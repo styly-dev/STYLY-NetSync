@@ -1,0 +1,204 @@
+// ConnectionManager.cs - Handles network connection management
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using NetMQ;
+using NetMQ.Sockets;
+using UnityEngine;
+
+namespace Styly.NetSync
+{
+    public class ConnectionManager
+    {
+        private DealerSocket _dealerSocket;
+        private SubscriberSocket _subSocket;
+        private Thread _receiveThread;
+        private volatile bool _shouldStop;
+        private bool _enableDebugLogs;
+        private bool _logNetworkTraffic;
+        private bool _connectionError;
+        private float _reconnectDelay = 10f;
+        private ServerDiscoveryManager _discoveryManager;
+        private string _currentGroupId;
+
+        public DealerSocket DealerSocket => _dealerSocket;
+        public SubscriberSocket SubSocket => _subSocket;
+        public bool IsConnected => _dealerSocket != null && _subSocket != null && !_connectionError;
+        public bool IsConnectionError => _connectionError;
+
+        public event Action<string> OnConnectionError;
+        public event Action OnConnectionEstablished;
+
+        private readonly NetSyncManager _netSyncManager;
+        private readonly MessageProcessor _messageProcessor;
+
+        public ConnectionManager(NetSyncManager netSyncManager, MessageProcessor messageProcessor, bool enableDebugLogs, bool logNetworkTraffic)
+        {
+            _netSyncManager = netSyncManager;
+            _messageProcessor = messageProcessor;
+            _enableDebugLogs = enableDebugLogs;
+            _logNetworkTraffic = logNetworkTraffic;
+        }
+
+        public void Connect(string serverAddress, int dealerPort, int subPort, string groupId)
+        {
+            if (_receiveThread != null)
+            {
+                return; // Already connected
+            }
+
+            _currentGroupId = groupId;
+            _connectionError = false;
+            _shouldStop = false;
+            _receiveThread = new Thread(() => NetworkLoop(serverAddress, dealerPort, subPort, groupId))
+            {
+                IsBackground = true,
+                Name = "STYLY_NetworkThread"
+            };
+            _receiveThread.Start();
+            DebugLog("Network thread started");
+        }
+
+        public void Disconnect()
+        {
+            if (_receiveThread == null) { return; }
+
+            _shouldStop = true;
+
+            // Dispose sockets
+            _subSocket?.Dispose();
+            _dealerSocket?.Dispose();
+
+            _subSocket = null;
+            _dealerSocket = null;
+
+            // Wait for receive thread to exit
+            WaitThreadExit(_receiveThread, 1000);
+            _receiveThread = null;
+
+            // OS-specific cleanup
+            SafeNetMQCleanup();
+        }
+
+        private void NetworkLoop(string serverAddress, int dealerPort, int subPort, string groupId)
+        {
+            try
+            {
+                // Dealer (for sending)
+                using var dealer = new DealerSocket();
+                dealer.Options.Linger = TimeSpan.Zero;
+                dealer.Options.SendHighWatermark = 10;
+                dealer.Connect($"{serverAddress}:{dealerPort}");
+                _dealerSocket = dealer;
+
+                DebugLog($"[Thread] DEALER connected → {serverAddress}:{dealerPort}");
+
+                // Subscriber (for receiving)
+                using var sub = new SubscriberSocket();
+                sub.Options.Linger = TimeSpan.Zero;
+                sub.Options.ReceiveHighWatermark = 10;
+                sub.Connect($"{serverAddress}:{subPort}");
+                sub.Subscribe(groupId);
+                _subSocket = sub;
+
+                DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
+
+                // Notify connection established
+                OnConnectionEstablished?.Invoke();
+
+                while (!_shouldStop)
+                {
+                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
+                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
+                    if (topic != groupId) { continue; }
+
+                    try
+                    {
+                        _messageProcessor.ProcessIncomingMessage(payload);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogError($"Binary parse error: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!_shouldStop)
+                {
+                    Debug.LogError($"Network thread error: {ex.Message}");
+                    _connectionError = true;
+                    OnConnectionError?.Invoke(ex.Message);
+                }
+            }
+        }
+
+        private static void WaitThreadExit(Thread t, int ms)
+        {
+#if UNITY_WEBGL
+            return; // WebGL doesn't support threads
+#else
+            if (t == null) { return; }
+            if (!t.Join(ms))
+            {
+#if !UNITY_IOS && !UNITY_TVOS && !UNITY_VISIONOS
+                try { t.Interrupt(); } catch { /* IL2CPP Unsupported */ }
+#endif
+                t.Join();
+            }
+#endif
+        }
+
+        private static void SafeNetMQCleanup()
+        {
+#if UNITY_WEBGL
+            return;
+#endif
+            // macOS: Cleanup tends to hang
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) { return; }
+
+            const int timeoutMs = 500;
+            try
+            {
+                var cts = new CancellationTokenSource();
+                var task = Task.Run(() => NetMQConfig.Cleanup(false), cts.Token);
+
+                if (!task.Wait(timeoutMs))
+                {
+                    cts.Cancel();
+                    Debug.LogWarning("[NetMQ] Cleanup timeout – skipped");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NetMQ] Cleanup error: {ex.Message}");
+            }
+        }
+
+        public void StartDiscovery(ServerDiscoveryManager discoveryManager, string groupId)
+        {
+            _discoveryManager = discoveryManager;
+            _currentGroupId = groupId;
+            if (_discoveryManager != null)
+            {
+                _discoveryManager.StartDiscovery();
+                DebugLog("Server discovery started");
+            }
+        }
+
+        public void ProcessDiscoveredServer(string serverAddress, int dealerPort, int subPort)
+        {
+            if (_discoveryManager != null)
+            {
+                _discoveryManager.StopDiscovery();
+            }
+            Connect(serverAddress, dealerPort, subPort, _currentGroupId);
+        }
+
+        public void DebugLog(string msg)
+        {
+            if (_enableDebugLogs) { Debug.Log($"[ConnectionManager] {msg}"); }
+        }
+    }
+}

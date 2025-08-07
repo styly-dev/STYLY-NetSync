@@ -1,0 +1,34 @@
+{
+    "files.exclude": {
+        "**/*.meta": true,
+        "**/Library": true,
+        "**/Temp": true,
+        "**/obj": true,
+        "**/Logs": true,
+        "**/Build": true,
+        "**/.vs": true,
+        "**/*.prefab": true,
+        "**/*.unity": true,
+        "**/*.asset": true,
+        "**/UserSettings": true
+    },
+    "search.exclude": {
+        "**/*.meta": true,
+        "**/*.csproj": true,
+        "**/*.sln": true,
+        "**/Library": true,
+        "**/Temp": true,
+        "**/obj": true,
+        "**/Logs": true,
+        "**/Build": true,
+        "**/.vs": true
+    },
+    "files.watcherExclude": {
+        "**/Library/**": true,
+        "**/Temp/**": true,
+        "**/obj/**": true,
+        "**/Logs/**": true,
+        "**/Build/**": true
+    },
+    "dotnet.defaultSolution": "STYLY-NetSync-Unity.sln"
+}

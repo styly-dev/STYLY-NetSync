@@ -1,0 +1,15 @@
+# License Notice
+
+This repository contains multiple sub-projects, each with its own license file.
+
+All sub-projects are licensed under the Apache License, Version 2.0.
+
+Please refer to the individual license files for details:
+
+- `STYLY-NetSync-Unity/LICENSE`  
+  This covers the Unity (C#) package code for STYLY-NetSync.
+
+- `STYLY-NetSync-Server/LICENSE`  
+  This covers the Python server code for STYLY-NetSync.
+
+Unless otherwise noted, each subdirectory is governed by its respective license file.
