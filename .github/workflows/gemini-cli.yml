@@ -34,8 +34,6 @@ jobs:
       (
         github.event_name == 'issues' && github.event.action == 'opened' &&
         contains(github.event.issue.body, '@gemini-cli') &&
-        !contains(github.event.issue.body, '@gemini-cli /review') &&
-        !contains(github.event.issue.body, '@gemini-cli /triage') &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
       ) ||
       (
@@ -44,15 +42,11 @@ jobs:
           github.event_name == 'pull_request_review_comment'
         ) &&
         contains(github.event.comment.body, '@gemini-cli') &&
-        !contains(github.event.comment.body, '@gemini-cli /review') &&
-        !contains(github.event.comment.body, '@gemini-cli /triage') &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
       ) ||
       (
         github.event_name == 'pull_request_review' &&
         contains(github.event.review.body, '@gemini-cli') &&
-        !contains(github.event.review.body, '@gemini-cli /review') &&
-        !contains(github.event.review.body, '@gemini-cli /triage') &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.review.author_association)
       )
     timeout-minutes: 10
