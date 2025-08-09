@@ -1,0 +1,225 @@
+name: 'Set ver and Create Release Draft'
+
+on:
+  workflow_dispatch:
+    inputs:
+      info:
+        description: |
+          This workflow will set version for Unity and Python, commit version changes to develop, merge develop into main and create a release draft.
+        required: false
+        type: boolean
+      version:
+        description: 'Version number (e.g., 1.0.0 or 1.0.0-beta.1)'
+        required: true
+        type: string
+
+jobs:
+  set-version-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0  # Full history for merge operations
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          # Check semantic versioning format (including pre-release versions)
+          if ! echo "$VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$' > /dev/null; then
+            echo "❌ Error: Invalid version format: $VERSION"
+            echo "Version must follow semantic versioning (e.g., 1.0.0 or 1.0.0-beta.1)"
+            exit 1
+          fi
+          echo "✅ Version format is valid: $VERSION"
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check if develop branch is up to date
+        run: |
+          git fetch origin develop
+          LOCAL_COMMIT=$(git rev-parse HEAD)
+          REMOTE_COMMIT=$(git rev-parse origin/develop)
+          
+          if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+            echo "❌ Error: develop branch is not up to date with origin/develop"
+            echo "Please pull the latest changes from origin/develop before running this workflow"
+            exit 1
+          fi
+          echo "✅ develop branch is up to date"
+
+      - name: Update Unity package.json version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          PACKAGE_FILE="STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json"
+          
+          if [ ! -f "$PACKAGE_FILE" ]; then
+            echo "❌ Error: Unity package.json not found at $PACKAGE_FILE"
+            exit 1
+          fi
+          
+          # Update version using jq (precise JSON manipulation)
+          jq --arg ver "$VERSION" '.version = $ver' "$PACKAGE_FILE" > tmp.json && mv tmp.json "$PACKAGE_FILE"
+          
+          echo "✅ Updated Unity package.json version to $VERSION"
+          echo "Updated content:"
+          cat "$PACKAGE_FILE"
+
+      - name: Update Python pyproject.toml version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          PYPROJECT_FILE="STYLY-NetSync-Server/pyproject.toml"
+          
+          if [ ! -f "$PYPROJECT_FILE" ]; then
+            echo "❌ Error: Python pyproject.toml not found at $PYPROJECT_FILE"
+            exit 1
+          fi
+          
+          # Update version line in pyproject.toml
+          sed -i "s/^version = .*/version = \"$VERSION\"/" "$PYPROJECT_FILE"
+          
+          echo "✅ Updated Python pyproject.toml version to $VERSION"
+          echo "Updated version line:"
+          grep "^version = " "$PYPROJECT_FILE"
+
+      - name: Commit version changes
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          
+          # Add both files
+          git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json
+          git add STYLY-NetSync-Server/pyproject.toml
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "⚠️ Warning: No changes to commit. Versions may already be set to $VERSION"
+            exit 0
+          fi
+          
+          # Commit changes
+          git commit -m "chore: bump version to $VERSION
+          
+          - Updated Unity package version in package.json
+          - Updated Python server version in pyproject.toml"
+          
+          echo "✅ Committed version changes"
+
+      - name: Push to develop branch
+        run: |
+          git push origin develop
+          echo "✅ Pushed changes to develop branch"
+
+      - name: Merge develop into main (fast-forward)
+        run: |
+          # Fetch main branch
+          git fetch origin main
+          
+          # Checkout main branch
+          git checkout main
+          
+          # Attempt fast-forward merge
+          if ! git merge --ff-only develop; then
+            echo "❌ Error: Cannot fast-forward merge develop into main"
+            echo "This usually happens when main has commits that develop doesn't have."
+            echo "Please resolve any conflicts manually and ensure develop includes all main commits."
+            exit 1
+          fi
+          
+          echo "✅ Successfully merged develop into main (fast-forward)"
+
+      - name: Push main branch
+        run: |
+          git push origin main
+          echo "✅ Pushed changes to main branch"
+
+      - name: Create Release Draft
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          TAG_NAME="v$VERSION"
+          
+          echo "Creating release draft for $TAG_NAME..."
+          
+          # Create release draft using GitHub CLI
+          gh release create "$TAG_NAME" \
+            --draft \
+            --target main \
+            --title "$TAG_NAME" \
+            --notes "## What's Changed
+          
+          
+          ---
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/previous-tag...$TAG_NAME"
+          
+          echo "✅ Release draft created: $TAG_NAME"
+          echo "📝 Please edit the release notes at: https://github.com/${{ github.repository }}/releases"
+
+      - name: Summary
+        if: always()
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          TAG_NAME="v$VERSION"
+          
+          # Write to GitHub Step Summary
+          {
+            echo "# 📦 Version Release Workflow Summary"
+            echo ""
+            
+            if [ "${{ job.status }}" == "success" ]; then
+              echo "## ✅ Status: Success"
+              echo ""
+              echo "### 🎯 Completed Actions"
+              echo ""
+              echo "| Step | Status | Description |"
+              echo "|------|--------|-------------|"
+              echo "| Version Update | ✅ | Updated Unity package.json to \`$VERSION\` |"
+              echo "| Version Update | ✅ | Updated Python pyproject.toml to \`$VERSION\` |"
+              echo "| Git Commit | ✅ | Committed changes to develop branch |"
+              echo "| Branch Merge | ✅ | Fast-forward merged develop → main |"
+              echo "| Release Draft | ✅ | Created draft release with tag \`$TAG_NAME\` |"
+              echo ""
+              echo "### 📦 Updated Files"
+              echo ""
+              echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json\`"
+              echo "- \`STYLY-NetSync-Server/pyproject.toml\`"
+              echo ""
+              echo "### 🚀 Next Steps"
+              echo ""
+              echo "**Review Release Draft**"
+              echo "   - [Edit Release Draft](https://github.com/${{ github.repository }}/releases)"
+            else
+              echo "## ❌ Status: Failed"
+              echo ""
+              echo "### 🔍 Troubleshooting"
+              echo ""
+              echo "Please check the workflow logs above for detailed error messages."
+              echo ""
+              echo "#### Common Issues:"
+              echo "- **Version format invalid**: Ensure version follows semantic versioning (x.x.x)"
+              echo "- **Branch not up to date**: Pull latest changes from origin/develop"
+              echo "- **Merge conflict**: Main branch has diverged from develop"
+              echo "- **Permission denied**: Check GitHub token permissions"
+              echo ""
+              echo "### 🔧 Recovery Steps"
+              echo ""
+              echo "1. Fix the issue based on error messages"
+              echo "2. Ensure develop branch is up to date"
+              echo "3. Re-run this workflow"
+              echo ""
+              echo "If issues persist, manually check:"
+              echo "- Current versions in both projects"
+              echo "- Git branch status"
+              echo "- GitHub Actions permissions"
+            fi
+            
+            echo ""
+            echo "---"
+            echo "*Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*"
+          } >> $GITHUB_STEP_SUMMARY
