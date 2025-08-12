@@ -15,7 +15,7 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly, InspectorName("Client No")] private int _displayClientNo;
 
         [Header("Connection Settings")]
-        [SerializeField] private string _serverAddress = "tcp://localhost";
+        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
         private int _dealerPort = 5555;
         private int _subPort = 5556;
         [SerializeField] private string _groupId = "default_group";
@@ -335,7 +335,8 @@ namespace Styly.NetSync
             _discoveredSubPort = subPort;
             
             // Update the server address for future connections
-            _serverAddress = serverAddress;
+            // Remove tcp:// prefix (discovery always returns with tcp://)
+            _serverAddress = serverAddress.Substring(6);
             _dealerPort = dealerPort;
             _subPort = subPort;
             
@@ -353,7 +354,9 @@ namespace Styly.NetSync
                 return;
             }
 
-            _connectionManager.Connect(_serverAddress, _dealerPort, _subPort, _groupId);
+            // Add tcp:// prefix
+            string fullAddress = $"tcp://{_serverAddress}";
+            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _groupId);
         }
 
         private void StopNetworking()
@@ -386,7 +389,7 @@ namespace Styly.NetSync
             {
                 DebugLog("Discovery timeout - falling back to localhost");
                 StopDiscovery();
-                _serverAddress = "tcp://localhost";
+                _serverAddress = "localhost";
                 StartNetworking();
             }
 
