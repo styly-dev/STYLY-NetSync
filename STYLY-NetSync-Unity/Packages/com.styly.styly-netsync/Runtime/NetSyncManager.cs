@@ -1,6 +1,7 @@
 // NetSyncManager.cs
 using System;
 using System.Collections.Generic;
+using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -9,6 +10,10 @@ namespace Styly.NetSync
     public class NetSyncManager : MonoBehaviour
     {
         #region === Inspector ===
+        [Header("Network Info")]
+        [SerializeField, ReadOnly, InspectorName("Device ID")] private string _displayDeviceId;
+        [SerializeField, ReadOnly, InspectorName("Client No")] private int _displayClientNo;
+
         [Header("Connection Settings")]
         [SerializeField] private string _serverAddress = "tcp://localhost";
         private int _dealerPort = 5555;
@@ -161,6 +166,7 @@ namespace Styly.NetSync
 
             // Generate device ID - use Android device ID if available, otherwise generate GUID
             _deviceId = GenerateDeviceId();
+            _displayDeviceId = _deviceId;  // Update display field
             _instance = this;
 
             // Detect stealth mode based on local player prefab
@@ -318,6 +324,7 @@ namespace Styly.NetSync
         private void OnLocalClientNoAssigned(int clientNo)
         {
             _clientNo = clientNo;
+            _displayClientNo = clientNo;  // Update display field
             DebugLog($"Local client number assigned: {clientNo}");
         }
         
