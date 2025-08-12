@@ -8,7 +8,12 @@ import logging
 import socket
 import argparse
 from typing import Dict, Any
-from . import binary_serializer
+
+# Handle both package and direct script execution
+try:
+    from . import binary_serializer
+except ImportError:
+    import binary_serializer
 
 # Log configuration
 logging.basicConfig(
