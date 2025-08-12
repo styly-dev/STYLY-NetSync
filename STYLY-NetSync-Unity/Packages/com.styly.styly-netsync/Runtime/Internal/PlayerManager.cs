@@ -26,7 +26,7 @@ namespace Styly.NetSync
         {
             if (localPlayerPrefab == null)
             {
-                Debug.LogError("LocalPlayer Prefab not set");
+                Debug.Log("[NetSync] ***** Stealth mode enabled ***** - No local player avatar will be spawned (LocalPlayerPrefab not set)");
                 return;
             }
 
