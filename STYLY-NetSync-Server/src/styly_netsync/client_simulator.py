@@ -16,7 +16,11 @@ from typing import Dict, List, Tuple
 import zmq
 
 # Import the binary serializer from the same package
-from .binary_serializer import serialize_client_transform
+try:
+    from .binary_serializer import serialize_client_transform
+except ImportError:
+    # Fallback for direct script execution
+    from binary_serializer import serialize_client_transform
 
 class MovementPattern(Enum):
     """Movement patterns matching DebugMoveAvatar.cs"""
