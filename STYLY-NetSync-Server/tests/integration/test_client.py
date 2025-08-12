@@ -51,7 +51,7 @@ import uuid
 import logging
 from datetime import datetime
 from threading import Thread, Event
-from binary_serializer import (
+from styly_netsync.binary_serializer import (
     serialize_client_transform,
     serialize_global_var_set,
     serialize_client_var_set,
