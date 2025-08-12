@@ -739,12 +739,21 @@ class NetSyncServer:
 
                 # Log status periodically
                 if current_time - last_log >= self.STATUS_LOG_INTERVAL:
-                    total_clients = sum(len(group) for group in self.groups.values())
+                    # Count normal and stealth clients separately
+                    normal_clients = 0
+                    stealth_clients = 0
+                    for group in self.groups.values():
+                        for client in group.values():
+                            if client.get("is_stealth", False):
+                                stealth_clients += 1
+                            else:
+                                normal_clients += 1
+                    
                     dirty_groups = sum(1 for flag in self.group_dirty_flags.values() if flag)
                     total_device_ids = len(self.device_id_last_seen)
-                    logger.info(f"Status: {len(self.groups)} groups, {total_clients} clients, "
-                            f"{dirty_groups} dirty groups, {total_device_ids} tracked device IDs, "
-                            f"{self.skipped_broadcasts} skipped broadcasts")
+                    logger.info(f"Status: {len(self.groups)} groups, {normal_clients} normal clients, "
+                            f"{stealth_clients} stealth clients, "
+                            f"{dirty_groups} dirty groups, {total_device_ids} tracked device IDs")
                     last_log = current_time
 
                 time.sleep(self.MAIN_LOOP_SLEEP)  # 50Hz loop for better responsiveness
