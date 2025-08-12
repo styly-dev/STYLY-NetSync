@@ -686,18 +686,16 @@ class NetSyncServer:
         self._broadcast_client_var_sync(group_id)
     
     def _broadcast_id_mappings(self, group_id: str):
-        """Broadcast all device ID mappings for a group (excluding stealth clients)"""
+        """Broadcast all device ID mappings for a group (including stealth clients)"""
         with self._groups_lock:
             if group_id not in self.group_device_id_to_client_no:
                 return
                 
-            # Collect all non-stealth mappings for the group
+            # Collect all mappings for the group (including stealth clients)
             mappings = []
             for device_id, client_no in self.group_device_id_to_client_no[group_id].items():
-                # Check if this client is stealth
-                client_data = self.groups.get(group_id, {}).get(device_id, {})
-                if not client_data.get("is_stealth", False):
-                    mappings.append((client_no, device_id))
+                # Include all clients (both normal and stealth)
+                mappings.append((client_no, device_id))
             
             if mappings:
                 try:
