@@ -11,9 +11,9 @@ namespace Styly.NetSync
     {
         #region === Inspector ===
         [Header("Network Info")]
-        [SerializeField, ReadOnly, InspectorName("Device ID")] private string _displayDeviceId;
-        [SerializeField, ReadOnly, InspectorName("Client No")] private int _displayClientNo;
-
+        [SerializeField, ReadOnly] private string _deviceId;
+        [SerializeField, ReadOnly] private int _clientNo = 0;
+        
         [Header("Connection Settings")]
         [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
         private int _dealerPort = 5555;
@@ -120,8 +120,6 @@ namespace Styly.NetSync
         #endregion ------------------------------------------------------------------------
 
         #region === Runtime Fields ===
-        private string _deviceId;
-        private int _clientNo = 0;  // Assigned by server
         private static bool _netMqInit;
 
         // Managers
@@ -166,7 +164,6 @@ namespace Styly.NetSync
 
             // Generate device ID - use Android device ID if available, otherwise generate GUID
             _deviceId = GenerateDeviceId();
-            _displayDeviceId = _deviceId;  // Update display field
             _instance = this;
 
             // Detect stealth mode based on local player prefab
@@ -324,7 +321,6 @@ namespace Styly.NetSync
         private void OnLocalClientNoAssigned(int clientNo)
         {
             _clientNo = clientNo;
-            _displayClientNo = clientNo;  // Update display field
             DebugLog($"Local client number assigned: {clientNo}");
         }
         
