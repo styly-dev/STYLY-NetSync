@@ -18,39 +18,36 @@ This is a multi-project repository containing:
 # Navigate to server directory
 cd STYLY-NetSync-Server
 
-# Install dependencies
-pip install -r requirements.txt
-# Or install from package
+# Install as package (recommended for development)
 pip install -e .
-
-# Run the server
-python src/styly_netsync/server.py
-# Or as module
-python -m styly_netsync
-
-# Run with custom ports
-python -m styly_netsync --dealer-port 5555 --pub-port 5556 --beacon-port 9999
-
-# Run without UDP discovery
-python -m styly_netsync --no-beacon
-
-# Run client simulator for load testing
-python src/styly_netsync/client_simulator.py --clients 100 --server tcp://localhost --group default_group
-
-# Development tools (requires dev dependencies)
+# Or install with dev dependencies
 pip install -e ".[dev]"
-black src/ tests/          # Format code
-ruff src/ tests/           # Lint code
+
+# Run server (after installation)
+styly-netsync-server                           # Using CLI entry point
+python -m styly_netsync                        # As Python module
+python src/styly_netsync/server.py             # Direct script
+
+# Server options
+styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999
+styly-netsync-server --no-beacon               # Disable UDP discovery
+
+# Run client simulator
+styly-netsync-simulator --clients 100 --server tcp://localhost --group default_group
+python src/styly_netsync/client_simulator.py --clients 100  # Alternative
+
+# Development tools
+black src/                 # Format code
+ruff check src/            # Lint code  
 mypy src/                  # Type check
-pytest                     # Run tests
+pytest                     # Run tests (when tests/ directory exists)
 
-# Check for port conflicts (Linux/Mac)
-lsof -i :5555
-kill <PID>
+# Debug port conflicts
+lsof -i :5555              # Linux/Mac: Find process using port
+kill -9 <PID>              # Linux/Mac: Kill process
 
-# Check for port conflicts (Windows)
-netstat -ano | findstr :5555
-taskkill /PID <PID> /F
+netstat -ano | findstr :5555   # Windows: Find process using port
+taskkill /PID <PID> /F         # Windows: Kill process
 ```
 
 ### Unity Client
@@ -243,6 +240,8 @@ When adding features:
 - `src/styly_netsync/server.py`: Main server with group management
 - `src/styly_netsync/binary_serializer.py`: Binary protocol implementation
 - `src/styly_netsync/client_simulator.py`: Load testing with movement patterns
+- `src/styly_netsync/cli.py`: CLI entry point wrapper
+- `src/styly_netsync/__main__.py`: Module execution support
 - `requirements.txt`: Python dependencies (pyzmq 26.4.0)
 - `pyproject.toml`: Package configuration with dev tools
 

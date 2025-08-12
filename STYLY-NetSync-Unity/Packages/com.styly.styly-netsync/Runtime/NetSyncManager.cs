@@ -130,6 +130,7 @@ namespace Styly.NetSync
 
         // State
         private bool _isDiscovering;
+        private bool _isStealthMode;
         private string _discoveredServer;
         private int _discoveredDealerPort;
         private int _discoveredSubPort;
@@ -162,8 +163,15 @@ namespace Styly.NetSync
             _deviceId = GenerateDeviceId();
             _instance = this;
 
+            // Detect stealth mode based on local player prefab
+            _isStealthMode = (_localPlayerPrefab == null);
+            
             InitializeManagers();
             DebugLog($"Device ID: {_deviceId}");
+            if (_isStealthMode)
+            {
+                DebugLog("Stealth mode enabled (no local avatar prefab)");
+            }
         }
 
         private void OnEnable()
@@ -404,10 +412,22 @@ namespace Styly.NetSync
         {
             if (!_connectionManager.IsConnectionError && _transformSyncManager.ShouldSendTransform(Time.time))
             {
-                var localPlayer = _playerManager.LocalPlayerAvatar;
-                if (!_transformSyncManager.SendLocalTransform(localPlayer, _groupId))
+                if (_isStealthMode)
                 {
-                    HandleConnectionError("Send failed – disconnected?");
+                    // Send stealth handshake instead of regular transform
+                    if (!_transformSyncManager.SendStealthHandshake(_groupId))
+                    {
+                        HandleConnectionError("Send failed – disconnected?");
+                    }
+                }
+                else
+                {
+                    // Normal transform sending
+                    var localPlayer = _playerManager.LocalPlayerAvatar;
+                    if (!_transformSyncManager.SendLocalTransform(localPlayer, _groupId))
+                    {
+                        HandleConnectionError("Send failed – disconnected?");
+                    }
                 }
                 _transformSyncManager.UpdateLastSendTime(Time.time);
             }

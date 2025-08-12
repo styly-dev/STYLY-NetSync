@@ -47,6 +47,30 @@ namespace Styly.NetSync
             }
         }
         
+        public bool SendStealthHandshake(string groupId)
+        {
+            if (_connectionManager.DealerSocket == null)
+                return true;
+            
+            try
+            {
+                var binaryData = BinarySerializer.SerializeStealthHandshake(_deviceId);
+                
+                var msg = new NetMQMessage();
+                msg.Append(groupId);
+                msg.Append(binaryData);
+                
+                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                if (ok) _messagesSent++;
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SendStealthHandshake: {ex.Message}");
+                return false;
+            }
+        }
+        
         public void IncrementMessagesSent()
         {
             _messagesSent++;

@@ -409,6 +409,9 @@ class NetSyncServer:
         """Handle client transform update"""
         device_id = data.get("deviceId")  # Receiving device ID from client
         
+        # Detect stealth mode using NaN handshake
+        is_stealth = binary_serializer._is_stealth_client(data)
+        
         # Get or assign client number for this device ID
         client_no = self._get_or_assign_client_no(group_id, device_id)
         
@@ -429,18 +432,21 @@ class NetSyncServer:
                     "last_update": time.time(),
                     "transform_data": data_with_client_no,
                     "client_no": client_no,
+                    "is_stealth": is_stealth,
                 }
                 self.group_dirty_flags[group_id] = True  # Mark group as dirty
                 # Cache the binary data if available
                 if raw_payload:
                     # Store by client number for efficient broadcast
                     self.client_binary_cache[client_no] = raw_payload
-                logger.info(f"New client {device_id[:8]}... (client number: {client_no}) joined group {group_id}")
+                stealth_text = " (stealth mode)" if is_stealth else ""
+                logger.info(f"New client {device_id[:8]}... (client number: {client_no}){stealth_text} joined group {group_id}")
             else:
                 # Update existing client and mark group as dirty
                 self.groups[group_id][device_id]["transform_data"] = data_with_client_no
                 self.groups[group_id][device_id]["last_update"] = time.time()
                 self.groups[group_id][device_id]["client_no"] = client_no
+                self.groups[group_id][device_id]["is_stealth"] = is_stealth
                 
                 # Update cached binary data if available
                 if raw_payload:
@@ -675,15 +681,18 @@ class NetSyncServer:
         self._broadcast_client_var_sync(group_id)
     
     def _broadcast_id_mappings(self, group_id: str):
-        """Broadcast all device ID mappings for a group"""
+        """Broadcast all device ID mappings for a group (excluding stealth clients)"""
         with self._groups_lock:
             if group_id not in self.group_device_id_to_client_no:
                 return
                 
-            # Collect all mappings for the group
+            # Collect all non-stealth mappings for the group
             mappings = []
             for device_id, client_no in self.group_device_id_to_client_no[group_id].items():
-                mappings.append((client_no, device_id))
+                # Check if this client is stealth
+                client_data = self.groups.get(group_id, {}).get(device_id, {})
+                if not client_data.get("is_stealth", False):
+                    mappings.append((client_no, device_id))
             
             if mappings:
                 try:
@@ -778,9 +787,10 @@ class NetSyncServer:
 
     def _broadcast_group(self, group_id, clients):
         """Broadcast a specific group's state"""
+        # Filter out stealth clients from broadcasts
         client_transforms = [
             client["transform_data"] for client in clients.values()
-            if client["transform_data"]
+            if client["transform_data"] and not client.get("is_stealth", False)
         ]
 
         if client_transforms:

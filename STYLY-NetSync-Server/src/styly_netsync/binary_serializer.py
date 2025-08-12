@@ -1,4 +1,5 @@
 import struct
+import math
 from typing import Dict, List, Tuple, Any, Union
 
 # Message type identifiers
@@ -19,6 +20,55 @@ TRANSFORM_VIRTUAL = 2   # 6 floats: full transform
 
 # Maximum allowed virtual transforms to prevent memory issues
 MAX_VIRTUAL_TRANSFORMS = 50
+
+# Stealth mode detection utilities
+def _is_nan_transform(transform: Dict[str, Any]) -> bool:
+    """Check if a transform contains all NaN values (stealth mode indicator)"""
+    # Check physical transform (posX, posZ, rotY)
+    physical = transform.get('physical', {})
+    if not physical:
+        return False
+    
+    # All physical values must be NaN
+    if not (math.isnan(physical.get('posX', 0)) and 
+            math.isnan(physical.get('posZ', 0)) and 
+            math.isnan(physical.get('rotY', 0))):
+        return False
+    
+    # Check head transform (all 6 values must be NaN)
+    head = transform.get('head', {})
+    if not head:
+        return False
+    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+        if not math.isnan(head.get(key, 0)):
+            return False
+    
+    # Check right hand transform (all 6 values must be NaN)
+    right_hand = transform.get('rightHand', {})
+    if not right_hand:
+        return False
+    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+        if not math.isnan(right_hand.get(key, 0)):
+            return False
+    
+    # Check left hand transform (all 6 values must be NaN)
+    left_hand = transform.get('leftHand', {})
+    if not left_hand:
+        return False
+    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+        if not math.isnan(left_hand.get(key, 0)):
+            return False
+    
+    # Check virtuals count is 0
+    virtuals = transform.get('virtuals', [])
+    if len(virtuals) != 0:
+        return False
+    
+    return True
+
+def _is_stealth_client(data: Dict[str, Any]) -> bool:
+    """Check if client data indicates stealth mode (NaN handshake)"""
+    return _is_nan_transform(data)
 
 # Helper functions for common operations
 def _pack_string(buffer: bytearray, string: str, use_ushort: bool = False) -> None:
