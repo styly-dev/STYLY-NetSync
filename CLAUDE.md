@@ -40,11 +40,19 @@ python src/styly_netsync/client_simulator.py --clients 100  # Alternative
 black src/                 # Format code
 ruff check src/            # Lint code  
 mypy src/                  # Type check
-pytest                     # Run tests (when tests/ directory exists)
+pytest                     # Run all tests
+pytest tests/test_all_run_methods.py  # Test all documented run methods
+pytest tests/integration/  # Run integration tests
+pytest -k test_stealth     # Run specific test by name pattern
+
+# Run specific test scripts
+python tests/integration/test_client.py         # Test basic client functionality
+python tests/integration/test_stealth_mode.py   # Test stealth mode feature
 
 # Debug port conflicts
 lsof -i :5555              # Linux/Mac: Find process using port
 kill -9 <PID>              # Linux/Mac: Kill process
+pkill -f styly-netsync     # Linux/Mac: Kill all STYLY processes
 
 netstat -ano | findstr :5555   # Windows: Find process using port
 taskkill /PID <PID> /F         # Windows: Kill process
@@ -91,6 +99,7 @@ The system uses ZeroMQ with binary serialization for efficient networking:
 - **Client Number System**: Maps device IDs to 2-byte numbers for efficiency
 - **Binary Caching**: Server caches client binary data to avoid re-serialization
 - **Client Timeout**: 1 second of inactivity = disconnect
+- **Stealth Mode Support**: Clients can connect without visible avatars (NaN handshake)
 
 #### 2. Unity Client Architecture
 
@@ -108,6 +117,11 @@ The system uses ZeroMQ with binary serialization for efficient networking:
 - **Physical Transform**: Local space (X,Z position, Y rotation only)
 - **Head/Hands**: World space full 6DOF
 - **Virtual Objects**: Array of additional world transforms
+
+**Stealth Mode**:
+- Enable by setting local player prefab to null in NetSyncManager
+- Client sends NaN handshake to maintain connection without avatar
+- Useful for spectator clients or server-side controllers
 
 #### 3. Binary Protocol
 
@@ -129,6 +143,7 @@ MSG_NETWORK_VARS = 9        // Server → Clients: Network variable updates
 - Server broadcasts use client numbers (2 bytes)
 - Physical transform: 3 floats (X, Z, rotY)
 - Virtual transforms: 6 floats (full position + rotation)
+- Stealth handshake: NaN values for all transform components
 
 ### Threading Model
 
@@ -189,6 +204,9 @@ NetSyncManager.Instance.OnGlobalVariableChanged.AddListener((name, oldVal, newVa
 NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, oldVal, newVal) => {
     Debug.Log($"Client {clientNo} var {name} changed: {oldVal} -> {newVal}");
 });
+
+// Check if client is in stealth mode
+bool isStealth = NetSyncManager.Instance.IsClientStealthMode(clientNo);
 ```
 
 ## Important Implementation Details
@@ -198,6 +216,7 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 - **Physical**: Local coordinates, ground movement only
 - **Virtual**: World coordinates, full 6DOF
 - **Interpolation**: Smooth movement for remote players
+- **Stealth Mode**: NaN values indicate invisible client
 
 ### Connection Handling
 - **Discovery**: UDP "STYLY-NETSYNC-DISCOVER" → "STYLY-NETSYNC|dealerPort|subPort|serverName"
@@ -205,6 +224,7 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 - **Platform-specific**: Special NetMQ cleanup for different platforms
 - **Fallback**: Localhost if discovery fails
 - **Client Number Assignment**: Server assigns 2-byte IDs to clients, broadcasted to all
+- **Handshake**: Periodic transform or stealth handshake to maintain connection
 
 ### Performance Optimizations
 - Binary protocol with struct packing
@@ -234,6 +254,35 @@ When adding features:
 3. Add handler in MessageProcessor
 4. Expose API through NetSyncManager
 
+When debugging issues:
+1. Enable debug logs in NetSyncManager inspector
+2. Check server logs for connection/group information
+3. Use `test_client.py` for isolated testing
+4. Monitor with `lsof` or `netstat` for port issues
+
+## Troubleshooting
+
+### Common Issues
+
+**Port Already in Use**:
+```bash
+# Find and kill process using the port
+lsof -i :5555  # Mac/Linux
+kill -9 <PID>
+```
+
+**Client Not Connecting**:
+1. Check firewall settings
+2. Verify server is running
+3. Confirm correct IP address
+4. Test with `test_client.py` first
+
+**Transforms Not Syncing**:
+1. Check send rate settings
+2. Verify group ID matches
+3. Ensure prefabs have NetSyncAvatar component
+4. Check debug logs for errors
+
 ## Key Files Reference
 
 ### Server (`STYLY-NetSync-Server/`)
@@ -244,6 +293,9 @@ When adding features:
 - `src/styly_netsync/__main__.py`: Module execution support
 - `requirements.txt`: Python dependencies (pyzmq 26.4.0)
 - `pyproject.toml`: Package configuration with dev tools
+- `tests/integration/test_client.py`: Basic client integration test
+- `tests/integration/test_stealth_mode.py`: Stealth mode feature test
+- `tests/test_all_run_methods.py`: Test all documented execution methods
 
 ### Unity Package (`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/`)
 - `Runtime/NetSyncManager.cs`: Main singleton entry point
@@ -261,3 +313,4 @@ When adding features:
 ### Demo Scenes
 - `Assets/Samples_Dev/Demo-01/Scripts/ReceiveRPC_to_ChangeColor.cs`: Example RPC receiver
 - `Assets/Samples_Dev/Demo-01/Scripts/SendRPC.cs`: Example RPC sender
+- `Assets/Samples_Dev/Debug/DebugMoveAvatar.cs`: Debug avatar movement
