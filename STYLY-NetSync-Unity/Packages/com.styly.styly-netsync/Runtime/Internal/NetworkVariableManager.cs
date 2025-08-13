@@ -72,11 +72,6 @@ namespace Styly.NetSync
             }
         }
         
-        public string GetGlobalVariable(string name)
-        {
-            return _globalVariables.TryGetValue(name, out var value) ? value : null;
-        }
-        
         public string GetGlobalVariable(string name, string defaultValue = null)
         {
             return _globalVariables.TryGetValue(name, out var value) ? value : defaultValue;
@@ -127,15 +122,6 @@ namespace Styly.NetSync
                 Debug.LogError($"Failed to send client variable: {ex.Message}");
                 return false;
             }
-        }
-        
-        public string GetClientVariable(int clientNo, string name)
-        {
-            if (_clientVariables.TryGetValue(clientNo, out var clientVars))
-            {
-                return clientVars.TryGetValue(name, out var value) ? value : null;
-            }
-            return null;
         }
         
         public string GetClientVariable(int clientNo, string name, string defaultValue = null)

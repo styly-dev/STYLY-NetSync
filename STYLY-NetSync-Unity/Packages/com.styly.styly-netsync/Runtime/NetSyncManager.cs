@@ -81,11 +81,6 @@ namespace Styly.NetSync
             return _networkVariableManager?.SetGlobalVariable(name, value, _roomId) ?? false;
         }
 
-        public string GetGlobalVariable(string name)
-        {
-            return _networkVariableManager?.GetGlobalVariable(name);
-        }
-
         public string GetGlobalVariable(string name, string defaultValue = null)
         {
             return _networkVariableManager?.GetGlobalVariable(name, defaultValue);
@@ -99,11 +94,6 @@ namespace Styly.NetSync
         public bool SetClientVariable(int targetClientNo, string name, string value)
         {
             return _networkVariableManager?.SetClientVariable(targetClientNo, name, value, _roomId) ?? false;
-        }
-
-        public string GetClientVariable(int clientNo, string name)
-        {
-            return _networkVariableManager?.GetClientVariable(clientNo, name);
         }
 
         public string GetClientVariable(int clientNo, string name, string defaultValue = null)
