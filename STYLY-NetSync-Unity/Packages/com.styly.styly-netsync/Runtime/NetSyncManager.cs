@@ -38,6 +38,7 @@ namespace Styly.NetSync
         private bool _logNetworkTraffic = false;
 
         [Header("Events")]
+        public UnityEvent OnInitialized;
         public UnityEvent<int> OnClientConnected;
         public UnityEvent<int> OnClientDisconnected;
         public UnityEvent<int, string, string[]> OnRPCReceived;
@@ -127,6 +128,29 @@ namespace Styly.NetSync
             return _messageProcessor?.IsClientStealthMode(clientNo) ?? false;
         }
         
+        /// <summary>
+        /// Safely gets global variable, returns defaultValue if not initialized
+        /// </summary>
+        /// <param name="name">Variable name</param>
+        /// <param name="defaultValue">Default value to return if not initialized or not found</param>
+        /// <returns>Variable value or defaultValue</returns>
+        public string GetGlobalVariableSafe(string name, string defaultValue = null)
+        {
+            return _isInitialized ? GetGlobalVariable(name, defaultValue) : defaultValue;
+        }
+        
+        /// <summary>
+        /// Safely gets client variable, returns defaultValue if not initialized
+        /// </summary>
+        /// <param name="clientNo">Client number</param>
+        /// <param name="name">Variable name</param>
+        /// <param name="defaultValue">Default value to return if not initialized or not found</param>
+        /// <returns>Variable value or defaultValue</returns>
+        public string GetClientVariableSafe(int clientNo, string name, string defaultValue = null)
+        {
+            return _isInitialized ? GetClientVariable(clientNo, name, defaultValue) : defaultValue;
+        }
+        
         #endregion ------------------------------------------------------------------------
 
         #region === Runtime Fields ===
@@ -144,6 +168,7 @@ namespace Styly.NetSync
         // State
         private bool _isDiscovering;
         private bool _isStealthMode;
+        private bool _isInitialized;
         private string _discoveredServer;
         private int _discoveredDealerPort;
         private int _discoveredSubPort;
@@ -156,6 +181,7 @@ namespace Styly.NetSync
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
         public string RoomId => _roomId;
+        public bool IsInitialized => _isInitialized;
         public ConnectionManager ConnectionManager => _connectionManager;
         public PlayerManager PlayerManager => _playerManager;
         public RPCManager RPCManager => _rpcManager;
@@ -335,7 +361,11 @@ namespace Styly.NetSync
         private void OnLocalClientNoAssigned(int clientNo)
         {
             _clientNo = clientNo;
-            DebugLog($"Local client number assigned: {clientNo}");
+            _isInitialized = true;
+            DebugLog($"Local client number assigned: {clientNo} - NetSyncManager initialized");
+            
+            // Trigger OnInitialized event - client is now ready for network operations
+            OnInitialized?.Invoke();
         }
         
         private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
