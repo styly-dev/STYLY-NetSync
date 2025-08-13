@@ -378,7 +378,7 @@ namespace Styly.NetSync
         /// </summary>
         public string GetClientVariable(int clientNo, string name, string defaultValue = null)
         {
-            return NetSyncManager.Instance?.GetClientVariable(clientNo, name, defaultValue) ?? defaultValue;
+            return NetSyncManager.Instance?.GetClientVariable(clientNo, name, defaultValue);
         }
         #endregion
     }
