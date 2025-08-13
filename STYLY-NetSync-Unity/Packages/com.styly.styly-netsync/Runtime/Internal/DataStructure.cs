@@ -57,11 +57,11 @@ namespace Styly.NetSync
         public List<Transform3D> virtuals;
     }
 
-    // Group data from server
+    // Room data from server
     [Serializable]
-    public class GroupTransformData
+    public class RoomTransformData
     {
-        public string groupId;
+        public string roomId;
         public List<ClientTransformData> clients;
     }
 
@@ -69,7 +69,7 @@ namespace Styly.NetSync
     [Serializable]
     public class NetworkMessage
     {
-        public string type; // "client_transform" or "group_transform"
+        public string type; // "client_transform" or "room_transform"
         public string data;
         public object dataObj; // For preserving object types without JSON conversion
     }

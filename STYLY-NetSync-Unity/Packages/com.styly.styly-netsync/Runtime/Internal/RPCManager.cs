@@ -23,7 +23,7 @@ namespace Styly.NetSync
             _netSyncManager = netSyncManager;
         }
 
-        public void SendBroadcast(string groupId, string functionName, string[] args)
+        public void SendBroadcast(string roomId, string functionName, string[] args)
         {
             if (_connectionManager.DealerSocket == null) { return; }
 
@@ -36,13 +36,13 @@ namespace Styly.NetSync
             var binary = BinarySerializer.SerializeRPCMessage(rpcMsg);
 
             var msg = new NetMQMessage();
-            msg.Append(groupId);
+            msg.Append(roomId);
             msg.Append(binary);
 
             _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
         }
 
-        public void SendToServer(string groupId, string functionName, string[] args)
+        public void SendToServer(string roomId, string functionName, string[] args)
         {
             if (_connectionManager.DealerSocket == null) { return; }
 
@@ -55,13 +55,13 @@ namespace Styly.NetSync
             var binary = BinarySerializer.SerializeRPCRequest(rpcMsg);
 
             var msg = new NetMQMessage();
-            msg.Append(groupId);
+            msg.Append(roomId);
             msg.Append(binary);
 
             _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
         }
 
-        public void SendToClient(string groupId, int targetClientNo, string functionName, string[] args)
+        public void SendToClient(string roomId, int targetClientNo, string functionName, string[] args)
         {
             if (_connectionManager.DealerSocket == null) { return; }
 
@@ -75,7 +75,7 @@ namespace Styly.NetSync
             var binary = BinarySerializer.SerializeRPCClientMessage(rpcMsg);
 
             var msg = new NetMQMessage();
-            msg.Append(groupId);
+            msg.Append(roomId);
             msg.Append(binary);
 
             _connectionManager.DealerSocket.TrySendMultipartMessage(msg);

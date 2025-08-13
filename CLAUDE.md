@@ -33,7 +33,7 @@ styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999
 styly-netsync-server --no-beacon               # Disable UDP discovery
 
 # Run client simulator
-styly-netsync-simulator --clients 100 --server tcp://localhost --group default_group
+styly-netsync-simulator --clients 100 --server tcp://localhost --room default_room
 python src/styly_netsync/client_simulator.py --clients 100  # Alternative
 
 # Development tools
@@ -83,14 +83,14 @@ Unity Clients (DEALER→ROUTER, SUB←PUB) ←→ Python Server (ROUTER→DEALER
 
 The system uses ZeroMQ with binary serialization for efficient networking:
 - **DEALER→ROUTER**: Clients send their state to server (port 5555)
-- **PUB→SUB**: Server broadcasts combined group state to all clients (port 5556)
+- **PUB→SUB**: Server broadcasts combined room state to all clients (port 5556)
 - **UDP Discovery**: Optional server discovery service (port 9999)
 - **Binary Protocol**: ~60% bandwidth reduction vs JSON
 
 ### Key Components
 
 #### 1. Python Server (`src/styly_netsync/server.py`)
-- **NetSyncServer**: Main server class with thread-safe group management
+- **NetSyncServer**: Main server class with thread-safe room management
 - **Threading Model**:
   - Main thread: Lifecycle management
   - Receive thread: Process client messages
@@ -128,7 +128,7 @@ The system uses ZeroMQ with binary serialization for efficient networking:
 **Message Types**:
 ```csharp
 MSG_CLIENT_TRANSFORM = 1    // Client → Server: Transform update
-MSG_GROUP_TRANSFORM = 2     // Server → Clients: Broadcast all transforms
+MSG_ROOM_TRANSFORM = 2     // Server → Clients: Broadcast all transforms
 MSG_RPC_BROADCAST = 3       // Client → Server → All: Broadcast RPC
 MSG_RPC_SERVER = 4          // Client → Server: Server RPC
 MSG_RPC_CLIENT = 5          // Client → Server → Client: Direct RPC
@@ -150,7 +150,7 @@ MSG_NETWORK_VARS = 9        // Server → Clients: Network variable updates
 **Server**:
 - Thread-safe with reentrant locks (RLock)
 - Context managers for safe lock acquisition
-- Atomic operations for group cleanup
+- Atomic operations for room cleanup
 
 **Unity**:
 - Main thread: Unity Update/UI
@@ -160,7 +160,7 @@ MSG_NETWORK_VARS = 9        // Server → Clients: Network variable updates
 ### RPC System
 
 ```csharp
-// Broadcast to all clients in group
+// Broadcast to all clients in room
 NetSyncManager.Instance.RpcBroadcast("FunctionName", new string[] { "arg1", "arg2" });
 
 // Send to server
@@ -183,7 +183,7 @@ NetSyncManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName,
 ### Network Variables System
 
 ```csharp
-// Set global variable (shared across all clients in group)
+// Set global variable (shared across all clients in room)
 NetSyncManager.Instance.SetGlobalVariable("gameState", "playing");
 
 // Set client-specific variable
@@ -229,7 +229,7 @@ bool isStealth = NetSyncManager.Instance.IsClientStealthMode(clientNo);
 ### Performance Optimizations
 - Binary protocol with struct packing
 - Client number system (2 bytes vs 36 byte device ID)
-- Adaptive broadcasting based on group activity
+- Adaptive broadcasting based on room activity
 - Binary caching on server side
 - Message queue high-water marks
 
@@ -256,7 +256,7 @@ When adding features:
 
 When debugging issues:
 1. Enable debug logs in NetSyncManager inspector
-2. Check server logs for connection/group information
+2. Check server logs for connection/room information
 3. Use `test_client.py` for isolated testing
 4. Monitor with `lsof` or `netstat` for port issues
 
@@ -279,14 +279,14 @@ kill -9 <PID>
 
 **Transforms Not Syncing**:
 1. Check send rate settings
-2. Verify group ID matches
+2. Verify room ID matches
 3. Ensure prefabs have NetSyncAvatar component
 4. Check debug logs for errors
 
 ## Key Files Reference
 
 ### Server (`STYLY-NetSync-Server/`)
-- `src/styly_netsync/server.py`: Main server with group management
+- `src/styly_netsync/server.py`: Main server with room management
 - `src/styly_netsync/binary_serializer.py`: Binary protocol implementation
 - `src/styly_netsync/client_simulator.py`: Load testing with movement patterns
 - `src/styly_netsync/cli.py`: CLI entry point wrapper

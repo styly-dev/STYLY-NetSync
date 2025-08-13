@@ -22,7 +22,7 @@ namespace Styly.NetSync
             SendRate = sendRate;
         }
         
-        public bool SendLocalTransform(NetSyncAvatar localPlayerAvatar, string groupId)
+        public bool SendLocalTransform(NetSyncAvatar localPlayerAvatar, string roomId)
         {
             if (localPlayerAvatar == null || _connectionManager.DealerSocket == null)
                 return false;
@@ -33,7 +33,7 @@ namespace Styly.NetSync
                 var binaryData = BinarySerializer.SerializeClientTransform(tx);
                 
                 var msg = new NetMQMessage();
-                msg.Append(groupId);
+                msg.Append(roomId);
                 msg.Append(binaryData);
                 
                 var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
@@ -47,7 +47,7 @@ namespace Styly.NetSync
             }
         }
         
-        public bool SendStealthHandshake(string groupId)
+        public bool SendStealthHandshake(string roomId)
         {
             if (_connectionManager.DealerSocket == null)
                 return false;
@@ -57,7 +57,7 @@ namespace Styly.NetSync
                 var binaryData = BinarySerializer.SerializeStealthHandshake(_deviceId);
                 
                 var msg = new NetMQMessage();
-                msg.Append(groupId);
+                msg.Append(roomId);
                 msg.Append(binaryData);
                 
                 var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);

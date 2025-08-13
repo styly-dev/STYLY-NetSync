@@ -78,8 +78,8 @@ Test the server with simulated clients:
 # Simulate 100 clients
 styly-netsync-simulator --clients 100
 
-# Custom server and group
-styly-netsync-simulator --server tcp://localhost --group my_group --clients 50
+# Custom server and room
+styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 ```
 
 ## Architecture
@@ -158,7 +158,7 @@ python test_client.py
 styly-netsync-server
 
 # In another terminal, simulate multiple clients
-styly-netsync-simulator --clients 100 --group test_group
+styly-netsync-simulator --clients 100 --room test_room
 
 # Monitor server logs for performance metrics
 ```
