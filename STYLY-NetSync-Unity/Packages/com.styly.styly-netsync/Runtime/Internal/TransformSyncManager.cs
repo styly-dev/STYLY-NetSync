@@ -25,7 +25,7 @@ namespace Styly.NetSync
         public bool SendLocalTransform(NetSyncAvatar localPlayerAvatar, string groupId)
         {
             if (localPlayerAvatar == null || _connectionManager.DealerSocket == null)
-                return true;
+                return false;
             
             try
             {
@@ -50,7 +50,7 @@ namespace Styly.NetSync
         public bool SendStealthHandshake(string groupId)
         {
             if (_connectionManager.DealerSocket == null)
-                return true;
+                return false;
             
             try
             {
