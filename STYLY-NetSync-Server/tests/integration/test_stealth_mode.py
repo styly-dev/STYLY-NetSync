@@ -96,12 +96,15 @@ def test_stealth_client():
     
     start_time = time.time()
     message_count = 0
+    last_handshake_time = start_time
     
     try:
         while time.time() - start_time < 10:
-            # Send periodic handshake to maintain connection
-            if int(time.time()) % 1 == 0:
+            # Send periodic handshake to maintain connection (once per second)
+            current_time = time.time()
+            if current_time - last_handshake_time >= 1.0:
                 dealer.send_multipart([group_id.encode('utf-8'), handshake])
+                last_handshake_time = current_time
             
             # Check for incoming messages
             if sub.poll(100):
