@@ -467,6 +467,12 @@ class NetSyncServer:
     
     def _broadcast_rpc_to_group(self, group_id: str, rpc_data: Dict[str, Any]):
         """Broadcast RPC to all clients in group except sender"""
+        # Log RPC broadcast
+        sender_client_no = rpc_data.get('senderClientNo', 0)
+        function_name = rpc_data.get('functionName', 'unknown')
+        args = rpc_data.get('args', [])
+        logger.info(f"RPC Broadcast: sender={sender_client_no}, function={function_name}, args={args}, group={group_id}")
+        
         # Prepare topic and payload
         topic_bytes = group_id.encode('utf-8')
         message_bytes = binary_serializer.serialize_rpc_message(rpc_data)
@@ -480,13 +486,22 @@ class NetSyncServer:
 
     def _handle_rpc_request(self, client_identity: bytes, group_id: str, rpc_data: Dict[str, Any]):
         """Handle client-to-server RPC request"""
+        # Log RPC server request
+        sender_client_no = rpc_data.get('senderClientNo', 0)
+        function_name = rpc_data.get('functionName', 'unknown')
+        args = rpc_data.get('args', [])
+        logger.info(f"RPC Server Request: sender={sender_client_no}, function={function_name}, args={args}, group={group_id}")
         # Here you can add your server-side RPC handling logic
         pass
 
     def _handle_rpc_client_request(self, group_id: str, rpc_data: Dict[str, Any]):
         """Handle client-to-client RPC request"""
-        # Expecting targetClientNo from client, need to resolve to device ID
+        # Log RPC client request
+        sender_client_no = rpc_data.get('senderClientNo', 0)
         target_client_no = rpc_data.get('targetClientNo', 0)
+        function_name = rpc_data.get('functionName', 'unknown')
+        args = rpc_data.get('args', [])
+        logger.info(f"RPC Client Request: sender={sender_client_no}, target={target_client_no}, function={function_name}, args={args}, group={group_id}")
         
         # Resolve target device ID from client number
         target_device_id = self._get_device_id_from_client_no(group_id, target_client_no)
@@ -571,6 +586,9 @@ class NetSyncServer:
                 if timestamp < existing['timestamp'] or (timestamp == existing['timestamp'] and sender_client_no < existing['lastWriterClientNo']):
                     return  # Ignore older or lower priority update
             
+            # Store old value for logging
+            old_value = global_vars.get(var_name, {}).get('value', None)
+            
             # Update variable
             global_vars[var_name] = {
                 'value': var_value,
@@ -578,7 +596,7 @@ class NetSyncServer:
                 'lastWriterClientNo': sender_client_no
             }
             
-            logger.info(f"Global variable '{var_name}' set to '{var_value}' by client {sender_client_no} in group {group_id}")
+            logger.info(f"Global Variable Changed: group={group_id}, client={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'")
             
             # Broadcast sync to all clients
             self._broadcast_global_var_sync(group_id)
@@ -614,6 +632,9 @@ class NetSyncServer:
                 if timestamp < existing['timestamp'] or (timestamp == existing['timestamp'] and sender_client_no < existing['lastWriterClientNo']):
                     return  # Ignore older or lower priority update
             
+            # Store old value for logging
+            old_value = client_vars.get(var_name, {}).get('value', None)
+            
             # Update variable
             client_vars[var_name] = {
                 'value': var_value,
@@ -621,7 +642,7 @@ class NetSyncServer:
                 'lastWriterClientNo': sender_client_no
             }
             
-            logger.info(f"Client variable '{var_name}' set to '{var_value}' for client {target_client_no} by client {sender_client_no} in group {group_id}")
+            logger.info(f"Client Variable Changed: group={group_id}, target={target_client_no}, sender={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'")
             
             # Broadcast sync to all clients
             self._broadcast_client_var_sync(group_id)

@@ -315,16 +315,20 @@ namespace Styly.NetSync
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
         {
+            string argsStr = args != null && args.Length > 0 ? string.Join(", ", args) : "none";
+            Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
             OnRPCReceived?.Invoke(senderClientNo, functionName, args);
         }
         
         private void OnGlobalVariableChangedHandler(string name, string oldValue, string newValue)
         {
+            Debug.Log($"[NetSyncManager] Global Variable Changed - Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
             OnGlobalVariableChanged?.Invoke(name, oldValue, newValue);
         }
         
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
+            Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
         }
         
