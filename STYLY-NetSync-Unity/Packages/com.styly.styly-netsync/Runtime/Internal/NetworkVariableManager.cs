@@ -138,6 +138,15 @@ namespace Styly.NetSync
             return null;
         }
         
+        public string GetClientVariable(int clientNo, string name, string defaultValue = null)
+        {
+            if (_clientVariables.TryGetValue(clientNo, out var clientVars))
+            {
+                return clientVars.TryGetValue(name, out var value) ? value : defaultValue;
+            }
+            return defaultValue;
+        }
+        
         // Helper methods for type conversion
         private static object[] ConvertToObjectArray(object obj)
         {

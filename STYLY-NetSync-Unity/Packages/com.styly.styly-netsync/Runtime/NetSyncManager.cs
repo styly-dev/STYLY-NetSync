@@ -105,6 +105,11 @@ namespace Styly.NetSync
         {
             return _networkVariableManager?.GetClientVariable(clientNo, name);
         }
+
+        public string GetClientVariable(int clientNo, string name, string defaultValue = null)
+        {
+            return _networkVariableManager?.GetClientVariable(clientNo, name, defaultValue) ?? defaultValue;
+        }
         
         /// <summary>
         /// Gets all variables for a specific client (for debugging)

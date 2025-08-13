@@ -350,6 +350,14 @@ namespace Styly.NetSync
         }
         
         /// <summary>
+        /// Get a client variable for this NetSyncAvatar's owner
+        /// </summary>
+        public string GetClientVariable(string name, string defaultValue = null)
+        {
+            return NetSyncManager.Instance?.GetClientVariable(_clientNo, name, defaultValue) ?? defaultValue;
+        }
+        
+        /// <summary>
         /// Set a client variable for a specific client
         /// </summary>
         public bool SetClientVariable(int targetClientNo, string name, string value)
@@ -363,6 +371,14 @@ namespace Styly.NetSync
         public string GetClientVariable(int clientNo, string name)
         {
             return NetSyncManager.Instance?.GetClientVariable(clientNo, name);
+        }
+        
+        /// <summary>
+        /// Get a client variable for a specific client
+        /// </summary>
+        public string GetClientVariable(int clientNo, string name, string defaultValue = null)
+        {
+            return NetSyncManager.Instance?.GetClientVariable(clientNo, name, defaultValue) ?? defaultValue;
         }
         #endregion
     }
