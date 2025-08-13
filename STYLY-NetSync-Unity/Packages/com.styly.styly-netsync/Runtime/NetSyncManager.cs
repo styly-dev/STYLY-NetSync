@@ -430,7 +430,7 @@ namespace Styly.NetSync
 
         private void SendTransformUpdates()
         {
-            if (!_connectionManager.IsConnectionError && _transformSyncManager.ShouldSendTransform(Time.time))
+            if (_connectionManager.IsConnected && !_connectionManager.IsConnectionError && _transformSyncManager.ShouldSendTransform(Time.time))
             {
                 if (_isStealthMode)
                 {
