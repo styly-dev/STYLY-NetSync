@@ -35,7 +35,7 @@ namespace Styly.NetSync
         // Properties
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
-        public bool IsLocalPlayer { get; private set; }
+        public bool IsLocalAvatar { get; private set; }
 
         // Variables for interpolation
         private Transform3D _targetPhysical;
@@ -54,7 +54,7 @@ namespace Styly.NetSync
 
         void Start()
         {
-            if (IsLocalPlayer)
+            if (IsLocalAvatar)
             {
                 // Use head as the physical transform for local player
                 _physicalTransform = _head;
@@ -80,11 +80,10 @@ namespace Styly.NetSync
         }
 
         // Initialization method called from NetSyncManager
-        // isLocalAvatar: whether this avatar represents the local player (ownership)
         public void Initialize(string deviceId, bool isLocalAvatar, NetSyncManager manager)
         {
             _deviceId = deviceId;
-            IsLocalPlayer = isLocalAvatar;
+            IsLocalAvatar = isLocalAvatar;
             _netSyncManager = manager;
 
             if (isLocalAvatar)
@@ -113,7 +112,7 @@ namespace Styly.NetSync
         {
             _clientNo = clientNo;
             _deviceId = null; // Will be set when ID mapping is received
-            IsLocalPlayer = false;
+            IsLocalAvatar = false;
             _netSyncManager = manager;
 
             // For remote players, set initial data for interpolation
@@ -130,7 +129,7 @@ namespace Styly.NetSync
 
         void Update()
         {
-            if (!IsLocalPlayer)
+            if (!IsLocalAvatar)
             {
                 // For remote players, interpolate and update Transform
                 if (_hasTargetData)
@@ -172,7 +171,7 @@ namespace Styly.NetSync
         // Update device ID when mapping is received
         public void UpdateDeviceId(string deviceId)
         {
-            if (!IsLocalPlayer && !string.IsNullOrEmpty(deviceId))
+            if (!IsLocalAvatar && !string.IsNullOrEmpty(deviceId))
             {
                 _deviceId = deviceId;
             }
@@ -181,7 +180,7 @@ namespace Styly.NetSync
         // Receive and apply transform data (for remote players)
         public void SetTransformData(ClientTransformData data)
         {
-            if (IsLocalPlayer) { return; }
+            if (IsLocalAvatar) { return; }
 
             // If this is the first data received, immediately set position to avoid interpolation from origin
             if (!_hasTargetData)
