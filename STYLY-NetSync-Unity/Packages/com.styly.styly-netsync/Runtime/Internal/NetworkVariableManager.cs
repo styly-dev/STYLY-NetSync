@@ -36,7 +36,7 @@ namespace Styly.NetSync
         }
         
         // Global Variables API
-        public bool SetGlobalVariable(string name, string value, string groupId)
+        public bool SetGlobalVariable(string name, string value, string roomId)
         {
             if (!ValidateVariableName(name) || !ValidateVariableValue(value))
                 return false;
@@ -60,7 +60,7 @@ namespace Styly.NetSync
             {
                 var binaryData = BinarySerializer.SerializeGlobalVarSet(data);
                 var msg = new NetMQMessage();
-                msg.Append(groupId);
+                msg.Append(roomId);
                 msg.Append(binaryData);
                 
                 return _connectionManager.DealerSocket?.TrySendMultipartMessage(msg) ?? false;
@@ -78,7 +78,7 @@ namespace Styly.NetSync
         }
         
         // Client Variables API
-        public bool SetClientVariable(int targetClientNo, string name, string value, string groupId)
+        public bool SetClientVariable(int targetClientNo, string name, string value, string roomId)
         {
             if (!ValidateVariableName(name) || !ValidateVariableValue(value))
                 return false;
@@ -112,7 +112,7 @@ namespace Styly.NetSync
                 
                 var binaryData = BinarySerializer.SerializeClientVarSet(data);
                 var msg = new NetMQMessage();
-                msg.Append(groupId);
+                msg.Append(roomId);
                 msg.Append(binaryData);
                 
                 return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);

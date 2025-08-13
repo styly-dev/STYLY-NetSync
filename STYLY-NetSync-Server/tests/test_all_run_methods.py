@@ -6,13 +6,13 @@ This test ensures that all documented ways to run the server and client simulato
 work correctly, preventing regression when code is refactored.
 """
 
+import os
 import subprocess
 import sys
 import time
-import signal
-import os
-import pytest
 from pathlib import Path
+
+import pytest
 
 # Get the project root directory
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -36,24 +36,24 @@ class TestAllRunMethods:
         """
         if args is None:
             args = ['--help'] if expect_help else []
-        
+
         if isinstance(command, str):
             command = command.split()
-        
+
         full_command = command + args
-        
+
         try:
             # Change to project root for consistent execution
             original_cwd = os.getcwd()
             os.chdir(PROJECT_ROOT)
-            
+
             process = subprocess.Popen(
                 full_command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
             )
-            
+
             if expect_help:
                 # For --help, wait for completion
                 stdout, stderr = process.communicate(timeout=timeout)
@@ -63,7 +63,7 @@ class TestAllRunMethods:
                 # For server processes, check if they start successfully
                 # Give it a moment to start
                 time.sleep(1)
-                
+
                 # Check if process is still running
                 if process.poll() is None:
                     # Process is running, terminate it
@@ -73,7 +73,7 @@ class TestAllRunMethods:
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait()
-                    
+
                     stdout, stderr = process.communicate()
                     # If we got here, the process started successfully
                     success = True
@@ -84,9 +84,9 @@ class TestAllRunMethods:
                     return_code = process.returncode
                     # Check if it failed immediately
                     success = return_code == 0
-            
+
             return success, stdout, stderr, return_code
-            
+
         except subprocess.TimeoutExpired:
             process.kill()
             stdout, stderr = process.communicate()
@@ -97,7 +97,7 @@ class TestAllRunMethods:
             os.chdir(original_cwd)
 
     # Server execution tests
-    
+
     def test_server_cli_entry_point_help(self):
         """Test: styly-netsync-server --help"""
         success, stdout, stderr, code = self.run_command(
@@ -162,7 +162,7 @@ class TestAllRunMethods:
         assert success, f"Server failed to start. stderr: {stderr}"
 
     # Client simulator execution tests
-    
+
     def test_simulator_cli_entry_point_help(self):
         """Test: styly-netsync-simulator --help"""
         success, stdout, stderr, code = self.run_command(
@@ -197,7 +197,7 @@ class TestAllRunMethods:
         assert code == 0
 
     # Server options tests
-    
+
     def test_server_with_custom_ports(self):
         """Test: styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999"""
         success, stdout, stderr, code = self.run_command(
@@ -228,10 +228,10 @@ if __name__ == "__main__":
         # Basic test runner without pytest
         test_instance = TestAllRunMethods()
         test_methods = [method for method in dir(test_instance) if method.startswith('test_')]
-        
+
         passed = 0
         failed = 0
-        
+
         for method_name in test_methods:
             print(f"Running {method_name}...", end=" ")
             try:
@@ -245,6 +245,6 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"✗ ERROR: {e}")
                 failed += 1
-        
+
         print(f"\nResults: {passed} passed, {failed} failed")
         sys.exit(0 if failed == 0 else 1)

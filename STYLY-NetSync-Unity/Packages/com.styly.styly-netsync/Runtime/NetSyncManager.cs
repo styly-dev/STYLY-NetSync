@@ -18,7 +18,7 @@ namespace Styly.NetSync
         [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
         private int _dealerPort = 5555;
         private int _subPort = 5556;
-        [SerializeField] private string _groupId = "default_group";
+        [SerializeField] private string _roomId = "default_room";
 
         // [Header("Discovery Settings")]
         private bool _enableDiscovery = true;
@@ -52,33 +52,33 @@ namespace Styly.NetSync
         // Public RPC methods for external access
         public void RpcBroadcast(string functionName, string[] args)
         {
-            _rpcManager?.SendBroadcast(_groupId, functionName, args);
+            _rpcManager?.SendBroadcast(_roomId, functionName, args);
         }
 
-        public void RpcBroadcast(string groupId, string functionName, string[] args)
+        public void RpcBroadcast(string roomId, string functionName, string[] args)
         {
-            _rpcManager?.SendBroadcast(groupId, functionName, args);
+            _rpcManager?.SendBroadcast(roomId, functionName, args);
         }
 
         public void RpcServer(string functionName, string[] args)
         {
-            _rpcManager?.SendToServer(_groupId, functionName, args);
+            _rpcManager?.SendToServer(_roomId, functionName, args);
         }
 
-        public void RpcServer(string groupId, string functionName, string[] args)
+        public void RpcServer(string roomId, string functionName, string[] args)
         {
-            _rpcManager?.SendToServer(groupId, functionName, args);
+            _rpcManager?.SendToServer(roomId, functionName, args);
         }
 
         public void RpcClient(int targetClientNo, string functionName, string[] args)
         {
-            _rpcManager?.SendToClient(_groupId, targetClientNo, functionName, args);
+            _rpcManager?.SendToClient(_roomId, targetClientNo, functionName, args);
         }
 
         // Network Variables API
         public bool SetGlobalVariable(string name, string value)
         {
-            return _networkVariableManager?.SetGlobalVariable(name, value, _groupId) ?? false;
+            return _networkVariableManager?.SetGlobalVariable(name, value, _roomId) ?? false;
         }
 
         public string GetGlobalVariable(string name)
@@ -88,12 +88,12 @@ namespace Styly.NetSync
 
         public bool SetClientVariable(string name, string value)
         {
-            return _networkVariableManager?.SetClientVariable(_clientNo, name, value, _groupId) ?? false;
+            return _networkVariableManager?.SetClientVariable(_clientNo, name, value, _roomId) ?? false;
         }
 
         public bool SetClientVariable(int targetClientNo, string name, string value)
         {
-            return _networkVariableManager?.SetClientVariable(targetClientNo, name, value, _groupId) ?? false;
+            return _networkVariableManager?.SetClientVariable(targetClientNo, name, value, _roomId) ?? false;
         }
 
         public string GetClientVariable(int clientNo, string name)
@@ -155,7 +155,7 @@ namespace Styly.NetSync
         #region === Public Properties ===
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
-        public string GroupId => _groupId;
+        public string RoomId => _roomId;
         public ConnectionManager ConnectionManager => _connectionManager;
         public PlayerManager PlayerManager => _playerManager;
         public RPCManager RPCManager => _rpcManager;
@@ -366,7 +366,7 @@ namespace Styly.NetSync
 
             // Add tcp:// prefix
             string fullAddress = $"tcp://{_serverAddress}";
-            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _groupId);
+            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId);
         }
 
         private void StopNetworking()
@@ -378,7 +378,7 @@ namespace Styly.NetSync
         private void StartDiscovery()
         {
             if (_discoveryManager == null) { return; }
-            _connectionManager.StartDiscovery(_discoveryManager, _groupId);
+            _connectionManager.StartDiscovery(_discoveryManager, _roomId);
             _isDiscovering = true;
             _discoveryStartTime = Time.time;
         }
@@ -435,7 +435,7 @@ namespace Styly.NetSync
                 if (_isStealthMode)
                 {
                     // Send stealth handshake instead of regular transform
-                    if (!_transformSyncManager.SendStealthHandshake(_groupId))
+                    if (!_transformSyncManager.SendStealthHandshake(_roomId))
                     {
                         HandleConnectionError("Send failed – disconnected?");
                     }
@@ -444,7 +444,7 @@ namespace Styly.NetSync
                 {
                     // Normal transform sending
                     var localPlayer = _playerManager.LocalPlayerAvatar;
-                    if (!_transformSyncManager.SendLocalTransform(localPlayer, _groupId))
+                    if (!_transformSyncManager.SendLocalTransform(localPlayer, _roomId))
                     {
                         HandleConnectionError("Send failed – disconnected?");
                     }

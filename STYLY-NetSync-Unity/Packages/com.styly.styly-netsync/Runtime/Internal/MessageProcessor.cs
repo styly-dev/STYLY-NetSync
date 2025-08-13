@@ -52,9 +52,9 @@ namespace Styly.NetSync
 
                 switch (msgType)
                 {
-                    case BinarySerializer.MSG_GROUP_TRANSFORM when data is GroupTransformData:
+                    case BinarySerializer.MSG_ROOM_TRANSFORM when data is RoomTransformData:
                         var json = JsonConvert.SerializeObject(data);
-                        _messageQueue.Enqueue(new NetworkMessage { type = "group_transform", data = json });
+                        _messageQueue.Enqueue(new NetworkMessage { type = "room_transform", data = json });
                         _messagesReceived++;
                         break;
 
@@ -128,8 +128,8 @@ namespace Styly.NetSync
             {
                 switch (msg.type)
                 {
-                    case "group_transform":
-                        ProcessGroupTransform(msg.data, playerManager, localDeviceId, netSyncManager);
+                    case "room_transform":
+                        ProcessRoomTransform(msg.data, playerManager, localDeviceId, netSyncManager);
                         break;
 
                     case "rpc":
@@ -196,21 +196,21 @@ namespace Styly.NetSync
             }
         }
 
-        private void ProcessGroupTransform(string json, PlayerManager playerManager, string localDeviceId, NetSyncManager netSyncManager = null)
+        private void ProcessRoomTransform(string json, PlayerManager playerManager, string localDeviceId, NetSyncManager netSyncManager = null)
         {
             if (string.IsNullOrEmpty(json))
             {
-                Debug.LogError("GroupTransform: empty JSON");
+                Debug.LogError("RoomTransform: empty JSON");
                 return;
             }
 
             try
             {
-                var group = JsonConvert.DeserializeObject<GroupTransformData>(json);
-                if (group == null) { return; }
+                var room = JsonConvert.DeserializeObject<RoomTransformData>(json);
+                if (room == null) { return; }
 
                 var alive = new HashSet<int>();
-                foreach (var c in group.clients)
+                foreach (var c in room.clients)
                 {
                     // Skip local player by client number
                     if (c.clientNo == _localClientNo) { continue; }
@@ -245,7 +245,7 @@ namespace Styly.NetSync
             }
             catch (Exception ex)
             {
-                Debug.LogError($"GroupTransform error: {ex.Message}");
+                Debug.LogError($"RoomTransform error: {ex.Message}");
             }
         }
 

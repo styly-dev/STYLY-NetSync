@@ -9,7 +9,7 @@ namespace Styly.NetSync
     {
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
-        public const byte MSG_GROUP_TRANSFORM = 2;  // Group transform with short IDs only
+        public const byte MSG_ROOM_TRANSFORM = 2;  // Room transform with short IDs only
         public const byte MSG_RPC_BROADCAST = 3;   // Broadcast function call
         public const byte MSG_RPC_SERVER = 4;   // Client-to-server RPC call
         public const byte MSG_RPC_CLIENT = 5;   // Client-to-client RPC call
@@ -176,8 +176,8 @@ namespace Styly.NetSync
                 {
                     // case MSG_CLIENT_TRANSFORM:
                     //     return (messageType, DeserializeClientTransform(reader));
-                    case MSG_GROUP_TRANSFORM:
-                        return (messageType, DeserializeGroupTransform(reader));
+                    case MSG_ROOM_TRANSFORM:
+                        return (messageType, DeserializeRoomTransform(reader));
                     case MSG_RPC_BROADCAST:
                         // RPC message
                         return (messageType, DeserializeRPCMessage(reader));
@@ -204,13 +204,13 @@ namespace Styly.NetSync
         }
 
 
-        private static GroupTransformData DeserializeGroupTransform(BinaryReader reader)
+        private static RoomTransformData DeserializeRoomTransform(BinaryReader reader)
         {
-            var data = new GroupTransformData();
+            var data = new RoomTransformData();
 
-            // Group ID
-            var groupIdLength = reader.ReadByte();
-            data.groupId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(groupIdLength));
+            // Room ID
+            var roomIdLength = reader.ReadByte();
+            data.roomId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(roomIdLength));
 
             // Number of clients
             var clientCount = reader.ReadUInt16();
@@ -224,7 +224,7 @@ namespace Styly.NetSync
                 // Client number (2 bytes)
                 client.clientNo = reader.ReadUInt16();
                 
-                // Note: Device ID is no longer sent in MSG_GROUP_TRANSFORM
+                // Note: Device ID is no longer sent in MSG_ROOM_TRANSFORM
                 // Device ID will be resolved from client number using mapping table
 
                 // Physical transform
