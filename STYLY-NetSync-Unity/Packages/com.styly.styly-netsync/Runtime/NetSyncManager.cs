@@ -88,7 +88,7 @@ namespace Styly.NetSync
 
         public string GetGlobalVariable(string name, string defaultValue = null)
         {
-            return _networkVariableManager?.GetGlobalVariable(name, defaultValue) ?? defaultValue;
+            return _networkVariableManager?.GetGlobalVariable(name, defaultValue);
         }
 
         public bool SetClientVariable(string name, string value)
