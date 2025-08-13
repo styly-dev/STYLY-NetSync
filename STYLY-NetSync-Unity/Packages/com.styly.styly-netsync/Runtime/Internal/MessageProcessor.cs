@@ -143,6 +143,13 @@ namespace Styly.NetSync
                     case "client_var_sync":
                         ProcessClientVariableSync(msg.dataObj as Dictionary<string, object>, networkVariableManager);
                         break;
+
+                    case "local_client_assigned":
+                        if (int.TryParse(msg.data, out var assignedClientNo))
+                        {
+                            OnLocalClientNoAssigned?.Invoke(assignedClientNo);
+                        }
+                        break;
                 }
             }
             
@@ -292,7 +299,12 @@ namespace Styly.NetSync
                 if (!string.IsNullOrEmpty(_localDeviceId) && mapping.deviceId == _localDeviceId)
                 {
                     SetLocalClientNo(mapping.clientNo);
-                    OnLocalClientNoAssigned?.Invoke(mapping.clientNo);
+                    // Queue the event to be invoked on the main thread
+                    _messageQueue.Enqueue(new NetworkMessage 
+                    { 
+                        type = "local_client_assigned", 
+                        data = mapping.clientNo.ToString() 
+                    });
                 }
                 
                 // Check if we have pending clients waiting for this mapping
