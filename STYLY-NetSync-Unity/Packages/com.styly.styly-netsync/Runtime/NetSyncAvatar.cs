@@ -54,8 +54,11 @@ namespace Styly.NetSync
 
         void Start()
         {
-            // Use head as the physical transform for local player
-            _physicalTransform = _head;
+            if (IsLocalPlayer)
+            {
+                // Use head as the physical transform for local player
+                _physicalTransform = _head;
+            }
         }
         
         void OnEnable()
@@ -77,19 +80,20 @@ namespace Styly.NetSync
         }
 
         // Initialization method called from NetSyncManager
-        public void Initialize(string deviceId, bool isLocal, NetSyncManager manager)
+        // isLocalAvatar: whether this avatar represents the local player (ownership)
+        public void Initialize(string deviceId, bool isLocalAvatar, NetSyncManager manager)
         {
             _deviceId = deviceId;
-            IsLocalPlayer = isLocal;
+            IsLocalPlayer = isLocalAvatar;
             _netSyncManager = manager;
-            
-            if (isLocal)
+
+            if (isLocalAvatar)
             {
                 // For local player, client number will be updated via NetSyncManager
                 _clientNo = 0;
             }
 
-            if (!isLocal)
+            if (!isLocalAvatar)
             {
                 // For remote players, set initial data for interpolation
                 _targetPhysical = new Transform3D();
@@ -185,8 +189,8 @@ namespace Styly.NetSync
                 // Set physical transform immediately
                 if (_physicalTransform != null && data.physical != null)
                 {
-                    _physicalTransform.localPosition = new Vector3(data.physical.posX, _physicalTransform.localPosition.y, data.physical.posZ);
-                    _physicalTransform.localRotation = Quaternion.Euler(0, data.physical.rotY, 0);
+                    _physicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
+                    _physicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
                 }
                 
                 // Set head transform immediately
@@ -230,17 +234,20 @@ namespace Styly.NetSync
             _targetLeftHand = data.leftHand;
             _targetVirtuals = data.virtuals;
             _hasTargetData = true;
-            
+            _physicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
+            _physicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
+
             // Update client number for remote players
             _clientNo = data.clientNo;
         }
 
         // Unified transform conversion method
-        private Transform3D ConvertToTransform3D(Transform transform, bool isLocal)
+        // isLocalSpace: whether to read from local space (physical) vs world space (virtual)
+        private Transform3D ConvertToTransform3D(Transform transform, bool isLocalSpace)
         {
             if (transform == null) { return new Transform3D(); }
 
-            if (isLocal)
+            if (isLocalSpace)
             {
                 // Physical/local transform (XZ position, Y rotation only)
                 return new Transform3D(
@@ -269,7 +276,7 @@ namespace Styly.NetSync
         }
 
         // Convert transform array to Transform3D list
-        private List<Transform3D> ConvertToTransform3DList(Transform[] transforms, bool isLocal)
+        private List<Transform3D> ConvertToTransform3DList(Transform[] transforms, bool isLocalSpace)
         {
             var result = new List<Transform3D>();
             if (transforms != null)
@@ -278,7 +285,7 @@ namespace Styly.NetSync
                 {
                     if (t != null)
                     {
-                        result.Add(ConvertToTransform3D(t, isLocal));
+                        result.Add(ConvertToTransform3D(t, isLocalSpace));
                     }
                 }
             }
@@ -320,14 +327,15 @@ namespace Styly.NetSync
         }
 
         // Unified interpolation method for any transform
-        private void InterpolateSingleTransform(Transform transform, Transform3D target, float deltaTime, bool isLocal)
+        // isLocalSpace: interpolate using localPosition/localRotation vs world position/rotation
+        private void InterpolateSingleTransform(Transform transform, Transform3D target, float deltaTime, bool isLocalSpace)
         {
-            Vector3 targetPos = isLocal
+            Vector3 targetPos = isLocalSpace
                 ? new Vector3(target.posX, transform.localPosition.y, target.posZ)
                 : new Vector3(target.posX, target.posY, target.posZ);
             Quaternion targetRot = Quaternion.Euler(target.rotX, target.rotY, target.rotZ);
 
-            if (isLocal)
+            if (isLocalSpace)
             {
                 transform.localPosition = Vector3.Lerp(transform.localPosition, targetPos, deltaTime);
                 transform.localRotation = Quaternion.Lerp(transform.localRotation, targetRot, deltaTime);
