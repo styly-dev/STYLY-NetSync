@@ -139,7 +139,7 @@ namespace Styly.NetSync
                     DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
 
                     OnServerDiscovered?.Invoke(serverAddress, dealerPort, subPort);
-                    
+
                     // Stop sending more discovery requests once we found a server
                     lock (_lockObject)
                     {

@@ -27,12 +27,12 @@ namespace Styly.NetSync
         {
             _logNetworkTraffic = logNetworkTraffic;
         }
-        
+
         public void SetLocalDeviceId(string deviceId)
         {
             _localDeviceId = deviceId;
         }
-        
+
         public void SetLocalClientNo(int clientNo)
         {
             _localClientNo = clientNo;
@@ -77,7 +77,7 @@ namespace Styly.NetSync
                         });
                         _messagesReceived++;
                         break;
-                    
+
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
                         // Process ID mappings immediately (don't queue)
                         // ID mapping data received
@@ -106,13 +106,13 @@ namespace Styly.NetSync
             {
                 // Log error with more context for debugging
                 Debug.LogError($"Binary parse error: {ex.Message}");
-                
+
                 // Log first few bytes of payload for debugging
                 if (payload != null && payload.Length > 0)
                 {
                     var hexDump = BitConverter.ToString(payload.Take(Math.Min(32, payload.Length)).ToArray());
                     Debug.LogError($"First bytes of problematic payload: {hexDump} (length: {payload.Length})");
-                    
+
                     // Log the message type byte specifically
                     if (payload.Length >= 1)
                     {
@@ -145,7 +145,7 @@ namespace Styly.NetSync
                         break;
                 }
             }
-            
+
             // Check for pending clients that now have ID mappings
             if (_pendingClients.Count > 0)
             {
@@ -158,20 +158,20 @@ namespace Styly.NetSync
                         // Found ID mapping for pending client
                     }
                 }
-                
+
                 foreach (var clientNo in pendingToProcess)
                 {
-                    if (_pendingClients.TryGetValue(clientNo, out var pendingClient) && 
+                    if (_pendingClients.TryGetValue(clientNo, out var pendingClient) &&
                         _clientNoToDeviceId.TryGetValue(clientNo, out var deviceId))
                     {
                         // Update device ID
                         pendingClient.deviceId = deviceId;
-                        
+
                         // Spawn the player
                         if (!playerManager.ConnectedPeers.ContainsKey(clientNo))
                         {
                             // Spawning pending client
-                            
+
                             // Spawn the remote player with the device ID
                             if (netSyncManager != null)
                             {
@@ -188,7 +188,7 @@ namespace Styly.NetSync
                                 playerManager.UpdateRemotePlayer(clientNo, pendingClient);
                             }
                         }
-                        
+
                         // Remove from pending
                         _pendingClients.Remove(clientNo);
                     }
@@ -214,9 +214,9 @@ namespace Styly.NetSync
                 {
                     // Skip local player by client number
                     if (c.clientNo == _localClientNo) { continue; }
-                    
+
                     alive.Add(c.clientNo);
-                    
+
                     // Check if player already exists and just needs update
                     if (playerManager.ConnectedPeers.ContainsKey(c.clientNo))
                     {
@@ -227,7 +227,7 @@ namespace Styly.NetSync
                     {
                         // Store in pending queue for processing in ProcessMessageQueue
                         _pendingClients[c.clientNo] = c;
-                        
+
                         // Client added to pending queue
                     }
                 }
@@ -271,48 +271,48 @@ namespace Styly.NetSync
             public string functionName { get; set; }
             public string[] args { get; set; }
         }
-        
+
         private void ProcessIdMappings(DeviceIdMappingData mappingData)
         {
             // Clear existing mappings
             _clientNoToDeviceId.Clear();
             _deviceIdToClientNo.Clear();
             _clientNoToIsStealthMode.Clear();
-            
+
             // Add new mappings
             foreach (var mapping in mappingData.mappings)
             {
                 _clientNoToDeviceId[mapping.clientNo] = mapping.deviceId;
                 _deviceIdToClientNo[mapping.deviceId] = mapping.clientNo;
                 _clientNoToIsStealthMode[mapping.clientNo] = mapping.isStealthMode;
-                
+
                 // ID Mapping: ClientNo => Device ID
-                
+
                 // Check if this is the local client's mapping
                 if (!string.IsNullOrEmpty(_localDeviceId) && mapping.deviceId == _localDeviceId)
                 {
                     SetLocalClientNo(mapping.clientNo);
                     OnLocalClientNoAssigned?.Invoke(mapping.clientNo);
                 }
-                
+
                 // Check if we have pending clients waiting for this mapping
                 if (_pendingClients.TryGetValue(mapping.clientNo, out var pendingClient))
                 {
                     // Update device ID
                     pendingClient.deviceId = mapping.deviceId;
-                    
+
                     // Remove from pending
                     _pendingClients.Remove(mapping.clientNo);
-                    
+
                     // Client now has device ID mapping
                 }
             }
-            
+
             // ID mappings updated
-            
+
             // Pending clients will be processed in ProcessMessageQueue on the main thread
         }
-        
+
         public int GetClientNo(string deviceId)
         {
             if (_deviceIdToClientNo.TryGetValue(deviceId, out var clientNo))
@@ -333,7 +333,7 @@ namespace Styly.NetSync
         {
             return _clientNoToDeviceId.TryGetValue(clientNo, out var deviceId) ? deviceId : null;
         }
-        
+
         public bool IsClientStealthMode(int clientNo)
         {
             return _clientNoToIsStealthMode.TryGetValue(clientNo, out var isStealthMode) && isStealthMode;
@@ -342,11 +342,11 @@ namespace Styly.NetSync
         private void ProcessGlobalVariableSync(Dictionary<string, object> variableData, NetworkVariableManager networkVariableManager)
         {
             if (networkVariableManager == null || variableData == null) return;
-            
+
             try
             {
                 networkVariableManager.HandleGlobalVariableSync(variableData);
-                
+
                 // Processed global variable sync
             }
             catch (Exception ex)
@@ -362,19 +362,19 @@ namespace Styly.NetSync
                 Debug.LogWarning("[MessageProcessor] NetworkVariableManager is null, cannot process client variable sync");
                 return;
             }
-            
+
             if (variableData == null)
             {
                 Debug.LogWarning("[MessageProcessor] Variable data is null");
                 return;
             }
-            
+
             try
             {
                 // Processing client variable sync data
-                
+
                 networkVariableManager.HandleClientVariableSync(variableData);
-                
+
                 // Processed client variable sync
             }
             catch (Exception ex)

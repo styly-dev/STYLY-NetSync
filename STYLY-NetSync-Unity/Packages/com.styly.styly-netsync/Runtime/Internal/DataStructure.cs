@@ -87,7 +87,7 @@ namespace Styly.NetSync
         // JSON-serialized function arguments array
         public string argumentsJson;
     }
-    
+
     // Device ID mapping data
     [Serializable]
     public class DeviceIdMapping
@@ -96,7 +96,7 @@ namespace Styly.NetSync
         public string deviceId;
         public bool isStealthMode;
     }
-    
+
     // Device ID mapping notification message
     [Serializable]
     public class DeviceIdMappingData

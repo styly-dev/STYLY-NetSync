@@ -37,7 +37,7 @@ namespace Styly.NetSync
                 var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data.deviceId);
                 writer.Write((byte)deviceIdBytes.Length);
                 writer.Write(deviceIdBytes);
-                
+
                 // Note: Client number is not sent by client, only assigned by server
 
                 // Physical transform (optimized: 3 floats only)
@@ -151,14 +151,14 @@ namespace Styly.NetSync
 
         // Maximum allowed virtual transforms to prevent memory issues
         private const int MAX_VIRTUAL_TRANSFORMS = 50;
-        
+
         public static (byte messageType, object data) Deserialize(byte[] bytes)
         {
             if (bytes == null || bytes.Length == 0)
             {
                 throw new ArgumentException("Cannot deserialize null or empty byte array");
             }
-            
+
             using (var ms = new MemoryStream(bytes))
             using (var reader = new BinaryReader(ms))
             {
@@ -223,7 +223,7 @@ namespace Styly.NetSync
 
                 // Client number (2 bytes)
                 client.clientNo = reader.ReadUInt16();
-                
+
                 // Note: Device ID is no longer sent in MSG_ROOM_TRANSFORM
                 // Device ID will be resolved from client number using mapping table
 
@@ -270,13 +270,13 @@ namespace Styly.NetSync
 
                 // Virtual transforms
                 var virtualCount = reader.ReadByte();
-                
+
                 // Validate virtual count to prevent memory issues
                 if (virtualCount > MAX_VIRTUAL_TRANSFORMS)
                 {
                     virtualCount = MAX_VIRTUAL_TRANSFORMS;
                 }
-                
+
                 if (virtualCount > 0)
                 {
                     client.virtuals = new List<Transform3D>(virtualCount);
@@ -411,32 +411,32 @@ namespace Styly.NetSync
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
-            
+
             // Message type
             writer.Write(MSG_GLOBAL_VAR_SET);
-            
+
             // Sender client number (2 bytes)
             var senderClientNo = data.TryGetValue("senderClientNo", out var senderObj) ? Convert.ToUInt16(senderObj) : (ushort)0;
             writer.Write(senderClientNo);
-            
+
             // Variable name (max 64 bytes)
             var varName = data.TryGetValue("variableName", out var nameObj) ? nameObj?.ToString() ?? "" : "";
             if (varName.Length > 64) varName = varName.Substring(0, 64);
             var nameBytes = System.Text.Encoding.UTF8.GetBytes(varName);
             writer.Write((byte)nameBytes.Length);
             writer.Write(nameBytes);
-            
+
             // Variable value (max 1024 bytes)
             var varValue = data.TryGetValue("variableValue", out var valueObj) ? valueObj?.ToString() ?? "" : "";
             if (varValue.Length > 1024) varValue = varValue.Substring(0, 1024);
             var valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
             writer.Write((ushort)valueBytes.Length);
             writer.Write(valueBytes);
-            
+
             // Timestamp (8 bytes double)
             var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
             writer.Write(timestamp);
-            
+
             return ms.ToArray();
         }
 
@@ -447,36 +447,36 @@ namespace Styly.NetSync
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
-            
+
             // Message type
             writer.Write(MSG_CLIENT_VAR_SET);
-            
+
             // Sender client number (2 bytes)
             var senderClientNo = data.TryGetValue("senderClientNo", out var senderObj) ? Convert.ToUInt16(senderObj) : (ushort)0;
             writer.Write(senderClientNo);
-            
+
             // Target client number (2 bytes)
             var targetClientNo = data.TryGetValue("targetClientNo", out var targetObj) ? Convert.ToUInt16(targetObj) : (ushort)0;
             writer.Write(targetClientNo);
-            
+
             // Variable name (max 64 bytes)
             var varName = data.TryGetValue("variableName", out var nameObj) ? nameObj?.ToString() ?? "" : "";
             if (varName.Length > 64) varName = varName.Substring(0, 64);
             var nameBytes = System.Text.Encoding.UTF8.GetBytes(varName);
             writer.Write((byte)nameBytes.Length);
             writer.Write(nameBytes);
-            
+
             // Variable value (max 1024 bytes)
             var varValue = data.TryGetValue("variableValue", out var valueObj) ? valueObj?.ToString() ?? "" : "";
             if (varValue.Length > 1024) varValue = varValue.Substring(0, 1024);
             var valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
             writer.Write((ushort)valueBytes.Length);
             writer.Write(valueBytes);
-            
+
             // Timestamp (8 bytes double)
             var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
             writer.Write(timestamp);
-            
+
             return ms.ToArray();
         }
 
@@ -524,7 +524,7 @@ namespace Styly.NetSync
                 argumentsJson = argsJson
             };
         }
-        
+
         /// <summary>
         /// Deserialize device ID mapping notification
         /// </summary>
@@ -532,25 +532,25 @@ namespace Styly.NetSync
         {
             var data = new DeviceIdMappingData();
             data.mappings = new List<DeviceIdMapping>();
-            
+
             // Number of mappings
             var count = reader.ReadUInt16();
-            
+
             // Each mapping
             for (int i = 0; i < count; i++)
             {
                 var mapping = new DeviceIdMapping();
                 mapping.clientNo = reader.ReadUInt16();
-                
+
                 // Read stealth flag (1 byte)
                 mapping.isStealthMode = reader.ReadByte() == 0x01;
-                
+
                 var deviceIdLength = reader.ReadByte();
                 mapping.deviceId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(deviceIdLength));
-                
+
                 data.mappings.Add(mapping);
             }
-            
+
             return data;
         }
 
@@ -561,32 +561,32 @@ namespace Styly.NetSync
         {
             var data = new Dictionary<string, object>();
             var variables = new List<object>();
-            
+
             // Number of variables
             var count = reader.ReadUInt16();
-            
+
             // Each variable
             for (int i = 0; i < count; i++)
             {
                 var variable = new Dictionary<string, object>();
-                
+
                 // Variable name
                 var nameLength = reader.ReadByte();
                 variable["name"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLength));
-                
+
                 // Variable value
                 var valueLength = reader.ReadUInt16();
                 variable["value"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(valueLength));
-                
+
                 // Timestamp
                 variable["timestamp"] = reader.ReadDouble();
-                
+
                 // Last writer client number
                 variable["lastWriterClientNo"] = reader.ReadUInt16();
-                
+
                 variables.Add(variable);
             }
-            
+
             data["variables"] = variables.ToArray();
             return data;
         }
@@ -598,41 +598,41 @@ namespace Styly.NetSync
         {
             var data = new Dictionary<string, object>();
             var clientVariables = new Dictionary<string, object>();
-            
+
             // Number of clients
             var clientCount = reader.ReadUInt16();
-            
+
             // Each client's variables
             for (int i = 0; i < clientCount; i++)
             {
                 var clientNo = reader.ReadUInt16();
                 var varCount = reader.ReadUInt16();
-                
+
                 var variables = new List<object>();
                 for (int j = 0; j < varCount; j++)
                 {
                     var variable = new Dictionary<string, object>();
-                    
+
                     // Variable name
                     var nameLength = reader.ReadByte();
                     variable["name"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLength));
-                    
+
                     // Variable value
                     var valueLength = reader.ReadUInt16();
                     variable["value"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(valueLength));
-                    
+
                     // Timestamp
                     variable["timestamp"] = reader.ReadDouble();
-                    
+
                     // Last writer client number
                     variable["lastWriterClientNo"] = reader.ReadUInt16();
-                    
+
                     variables.Add(variable);
                 }
-                
+
                 clientVariables[clientNo.ToString()] = variables.ToArray();
             }
-            
+
             data["clientVariables"] = clientVariables;
             return data;
         }
