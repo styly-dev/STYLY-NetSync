@@ -72,9 +72,9 @@ namespace Styly.NetSync
             }
         }
         
-        public string GetGlobalVariable(string name)
+        public string GetGlobalVariable(string name, string defaultValue = null)
         {
-            return _globalVariables.TryGetValue(name, out var value) ? value : null;
+            return _globalVariables.TryGetValue(name, out var value) ? value : defaultValue;
         }
         
         // Client Variables API
@@ -124,13 +124,13 @@ namespace Styly.NetSync
             }
         }
         
-        public string GetClientVariable(int clientNo, string name)
+        public string GetClientVariable(int clientNo, string name, string defaultValue = null)
         {
             if (_clientVariables.TryGetValue(clientNo, out var clientVars))
             {
-                return clientVars.TryGetValue(name, out var value) ? value : null;
+                return clientVars.TryGetValue(name, out var value) ? value : defaultValue;
             }
-            return null;
+            return defaultValue;
         }
         
         // Helper methods for type conversion
