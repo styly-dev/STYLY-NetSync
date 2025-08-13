@@ -63,6 +63,7 @@ Issues = "https://github.com/styly-dev/STYLY-NetSync/issues"
 [project.scripts]
 styly-netsync-server = "styly_netsync.cli:cli_main"
 styly-netsync-simulator = "styly_netsync.client_simulator:main"
+dev = "styly_netsync.__main__:main"
 
 # Tell setuptools we use the src/ layout
 [tool.setuptools.packages.find]
@@ -160,3 +161,4 @@ exclude_lines = [
 
 [tool.coverage.html]
 directory = "htmlcov"
+
