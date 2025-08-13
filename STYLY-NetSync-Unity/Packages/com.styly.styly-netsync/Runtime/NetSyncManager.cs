@@ -108,7 +108,7 @@ namespace Styly.NetSync
 
         public string GetClientVariable(int clientNo, string name, string defaultValue = null)
         {
-            return _networkVariableManager?.GetClientVariable(clientNo, name, defaultValue) ?? defaultValue;
+            return _networkVariableManager?.GetClientVariable(clientNo, name, defaultValue);
         }
         
         /// <summary>
