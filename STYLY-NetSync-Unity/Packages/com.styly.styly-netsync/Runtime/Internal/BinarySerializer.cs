@@ -542,6 +542,9 @@ namespace Styly.NetSync
                 var mapping = new DeviceIdMapping();
                 mapping.clientNo = reader.ReadUInt16();
                 
+                // Read stealth flag (1 byte)
+                mapping.isStealthMode = reader.ReadByte() == 0x01;
+                
                 var deviceIdLength = reader.ReadByte();
                 mapping.deviceId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(deviceIdLength));
                 

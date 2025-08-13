@@ -686,16 +686,19 @@ class NetSyncServer:
         self._broadcast_client_var_sync(group_id)
     
     def _broadcast_id_mappings(self, group_id: str):
-        """Broadcast all device ID mappings for a group (including stealth clients)"""
+        """Broadcast all device ID mappings for a group (including stealth clients with flag)"""
         with self._groups_lock:
             if group_id not in self.group_device_id_to_client_no:
                 return
                 
-            # Collect all mappings for the group (including stealth clients)
+            # Collect all mappings for the group (including stealth clients with their flag)
             mappings = []
             for device_id, client_no in self.group_device_id_to_client_no[group_id].items():
-                # Include all clients (both normal and stealth)
-                mappings.append((client_no, device_id))
+                # Get stealth status from client data
+                client_data = self.groups.get(group_id, {}).get(device_id, {})
+                is_stealth = client_data.get("is_stealth", False)
+                # Include all clients with their stealth flag
+                mappings.append((client_no, device_id, is_stealth))
             
             if mappings:
                 try:
@@ -703,7 +706,7 @@ class NetSyncServer:
                     topic_bytes = group_id.encode('utf-8')
                     message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
                     self.pub.send_multipart([topic_bytes, message_bytes])
-                    logger.info(f"Broadcasted {len(mappings)} ID mappings to group {group_id}: {[(cno, did[:8]) for cno, did in mappings]}")
+                    logger.info(f"Broadcasted {len(mappings)} ID mappings to group {group_id}: {[(cno, did[:8], 'stealth' if stealth else 'normal') for cno, did, stealth in mappings]}")
                 except Exception as e:
                     logger.error(f"Failed to broadcast ID mappings to group {group_id}: {e}")
 

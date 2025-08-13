@@ -15,6 +15,7 @@ namespace Styly.NetSync
         private int _messagesReceived;
         private readonly Dictionary<int, string> _clientNoToDeviceId = new();
         private readonly Dictionary<string, int> _deviceIdToClientNo = new();
+        private readonly Dictionary<int, bool> _clientNoToIsStealthMode = new();
         private readonly Dictionary<int, ClientTransformData> _pendingClients = new(); // Clients waiting for ID mapping
         private string _localDeviceId;
         private int _localClientNo = 0;
@@ -231,8 +232,8 @@ namespace Styly.NetSync
                     }
                 }
 
-                // Check for disconnected clients
-                var currentClients = playerManager.GetAliveClients();
+                // Check for disconnected clients (including stealth clients)
+                var currentClients = playerManager.GetAliveClients(this, includeStealthClients: true);
                 foreach (var clientNo in currentClients)
                 {
                     if (!alive.Contains(clientNo))
@@ -276,12 +277,14 @@ namespace Styly.NetSync
             // Clear existing mappings
             _clientNoToDeviceId.Clear();
             _deviceIdToClientNo.Clear();
+            _clientNoToIsStealthMode.Clear();
             
             // Add new mappings
             foreach (var mapping in mappingData.mappings)
             {
                 _clientNoToDeviceId[mapping.clientNo] = mapping.deviceId;
                 _deviceIdToClientNo[mapping.deviceId] = mapping.clientNo;
+                _clientNoToIsStealthMode[mapping.clientNo] = mapping.isStealthMode;
                 
                 // ID Mapping: ClientNo => Device ID
                 
@@ -329,6 +332,11 @@ namespace Styly.NetSync
         public string GetDeviceIdFromClientNo(int clientNo)
         {
             return _clientNoToDeviceId.TryGetValue(clientNo, out var deviceId) ? deviceId : null;
+        }
+        
+        public bool IsClientStealthMode(int clientNo)
+        {
+            return _clientNoToIsStealthMode.TryGetValue(clientNo, out var isStealthMode) && isStealthMode;
         }
 
         private void ProcessGlobalVariableSync(Dictionary<string, object> variableData, NetworkVariableManager networkVariableManager)

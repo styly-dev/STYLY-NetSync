@@ -117,6 +117,16 @@ namespace Styly.NetSync
             return _networkVariableManager?.GetAllGlobalVariables() ?? new Dictionary<string, string>();
         }
         
+        /// <summary>
+        /// Checks if a client is in stealth mode (no visible avatar)
+        /// </summary>
+        /// <param name="clientNo">The client number to check</param>
+        /// <returns>True if the client is in stealth mode, false otherwise</returns>
+        public bool IsClientStealthMode(int clientNo)
+        {
+            return _messageProcessor?.IsClientStealthMode(clientNo) ?? false;
+        }
+        
         #endregion ------------------------------------------------------------------------
 
         #region === Runtime Fields ===

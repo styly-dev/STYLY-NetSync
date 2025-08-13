@@ -229,11 +229,11 @@ def serialize_rpc_client_message(data: Dict[str, Any]) -> bytes:
     _serialize_rpc_base(buffer, data, MSG_RPC_CLIENT)
     return bytes(buffer)
 
-def serialize_device_id_mapping(mappings: List[Tuple[int, str]]) -> bytes:
+def serialize_device_id_mapping(mappings: List[Tuple[int, str, bool]]) -> bytes:
     """Serialize device ID mapping message
     
     Args:
-        mappings: List of (client_no, device_id) tuples
+        mappings: List of (client_no, device_id, is_stealth) tuples
     """
     buffer = bytearray()
     
@@ -244,8 +244,9 @@ def serialize_device_id_mapping(mappings: List[Tuple[int, str]]) -> bytes:
     buffer.extend(struct.pack('<H', len(mappings)))
     
     # Each mapping
-    for client_no, device_id in mappings:
+    for client_no, device_id, is_stealth in mappings:
         buffer.extend(struct.pack('<H', client_no))
+        buffer.append(0x01 if is_stealth else 0x00)  # Stealth flag (1 byte)
         _pack_string(buffer, device_id)
     
     return bytes(buffer)
@@ -545,8 +546,10 @@ def _deserialize_device_id_mapping(data: bytes, offset: int) -> Dict[str, Any]:
     for _ in range(count):
         client_no = struct.unpack('<H', data[offset:offset+2])[0]
         offset += 2
+        is_stealth = data[offset] == 0x01  # Read stealth flag (1 byte)
+        offset += 1
         device_id, offset = _unpack_string(data, offset)
-        result['mappings'].append({'clientNo': client_no, 'deviceId': device_id})
+        result['mappings'].append({'clientNo': client_no, 'deviceId': device_id, 'isStealthMode': is_stealth})
     
     return result
 

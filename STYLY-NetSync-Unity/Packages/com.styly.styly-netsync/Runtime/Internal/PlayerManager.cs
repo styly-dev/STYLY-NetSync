@@ -116,9 +116,25 @@ namespace Styly.NetSync
             }
         }
 
-        public HashSet<int> GetAliveClients()
+        public HashSet<int> GetAliveClients(MessageProcessor messageProcessor = null, bool includeStealthClients = false)
         {
-            return new HashSet<int>(_connectedPeers.Keys);
+            // If explicitly including stealth clients or no processor available to check
+            if (includeStealthClients || messageProcessor == null)
+            {
+                // Return all clients
+                return new HashSet<int>(_connectedPeers.Keys);
+            }
+            
+            // Filter out stealth mode clients (default behavior)
+            var result = new HashSet<int>();
+            foreach (var clientNo in _connectedPeers.Keys)
+            {
+                if (!messageProcessor.IsClientStealthMode(clientNo))
+                {
+                    result.Add(clientNo);
+                }
+            }
+            return result;
         }
 
         private void DebugLog(string msg)
