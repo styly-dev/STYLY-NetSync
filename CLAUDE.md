@@ -192,9 +192,9 @@ NetSyncManager.Instance.SetClientVariable("playerScore", "100");
 // Set another client's variable (requires their client number)
 NetSyncManager.Instance.SetClientVariable(targetClientNo, "health", "50");
 
-// Get variables
-string gameState = NetSyncManager.Instance.GetGlobalVariable("gameState");
-string score = NetSyncManager.Instance.GetClientVariable(clientNo, "playerScore");
+// Get variables with default value support
+string gameState = NetSyncManager.Instance.GetGlobalVariable("gameState", "waiting");
+string score = NetSyncManager.Instance.GetClientVariable(clientNo, "playerScore", "0");
 
 // Listen for changes
 NetSyncManager.Instance.OnGlobalVariableChanged.AddListener((name, oldVal, newVal) => {
