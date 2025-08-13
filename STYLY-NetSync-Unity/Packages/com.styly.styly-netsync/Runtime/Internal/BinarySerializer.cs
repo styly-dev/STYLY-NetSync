@@ -232,7 +232,7 @@ namespace Styly.NetSync
                     var posX = reader.ReadSingle();
                     var posZ = reader.ReadSingle();
                     var rotY = reader.ReadSingle();
-                    client.physical = new Transform3D(posX, posZ, rotY, true);
+                    client.physical = new Transform3D(posX, 0, posZ, 0, rotY, 0, true);
                 }
 
                 // Head transform

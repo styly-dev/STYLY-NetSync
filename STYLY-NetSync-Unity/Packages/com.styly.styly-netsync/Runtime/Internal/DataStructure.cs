@@ -19,18 +19,6 @@ namespace Styly.NetSync
 
         public Transform3D() { }
 
-        // Constructor for physical/local transforms (XZ position, Y rotation only)
-        public Transform3D(float x, float z, float rotY, bool local = true)
-        {
-            posX = x;
-            posY = 0;
-            posZ = z;
-            rotX = 0;
-            this.rotY = rotY;
-            rotZ = 0;
-            isLocalSpace = local;
-        }
-
         // Constructor for virtual/world transforms (full 6DOF)
         public Transform3D(float x, float y, float z, float rotX, float rotY, float rotZ, bool local = false)
         {

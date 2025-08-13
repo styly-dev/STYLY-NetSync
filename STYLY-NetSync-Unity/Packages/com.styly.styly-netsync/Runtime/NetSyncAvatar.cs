@@ -16,8 +16,13 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private int _clientNo;
 
         [Header("Transform Sync Settings")]
-        private Transform _physicalTransform; // Object to sync Physical position (local coordinate system). _head will be used for physical transform of local player
+        [SerializeField, ReadOnly] private Transform _physicalTransform; // Object to sync Physical position (local coordinate system). _head will be used for physical transform of local player
 
+        [Header("Physical Transform Data (Runtime)")]
+        [SerializeField, ReadOnly] private Vector3 _physicalPosition;
+        [SerializeField, ReadOnly] private Vector3 _physicalRotation;
+
+        [Header("Body Parts")]
         [SerializeField] private Transform _head;
         [SerializeField] private Transform _rightHand;
         [SerializeField] private Transform _leftHand;
@@ -134,6 +139,15 @@ namespace Styly.NetSync
                 // For local player, update client number display
                 _clientNo = _netSyncManager.ClientNo;
             }
+
+            // Update physical transform display values for inspector
+#if UNITY_EDITOR
+            if (_physicalTransform != null)
+            {
+                _physicalPosition = _physicalTransform.localPosition;
+                _physicalRotation = _physicalTransform.localEulerAngles;
+            }
+#endif
         }
 
         // Get current transform data for sending
@@ -231,8 +245,11 @@ namespace Styly.NetSync
                 // Physical/local transform (XZ position, Y rotation only)
                 return new Transform3D(
                     transform.localPosition.x,
+                    0,
                     transform.localPosition.z,
+                    0,
                     transform.localEulerAngles.y,
+                    0,
                     true
                 );
             }
