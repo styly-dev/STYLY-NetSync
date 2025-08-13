@@ -106,6 +106,7 @@ namespace Styly.NetSync
     {
         public int clientNo;
         public string deviceId;
+        public bool isStealthMode;
     }
     
     // Device ID mapping notification message

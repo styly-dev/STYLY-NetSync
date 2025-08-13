@@ -18,44 +18,52 @@ This is a multi-project repository containing:
 # Navigate to server directory
 cd STYLY-NetSync-Server
 
-# Install dependencies
-pip install -r requirements.txt
+# Install as package (recommended for development)
+pip install -e .
+# Or install with dev dependencies
+pip install -e ".[dev]"
 
-# Run the server
-python server.py
+# Run server (after installation)
+styly-netsync-server                           # Using CLI entry point
+python -m styly_netsync                        # As Python module
+python src/styly_netsync/server.py             # Direct script
 
-# Run with custom ports
-python server.py --dealer-port 5555 --pub-port 5556 --beacon-port 9999
+# Server options
+styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999
+styly-netsync-server --no-beacon               # Disable UDP discovery
 
-# Run without UDP discovery
-python server.py --no-beacon
+# Run client simulator
+styly-netsync-simulator --clients 100 --server tcp://localhost --group default_group
+python src/styly_netsync/client_simulator.py --clients 100  # Alternative
 
-# Run client simulator for load testing
-python client_simulator.py --clients 100 --server tcp://localhost --group default_group
+# Development tools
+black src/                 # Format code
+ruff check src/            # Lint code  
+mypy src/                  # Type check
+pytest                     # Run tests (when tests/ directory exists)
 
-# Check for port conflicts (Linux/Mac)
-lsof -i :5555
-kill <PID>
+# Debug port conflicts
+lsof -i :5555              # Linux/Mac: Find process using port
+kill -9 <PID>              # Linux/Mac: Kill process
 
-# Check for port conflicts (Windows)
-netstat -ano | findstr :5555
-taskkill /PID <PID> /F
+netstat -ano | findstr :5555   # Windows: Find process using port
+taskkill /PID <PID> /F         # Windows: Kill process
 ```
 
 ### Unity Client
 
 - **Unity Version**: Unity 6000.0.48f1 or later (Unity 6)
 - **Build**: Use Unity Editor GUI (no command-line build scripts)
-- **Package Location**: `STYLY-NetSync-Unity/Packages/com.styly.styly-lbe-multiplayer`
+- **Package Location**: `STYLY-NetSync-Unity/Packages/com.styly.styly-netsync`
 - **Package Name**: com.styly.styly-netsync
 - **Dependencies**: 
   - NetMQ 4.0.2 (NuGet)
   - Unity XR Core Utils 2.1.1
+  - Newtonsoft.Json 3.2.1
+  - STYLY XR Rig 0.4.1
 - **Demo Scenes**: 
   - `Assets/Samples_Dev/Demo-01/Demo-01.unity` - Main demo
   - `Assets/Samples_Dev/Debug/Debug Scene.unity` - Debug testing
-
-**Note**: No test or lint commands are currently configured for either Python or Unity code.
 
 ## High-Level Architecture
 
@@ -73,8 +81,8 @@ The system uses ZeroMQ with binary serialization for efficient networking:
 
 ### Key Components
 
-#### 1. Python Server (`server.py`)
-- **MultiplayerServer**: Main server class with thread-safe group management
+#### 1. Python Server (`src/styly_netsync/server.py`)
+- **NetSyncServer**: Main server class with thread-safe group management
 - **Threading Model**:
   - Main thread: Lifecycle management
   - Receive thread: Process client messages
@@ -86,16 +94,16 @@ The system uses ZeroMQ with binary serialization for efficient networking:
 
 #### 2. Unity Client Architecture
 
-**Manager Components** (all internal to NetworkManager, namespace Styly.NetSync):
+**Manager Components** (all internal to NetSyncManager, namespace Styly.NetSync):
 - **ConnectionManager**: ZeroMQ socket management (DEALER/SUB)
 - **PlayerManager**: Spawn/despawn local and remote players
 - **TransformSyncManager**: Position synchronization (1-120Hz)
 - **RPCManager**: Remote procedure calls
-- **NetworkVariableManager**: Synchronized key-value storage (new)
+- **NetworkVariableManager**: Synchronized key-value storage
 - **MessageProcessor**: Binary message parsing
 - **ServerDiscoveryManager**: UDP discovery client
 
-**NetworkObject Component**:
+**NetSyncAvatar Component**:
 - Attached to synchronized GameObjects
 - **Physical Transform**: Local space (X,Z position, Y rotation only)
 - **Head/Hands**: World space full 6DOF
@@ -138,16 +146,16 @@ MSG_NETWORK_VARS = 9        // Server → Clients: Network variable updates
 
 ```csharp
 // Broadcast to all clients in group
-NetworkManager.Instance.RpcBroadcast("FunctionName", new string[] { "arg1", "arg2" });
+NetSyncManager.Instance.RpcBroadcast("FunctionName", new string[] { "arg1", "arg2" });
 
 // Send to server
-NetworkManager.Instance.RpcServer("ServerFunction", new string[] { "data" });
+NetSyncManager.Instance.RpcServer("ServerFunction", new string[] { "data" });
 
 // Send to specific client (using client number)
-NetworkManager.Instance.RpcClient(targetClientNo, "DirectMessage", new string[] { "hello" });
+NetSyncManager.Instance.RpcClient(targetClientNo, "DirectMessage", new string[] { "hello" });
 
 // Receive RPCs
-NetworkManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName, args) => {
+NetSyncManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName, args) => {
     switch (functionName)
     {
         case "FunctionName":
@@ -157,28 +165,28 @@ NetworkManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName,
 });
 ```
 
-#### Network Variables System
+### Network Variables System
 
 ```csharp
 // Set global variable (shared across all clients in group)
-NetworkManager.Instance.SetGlobalVariable("gameState", "playing");
+NetSyncManager.Instance.SetGlobalVariable("gameState", "playing");
 
-// Set client-specific variable (set your own)
-NetworkManager.Instance.SetClientVariable("playerScore", "100");
+// Set client-specific variable
+NetSyncManager.Instance.SetClientVariable("playerScore", "100");
 
 // Set another client's variable (requires their client number)
-NetworkManager.Instance.SetClientVariable(targetClientNo, "health", "50");
+NetSyncManager.Instance.SetClientVariable(targetClientNo, "health", "50");
 
 // Get variables
-string gameState = NetworkManager.Instance.GetGlobalVariable("gameState");
-string score = NetworkManager.Instance.GetClientVariable(clientNo, "playerScore");
+string gameState = NetSyncManager.Instance.GetGlobalVariable("gameState");
+string score = NetSyncManager.Instance.GetClientVariable(clientNo, "playerScore");
 
 // Listen for changes
-NetworkManager.Instance.OnGlobalVariableChanged.AddListener((name, oldVal, newVal) => {
+NetSyncManager.Instance.OnGlobalVariableChanged.AddListener((name, oldVal, newVal) => {
     Debug.Log($"Global var {name} changed: {oldVal} -> {newVal}");
 });
 
-NetworkManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, oldVal, newVal) => {
+NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, oldVal, newVal) => {
     Debug.Log($"Client {clientNo} var {name} changed: {oldVal} -> {newVal}");
 });
 ```
@@ -224,28 +232,32 @@ When adding features:
 1. Define message type constant in both codebases
 2. Implement serialization in BinarySerializer
 3. Add handler in MessageProcessor
-4. Expose API through NetworkManager
+4. Expose API through NetSyncManager
 
 ## Key Files Reference
 
 ### Server (`STYLY-NetSync-Server/`)
-- `server.py`: Main server with group management
-- `binary_serializer.py`: Binary protocol implementation
-- `client_simulator.py`: Load testing with movement patterns
+- `src/styly_netsync/server.py`: Main server with group management
+- `src/styly_netsync/binary_serializer.py`: Binary protocol implementation
+- `src/styly_netsync/client_simulator.py`: Load testing with movement patterns
+- `src/styly_netsync/cli.py`: CLI entry point wrapper
+- `src/styly_netsync/__main__.py`: Module execution support
 - `requirements.txt`: Python dependencies (pyzmq 26.4.0)
+- `pyproject.toml`: Package configuration with dev tools
 
-### Unity Package (`STYLY-NetSync-Unity/Packages/com.styly.styly-lbe-multiplayer/`)
-- `Runtime/NetworkManager.cs`: Main singleton entry point
-- `Runtime/NetworkObject.cs`: Component for sync
+### Unity Package (`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/`)
+- `Runtime/NetSyncManager.cs`: Main singleton entry point
+- `Runtime/NetSyncAvatar.cs`: Component for sync
 - `Runtime/Internal/BinarySerializer.cs`: Binary protocol
-- `Runtime/Internal/DataStructure.cs`: Shared data structures (ClientData, DeviceIdMapping)
+- `Runtime/Internal/DataStructure.cs`: Shared data structures
 - `Runtime/Internal/ConnectionManager.cs`: ZeroMQ handling
 - `Runtime/Internal/MessageProcessor.cs`: Message parsing
-- `Runtime/Internal/NetworkVariableManager.cs`: Network Variables system
-- `Runtime/Internal/PlayerManager.cs`: Player spawn/despawn logic
+- `Runtime/Internal/NetworkVariableManager.cs`: Network variables
+- `Runtime/Internal/PlayerManager.cs`: Player spawn/despawn
 - `Runtime/Internal/TransformSyncManager.cs`: Transform interpolation
 - `Runtime/Internal/RPCManager.cs`: RPC handling
 - `Runtime/Internal/ServerDiscoveryManager.cs`: UDP discovery
 
 ### Demo Scenes
 - `Assets/Samples_Dev/Demo-01/Scripts/ReceiveRPC_to_ChangeColor.cs`: Example RPC receiver
+- `Assets/Samples_Dev/Demo-01/Scripts/SendRPC.cs`: Example RPC sender

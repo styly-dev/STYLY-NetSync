@@ -1,6 +1,7 @@
 // NetSyncManager.cs
 using System;
 using System.Collections.Generic;
+using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -9,8 +10,12 @@ namespace Styly.NetSync
     public class NetSyncManager : MonoBehaviour
     {
         #region === Inspector ===
+        [Header("Network Info")]
+        [SerializeField, ReadOnly] private string _deviceId;
+        [SerializeField, ReadOnly] private int _clientNo = 0;
+        
         [Header("Connection Settings")]
-        [SerializeField] private string _serverAddress = "tcp://localhost";
+        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
         private int _dealerPort = 5555;
         private int _subPort = 5556;
         [SerializeField] private string _groupId = "default_group";
@@ -112,11 +117,19 @@ namespace Styly.NetSync
             return _networkVariableManager?.GetAllGlobalVariables() ?? new Dictionary<string, string>();
         }
         
+        /// <summary>
+        /// Checks if a client is in stealth mode (no visible avatar)
+        /// </summary>
+        /// <param name="clientNo">The client number to check</param>
+        /// <returns>True if the client is in stealth mode, false otherwise</returns>
+        public bool IsClientStealthMode(int clientNo)
+        {
+            return _messageProcessor?.IsClientStealthMode(clientNo) ?? false;
+        }
+        
         #endregion ------------------------------------------------------------------------
 
         #region === Runtime Fields ===
-        private string _deviceId;
-        private int _clientNo = 0;  // Assigned by server
         private static bool _netMqInit;
 
         // Managers
@@ -130,6 +143,7 @@ namespace Styly.NetSync
 
         // State
         private bool _isDiscovering;
+        private bool _isStealthMode;
         private string _discoveredServer;
         private int _discoveredDealerPort;
         private int _discoveredSubPort;
@@ -162,8 +176,15 @@ namespace Styly.NetSync
             _deviceId = GenerateDeviceId();
             _instance = this;
 
+            // Detect stealth mode based on local player prefab
+            _isStealthMode = (_localPlayerPrefab == null);
+            
             InitializeManagers();
             DebugLog($"Device ID: {_deviceId}");
+            if (_isStealthMode)
+            {
+                DebugLog("Stealth mode enabled (no local avatar prefab)");
+            }
         }
 
         private void OnEnable()
@@ -294,16 +315,20 @@ namespace Styly.NetSync
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
         {
+            string argsStr = args != null && args.Length > 0 ? string.Join(", ", args) : "none";
+            Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
             OnRPCReceived?.Invoke(senderClientNo, functionName, args);
         }
         
         private void OnGlobalVariableChangedHandler(string name, string oldValue, string newValue)
         {
+            Debug.Log($"[NetSyncManager] Global Variable Changed - Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
             OnGlobalVariableChanged?.Invoke(name, oldValue, newValue);
         }
         
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
+            Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
         }
         
@@ -320,7 +345,8 @@ namespace Styly.NetSync
             _discoveredSubPort = subPort;
             
             // Update the server address for future connections
-            _serverAddress = serverAddress;
+            // Remove tcp:// prefix (discovery always returns with tcp://)
+            _serverAddress = serverAddress.Substring(6);
             _dealerPort = dealerPort;
             _subPort = subPort;
             
@@ -338,7 +364,9 @@ namespace Styly.NetSync
                 return;
             }
 
-            _connectionManager.Connect(_serverAddress, _dealerPort, _subPort, _groupId);
+            // Add tcp:// prefix
+            string fullAddress = $"tcp://{_serverAddress}";
+            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _groupId);
         }
 
         private void StopNetworking()
@@ -371,7 +399,7 @@ namespace Styly.NetSync
             {
                 DebugLog("Discovery timeout - falling back to localhost");
                 StopDiscovery();
-                _serverAddress = "tcp://localhost";
+                _serverAddress = "localhost";
                 StartNetworking();
             }
 
@@ -404,10 +432,22 @@ namespace Styly.NetSync
         {
             if (!_connectionManager.IsConnectionError && _transformSyncManager.ShouldSendTransform(Time.time))
             {
-                var localPlayer = _playerManager.LocalPlayerAvatar;
-                if (!_transformSyncManager.SendLocalTransform(localPlayer, _groupId))
+                if (_isStealthMode)
                 {
-                    HandleConnectionError("Send failed – disconnected?");
+                    // Send stealth handshake instead of regular transform
+                    if (!_transformSyncManager.SendStealthHandshake(_groupId))
+                    {
+                        HandleConnectionError("Send failed – disconnected?");
+                    }
+                }
+                else
+                {
+                    // Normal transform sending
+                    var localPlayer = _playerManager.LocalPlayerAvatar;
+                    if (!_transformSyncManager.SendLocalTransform(localPlayer, _groupId))
+                    {
+                        HandleConnectionError("Send failed – disconnected?");
+                    }
                 }
                 _transformSyncManager.UpdateLastSendTime(Time.time);
             }

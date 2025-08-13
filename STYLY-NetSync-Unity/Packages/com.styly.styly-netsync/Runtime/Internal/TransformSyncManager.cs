@@ -25,7 +25,7 @@ namespace Styly.NetSync
         public bool SendLocalTransform(NetSyncAvatar localPlayerAvatar, string groupId)
         {
             if (localPlayerAvatar == null || _connectionManager.DealerSocket == null)
-                return true;
+                return false;
             
             try
             {
@@ -43,6 +43,30 @@ namespace Styly.NetSync
             catch (Exception ex)
             {
                 Debug.LogError($"SendLocalTransform: {ex.Message}");
+                return false;
+            }
+        }
+        
+        public bool SendStealthHandshake(string groupId)
+        {
+            if (_connectionManager.DealerSocket == null)
+                return false;
+            
+            try
+            {
+                var binaryData = BinarySerializer.SerializeStealthHandshake(_deviceId);
+                
+                var msg = new NetMQMessage();
+                msg.Append(groupId);
+                msg.Append(binaryData);
+                
+                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                if (ok) _messagesSent++;
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SendStealthHandshake: {ex.Message}");
                 return false;
             }
         }

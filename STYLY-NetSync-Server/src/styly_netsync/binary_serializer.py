@@ -1,4 +1,5 @@
 import struct
+import math
 from typing import Dict, List, Tuple, Any, Union
 
 # Message type identifiers
@@ -19,6 +20,55 @@ TRANSFORM_VIRTUAL = 2   # 6 floats: full transform
 
 # Maximum allowed virtual transforms to prevent memory issues
 MAX_VIRTUAL_TRANSFORMS = 50
+
+# Stealth mode detection utilities
+def _is_nan_transform(transform: Dict[str, Any]) -> bool:
+    """Check if a transform contains all NaN values (stealth mode indicator)"""
+    # Check physical transform (posX, posZ, rotY)
+    physical = transform.get('physical', {})
+    if not physical:
+        return False
+    
+    # All physical values must be NaN
+    if not (math.isnan(physical.get('posX', 0)) and 
+            math.isnan(physical.get('posZ', 0)) and 
+            math.isnan(physical.get('rotY', 0))):
+        return False
+    
+    # Check head transform (all 6 values must be NaN)
+    head = transform.get('head', {})
+    if not head:
+        return False
+    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+        if not math.isnan(head.get(key, 0)):
+            return False
+    
+    # Check right hand transform (all 6 values must be NaN)
+    right_hand = transform.get('rightHand', {})
+    if not right_hand:
+        return False
+    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+        if not math.isnan(right_hand.get(key, 0)):
+            return False
+    
+    # Check left hand transform (all 6 values must be NaN)
+    left_hand = transform.get('leftHand', {})
+    if not left_hand:
+        return False
+    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+        if not math.isnan(left_hand.get(key, 0)):
+            return False
+    
+    # Check virtuals count is 0
+    virtuals = transform.get('virtuals', [])
+    if len(virtuals) != 0:
+        return False
+    
+    return True
+
+def _is_stealth_client(data: Dict[str, Any]) -> bool:
+    """Check if client data indicates stealth mode (NaN handshake)"""
+    return _is_nan_transform(data)
 
 # Helper functions for common operations
 def _pack_string(buffer: bytearray, string: str, use_ushort: bool = False) -> None:
@@ -179,11 +229,11 @@ def serialize_rpc_client_message(data: Dict[str, Any]) -> bytes:
     _serialize_rpc_base(buffer, data, MSG_RPC_CLIENT)
     return bytes(buffer)
 
-def serialize_device_id_mapping(mappings: List[Tuple[int, str]]) -> bytes:
+def serialize_device_id_mapping(mappings: List[Tuple[int, str, bool]]) -> bytes:
     """Serialize device ID mapping message
     
     Args:
-        mappings: List of (client_no, device_id) tuples
+        mappings: List of (client_no, device_id, is_stealth) tuples
     """
     buffer = bytearray()
     
@@ -194,8 +244,9 @@ def serialize_device_id_mapping(mappings: List[Tuple[int, str]]) -> bytes:
     buffer.extend(struct.pack('<H', len(mappings)))
     
     # Each mapping
-    for client_no, device_id in mappings:
+    for client_no, device_id, is_stealth in mappings:
         buffer.extend(struct.pack('<H', client_no))
+        buffer.append(0x01 if is_stealth else 0x00)  # Stealth flag (1 byte)
         _pack_string(buffer, device_id)
     
     return bytes(buffer)
@@ -495,8 +546,10 @@ def _deserialize_device_id_mapping(data: bytes, offset: int) -> Dict[str, Any]:
     for _ in range(count):
         client_no = struct.unpack('<H', data[offset:offset+2])[0]
         offset += 2
+        is_stealth = data[offset] == 0x01  # Read stealth flag (1 byte)
+        offset += 1
         device_id, offset = _unpack_string(data, offset)
-        result['mappings'].append({'clientNo': client_no, 'deviceId': device_id})
+        result['mappings'].append({'clientNo': client_no, 'deviceId': device_id, 'isStealthMode': is_stealth})
     
     return result
 

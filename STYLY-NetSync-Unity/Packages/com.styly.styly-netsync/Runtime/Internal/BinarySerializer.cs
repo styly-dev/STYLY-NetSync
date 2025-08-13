@@ -104,6 +104,49 @@ namespace Styly.NetSync
             }
         }
 
+        public static byte[] SerializeStealthHandshake(string deviceId)
+        {
+            using (var ms = new MemoryStream())
+            using (var writer = new BinaryWriter(ms))
+            {
+                // Message type
+                writer.Write(MSG_CLIENT_TRANSFORM);
+
+                // Device ID (as UTF8 bytes with length prefix)
+                var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId);
+                writer.Write((byte)deviceIdBytes.Length);
+                writer.Write(deviceIdBytes);
+
+                // Physical transform with NaN values (stealth mode indicator)
+                writer.Write(float.NaN); // posX
+                writer.Write(float.NaN); // posZ
+                writer.Write(float.NaN); // rotY
+
+                // Head transform (NaN values)
+                for (int i = 0; i < 6; i++) // posX, posY, posZ, rotX, rotY, rotZ
+                {
+                    writer.Write(float.NaN);
+                }
+
+                // Right hand transform (NaN values)
+                for (int i = 0; i < 6; i++)
+                {
+                    writer.Write(float.NaN);
+                }
+
+                // Left hand transform (NaN values)
+                for (int i = 0; i < 6; i++)
+                {
+                    writer.Write(float.NaN);
+                }
+
+                // No virtual transforms for stealth handshake
+                writer.Write((byte)0);
+
+                return ms.ToArray();
+            }
+        }
+
         #region === Deserialization ===
 
         // Maximum allowed virtual transforms to prevent memory issues
@@ -498,6 +541,9 @@ namespace Styly.NetSync
             {
                 var mapping = new DeviceIdMapping();
                 mapping.clientNo = reader.ReadUInt16();
+                
+                // Read stealth flag (1 byte)
+                mapping.isStealthMode = reader.ReadByte() == 0x01;
                 
                 var deviceIdLength = reader.ReadByte();
                 mapping.deviceId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(deviceIdLength));

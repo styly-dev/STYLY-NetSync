@@ -8,7 +8,12 @@ import logging
 import socket
 import argparse
 from typing import Dict, Any
-from . import binary_serializer
+
+# Handle both package and direct script execution
+try:
+    from . import binary_serializer
+except ImportError:
+    import binary_serializer
 
 # Log configuration
 logging.basicConfig(
@@ -409,6 +414,9 @@ class NetSyncServer:
         """Handle client transform update"""
         device_id = data.get("deviceId")  # Receiving device ID from client
         
+        # Detect stealth mode using NaN handshake
+        is_stealth = binary_serializer._is_stealth_client(data)
+        
         # Get or assign client number for this device ID
         client_no = self._get_or_assign_client_no(group_id, device_id)
         
@@ -429,18 +437,21 @@ class NetSyncServer:
                     "last_update": time.time(),
                     "transform_data": data_with_client_no,
                     "client_no": client_no,
+                    "is_stealth": is_stealth,
                 }
                 self.group_dirty_flags[group_id] = True  # Mark group as dirty
                 # Cache the binary data if available
                 if raw_payload:
                     # Store by client number for efficient broadcast
                     self.client_binary_cache[client_no] = raw_payload
-                logger.info(f"New client {device_id[:8]}... (client number: {client_no}) joined group {group_id}")
+                stealth_text = " (stealth mode)" if is_stealth else ""
+                logger.info(f"New client {device_id[:8]}... (client number: {client_no}){stealth_text} joined group {group_id}")
             else:
                 # Update existing client and mark group as dirty
                 self.groups[group_id][device_id]["transform_data"] = data_with_client_no
                 self.groups[group_id][device_id]["last_update"] = time.time()
                 self.groups[group_id][device_id]["client_no"] = client_no
+                self.groups[group_id][device_id]["is_stealth"] = is_stealth
                 
                 # Update cached binary data if available
                 if raw_payload:
@@ -456,6 +467,12 @@ class NetSyncServer:
     
     def _broadcast_rpc_to_group(self, group_id: str, rpc_data: Dict[str, Any]):
         """Broadcast RPC to all clients in group except sender"""
+        # Log RPC broadcast
+        sender_client_no = rpc_data.get('senderClientNo', 0)
+        function_name = rpc_data.get('functionName', 'unknown')
+        args = rpc_data.get('args', [])
+        logger.info(f"RPC Broadcast: sender={sender_client_no}, function={function_name}, args={args}, group={group_id}")
+        
         # Prepare topic and payload
         topic_bytes = group_id.encode('utf-8')
         message_bytes = binary_serializer.serialize_rpc_message(rpc_data)
@@ -469,13 +486,22 @@ class NetSyncServer:
 
     def _handle_rpc_request(self, client_identity: bytes, group_id: str, rpc_data: Dict[str, Any]):
         """Handle client-to-server RPC request"""
+        # Log RPC server request
+        sender_client_no = rpc_data.get('senderClientNo', 0)
+        function_name = rpc_data.get('functionName', 'unknown')
+        args = rpc_data.get('args', [])
+        logger.info(f"RPC Server Request: sender={sender_client_no}, function={function_name}, args={args}, group={group_id}")
         # Here you can add your server-side RPC handling logic
         pass
 
     def _handle_rpc_client_request(self, group_id: str, rpc_data: Dict[str, Any]):
         """Handle client-to-client RPC request"""
-        # Expecting targetClientNo from client, need to resolve to device ID
+        # Log RPC client request
+        sender_client_no = rpc_data.get('senderClientNo', 0)
         target_client_no = rpc_data.get('targetClientNo', 0)
+        function_name = rpc_data.get('functionName', 'unknown')
+        args = rpc_data.get('args', [])
+        logger.info(f"RPC Client Request: sender={sender_client_no}, target={target_client_no}, function={function_name}, args={args}, group={group_id}")
         
         # Resolve target device ID from client number
         target_device_id = self._get_device_id_from_client_no(group_id, target_client_no)
@@ -560,6 +586,9 @@ class NetSyncServer:
                 if timestamp < existing['timestamp'] or (timestamp == existing['timestamp'] and sender_client_no < existing['lastWriterClientNo']):
                     return  # Ignore older or lower priority update
             
+            # Store old value for logging
+            old_value = global_vars.get(var_name, {}).get('value', None)
+            
             # Update variable
             global_vars[var_name] = {
                 'value': var_value,
@@ -567,7 +596,7 @@ class NetSyncServer:
                 'lastWriterClientNo': sender_client_no
             }
             
-            logger.info(f"Global variable '{var_name}' set to '{var_value}' by client {sender_client_no} in group {group_id}")
+            logger.info(f"Global Variable Changed: group={group_id}, client={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'")
             
             # Broadcast sync to all clients
             self._broadcast_global_var_sync(group_id)
@@ -603,6 +632,9 @@ class NetSyncServer:
                 if timestamp < existing['timestamp'] or (timestamp == existing['timestamp'] and sender_client_no < existing['lastWriterClientNo']):
                     return  # Ignore older or lower priority update
             
+            # Store old value for logging
+            old_value = client_vars.get(var_name, {}).get('value', None)
+            
             # Update variable
             client_vars[var_name] = {
                 'value': var_value,
@@ -610,7 +642,7 @@ class NetSyncServer:
                 'lastWriterClientNo': sender_client_no
             }
             
-            logger.info(f"Client variable '{var_name}' set to '{var_value}' for client {target_client_no} by client {sender_client_no} in group {group_id}")
+            logger.info(f"Client Variable Changed: group={group_id}, target={target_client_no}, sender={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'")
             
             # Broadcast sync to all clients
             self._broadcast_client_var_sync(group_id)
@@ -675,15 +707,19 @@ class NetSyncServer:
         self._broadcast_client_var_sync(group_id)
     
     def _broadcast_id_mappings(self, group_id: str):
-        """Broadcast all device ID mappings for a group"""
+        """Broadcast all device ID mappings for a group (including stealth clients with flag)"""
         with self._groups_lock:
             if group_id not in self.group_device_id_to_client_no:
                 return
                 
-            # Collect all mappings for the group
+            # Collect all mappings for the group (including stealth clients with their flag)
             mappings = []
             for device_id, client_no in self.group_device_id_to_client_no[group_id].items():
-                mappings.append((client_no, device_id))
+                # Get stealth status from client data
+                client_data = self.groups.get(group_id, {}).get(device_id, {})
+                is_stealth = client_data.get("is_stealth", False)
+                # Include all clients with their stealth flag
+                mappings.append((client_no, device_id, is_stealth))
             
             if mappings:
                 try:
@@ -691,7 +727,7 @@ class NetSyncServer:
                     topic_bytes = group_id.encode('utf-8')
                     message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
                     self.pub.send_multipart([topic_bytes, message_bytes])
-                    logger.info(f"Broadcasted {len(mappings)} ID mappings to group {group_id}: {[(cno, did[:8]) for cno, did in mappings]}")
+                    logger.info(f"Broadcasted {len(mappings)} ID mappings to group {group_id}: {[(cno, did[:8], 'stealth' if stealth else 'normal') for cno, did, stealth in mappings]}")
                 except Exception as e:
                     logger.error(f"Failed to broadcast ID mappings to group {group_id}: {e}")
 
@@ -725,12 +761,21 @@ class NetSyncServer:
 
                 # Log status periodically
                 if current_time - last_log >= self.STATUS_LOG_INTERVAL:
-                    total_clients = sum(len(group) for group in self.groups.values())
+                    # Count normal and stealth clients separately
+                    normal_clients = 0
+                    stealth_clients = 0
+                    for group in self.groups.values():
+                        for client in group.values():
+                            if client.get("is_stealth", False):
+                                stealth_clients += 1
+                            else:
+                                normal_clients += 1
+                    
                     dirty_groups = sum(1 for flag in self.group_dirty_flags.values() if flag)
                     total_device_ids = len(self.device_id_last_seen)
-                    logger.info(f"Status: {len(self.groups)} groups, {total_clients} clients, "
-                            f"{dirty_groups} dirty groups, {total_device_ids} tracked device IDs, "
-                            f"{self.skipped_broadcasts} skipped broadcasts")
+                    logger.info(f"Status: {len(self.groups)} groups, {normal_clients} normal clients, "
+                            f"{stealth_clients} stealth clients, "
+                            f"{dirty_groups} dirty groups, {total_device_ids} tracked device IDs")
                     last_log = current_time
 
                 time.sleep(self.MAIN_LOOP_SLEEP)  # 50Hz loop for better responsiveness
@@ -778,9 +823,10 @@ class NetSyncServer:
 
     def _broadcast_group(self, group_id, clients):
         """Broadcast a specific group's state"""
+        # Filter out stealth clients from broadcasts
         client_transforms = [
             client["transform_data"] for client in clients.values()
-            if client["transform_data"]
+            if client["transform_data"] and not client.get("is_stealth", False)
         ]
 
         if client_transforms:
