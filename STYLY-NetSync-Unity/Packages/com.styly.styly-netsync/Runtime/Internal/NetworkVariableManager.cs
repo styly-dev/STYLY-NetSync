@@ -77,6 +77,11 @@ namespace Styly.NetSync
             return _globalVariables.TryGetValue(name, out var value) ? value : null;
         }
         
+        public string GetGlobalVariable(string name, string defaultValue = null)
+        {
+            return _globalVariables.TryGetValue(name, out var value) ? value : defaultValue;
+        }
+        
         // Client Variables API
         public bool SetClientVariable(int targetClientNo, string name, string value, string roomId)
         {
