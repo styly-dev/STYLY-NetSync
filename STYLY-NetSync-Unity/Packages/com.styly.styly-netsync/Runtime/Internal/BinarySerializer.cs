@@ -24,7 +24,7 @@ namespace Styly.NetSync
         private static void WriteTransformData(BinaryWriter writer, TransformData d)
         {
             var p = d?.position ?? Vector3.zero;
-            Vector3 p, r;
+            Vector3 r;
             if (d == null)
             {
                 p = Vector3.zero;
