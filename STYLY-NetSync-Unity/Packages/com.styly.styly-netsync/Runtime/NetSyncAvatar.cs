@@ -179,7 +179,7 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar) { return; }
 
-            // Apply physical transform in local space
+            // Apply physical transform in local space and update backing fields for interpolation
             if (_physicalTransform != null && data.physical != null)
             {
                 _physicalTransform.localPosition = data.physical.position;
