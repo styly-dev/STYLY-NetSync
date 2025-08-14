@@ -169,6 +169,9 @@ class STYLYNetSyncUser(User):
                 metrics_collector=global_metrics
             )
             
+            # Set callback for transform receive metrics
+            self.client.on_transform_received = self._record_transform_received
+            
             # Connect to server
             if self.client.connect():
                 self.connected = True
@@ -180,6 +183,24 @@ class STYLYNetSyncUser(User):
         except Exception as e:
             logger.error(f"Error starting user {self.user_id}: {e}")
             raise StopUser(f"Startup error: {e}")
+    
+    def _record_transform_received(self, client_count: int):
+        """Record transform receive metrics in Locust."""
+        try:
+            self.environment.events.request.fire(
+                request_type="STYLY",
+                name="transform_receive",
+                response_time=0,  # Receive operations don't have response time
+                response_length=client_count,
+                exception=None,
+                context={}
+            )
+            
+            if config.detailed_logging:
+                logger.debug(f"Recorded transform receive: {client_count} clients")
+                
+        except Exception as e:
+            logger.warning(f"Failed to record transform receive metrics: {e}")
     
     def on_stop(self):
         """Called when a user stops."""

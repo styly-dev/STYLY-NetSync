@@ -88,6 +88,9 @@ class STYLYNetSyncClient:
         self.running = False
         self._lock = threading.RLock()
         
+        # Callback for metrics recording
+        self.on_transform_received = None
+        
         logger.info(f"STYLYNetSyncClient initialized: user_id={self.user_id}, device_id={self.device_id[:8]}...")
     
     def connect(self) -> bool:
@@ -369,6 +372,13 @@ class STYLYNetSyncClient:
                 clients = msg_data.get('clients', [])
                 with self._lock:
                     self.received_transforms = clients
+                
+                # Call metrics recording callback if available
+                if self.on_transform_received:
+                    try:
+                        self.on_transform_received(len(clients))
+                    except Exception as e:
+                        logger.warning(f"Error in transform received callback: {e}")
                 
                 if config.detailed_logging:
                     logger.debug(f"Received room transform with {len(clients)} clients")
