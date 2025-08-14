@@ -14,54 +14,31 @@ MSG_GLOBAL_VAR_SYNC = 8  # Sync global variables
 MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 
-# Transform data type identifiers
-TRANSFORM_PHYSICAL = 1  # 3 floats: posX, posZ, rotY
-TRANSFORM_VIRTUAL = 2   # 6 floats: full transform
-
 # Maximum allowed virtual transforms to prevent memory issues
 MAX_VIRTUAL_TRANSFORMS = 50
 
 # Stealth mode detection utilities
 def _is_nan_transform(transform: Dict[str, Any]) -> bool:
     """Check if a transform contains all NaN values (stealth mode indicator)"""
-    # Check physical transform (posX, posZ, rotY)
-    physical = transform.get('physical', {})
-    if not physical:
+    # Physical transform must have all 6 values NaN
+    phys = transform.get('physical', {})
+    if not phys:
         return False
-
-    # All physical values must be NaN
-    if not (math.isnan(physical.get('posX', 0)) and
-            math.isnan(physical.get('posZ', 0)) and
-            math.isnan(physical.get('rotY', 0))):
-        return False
-
-    # Check head transform (all 6 values must be NaN)
-    head = transform.get('head', {})
-    if not head:
-        return False
-    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
-        if not math.isnan(head.get(key, 0)):
+    for k in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+        if not math.isnan(phys.get(k, 0)):
             return False
 
-    # Check right hand transform (all 6 values must be NaN)
-    right_hand = transform.get('rightHand', {})
-    if not right_hand:
-        return False
-    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
-        if not math.isnan(right_hand.get(key, 0)):
+    # Head, right hand, left hand transforms must also be all NaN
+    for part in ['head', 'rightHand', 'leftHand']:
+        t = transform.get(part, {})
+        if not t:
             return False
+        for k in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+            if not math.isnan(t.get(k, 0)):
+                return False
 
-    # Check left hand transform (all 6 values must be NaN)
-    left_hand = transform.get('leftHand', {})
-    if not left_hand:
-        return False
-    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
-        if not math.isnan(left_hand.get(key, 0)):
-            return False
-
-    # Check virtuals count is 0
-    virtuals = transform.get('virtuals', [])
-    if len(virtuals) != 0:
+    # Virtuals count must be 0
+    if len(transform.get('virtuals', [])) != 0:
         return False
 
     return True
@@ -91,36 +68,25 @@ def _unpack_string(data: bytes, offset: int, use_ushort: bool = False) -> Tuple[
     string = data[offset:offset+length].decode('utf-8')
     return string, offset + length
 
-def _pack_transform(buffer: bytearray, transform: Dict[str, Any], keys: List[str]) -> None:
-    """Pack a transform with specified keys"""
-    for key in keys:
-        buffer.extend(struct.pack('<f', transform.get(key, 0)))
+def _pack_full_transform(buffer: bytearray, t: Dict[str, Any]) -> None:
+    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
+        buffer.extend(struct.pack('<f', t.get(key, 0.0)))
 
-def _unpack_transform(data: bytes, offset: int, keys: List[str], is_local_space: bool = False) -> Tuple[Dict[str, Any], int]:
-    """Unpack a transform with specified keys"""
-    transform = {'isLocalSpace': is_local_space}
-    for key in keys:
-        value = struct.unpack('<f', data[offset:offset+4])[0]
-        transform[key] = value
+def _unpack_full_transform(data: bytes, offset: int) -> Tuple[Dict[str, Any], int]:
+    keys = ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']
+    t: Dict[str, Any] = {}
+    for k in keys:
+        t[k] = struct.unpack('<f', data[offset:offset+4])[0]
         offset += 4
-    return transform, offset
-
-def _pack_full_transform(buffer: bytearray, transform: Dict[str, Any]) -> None:
-    """Pack a full 6-float transform"""
-    _pack_transform(buffer, transform, ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ'])
-
-def _unpack_full_transform(data: bytes, offset: int, is_local_space: bool = False) -> Tuple[Dict[str, Any], int]:
-    """Unpack a full 6-float transform"""
-    return _unpack_transform(data, offset, ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ'], is_local_space)
+    return t, offset
 
 def _serialize_client_data(buffer: bytearray, client: Dict[str, Any]) -> None:
     """Serialize a single client's data (shared by room transform and client transform)"""
     # Device ID
     _pack_string(buffer, client.get('deviceId', ''))
 
-    # Physical transform (special case: only 3 values)
-    physical = client.get('physical', {})
-    _pack_transform(buffer, physical, ['posX', 'posZ', 'rotY'])
+    # Physical transform (full 6 floats)
+    _pack_full_transform(buffer, client.get('physical', {}))
 
     # Head, Right hand, Left hand transforms
     for transform_key in ['head', 'rightHand', 'leftHand']:
@@ -177,9 +143,8 @@ def _serialize_client_data_short(buffer: bytearray, client: Dict[str, Any]) -> N
     client_no = client.get('clientNo', 0)
     buffer.extend(struct.pack('<H', client_no))
 
-    # Physical transform (special case: only 3 values)
-    physical = client.get('physical', {})
-    _pack_transform(buffer, physical, ['posX', 'posZ', 'rotY'])
+    # Physical transform
+    _pack_full_transform(buffer, client.get('physical', {}))
 
     # Head, Right hand, Left hand transforms
     for transform_key in ['head', 'rightHand', 'leftHand']:
@@ -418,17 +383,8 @@ def _deserialize_client_transform(data: bytes, offset: int) -> Dict[str, Any]:
     # Device ID
     result['deviceId'], offset = _unpack_string(data, offset)
 
-    # Physical transform (special case with default values)
-    physical_values, offset = _unpack_transform(data, offset, ['posX', 'posZ', 'rotY'], is_local_space=True)
-    result['physical'] = {
-        'posX': physical_values['posX'],
-        'posY': 0,
-        'posZ': physical_values['posZ'],
-        'rotX': 0,
-        'rotY': physical_values['rotY'],
-        'rotZ': 0,
-        'isLocalSpace': True
-    }
+    # Physical transform (6 floats)
+    result['physical'], offset = _unpack_full_transform(data, offset)
 
     # Head, Right hand, Left hand transforms
     result['head'], offset = _unpack_full_transform(data, offset)
@@ -500,16 +456,7 @@ def _deserialize_room_transform(data: bytes, offset: int) -> Dict[str, Any]:
         client['clientNo'] = client_no
 
         # Physical transform
-        physical_values, offset = _unpack_transform(data, offset, ['posX', 'posZ', 'rotY'], is_local_space=True)
-        client['physical'] = {
-            'posX': physical_values['posX'],
-            'posY': 0,
-            'posZ': physical_values['posZ'],
-            'rotX': 0,
-            'rotY': physical_values['rotY'],
-            'rotZ': 0,
-            'isLocalSpace': True
-        }
+        client['physical'], offset = _unpack_full_transform(data, offset)
 
         # Head, Right hand, Left hand transforms
         client['head'], offset = _unpack_full_transform(data, offset)

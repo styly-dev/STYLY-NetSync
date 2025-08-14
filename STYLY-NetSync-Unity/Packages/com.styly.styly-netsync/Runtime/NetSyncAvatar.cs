@@ -38,11 +38,10 @@ namespace Styly.NetSync
         public bool IsLocalAvatar { get; private set; }
 
         // Variables for interpolation
-        private Transform3D _targetPhysical;
-        private Transform3D _targetHead;
-        private Transform3D _targetRightHand;
-        private Transform3D _targetLeftHand;
-        private List<Transform3D> _targetVirtuals = new List<Transform3D>();
+        private TransformData _targetHead;
+        private TransformData _targetRightHand;
+        private TransformData _targetLeftHand;
+        private List<TransformData> _targetVirtuals = new List<TransformData>();
         private bool _hasTargetData = false;
 
         // Reference to NetSyncManager
@@ -95,14 +94,13 @@ namespace Styly.NetSync
             if (!isLocalAvatar)
             {
                 // For remote players, set initial data for interpolation
-                _targetPhysical = new Transform3D();
-                _targetHead = new Transform3D();
-                _targetRightHand = new Transform3D();
-                _targetLeftHand = new Transform3D();
+                _targetHead = new TransformData();
+                _targetRightHand = new TransformData();
+                _targetLeftHand = new TransformData();
                 _targetVirtuals.Clear();
                 for (int i = 0; i < _virtualTransforms.Length; i++)
                 {
-                    _targetVirtuals.Add(new Transform3D());
+                    _targetVirtuals.Add(new TransformData());
                 }
             }
         }
@@ -116,14 +114,13 @@ namespace Styly.NetSync
             _netSyncManager = manager;
 
             // For remote players, set initial data for interpolation
-            _targetPhysical = new Transform3D();
-            _targetHead = new Transform3D();
-            _targetRightHand = new Transform3D();
-            _targetLeftHand = new Transform3D();
+            _targetHead = new TransformData();
+            _targetRightHand = new TransformData();
+            _targetLeftHand = new TransformData();
             _targetVirtuals.Clear();
             for (int i = 0; i < _virtualTransforms.Length; i++)
             {
-                _targetVirtuals.Add(new Transform3D());
+                _targetVirtuals.Add(new TransformData());
             }
         }
 
@@ -160,11 +157,11 @@ namespace Styly.NetSync
             {
                 deviceId = _deviceId,
                 clientNo = _clientNo,
-                physical = ConvertToTransform3D(_physicalTransform, true),
-                head = ConvertToTransform3D(_head, false),
-                rightHand = ConvertToTransform3D(_rightHand, false),
-                leftHand = ConvertToTransform3D(_leftHand, false),
-                virtuals = ConvertToTransform3DList(_virtualTransforms, false)
+                physical = ConvertToTransformData(_physicalTransform, true),
+                head = ConvertToTransformData(_head, false),
+                rightHand = ConvertToTransformData(_rightHand, false),
+                leftHand = ConvertToTransformData(_leftHand, false),
+                virtuals = ConvertToTransformDataList(_virtualTransforms, false)
             };
         }
 
@@ -188,13 +185,8 @@ namespace Styly.NetSync
                 // Set physical transform immediately
                 if (_physicalTransform != null && data.physical != null)
                 {
-                    _physicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
-                    Vector3 newPhysicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
-                    Vector3 newPhysicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
-                    _physicalPosition = newPhysicalPosition;
-                    _physicalRotation = newPhysicalRotation;
-                    _physicalTransform.localPosition = newPhysicalPosition;
-                    _physicalTransform.localEulerAngles = newPhysicalRotation;
+                    _physicalPosition = data.physical.position;
+                    _physicalRotation = data.physical.rotation;
                     _physicalTransform.localPosition = _physicalPosition;
                     _physicalTransform.localEulerAngles = _physicalRotation;
                 }
@@ -202,21 +194,21 @@ namespace Styly.NetSync
                 // Set head transform immediately
                 if (_head != null && data.head != null)
                 {
-                    _head.position = new Vector3(data.head.posX, data.head.posY, data.head.posZ);
-                    _head.rotation = Quaternion.Euler(data.head.rotX, data.head.rotY, data.head.rotZ);
+                    _head.position = data.head.position;
+                    _head.rotation = Quaternion.Euler(data.head.rotation);
                 }
 
                 // Set hand transforms immediately
                 if (_rightHand != null && data.rightHand != null)
                 {
-                    _rightHand.position = new Vector3(data.rightHand.posX, data.rightHand.posY, data.rightHand.posZ);
-                    _rightHand.rotation = Quaternion.Euler(data.rightHand.rotX, data.rightHand.rotY, data.rightHand.rotZ);
+                    _rightHand.position = data.rightHand.position;
+                    _rightHand.rotation = Quaternion.Euler(data.rightHand.rotation);
                 }
 
                 if (_leftHand != null && data.leftHand != null)
                 {
-                    _leftHand.position = new Vector3(data.leftHand.posX, data.leftHand.posY, data.leftHand.posZ);
-                    _leftHand.rotation = Quaternion.Euler(data.leftHand.rotX, data.leftHand.rotY, data.leftHand.rotZ);
+                    _leftHand.position = data.leftHand.position;
+                    _leftHand.rotation = Quaternion.Euler(data.leftHand.rotation);
                 }
 
                 // Set virtual transforms immediately
@@ -228,8 +220,8 @@ namespace Styly.NetSync
                         if (_virtualTransforms[i] != null && data.virtuals[i] != null)
                         {
                             var vt = data.virtuals[i];
-                            _virtualTransforms[i].position = new Vector3(vt.posX, vt.posY, vt.posZ);
-                            _virtualTransforms[i].rotation = Quaternion.Euler(vt.rotX, vt.rotY, vt.rotZ);
+                            _virtualTransforms[i].position = vt.position;
+                            _virtualTransforms[i].rotation = Quaternion.Euler(vt.rotation);
                         }
                     }
                 }
@@ -240,58 +232,36 @@ namespace Styly.NetSync
             _targetLeftHand = data.leftHand;
             _targetVirtuals = data.virtuals;
             _hasTargetData = true;
-            _physicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
-            _physicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
+            _physicalPosition = data.physical.position;
+            _physicalRotation = data.physical.rotation;
 
             // Update client number for remote players
             _clientNo = data.clientNo;
         }
 
-        // Unified transform conversion method
-        // isLocalSpace: whether to read from local space (physical) vs world space (virtual)
-        private Transform3D ConvertToTransform3D(Transform transform, bool isLocalSpace)
+        // Convert transform to TransformData
+        private TransformData ConvertToTransformData(Transform transform, bool isPhysical)
         {
-            if (transform == null) { return new Transform3D(); }
+            if (transform == null) { return new TransformData(); }
 
-            if (isLocalSpace)
+            return new TransformData
             {
-                // Physical/local transform (XZ position, Y rotation only)
-                return new Transform3D(
-                    transform.localPosition.x,
-                    0,
-                    transform.localPosition.z,
-                    0,
-                    transform.localEulerAngles.y,
-                    0,
-                    true
-                );
-            }
-            else
-            {
-                // Virtual/world transform (full 6DOF)
-                return new Transform3D(
-                    transform.position.x,
-                    transform.position.y,
-                    transform.position.z,
-                    transform.eulerAngles.x,
-                    transform.eulerAngles.y,
-                    transform.eulerAngles.z,
-                    false
-                );
-            }
+                position = isPhysical ? transform.localPosition : transform.position,
+                rotation = isPhysical ? transform.localEulerAngles : transform.eulerAngles
+            };
         }
 
-        // Convert transform array to Transform3D list
-        private List<Transform3D> ConvertToTransform3DList(Transform[] transforms, bool isLocalSpace)
+        // Convert transform array to TransformData list
+        private List<TransformData> ConvertToTransformDataList(Transform[] transforms, bool isPhysical)
         {
-            var result = new List<Transform3D>();
+            var result = new List<TransformData>();
             if (transforms != null)
             {
                 foreach (var t in transforms)
                 {
                     if (t != null)
                     {
-                        result.Add(ConvertToTransform3D(t, isLocalSpace));
+                        result.Add(ConvertToTransformData(t, isPhysical));
                     }
                 }
             }
@@ -333,15 +303,12 @@ namespace Styly.NetSync
         }
 
         // Unified interpolation method for any transform
-        // isLocalSpace: interpolate using localPosition/localRotation vs world position/rotation
-        private void InterpolateSingleTransform(Transform transform, Transform3D target, float deltaTime, bool isLocalSpace)
+        private void InterpolateSingleTransform(Transform transform, TransformData target, float deltaTime, bool isPhysical)
         {
-            Vector3 targetPos = isLocalSpace
-                ? new Vector3(target.posX, transform.localPosition.y, target.posZ)
-                : new Vector3(target.posX, target.posY, target.posZ);
-            Quaternion targetRot = Quaternion.Euler(target.rotX, target.rotY, target.rotZ);
+            Vector3 targetPos = target.position;
+            Quaternion targetRot = Quaternion.Euler(target.rotation);
 
-            if (isLocalSpace)
+            if (isPhysical)
             {
                 transform.localPosition = Vector3.Lerp(transform.localPosition, targetPos, deltaTime);
                 transform.localRotation = Quaternion.Lerp(transform.localRotation, targetRot, deltaTime);
