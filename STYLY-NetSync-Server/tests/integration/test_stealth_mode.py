@@ -19,10 +19,9 @@ def create_stealth_handshake(device_id: str) -> bytes:
     buffer.append(len(device_id_bytes))
     buffer.extend(device_id_bytes)
 
-    # Physical transform with NaN values (3 floats)
-    buffer.extend(struct.pack('<f', float('nan')))  # posX
-    buffer.extend(struct.pack('<f', float('nan')))  # posZ
-    buffer.extend(struct.pack('<f', float('nan')))  # rotY
+    # Physical transform with NaN values (6 floats)
+    for _ in range(6):
+        buffer.extend(struct.pack('<f', float('nan')))
 
     # Head transform with NaN values (6 floats)
     for _ in range(6):
