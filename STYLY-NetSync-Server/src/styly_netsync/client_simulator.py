@@ -114,7 +114,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": 0,  # For simplicity, no rotation in simulation
                 "rotZ": 0,
-                "isLocalSpace": True,
             },
             "head": {
                 "posX": head_pos[0],
@@ -123,7 +122,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": 0,
                 "rotZ": 0,
-                "isLocalSpace": False,
             },
             "rightHand": {
                 "posX": right_hand_pos[0],
@@ -132,7 +130,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": 0,
                 "rotZ": 0,
-                "isLocalSpace": False,
             },
             "leftHand": {
                 "posX": left_hand_pos[0],
@@ -141,7 +138,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": 0,
                 "rotZ": 0,
-                "isLocalSpace": False,
             },
             "virtuals": virtuals,
         }
@@ -302,7 +298,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": current_phase,  # Rotate around Y axis
                 "rotZ": 0,
-                "isLocalSpace": False,
             }
             virtuals.append(virtual_pos)
 

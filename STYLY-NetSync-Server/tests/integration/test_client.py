@@ -151,7 +151,6 @@ class TestClient:
                 'rotX': 0,
                 'rotY': self.rotation_y,
                 'rotZ': 0,
-                'isLocalSpace': True
             },
             'head': {
                 'posX': self.position_x,
@@ -160,7 +159,6 @@ class TestClient:
                 'rotX': 0,
                 'rotY': self.rotation_y,
                 'rotZ': 0,
-                'isLocalSpace': False
             },
             'rightHand': {
                 'posX': self.position_x + 0.3,
@@ -169,7 +167,6 @@ class TestClient:
                 'rotX': 0,
                 'rotY': 0,
                 'rotZ': 0,
-                'isLocalSpace': False
             },
             'leftHand': {
                 'posX': self.position_x - 0.3,
@@ -178,7 +175,6 @@ class TestClient:
                 'rotX': 0,
                 'rotY': 0,
                 'rotZ': 0,
-                'isLocalSpace': False
             },
             'virtuals': []  # No virtual objects for this test
         }
