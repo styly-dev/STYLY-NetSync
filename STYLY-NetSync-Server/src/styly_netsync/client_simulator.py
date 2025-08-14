@@ -23,6 +23,7 @@ except ImportError:
     # Fallback for direct script execution
     from binary_serializer import serialize_client_transform
 
+
 class MovementPattern(Enum):
     """Movement patterns matching DebugMoveAvatar.cs"""
 
@@ -31,6 +32,7 @@ class MovementPattern(Enum):
     RANDOM_WALK = 2
     LINEAR_PING_PONG = 3
     SPIRAL = 4
+
 
 class SimulatedClient:
     """Represents a single simulated client with movement patterns."""
@@ -109,12 +111,11 @@ class SimulatedClient:
             "deviceId": self.device_id,
             "physical": {
                 "posX": new_position[0],
-                "posY": 0,  # Y is always 0 for physical transform
+                "posY": 0,
                 "posZ": new_position[2],
                 "rotX": 0,
-                "rotY": 0,  # For simplicity, no rotation in simulation
+                "rotY": 0,
                 "rotZ": 0,
-                "isLocalSpace": True,
             },
             "head": {
                 "posX": head_pos[0],
@@ -123,7 +124,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": 0,
                 "rotZ": 0,
-                "isLocalSpace": False,
             },
             "rightHand": {
                 "posX": right_hand_pos[0],
@@ -132,7 +132,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": 0,
                 "rotZ": 0,
-                "isLocalSpace": False,
             },
             "leftHand": {
                 "posX": left_hand_pos[0],
@@ -141,7 +140,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": 0,
                 "rotZ": 0,
-                "isLocalSpace": False,
             },
             "virtuals": virtuals,
         }
@@ -302,7 +300,6 @@ class SimulatedClient:
                 "rotX": 0,
                 "rotY": current_phase,  # Rotate around Y axis
                 "rotZ": 0,
-                "isLocalSpace": False,
             }
             virtuals.append(virtual_pos)
 
@@ -339,9 +336,12 @@ class ClientSimulator:
 
         # Check system limits first
         import resource
+
         try:
             soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-            self.logger.info(f"System file descriptor limits: soft={soft_limit}, hard={hard_limit}")
+            self.logger.info(
+                f"System file descriptor limits: soft={soft_limit}, hard={hard_limit}"
+            )
 
             # Warn if trying to create too many clients
             # Each client needs 1 socket + overhead for other system files
@@ -395,7 +395,9 @@ class ClientSimulator:
                     break
 
         if failed_clients > 0:
-            self.logger.warning(f"Failed to start {failed_clients} clients due to resource limits.")
+            self.logger.warning(
+                f"Failed to start {failed_clients} clients due to resource limits."
+            )
 
         self.logger.info("All clients started. Press Ctrl+C to stop simulation.")
 
@@ -421,7 +423,9 @@ class ClientSimulator:
                 self.logger.debug(f"Waiting for device thread {i} to finish...")
                 thread.join(timeout=2.0)
                 if thread.is_alive():
-                    self.logger.warning(f"Device thread {i} did not finish within timeout")
+                    self.logger.warning(
+                        f"Device thread {i} did not finish within timeout"
+                    )
 
         # Terminate the shared context after all threads are done
         try:
@@ -484,7 +488,9 @@ class ClientSimulator:
 
         except zmq.error.ZMQError as e:
             if "Too many open files" in str(e):
-                client.logger.error("Socket creation failed - too many open files. Consider reducing the number of clients or increasing system ulimit.")
+                client.logger.error(
+                    "Socket creation failed - too many open files. Consider reducing the number of clients or increasing system ulimit."
+                )
             else:
                 client.logger.error(f"ZMQ error in client simulation: {e}")
         except Exception as e:
@@ -498,9 +504,7 @@ class ClientSimulator:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="STYLY NetSync Client Simulator"
-    )
+    parser = argparse.ArgumentParser(description="STYLY NetSync Client Simulator")
     parser.add_argument(
         "--clients",
         type=int,
