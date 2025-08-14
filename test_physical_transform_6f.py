@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Test script to verify Physical Transform 6f implementation
-Tests that physical transform now includes full position (x,y,z) and rotation (x,y,z)
+Test script to verify Physical Transform 6f implementation.
+Tests that physical transforms are serialized and deserialized with all 6 degrees of freedom: posX, posY, posZ, rotX, rotY, rotZ.
 """
 
 import math
