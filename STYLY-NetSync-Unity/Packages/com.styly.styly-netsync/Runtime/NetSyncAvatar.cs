@@ -189,7 +189,12 @@ namespace Styly.NetSync
                 if (_physicalTransform != null && data.physical != null)
                 {
                     _physicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
-                    _physicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
+                    Vector3 newPhysicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
+                    Vector3 newPhysicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
+                    _physicalPosition = newPhysicalPosition;
+                    _physicalRotation = newPhysicalRotation;
+                    _physicalTransform.localPosition = newPhysicalPosition;
+                    _physicalTransform.localEulerAngles = newPhysicalRotation;
                     _physicalTransform.localPosition = _physicalPosition;
                     _physicalTransform.localEulerAngles = _physicalRotation;
                 }
