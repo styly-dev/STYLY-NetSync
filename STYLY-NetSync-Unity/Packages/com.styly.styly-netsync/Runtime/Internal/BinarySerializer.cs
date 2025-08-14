@@ -262,8 +262,6 @@ namespace Styly.NetSync
 
         #endregion
 
-        // Removed obsolete size calculation code - all transforms now use 6 floats
-
         /// <summary>
         /// Serialize an RPC broadcast message
         /// </summary>
