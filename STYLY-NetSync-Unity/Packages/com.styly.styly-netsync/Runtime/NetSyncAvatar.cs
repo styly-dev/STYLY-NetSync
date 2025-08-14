@@ -190,6 +190,8 @@ namespace Styly.NetSync
                 {
                     _physicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
                     _physicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
+                    _physicalTransform.localPosition = _physicalPosition;
+                    _physicalTransform.localEulerAngles = _physicalRotation;
                 }
 
                 // Set head transform immediately
