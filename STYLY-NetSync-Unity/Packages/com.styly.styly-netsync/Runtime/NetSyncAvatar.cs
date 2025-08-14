@@ -239,7 +239,7 @@ namespace Styly.NetSync
             _clientNo = data.clientNo;
         }
 
-        // Convert transform to TransformData
+        // Converts a Unity Transform to a TransformData object
         private TransformData ConvertToTransformData(Transform transform, bool isPhysical)
         {
             if (transform == null) { return new TransformData(); }
