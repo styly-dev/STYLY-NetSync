@@ -1,0 +1,14 @@
+# Locust load testing framework
+locust>=2.17.0
+
+# ZeroMQ for STYLY NetSync communication
+pyzmq>=26.0.0
+
+# Data analysis and visualization
+pandas>=2.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Additional utilities
+numpy>=1.24.0
+psutil>=5.9.0  # System monitoring
