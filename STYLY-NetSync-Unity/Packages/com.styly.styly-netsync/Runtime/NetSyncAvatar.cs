@@ -16,8 +16,13 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private int _clientNo;
 
         [Header("Transform Sync Settings")]
-        private Transform _physicalTransform; // Object to sync Physical position (local coordinate system). _head will be used for physical transform of local player
+        [SerializeField, ReadOnly] private Transform _physicalTransform; // Object to sync Physical position (local coordinate system). _head will be used for physical transform of local player
 
+        [Header("Physical Transform Data (Runtime)")]
+        [SerializeField, ReadOnly] private Vector3 _physicalPosition;
+        [SerializeField, ReadOnly] private Vector3 _physicalRotation;
+
+        [Header("Body Parts")]
         [SerializeField] private Transform _head;
         [SerializeField] private Transform _rightHand;
         [SerializeField] private Transform _leftHand;
@@ -30,7 +35,7 @@ namespace Styly.NetSync
         // Properties
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
-        public bool IsLocalPlayer { get; private set; }
+        public bool IsLocalAvatar { get; private set; }
 
         // Variables for interpolation
         private Transform3D _targetPhysical;
@@ -42,17 +47,20 @@ namespace Styly.NetSync
 
         // Reference to NetSyncManager
         private NetSyncManager _netSyncManager;
-        
+
         // Events
         [Header("Network Variable Events")]
         public UnityEvent<string, string, string> OnClientVariableChanged;
 
         void Start()
         {
-            // Use head as the physical transform for local player
-            _physicalTransform = _head;
+            if (IsLocalAvatar)
+            {
+                // Use head as the physical transform for local player
+                _physicalTransform = _head;
+            }
         }
-        
+
         void OnEnable()
         {
             // Subscribe to NetSyncManager's client variable change event
@@ -61,7 +69,7 @@ namespace Styly.NetSync
                 NetSyncManager.Instance.OnClientVariableChanged.AddListener(HandleClientVariableChanged);
             }
         }
-        
+
         void OnDisable()
         {
             // Unsubscribe from NetSyncManager's client variable change event
@@ -72,19 +80,19 @@ namespace Styly.NetSync
         }
 
         // Initialization method called from NetSyncManager
-        public void Initialize(string deviceId, bool isLocal, NetSyncManager manager)
+        public void Initialize(string deviceId, bool isLocalAvatar, NetSyncManager manager)
         {
             _deviceId = deviceId;
-            IsLocalPlayer = isLocal;
+            IsLocalAvatar = isLocalAvatar;
             _netSyncManager = manager;
-            
-            if (isLocal)
+
+            if (isLocalAvatar)
             {
                 // For local player, client number will be updated via NetSyncManager
                 _clientNo = 0;
             }
 
-            if (!isLocal)
+            if (!isLocalAvatar)
             {
                 // For remote players, set initial data for interpolation
                 _targetPhysical = new Transform3D();
@@ -98,15 +106,15 @@ namespace Styly.NetSync
                 }
             }
         }
-        
+
         // Initialization method for remote players with known client number
         public void InitializeRemote(int clientNo, NetSyncManager manager)
         {
             _clientNo = clientNo;
             _deviceId = null; // Will be set when ID mapping is received
-            IsLocalPlayer = false;
+            IsLocalAvatar = false;
             _netSyncManager = manager;
-            
+
             // For remote players, set initial data for interpolation
             _targetPhysical = new Transform3D();
             _targetHead = new Transform3D();
@@ -121,7 +129,7 @@ namespace Styly.NetSync
 
         void Update()
         {
-            if (!IsLocalPlayer)
+            if (!IsLocalAvatar)
             {
                 // For remote players, interpolate and update Transform
                 if (_hasTargetData)
@@ -134,6 +142,15 @@ namespace Styly.NetSync
                 // For local player, update client number display
                 _clientNo = _netSyncManager.ClientNo;
             }
+
+            // Update physical transform display values for inspector
+#if UNITY_EDITOR
+            if (_physicalTransform != null)
+            {
+                _physicalPosition = _physicalTransform.localPosition;
+                _physicalRotation = _physicalTransform.localEulerAngles;
+            }
+#endif
         }
 
         // Get current transform data for sending
@@ -154,47 +171,54 @@ namespace Styly.NetSync
         // Update device ID when mapping is received
         public void UpdateDeviceId(string deviceId)
         {
-            if (!IsLocalPlayer && !string.IsNullOrEmpty(deviceId))
+            if (!IsLocalAvatar && !string.IsNullOrEmpty(deviceId))
             {
                 _deviceId = deviceId;
             }
         }
-        
+
         // Receive and apply transform data (for remote players)
         public void SetTransformData(ClientTransformData data)
         {
-            if (IsLocalPlayer) { return; }
-            
+            if (IsLocalAvatar) { return; }
+
             // If this is the first data received, immediately set position to avoid interpolation from origin
             if (!_hasTargetData)
             {
                 // Set physical transform immediately
                 if (_physicalTransform != null && data.physical != null)
                 {
-                    _physicalTransform.localPosition = new Vector3(data.physical.posX, _physicalTransform.localPosition.y, data.physical.posZ);
-                    _physicalTransform.localRotation = Quaternion.Euler(0, data.physical.rotY, 0);
+                    _physicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
+                    Vector3 newPhysicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
+                    Vector3 newPhysicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
+                    _physicalPosition = newPhysicalPosition;
+                    _physicalRotation = newPhysicalRotation;
+                    _physicalTransform.localPosition = newPhysicalPosition;
+                    _physicalTransform.localEulerAngles = newPhysicalRotation;
+                    _physicalTransform.localPosition = _physicalPosition;
+                    _physicalTransform.localEulerAngles = _physicalRotation;
                 }
-                
+
                 // Set head transform immediately
                 if (_head != null && data.head != null)
                 {
                     _head.position = new Vector3(data.head.posX, data.head.posY, data.head.posZ);
                     _head.rotation = Quaternion.Euler(data.head.rotX, data.head.rotY, data.head.rotZ);
                 }
-                
+
                 // Set hand transforms immediately
                 if (_rightHand != null && data.rightHand != null)
                 {
                     _rightHand.position = new Vector3(data.rightHand.posX, data.rightHand.posY, data.rightHand.posZ);
                     _rightHand.rotation = Quaternion.Euler(data.rightHand.rotX, data.rightHand.rotY, data.rightHand.rotZ);
                 }
-                
+
                 if (_leftHand != null && data.leftHand != null)
                 {
                     _leftHand.position = new Vector3(data.leftHand.posX, data.leftHand.posY, data.leftHand.posZ);
                     _leftHand.rotation = Quaternion.Euler(data.leftHand.rotX, data.leftHand.rotY, data.leftHand.rotZ);
                 }
-                
+
                 // Set virtual transforms immediately
                 if (_virtualTransforms != null && data.virtuals != null)
                 {
@@ -210,29 +234,35 @@ namespace Styly.NetSync
                     }
                 }
             }
-            
+
             _targetHead = data.head;
             _targetRightHand = data.rightHand;
             _targetLeftHand = data.leftHand;
             _targetVirtuals = data.virtuals;
             _hasTargetData = true;
-            
+            _physicalPosition = new Vector3(data.physical.posX, data.physical.posY, data.physical.posZ);
+            _physicalRotation = new Vector3(data.physical.rotX, data.physical.rotY, data.physical.rotZ);
+
             // Update client number for remote players
             _clientNo = data.clientNo;
         }
 
         // Unified transform conversion method
-        private Transform3D ConvertToTransform3D(Transform transform, bool isLocal)
+        // isLocalSpace: whether to read from local space (physical) vs world space (virtual)
+        private Transform3D ConvertToTransform3D(Transform transform, bool isLocalSpace)
         {
             if (transform == null) { return new Transform3D(); }
 
-            if (isLocal)
+            if (isLocalSpace)
             {
                 // Physical/local transform (XZ position, Y rotation only)
                 return new Transform3D(
                     transform.localPosition.x,
+                    0,
                     transform.localPosition.z,
+                    0,
                     transform.localEulerAngles.y,
+                    0,
                     true
                 );
             }
@@ -252,7 +282,7 @@ namespace Styly.NetSync
         }
 
         // Convert transform array to Transform3D list
-        private List<Transform3D> ConvertToTransform3DList(Transform[] transforms, bool isLocal)
+        private List<Transform3D> ConvertToTransform3DList(Transform[] transforms, bool isLocalSpace)
         {
             var result = new List<Transform3D>();
             if (transforms != null)
@@ -261,7 +291,7 @@ namespace Styly.NetSync
                 {
                     if (t != null)
                     {
-                        result.Add(ConvertToTransform3D(t, isLocal));
+                        result.Add(ConvertToTransform3D(t, isLocalSpace));
                     }
                 }
             }
@@ -303,14 +333,15 @@ namespace Styly.NetSync
         }
 
         // Unified interpolation method for any transform
-        private void InterpolateSingleTransform(Transform transform, Transform3D target, float deltaTime, bool isLocal)
+        // isLocalSpace: interpolate using localPosition/localRotation vs world position/rotation
+        private void InterpolateSingleTransform(Transform transform, Transform3D target, float deltaTime, bool isLocalSpace)
         {
-            Vector3 targetPos = isLocal
+            Vector3 targetPos = isLocalSpace
                 ? new Vector3(target.posX, transform.localPosition.y, target.posZ)
                 : new Vector3(target.posX, target.posY, target.posZ);
             Quaternion targetRot = Quaternion.Euler(target.rotX, target.rotY, target.rotZ);
 
-            if (isLocal)
+            if (isLocalSpace)
             {
                 transform.localPosition = Vector3.Lerp(transform.localPosition, targetPos, deltaTime);
                 transform.localRotation = Quaternion.Lerp(transform.localRotation, targetRot, deltaTime);
@@ -321,7 +352,7 @@ namespace Styly.NetSync
                 transform.rotation = Quaternion.Lerp(transform.rotation, targetRot, deltaTime);
             }
         }
-        
+
         // Handle client variable changes from NetSyncManager
         private void HandleClientVariableChanged(int clientNo, string name, string oldValue, string newValue)
         {
@@ -331,7 +362,7 @@ namespace Styly.NetSync
                 OnClientVariableChanged?.Invoke(name, oldValue, newValue);
             }
         }
-        
+
         #region === Network Variables Convenience Methods ===
         /// <summary>
         /// Set a client variable for this NetSyncAvatar's owner
@@ -340,7 +371,7 @@ namespace Styly.NetSync
         {
             return NetSyncManager.Instance?.SetClientVariable(_clientNo, name, value) ?? false;
         }
-        
+
         /// <summary>
         /// Get a client variable for this NetSyncAvatar's owner
         /// </summary>
@@ -348,7 +379,7 @@ namespace Styly.NetSync
         {
             return NetSyncManager.Instance?.GetClientVariable(_clientNo, name, defaultValue);
         }
-        
+
         /// <summary>
         /// Set a client variable for a specific client
         /// </summary>
@@ -356,7 +387,7 @@ namespace Styly.NetSync
         {
             return NetSyncManager.Instance?.SetClientVariable(targetClientNo, name, value) ?? false;
         }
-        
+
         /// <summary>
         /// Get a client variable for a specific client
         /// </summary>

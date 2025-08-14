@@ -31,7 +31,7 @@ namespace Styly.NetSync
             }
 
             // Instantiate a local avatar prefab asset
-            GameObject localGO= null;
+            GameObject localGO = null;
             if (localPlayerPrefab.scene.IsValid())
             {
                 Debug.LogError("LocalPlayer Prefab should not be a scene object. Please use a prefab asset instead.");
@@ -64,7 +64,7 @@ namespace Styly.NetSync
         public void SpawnRemotePlayer(int clientNo, string deviceId, GameObject remotePlayerPrefab, NetSyncManager netSyncManager)
         {
             if (remotePlayerPrefab == null || _connectedPeers.ContainsKey(clientNo)) { return; }
-            
+
             if (string.IsNullOrEmpty(deviceId))
             {
                 Debug.LogError($"Cannot spawn remote player {clientNo} without device ID");
@@ -82,12 +82,12 @@ namespace Styly.NetSync
             net.InitializeRemote(clientNo, netSyncManager);
             net.UpdateDeviceId(deviceId);
             _connectedPeers[clientNo] = go;
-            
+
             // Set the GameObject name to include the client ID instead of "(Clone)"
             // Get the original prefab name without "(Clone)" suffix
             string prefabName = remotePlayerPrefab.name;
             go.name = $"{prefabName} ({clientNo})";
-            
+
             DebugLog($"Remote player spawned: clientNo={clientNo}, deviceId={deviceId}");
         }
 
@@ -124,7 +124,7 @@ namespace Styly.NetSync
                 // Return all clients
                 return new HashSet<int>(_connectedPeers.Keys);
             }
-            
+
             // Filter out stealth mode clients (default behavior)
             var result = new HashSet<int>();
             foreach (var clientNo in _connectedPeers.Keys)

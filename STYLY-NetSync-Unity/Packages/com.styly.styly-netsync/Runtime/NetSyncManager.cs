@@ -13,7 +13,7 @@ namespace Styly.NetSync
         [Header("Network Info")]
         [SerializeField, ReadOnly] private string _deviceId;
         [SerializeField, ReadOnly] private int _clientNo = 0;
-        
+
         [Header("Connection Settings")]
         [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
         private int _dealerPort = 5555;
@@ -100,7 +100,7 @@ namespace Styly.NetSync
         {
             return _networkVariableManager?.GetClientVariable(clientNo, name, defaultValue);
         }
-        
+
         /// <summary>
         /// Gets all variables for a specific client (for debugging)
         /// </summary>
@@ -116,7 +116,7 @@ namespace Styly.NetSync
         {
             return _networkVariableManager?.GetAllGlobalVariables() ?? new Dictionary<string, string>();
         }
-        
+
         /// <summary>
         /// Checks if a client is in stealth mode (no visible avatar)
         /// </summary>
@@ -126,7 +126,7 @@ namespace Styly.NetSync
         {
             return _messageProcessor?.IsClientStealthMode(clientNo) ?? false;
         }
-        
+
         #endregion ------------------------------------------------------------------------
 
         #region === Runtime Fields ===
@@ -161,7 +161,7 @@ namespace Styly.NetSync
         public RPCManager RPCManager => _rpcManager;
         public TransformSyncManager TransformSyncManager => _transformSyncManager;
         public MessageProcessor MessageProcessor => _messageProcessor;
-        
+
         public GameObject GetRemotePlayerPrefab() => _remotePlayerPrefab;
         #endregion ------------------------------------------------------------------------
 
@@ -178,7 +178,7 @@ namespace Styly.NetSync
 
             // Detect stealth mode based on local player prefab
             _isStealthMode = (_localPlayerPrefab == null);
-            
+
             InitializeManagers();
             DebugLog($"Device ID: {_deviceId}");
             if (_isStealthMode)
@@ -204,10 +204,10 @@ namespace Styly.NetSync
 
         private void OnApplicationPause(bool paused)
         {
-            if (paused) 
-            { 
+            if (paused)
+            {
                 DebugLog("Application paused - stopping network");
-                StopNetworking(); 
+                StopNetworking();
             }
             else
             {
@@ -267,7 +267,7 @@ namespace Styly.NetSync
             return fallbackGuid;
 #endif
         }
-        
+
         private void InitializeManagers()
         {
             // Initialize managers
@@ -286,14 +286,14 @@ namespace Styly.NetSync
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
             _playerManager.OnClientDisconnected.AddListener(OnRemotePlayerDisconnected);
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
-            
+
             // Setup network variable events
             if (_networkVariableManager != null)
             {
                 _networkVariableManager.OnGlobalVariableChanged += OnGlobalVariableChangedHandler;
                 _networkVariableManager.OnClientVariableChanged += OnClientVariableChangedHandler;
             }
-            
+
             // Setup discovery event
             if (_discoveryManager != null)
             {
@@ -319,37 +319,37 @@ namespace Styly.NetSync
             Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
             OnRPCReceived?.Invoke(senderClientNo, functionName, args);
         }
-        
+
         private void OnGlobalVariableChangedHandler(string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Global Variable Changed - Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
             OnGlobalVariableChanged?.Invoke(name, oldValue, newValue);
         }
-        
+
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
         }
-        
+
         private void OnLocalClientNoAssigned(int clientNo)
         {
             _clientNo = clientNo;
             DebugLog($"Local client number assigned: {clientNo}");
         }
-        
+
         private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
         {
             _discoveredServer = serverAddress;
             _discoveredDealerPort = dealerPort;
             _discoveredSubPort = subPort;
-            
+
             // Update the server address for future connections
             // Remove tcp:// prefix (discovery always returns with tcp://)
             _serverAddress = serverAddress.Substring(6);
             _dealerPort = dealerPort;
             _subPort = subPort;
-            
+
             DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
         }
         #endregion ------------------------------------------------------------------------
