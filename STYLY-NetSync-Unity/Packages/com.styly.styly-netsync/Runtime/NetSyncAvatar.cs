@@ -181,7 +181,6 @@ namespace Styly.NetSync
                 _physicalTransform.localPosition = data.physical.position;
                 _physicalTransform.localRotation = Quaternion.Euler(data.physical.rotation);
                 _physicalPosition = data.physical.position;
-                _physicalRotation = data.physical.rotation;
             }
 
             if (!_hasTargetData)
