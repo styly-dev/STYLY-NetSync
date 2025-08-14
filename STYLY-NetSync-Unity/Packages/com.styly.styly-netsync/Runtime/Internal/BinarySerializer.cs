@@ -21,7 +21,6 @@ namespace Styly.NetSync
 
         // Transform data type identifiers (deprecated - kept for reference)
         // All transforms now use 6 floats for consistency
-
         #region === Serialization ===
 
         // Helper to write TransformData as 6 floats
