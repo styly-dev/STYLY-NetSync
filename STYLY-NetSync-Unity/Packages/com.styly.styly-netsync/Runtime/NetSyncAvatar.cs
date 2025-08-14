@@ -274,7 +274,7 @@ namespace Styly.NetSync
                 InterpolateSingleTransform(_physicalTransform, _targetPhysical, deltaTime, true);
                 // Synchronize cached physical position and rotation after interpolation
                 _physicalPosition = _physicalTransform.position;
-                _physicalRotation = _physicalTransform.rotation;
+                _physicalRotation = _physicalTransform.rotation.eulerAngles;
             }
             if (_head != null && _targetHead != null)
             {
