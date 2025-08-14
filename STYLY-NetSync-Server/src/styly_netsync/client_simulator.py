@@ -18,10 +18,10 @@ import zmq
 
 # Import the binary serializer from the same package
 try:
-    from .binary_serializer import serialize_client_transform
+    from .binary_serializer import serialize_client_transform, TransformData, Vector3
 except ImportError:
     # Fallback for direct script execution
-    from binary_serializer import serialize_client_transform
+    from binary_serializer import serialize_client_transform, TransformData, Vector3
 
 class MovementPattern(Enum):
     """Movement patterns matching DebugMoveAvatar.cs"""
@@ -107,43 +107,29 @@ class SimulatedClient:
         # Build transform data matching the expected format
         transform_data = {
             "deviceId": self.device_id,
-            "physical": {
-                "posX": new_position[0],
-                "posY": 0,  # Y is always 0 for physical transform
-                "posZ": new_position[2],
-                "rotX": 0,
-                "rotY": 0,  # For simplicity, no rotation in simulation
-                "rotZ": 0,
-                "isLocalSpace": True,
-            },
-            "head": {
-                "posX": head_pos[0],
-                "posY": head_pos[1],
-                "posZ": head_pos[2],
-                "rotX": 0,
-                "rotY": 0,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
-            "rightHand": {
-                "posX": right_hand_pos[0],
-                "posY": right_hand_pos[1],
-                "posZ": right_hand_pos[2],
-                "rotX": 0,
-                "rotY": 0,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
-            "leftHand": {
-                "posX": left_hand_pos[0],
-                "posY": left_hand_pos[1],
-                "posZ": left_hand_pos[2],
-                "rotX": 0,
-                "rotY": 0,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
-            "virtuals": virtuals,
+            "physical": TransformData(
+                position=Vector3(new_position[0], 0, new_position[2]),
+                rotation=Vector3(0, 0, 0),
+            ),
+            "head": TransformData(
+                position=Vector3(head_pos[0], head_pos[1], head_pos[2]),
+                rotation=Vector3(0, 0, 0),
+            ),
+            "rightHand": TransformData(
+                position=Vector3(right_hand_pos[0], right_hand_pos[1], right_hand_pos[2]),
+                rotation=Vector3(0, 0, 0),
+            ),
+            "leftHand": TransformData(
+                position=Vector3(left_hand_pos[0], left_hand_pos[1], left_hand_pos[2]),
+                rotation=Vector3(0, 0, 0),
+            ),
+            "virtuals": [
+                TransformData(
+                    position=Vector3(v["posX"], v["posY"], v["posZ"]),
+                    rotation=Vector3(v.get("rotX", 0), v.get("rotY", 0), v.get("rotZ", 0)),
+                )
+                for v in virtuals
+            ],
         }
 
         return transform_data
