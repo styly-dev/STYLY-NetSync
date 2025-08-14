@@ -285,7 +285,7 @@ namespace Styly.NetSync
         {
             float deltaTime = Time.deltaTime * _interpolationSpeed;
             
-            // Physical Transform interpolation (local space)
+            // Interpolate physical transform in local space towards target data received from the network
             if (_physicalTransform != null && _targetPhysical != null)
             {
                 _physicalTransform.localPosition = Vector3.Lerp(_physicalTransform.localPosition, _targetPhysical.GetPosition(), deltaTime);
