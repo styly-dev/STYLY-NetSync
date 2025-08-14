@@ -65,6 +65,8 @@ from styly_netsync.binary_serializer import (
     serialize_rpc_client_message,
     serialize_rpc_message,
     serialize_rpc_request,
+    TransformData,
+    Vector3,
 )
 
 # Configure logging
@@ -144,43 +146,23 @@ class TestClient:
         # Build transform data
         transform_data = {
             'deviceId': self.device_id,
-            'physical': {
-                'posX': self.position_x,
-                'posY': 0,
-                'posZ': self.position_z,
-                'rotX': 0,
-                'rotY': self.rotation_y,
-                'rotZ': 0,
-                'isLocalSpace': True
-            },
-            'head': {
-                'posX': self.position_x,
-                'posY': 1.6,  # Head height
-                'posZ': self.position_z,
-                'rotX': 0,
-                'rotY': self.rotation_y,
-                'rotZ': 0,
-                'isLocalSpace': False
-            },
-            'rightHand': {
-                'posX': self.position_x + 0.3,
-                'posY': 1.2,
-                'posZ': self.position_z,
-                'rotX': 0,
-                'rotY': 0,
-                'rotZ': 0,
-                'isLocalSpace': False
-            },
-            'leftHand': {
-                'posX': self.position_x - 0.3,
-                'posY': 1.2,
-                'posZ': self.position_z,
-                'rotX': 0,
-                'rotY': 0,
-                'rotZ': 0,
-                'isLocalSpace': False
-            },
-            'virtuals': []  # No virtual objects for this test
+            'physical': TransformData(
+                position=Vector3(self.position_x, 0, self.position_z),
+                rotation=Vector3(0, self.rotation_y, 0)
+            ),
+            'head': TransformData(
+                position=Vector3(self.position_x, 1.6, self.position_z),
+                rotation=Vector3(0, self.rotation_y, 0)
+            ),
+            'rightHand': TransformData(
+                position=Vector3(self.position_x + 0.3, 1.2, self.position_z),
+                rotation=Vector3(0, 0, 0)
+            ),
+            'leftHand': TransformData(
+                position=Vector3(self.position_x - 0.3, 1.2, self.position_z),
+                rotation=Vector3(0, 0, 0)
+            ),
+            'virtuals': []
         }
 
         # Serialize and send

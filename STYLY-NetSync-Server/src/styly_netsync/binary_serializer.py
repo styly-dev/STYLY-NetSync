@@ -1,5 +1,6 @@
 import math
 import struct
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Union
 
 # Message type identifiers
@@ -14,56 +15,44 @@ MSG_GLOBAL_VAR_SYNC = 8  # Sync global variables
 MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 
-# Transform data type identifiers
-TRANSFORM_PHYSICAL = 1  # 3 floats: posX, posZ, rotY
-TRANSFORM_VIRTUAL = 2   # 6 floats: full transform
-
 # Maximum allowed virtual transforms to prevent memory issues
 MAX_VIRTUAL_TRANSFORMS = 50
 
+
+@dataclass
+class Vector3:
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+
+@dataclass
+class TransformData:
+    position: Vector3 = field(default_factory=Vector3)
+    rotation: Vector3 = field(default_factory=Vector3)
+
 # Stealth mode detection utilities
 def _is_nan_transform(transform: Dict[str, Any]) -> bool:
-    """Check if a transform contains all NaN values (stealth mode indicator)"""
-    # Check physical transform (posX, posZ, rotY)
-    physical = transform.get('physical', {})
-    if not physical:
+    """Check if all transform values are NaN (stealth mode)."""
+    def _is_nan_td(td: TransformData) -> bool:
+        vals = [td.position.x, td.position.y, td.position.z,
+                td.rotation.x, td.rotation.y, td.rotation.z]
+        return all(math.isnan(v) for v in vals)
+
+    physical = transform.get('physical')
+    head = transform.get('head')
+    right_hand = transform.get('rightHand')
+    left_hand = transform.get('leftHand')
+
+    if not all([physical, head, right_hand, left_hand]):
         return False
 
-    # All physical values must be NaN
-    if not (math.isnan(physical.get('posX', 0)) and
-            math.isnan(physical.get('posZ', 0)) and
-            math.isnan(physical.get('rotY', 0))):
+    if not (_is_nan_td(physical) and _is_nan_td(head) and _is_nan_td(right_hand) and _is_nan_td(left_hand)):
         return False
 
-    # Check head transform (all 6 values must be NaN)
-    head = transform.get('head', {})
-    if not head:
-        return False
-    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
-        if not math.isnan(head.get(key, 0)):
-            return False
-
-    # Check right hand transform (all 6 values must be NaN)
-    right_hand = transform.get('rightHand', {})
-    if not right_hand:
-        return False
-    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
-        if not math.isnan(right_hand.get(key, 0)):
-            return False
-
-    # Check left hand transform (all 6 values must be NaN)
-    left_hand = transform.get('leftHand', {})
-    if not left_hand:
-        return False
-    for key in ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ']:
-        if not math.isnan(left_hand.get(key, 0)):
-            return False
-
-    # Check virtuals count is 0
     virtuals = transform.get('virtuals', [])
     if len(virtuals) != 0:
         return False
-
     return True
 
 def _is_stealth_client(data: Dict[str, Any]) -> bool:
@@ -91,108 +80,66 @@ def _unpack_string(data: bytes, offset: int, use_ushort: bool = False) -> Tuple[
     string = data[offset:offset+length].decode('utf-8')
     return string, offset + length
 
-def _pack_transform(buffer: bytearray, transform: Dict[str, Any], keys: List[str]) -> None:
-    """Pack a transform with specified keys"""
-    for key in keys:
-        buffer.extend(struct.pack('<f', transform.get(key, 0)))
+def serialize_transform_data(buffer: bytearray, data: TransformData) -> None:
+    buffer.extend(struct.pack('<f', data.position.x))
+    buffer.extend(struct.pack('<f', data.position.y))
+    buffer.extend(struct.pack('<f', data.position.z))
+    buffer.extend(struct.pack('<f', data.rotation.x))
+    buffer.extend(struct.pack('<f', data.rotation.y))
+    buffer.extend(struct.pack('<f', data.rotation.z))
 
-def _unpack_transform(data: bytes, offset: int, keys: List[str], is_local_space: bool = False) -> Tuple[Dict[str, Any], int]:
-    """Unpack a transform with specified keys"""
-    transform = {'isLocalSpace': is_local_space}
-    for key in keys:
-        value = struct.unpack('<f', data[offset:offset+4])[0]
-        transform[key] = value
-        offset += 4
-    return transform, offset
-
-def _pack_full_transform(buffer: bytearray, transform: Dict[str, Any]) -> None:
-    """Pack a full 6-float transform"""
-    _pack_transform(buffer, transform, ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ'])
-
-def _unpack_full_transform(data: bytes, offset: int, is_local_space: bool = False) -> Tuple[Dict[str, Any], int]:
-    """Unpack a full 6-float transform"""
-    return _unpack_transform(data, offset, ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ'], is_local_space)
-
-def _serialize_client_data(buffer: bytearray, client: Dict[str, Any]) -> None:
-    """Serialize a single client's data (shared by room transform and client transform)"""
-    # Device ID
-    _pack_string(buffer, client.get('deviceId', ''))
-
-    # Physical transform (special case: only 3 values)
-    physical = client.get('physical', {})
-    _pack_transform(buffer, physical, ['posX', 'posZ', 'rotY'])
-
-    # Head, Right hand, Left hand transforms
-    for transform_key in ['head', 'rightHand', 'leftHand']:
-        _pack_full_transform(buffer, client.get(transform_key, {}))
-
-    # Virtual transforms
-    virtuals = client.get('virtuals', [])
-    virtual_count = min(len(virtuals), MAX_VIRTUAL_TRANSFORMS)
-    # Limit virtual transforms to maximum allowed
-    buffer.append(virtual_count)
-
-    for i in range(virtual_count):
-        _pack_full_transform(buffer, virtuals[i])
 
 def serialize_client_transform(data: Dict[str, Any]) -> bytes:
-    """Serialize client transform data to binary format"""
     buffer = bytearray()
-
-    # Message type
     buffer.append(MSG_CLIENT_TRANSFORM)
 
-    # Client data
-    _serialize_client_data(buffer, data)
+    device_id_bytes = data.get('deviceId', '').encode('utf-8')
+    buffer.append(len(device_id_bytes))
+    buffer.extend(device_id_bytes)
+
+    serialize_transform_data(buffer, data.get('physical', TransformData()))
+    serialize_transform_data(buffer, data.get('head', TransformData()))
+    serialize_transform_data(buffer, data.get('rightHand', TransformData()))
+    serialize_transform_data(buffer, data.get('leftHand', TransformData()))
+
+    virtuals = data.get('virtuals', [])
+    count = min(len(virtuals), MAX_VIRTUAL_TRANSFORMS)
+    buffer.append(count)
+    for i in range(count):
+        serialize_transform_data(buffer, virtuals[i])
 
     return bytes(buffer)
 
-def serialize_room_transform(data: Dict[str, Any]) -> bytes:
-    """Serialize room transform data with short IDs (2 bytes per client ID)
-    
-    Args:
-        data: The room transform data with clientNo field in each client
-    """
-    buffer = bytearray()
 
-    # Message type
+def serialize_room_transform(data: Dict[str, Any]) -> bytes:
+    buffer = bytearray()
     buffer.append(MSG_ROOM_TRANSFORM)
 
-    # Room ID
     _pack_string(buffer, data.get('roomId', ''))
 
-    # Number of clients
     clients = data.get('clients', [])
-    buffer.extend(struct.pack('<H', len(clients)))  # ushort
+    buffer.extend(struct.pack('<H', len(clients)))
 
-    # Each client's data with short ID
     for client in clients:
         _serialize_client_data_short(buffer, client)
 
     return bytes(buffer)
 
+
 def _serialize_client_data_short(buffer: bytearray, client: Dict[str, Any]) -> None:
-    """Serialize a single client's data with client number only (2 bytes)"""
-    # Client number (2 bytes)
     client_no = client.get('clientNo', 0)
     buffer.extend(struct.pack('<H', client_no))
 
-    # Physical transform (special case: only 3 values)
-    physical = client.get('physical', {})
-    _pack_transform(buffer, physical, ['posX', 'posZ', 'rotY'])
+    serialize_transform_data(buffer, client.get('physical', TransformData()))
+    serialize_transform_data(buffer, client.get('head', TransformData()))
+    serialize_transform_data(buffer, client.get('rightHand', TransformData()))
+    serialize_transform_data(buffer, client.get('leftHand', TransformData()))
 
-    # Head, Right hand, Left hand transforms
-    for transform_key in ['head', 'rightHand', 'leftHand']:
-        _pack_full_transform(buffer, client.get(transform_key, {}))
-
-    # Virtual transforms
     virtuals = client.get('virtuals', [])
-    virtual_count = min(len(virtuals), MAX_VIRTUAL_TRANSFORMS)
-    # Limit virtual transforms to maximum allowed
-    buffer.append(virtual_count)
-
-    for i in range(virtual_count):
-        _pack_full_transform(buffer, virtuals[i])
+    count = min(len(virtuals), MAX_VIRTUAL_TRANSFORMS)
+    buffer.append(count)
+    for i in range(count):
+        serialize_transform_data(buffer, virtuals[i])
 
 
 def _serialize_rpc_base(buffer: bytearray, data: Dict[str, Any], msg_type: int) -> None:
@@ -411,43 +358,31 @@ def deserialize(data: bytes) -> Tuple[int, Union[Dict[str, Any], None], bytes]:
         # Error deserializing message - return None data
         return message_type, None, b''
 
-def _deserialize_client_transform(data: bytes, offset: int) -> Dict[str, Any]:
-    """Deserialize client transform from binary data"""
-    result = {}
+def deserialize_transform_data(data: bytes, offset: int) -> Tuple[TransformData, int]:
+    px, py, pz, rx, ry, rz = struct.unpack_from('<ffffff', data, offset)
+    offset += 24
+    return TransformData(position=Vector3(px, py, pz), rotation=Vector3(rx, ry, rz)), offset
 
-    # Device ID
+
+def _deserialize_client_transform(data: bytes, offset: int) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+
     result['deviceId'], offset = _unpack_string(data, offset)
 
-    # Physical transform (special case with default values)
-    physical_values, offset = _unpack_transform(data, offset, ['posX', 'posZ', 'rotY'], is_local_space=True)
-    result['physical'] = {
-        'posX': physical_values['posX'],
-        'posY': 0,
-        'posZ': physical_values['posZ'],
-        'rotX': 0,
-        'rotY': physical_values['rotY'],
-        'rotZ': 0,
-        'isLocalSpace': True
-    }
+    result['physical'], offset = deserialize_transform_data(data, offset)
+    result['head'], offset = deserialize_transform_data(data, offset)
+    result['rightHand'], offset = deserialize_transform_data(data, offset)
+    result['leftHand'], offset = deserialize_transform_data(data, offset)
 
-    # Head, Right hand, Left hand transforms
-    result['head'], offset = _unpack_full_transform(data, offset)
-    result['rightHand'], offset = _unpack_full_transform(data, offset)
-    result['leftHand'], offset = _unpack_full_transform(data, offset)
-
-    # Virtual transforms
     virtual_count = data[offset]
     offset += 1
-
-    # Validate virtual count to prevent memory issues
     if virtual_count > MAX_VIRTUAL_TRANSFORMS:
         virtual_count = MAX_VIRTUAL_TRANSFORMS
-
-    if virtual_count > 0:
-        result['virtuals'] = []
-        for _ in range(virtual_count):
-            vt, offset = _unpack_full_transform(data, offset)
-            result['virtuals'].append(vt)
+    virtuals: List[TransformData] = []
+    for _ in range(virtual_count):
+        vt, offset = deserialize_transform_data(data, offset)
+        virtuals.append(vt)
+    result['virtuals'] = virtuals
 
     return result
 
@@ -480,55 +415,33 @@ def _deserialize_rpc_client_message(data: bytes, offset: int) -> Dict[str, Any]:
     return result
 
 def _deserialize_room_transform(data: bytes, offset: int) -> Dict[str, Any]:
-    """Deserialize room transform with client numbers only"""
-    result = {}
+    result: Dict[str, Any] = {}
 
-    # Room ID
     result['roomId'], offset = _unpack_string(data, offset)
 
-    # Number of clients
-    client_count = struct.unpack('<H', data[offset:offset+2])[0]
+    client_count = struct.unpack_from('<H', data, offset)[0]
     offset += 2
-
     result['clients'] = []
+
     for _ in range(client_count):
-        client = {}
-
-        # Client number (2 bytes)
-        client_no = struct.unpack('<H', data[offset:offset+2])[0]
+        client: Dict[str, Any] = {}
+        client['clientNo'] = struct.unpack_from('<H', data, offset)[0]
         offset += 2
-        client['clientNo'] = client_no
 
-        # Physical transform
-        physical_values, offset = _unpack_transform(data, offset, ['posX', 'posZ', 'rotY'], is_local_space=True)
-        client['physical'] = {
-            'posX': physical_values['posX'],
-            'posY': 0,
-            'posZ': physical_values['posZ'],
-            'rotX': 0,
-            'rotY': physical_values['rotY'],
-            'rotZ': 0,
-            'isLocalSpace': True
-        }
+        client['physical'], offset = deserialize_transform_data(data, offset)
+        client['head'], offset = deserialize_transform_data(data, offset)
+        client['rightHand'], offset = deserialize_transform_data(data, offset)
+        client['leftHand'], offset = deserialize_transform_data(data, offset)
 
-        # Head, Right hand, Left hand transforms
-        client['head'], offset = _unpack_full_transform(data, offset)
-        client['rightHand'], offset = _unpack_full_transform(data, offset)
-        client['leftHand'], offset = _unpack_full_transform(data, offset)
-
-        # Virtual transforms
         virtual_count = data[offset]
         offset += 1
-
-        # Validate virtual count to prevent memory issues
         if virtual_count > MAX_VIRTUAL_TRANSFORMS:
             virtual_count = MAX_VIRTUAL_TRANSFORMS
-
-        if virtual_count > 0:
-            client['virtuals'] = []
-            for _ in range(virtual_count):
-                vt, offset = _unpack_full_transform(data, offset)
-                client['virtuals'].append(vt)
+        virtuals: List[TransformData] = []
+        for _ in range(virtual_count):
+            vt, offset = deserialize_transform_data(data, offset)
+            virtuals.append(vt)
+        client['virtuals'] = virtuals
 
         result['clients'].append(client)
 
