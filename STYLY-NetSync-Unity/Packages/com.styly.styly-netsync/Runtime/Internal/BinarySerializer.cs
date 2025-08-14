@@ -24,7 +24,17 @@ namespace Styly.NetSync
         private static void WriteTransformData(BinaryWriter writer, TransformData d)
         {
             var p = d?.position ?? Vector3.zero;
-            var r = d?.rotation ?? Vector3.zero;
+            Vector3 p, r;
+            if (d == null)
+            {
+                p = Vector3.zero;
+                r = Vector3.zero;
+            }
+            else
+            {
+                p = d.position;
+                r = d.rotation;
+            }
             writer.Write(p.x); writer.Write(p.y); writer.Write(p.z);
             writer.Write(r.x); writer.Write(r.y); writer.Write(r.z);
         }
