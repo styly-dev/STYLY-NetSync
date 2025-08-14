@@ -15,7 +15,6 @@ MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 
 # Transform data type identifiers (deprecated - kept for reference)
-# All transforms now use 6 floats for consistency
 
 # Maximum allowed virtual transforms to prevent memory issues
 MAX_VIRTUAL_TRANSFORMS = 50
