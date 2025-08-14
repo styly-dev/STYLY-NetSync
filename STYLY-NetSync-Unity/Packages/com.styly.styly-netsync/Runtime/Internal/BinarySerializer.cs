@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 
 namespace Styly.NetSync
@@ -19,11 +20,17 @@ namespace Styly.NetSync
         public const byte MSG_CLIENT_VAR_SET = 9;  // Set client variable
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
 
-        // Transform data type identifiers
-        private const byte TRANSFORM_PHYSICAL = 1;  // 3 floats: posX, posZ, rotY
-        private const byte TRANSFORM_VIRTUAL = 2;   // 6 floats: full transform
-
         #region === Serialization ===
+
+        private static void WriteTransformData(BinaryWriter writer, TransformData data)
+        {
+            writer.Write(data.position.x);
+            writer.Write(data.position.y);
+            writer.Write(data.position.z);
+            writer.Write(data.rotation.x);
+            writer.Write(data.rotation.y);
+            writer.Write(data.rotation.z);
+        }
 
         public static byte[] SerializeClientTransform(ClientTransformData data)
         {
@@ -34,69 +41,32 @@ namespace Styly.NetSync
                 writer.Write(MSG_CLIENT_TRANSFORM);
 
                 // Device ID (as UTF8 bytes with length prefix)
-                var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data.deviceId);
+                var deviceIdBytes = Encoding.UTF8.GetBytes(data.deviceId ?? "");
                 writer.Write((byte)deviceIdBytes.Length);
                 writer.Write(deviceIdBytes);
 
-                // Note: Client number is not sent by client, only assigned by server
-
-                // Physical transform (optimized: 3 floats only)
-                {
-                    writer.Write(data.physical.posX);
-                    writer.Write(data.physical.posZ);
-                    writer.Write(data.physical.rotY);
-                }
+                // Physical transform (local space)
+                WriteTransformData(writer, data.physical ?? new TransformData());
 
                 // Head transform
-                {
-                    writer.Write(data.head.posX);
-                    writer.Write(data.head.posY);
-                    writer.Write(data.head.posZ);
-                    writer.Write(data.head.rotX);
-                    writer.Write(data.head.rotY);
-                    writer.Write(data.head.rotZ);
-                }
+                WriteTransformData(writer, data.head ?? new TransformData());
 
                 // Right hand transform
-                {
-                    writer.Write(data.rightHand.posX);
-                    writer.Write(data.rightHand.posY);
-                    writer.Write(data.rightHand.posZ);
-                    writer.Write(data.rightHand.rotX);
-                    writer.Write(data.rightHand.rotY);
-                    writer.Write(data.rightHand.rotZ);
-                }
+                WriteTransformData(writer, data.rightHand ?? new TransformData());
 
                 // Left hand transform
-                {
-                    writer.Write(data.leftHand.posX);
-                    writer.Write(data.leftHand.posY);
-                    writer.Write(data.leftHand.posZ);
-                    writer.Write(data.leftHand.rotX);
-                    writer.Write(data.leftHand.rotY);
-                    writer.Write(data.leftHand.rotZ);
-                }
+                WriteTransformData(writer, data.leftHand ?? new TransformData());
 
                 // Virtual transforms count
                 var virtualCount = data.virtuals?.Count ?? 0;
-                if (virtualCount > MAX_VIRTUAL_TRANSFORMS)
-                {
-                    virtualCount = MAX_VIRTUAL_TRANSFORMS;
-                }
                 writer.Write((byte)virtualCount);
 
-                // Virtual transforms (always full 6DOF)
-                if (data.virtuals != null && virtualCount > 0)
+                // Virtual transforms
+                if (data.virtuals != null)
                 {
                     for (int i = 0; i < virtualCount; i++)
                     {
-                        var vt = data.virtuals[i];
-                        writer.Write(vt.posX);
-                        writer.Write(vt.posY);
-                        writer.Write(vt.posZ);
-                        writer.Write(vt.rotX);
-                        writer.Write(vt.rotY);
-                        writer.Write(vt.rotZ);
+                        WriteTransformData(writer, data.virtuals[i] ?? new TransformData());
                     }
                 }
 
@@ -118,27 +88,16 @@ namespace Styly.NetSync
                 writer.Write(deviceIdBytes);
 
                 // Physical transform with NaN values (stealth mode indicator)
-                writer.Write(float.NaN); // posX
-                writer.Write(float.NaN); // posZ
-                writer.Write(float.NaN); // rotY
+                for (int i = 0; i < 6; i++) { writer.Write(float.NaN); }
 
                 // Head transform (NaN values)
-                for (int i = 0; i < 6; i++) // posX, posY, posZ, rotX, rotY, rotZ
-                {
-                    writer.Write(float.NaN);
-                }
+                for (int i = 0; i < 6; i++) { writer.Write(float.NaN); }
 
                 // Right hand transform (NaN values)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
+                for (int i = 0; i < 6; i++) { writer.Write(float.NaN); }
 
                 // Left hand transform (NaN values)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
+                for (int i = 0; i < 6; i++) { writer.Write(float.NaN); }
 
                 // No virtual transforms for stealth handshake
                 writer.Write((byte)0);
@@ -204,19 +163,27 @@ namespace Styly.NetSync
         }
 
 
+        private static TransformData ReadTransformData(BinaryReader reader)
+        {
+            return new TransformData
+            {
+                position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()),
+                rotation = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle())
+            };
+        }
+
         private static RoomTransformData DeserializeRoomTransform(BinaryReader reader)
         {
             var data = new RoomTransformData();
 
             // Room ID
             var roomIdLength = reader.ReadByte();
-            data.roomId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(roomIdLength));
+            data.roomId = Encoding.UTF8.GetString(reader.ReadBytes(roomIdLength));
 
             // Number of clients
             var clientCount = reader.ReadUInt16();
             data.clients = new List<ClientTransformData>(clientCount);
 
-            // Each client with short ID
             for (int i = 0; i < clientCount; i++)
             {
                 var client = new ClientTransformData();
@@ -224,76 +191,33 @@ namespace Styly.NetSync
                 // Client number (2 bytes)
                 client.clientNo = reader.ReadUInt16();
 
-                // Note: Device ID is no longer sent in MSG_ROOM_TRANSFORM
-                // Device ID will be resolved from client number using mapping table
-
-                // Physical transform
-                {
-                    var posX = reader.ReadSingle();
-                    var posZ = reader.ReadSingle();
-                    var rotY = reader.ReadSingle();
-                    client.physical = new Transform3D(posX, 0, posZ, 0, rotY, 0, true);
-                }
+                // Physical transform (local space)
+                client.physical = ReadTransformData(reader);
 
                 // Head transform
-                {
-                    var posX = reader.ReadSingle();
-                    var posY = reader.ReadSingle();
-                    var posZ = reader.ReadSingle();
-                    var rotX = reader.ReadSingle();
-                    var rotY = reader.ReadSingle();
-                    var rotZ = reader.ReadSingle();
-                    client.head = new Transform3D(posX, posY, posZ, rotX, rotY, rotZ, false);
-                }
+                client.head = ReadTransformData(reader);
 
                 // Right hand transform
-                {
-                    var posX = reader.ReadSingle();
-                    var posY = reader.ReadSingle();
-                    var posZ = reader.ReadSingle();
-                    var rotX = reader.ReadSingle();
-                    var rotY = reader.ReadSingle();
-                    var rotZ = reader.ReadSingle();
-                    client.rightHand = new Transform3D(posX, posY, posZ, rotX, rotY, rotZ, false);
-                }
+                client.rightHand = ReadTransformData(reader);
 
                 // Left hand transform
-                {
-                    var posX = reader.ReadSingle();
-                    var posY = reader.ReadSingle();
-                    var posZ = reader.ReadSingle();
-                    var rotX = reader.ReadSingle();
-                    var rotY = reader.ReadSingle();
-                    var rotZ = reader.ReadSingle();
-                    client.leftHand = new Transform3D(posX, posY, posZ, rotX, rotY, rotZ, false);
-                }
+                client.leftHand = ReadTransformData(reader);
 
                 // Virtual transforms
                 var virtualCount = reader.ReadByte();
-
-                // Validate virtual count to prevent memory issues
                 if (virtualCount > MAX_VIRTUAL_TRANSFORMS)
                 {
                     virtualCount = MAX_VIRTUAL_TRANSFORMS;
                 }
-
-                if (virtualCount > 0)
+                client.virtuals = new List<TransformData>(virtualCount);
+                for (int j = 0; j < virtualCount; j++)
                 {
-                    client.virtuals = new List<Transform3D>(virtualCount);
-                    for (int j = 0; j < virtualCount; j++)
-                    {
-                        var posX = reader.ReadSingle();
-                        var posY = reader.ReadSingle();
-                        var posZ = reader.ReadSingle();
-                        var rotX = reader.ReadSingle();
-                        var rotY = reader.ReadSingle();
-                        var rotZ = reader.ReadSingle();
-                        client.virtuals.Add(new Transform3D(posX, posY, posZ, rotX, rotY, rotZ, false));
-                    }
+                    client.virtuals.Add(ReadTransformData(reader));
                 }
 
                 data.clients.Add(client);
             }
+
             return data;
         }
 
@@ -305,28 +229,14 @@ namespace Styly.NetSync
         public static int CalculateClientTransformSize(ClientTransformData data)
         {
             int size = 1; // Message type
-            size += 1 + System.Text.Encoding.UTF8.GetByteCount(data.deviceId); // Device ID
+            size += 1 + Encoding.UTF8.GetByteCount(data.deviceId ?? ""); // Device ID
 
-            // Physical transform
-            if (data.physical != null && data.physical.isLocalSpace)
-            {
-                size += 1 + 12; // Type + 3 floats
-            }
-            else if (data.physical != null)
-            {
-                size += 1 + 24; // Type + 6 floats
-            }
-            else
-            {
-                size += 1; // Just type (0)
-            }
+            // 4 transforms * 24 bytes (6 floats)
+            size += 24 * 4;
 
             // Virtual transforms
             size += 1; // Count
-            if (data.virtuals != null)
-            {
-                size += data.virtuals.Count * 24; // 6 floats each
-            }
+            size += (data.virtuals?.Count ?? 0) * 24;
 
             return size;
         }

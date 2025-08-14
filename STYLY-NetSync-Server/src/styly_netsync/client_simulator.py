@@ -18,10 +18,10 @@ import zmq
 
 # Import the binary serializer from the same package
 try:
-    from .binary_serializer import serialize_client_transform
+    from .binary_serializer import serialize_client_transform, TransformData, Vector3
 except ImportError:
     # Fallback for direct script execution
-    from binary_serializer import serialize_client_transform
+    from binary_serializer import serialize_client_transform, TransformData, Vector3
 
 class MovementPattern(Enum):
     """Movement patterns matching DebugMoveAvatar.cs"""
@@ -107,42 +107,22 @@ class SimulatedClient:
         # Build transform data matching the expected format
         transform_data = {
             "deviceId": self.device_id,
-            "physical": {
-                "posX": new_position[0],
-                "posY": 0,  # Y is always 0 for physical transform
-                "posZ": new_position[2],
-                "rotX": 0,
-                "rotY": 0,  # For simplicity, no rotation in simulation
-                "rotZ": 0,
-                "isLocalSpace": True,
-            },
-            "head": {
-                "posX": head_pos[0],
-                "posY": head_pos[1],
-                "posZ": head_pos[2],
-                "rotX": 0,
-                "rotY": 0,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
-            "rightHand": {
-                "posX": right_hand_pos[0],
-                "posY": right_hand_pos[1],
-                "posZ": right_hand_pos[2],
-                "rotX": 0,
-                "rotY": 0,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
-            "leftHand": {
-                "posX": left_hand_pos[0],
-                "posY": left_hand_pos[1],
-                "posZ": left_hand_pos[2],
-                "rotX": 0,
-                "rotY": 0,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
+            "physical": TransformData(
+                position=Vector3(new_position[0], 0, new_position[2]),
+                rotation=Vector3(0, 0, 0),
+            ),
+            "head": TransformData(
+                position=Vector3(head_pos[0], head_pos[1], head_pos[2]),
+                rotation=Vector3(0, 0, 0),
+            ),
+            "rightHand": TransformData(
+                position=Vector3(right_hand_pos[0], right_hand_pos[1], right_hand_pos[2]),
+                rotation=Vector3(0, 0, 0),
+            ),
+            "leftHand": TransformData(
+                position=Vector3(left_hand_pos[0], left_hand_pos[1], left_hand_pos[2]),
+                rotation=Vector3(0, 0, 0),
+            ),
             "virtuals": virtuals,
         }
 
@@ -274,9 +254,9 @@ class SimulatedClient:
 
     def _calculate_virtual_positions(
         self, base_position: List[float], elapsed_time: float
-    ) -> List[Dict]:
+    ) -> List[TransformData]:
         """Calculate positions for virtual objects orbiting the avatar."""
-        virtuals = []
+        virtuals: List[TransformData] = []
         avatar_center = [
             base_position[0],
             base_position[1] + 1.0,
@@ -295,16 +275,16 @@ class SimulatedClient:
             orbit_y = math.sin(current_phase * 2) * self.virtual_item_vertical_range
             orbit_z = math.sin(current_phase) * radius * 0.7  # Elliptical orbit
 
-            virtual_pos = {
-                "posX": avatar_center[0] + orbit_x,
-                "posY": avatar_center[1] + orbit_y,
-                "posZ": avatar_center[2] + orbit_z,
-                "rotX": 0,
-                "rotY": current_phase,  # Rotate around Y axis
-                "rotZ": 0,
-                "isLocalSpace": False,
-            }
-            virtuals.append(virtual_pos)
+            virtuals.append(
+                TransformData(
+                    position=Vector3(
+                        avatar_center[0] + orbit_x,
+                        avatar_center[1] + orbit_y,
+                        avatar_center[2] + orbit_z,
+                    ),
+                    rotation=Vector3(0, current_phase, 0),
+                )
+            )
 
         return virtuals
 
@@ -474,7 +454,7 @@ class ClientSimulator:
                     )
 
                     client.logger.debug(
-                        f"Sent transform update: pos=({transform_data['physical']['posX']:.2f}, {transform_data['physical']['posZ']:.2f})"
+                        f"Sent transform update: pos=({transform_data['physical'].position.x:.2f}, {transform_data['physical'].position.z:.2f})"
                     )
 
                     last_update = current_time
