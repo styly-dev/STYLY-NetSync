@@ -67,8 +67,14 @@ namespace Styly.NetSync
             _shouldStop = true;
 
             // Dispose sockets
-            _subSocket?.Dispose();
-            _dealerSocket?.Dispose();
+            if (_subSocket != null)
+            {
+                _subSocket.Dispose();
+            }
+            if (_dealerSocket != null)
+            {
+                _dealerSocket.Dispose();
+            }
 
             _subSocket = null;
             _dealerSocket = null;
@@ -105,7 +111,10 @@ namespace Styly.NetSync
                 DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
 
                 // Notify connection established
-                OnConnectionEstablished?.Invoke();
+                if (OnConnectionEstablished != null)
+                {
+                    OnConnectionEstablished.Invoke();
+                }
 
                 while (!_shouldStop)
                 {
@@ -129,7 +138,10 @@ namespace Styly.NetSync
                 {
                     Debug.LogError($"Network thread error: {ex.Message}");
                     _connectionError = true;
-                    OnConnectionError?.Invoke(ex.Message);
+                    if (OnConnectionError != null)
+                    {
+                        OnConnectionError.Invoke(ex.Message);
+                    }
                 }
             }
         }

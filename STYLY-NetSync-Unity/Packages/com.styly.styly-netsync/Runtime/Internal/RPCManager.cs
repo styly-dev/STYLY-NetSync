@@ -85,7 +85,10 @@ namespace Styly.NetSync
         {
             while (_rpcQueue.TryDequeue(out var rpc))
             {
-                OnRPCReceived?.Invoke(rpc.senderClientNo, rpc.fn, rpc.args);
+                if (OnRPCReceived != null)
+                {
+                    OnRPCReceived.Invoke(rpc.senderClientNo, rpc.fn, rpc.args);
+                }
             }
         }
 
