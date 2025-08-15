@@ -1,5 +1,7 @@
 # STYLY NetSync ベンチマークツール
 
+**[English version available below](#styly-netsync-benchmark-tools)**
+
 このディレクトリには、STYLY NetSyncサーバーの負荷テスト用のLocustベースのベンチマークツールが含まれています。このベンチマークは、transform同期とRPC呼び出しなど、典型的なマルチプレイヤーアクションを実行する複数のVR/MRクライアントをシミュレートします。
 
 ## 機能
@@ -10,6 +12,10 @@
 - **リアルタイム監視**: STYLY固有のカスタムメトリクスを持つLocust Web UI
 - **柔軟な設定**: 環境変数ベースの設定
 - **独立した依存関係**: メインプロジェクトの依存関係に影響なし
+
+## 技術的詳細
+
+LocustはasyncioではなくgeventベースのためZeroMQとの相性を考慮し、PyZMQをgreenモード（`zmq.green`）で動作させています。これによりLocustのイベントループと協調動作し、高い並行性能を実現しています。
 
 ## クイックスタート
 
@@ -60,26 +66,26 @@ STYLY_SERVER_ADDRESS=192.168.1.100 STYLY_ROOM_ID=load_test uv run locust -f locu
 
 環境変数を使用してベンチマークを設定：
 
-| 変数 | デフォルト | 説明 |
-|------|-----------|------|
-| `STYLY_SERVER_ADDRESS` | `localhost` | サーバーアドレス |
-| `STYLY_DEALER_PORT` | `5555` | DEALERソケットポート |
-| `STYLY_SUB_PORT` | `5556` | SUBソケットポート |
-| `STYLY_ROOM_ID` | `benchmark_room` | テスト用ルームID |
-| `STYLY_TRANSFORM_RATE` | `50.0` | Transform更新レート（Hz） |
-| `STYLY_NETVAR_INTERVAL` | `60.0` | ネットワーク変数更新間隔（秒） |
-| `STYLY_RPC_INTERVAL` | `10.0` | RPC送信間隔（秒） |
-| `STYLY_MOVEMENT_RADIUS` | `5.0` | シミュレーション用移動半径 |
-| `STYLY_MOVEMENT_SPEED` | `1.0` | 移動速度倍率 |
-| `STYLY_LOG_LEVEL` | `INFO` | ログレベル |
-| `STYLY_DETAILED_LOGGING` | `false` | 詳細ログを有効化 |
+| 変数 | 説明 |
+|------|------|
+| `STYLY_SERVER_ADDRESS` | サーバーアドレス |
+| `STYLY_DEALER_PORT` | DEALERソケットポート |
+| `STYLY_SUB_PORT` | SUBソケットポート |
+| `STYLY_ROOM_ID` | テスト用ルームID |
+| `STYLY_TRANSFORM_RATE` | Transform更新レート（Hz） |
+| `STYLY_RPC_INTERVAL` | RPC送信間隔（秒） |
+| `STYLY_MOVEMENT_RADIUS` | シミュレーション用移動半径 |
+| `STYLY_MOVEMENT_SPEED` | 移動速度倍率 |
+| `STYLY_LOG_LEVEL` | ログレベル |
+| `STYLY_DETAILED_LOGGING` | 詳細ログを有効化 |
+
+**注意**: デフォルト値については `benchmark_config.py` を参照してください。設定値は定期的に調整される場合があります。
 
 ### 設定例
 
 ```bash
 # 高頻度テストと詳細ログ
 export STYLY_TRANSFORM_RATE=100.0
-export STYLY_NETVAR_INTERVAL=30.0
 export STYLY_RPC_INTERVAL=5.0
 export STYLY_DETAILED_LOGGING=true
 export STYLY_LOG_LEVEL=DEBUG
@@ -273,6 +279,10 @@ This directory contains Locust-based benchmarking tools for load testing the STY
 - **Flexible Configuration**: Environment variable-based configuration
 - **Independent Dependencies**: No impact on main project dependencies
 
+## Technical Details
+
+Locust is gevent-based rather than asyncio-based, so PyZMQ is configured to run in green mode (`zmq.green`) for compatibility with ZeroMQ. This allows cooperative operation with Locust's event loop and achieves high concurrent performance.
+
 ## Quick Start
 
 ### 1. Setup Environment
@@ -322,26 +332,26 @@ STYLY_SERVER_ADDRESS=192.168.1.100 STYLY_ROOM_ID=load_test uv run locust -f locu
 
 Configure the benchmark using environment variables:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `STYLY_SERVER_ADDRESS` | `localhost` | Server address |
-| `STYLY_DEALER_PORT` | `5555` | DEALER socket port |
-| `STYLY_SUB_PORT` | `5556` | SUB socket port |
-| `STYLY_ROOM_ID` | `benchmark_room` | Room ID for testing |
-| `STYLY_TRANSFORM_RATE` | `50.0` | Transform update rate (Hz) |
-| `STYLY_NETVAR_INTERVAL` | `60.0` | Network variable update interval (seconds) |
-| `STYLY_RPC_INTERVAL` | `10.0` | RPC send interval (seconds) |
-| `STYLY_MOVEMENT_RADIUS` | `5.0` | Movement radius for simulation |
-| `STYLY_MOVEMENT_SPEED` | `1.0` | Movement speed multiplier |
-| `STYLY_LOG_LEVEL` | `INFO` | Logging level |
-| `STYLY_DETAILED_LOGGING` | `false` | Enable detailed logging |
+| Variable | Description |
+|----------|-------------|
+| `STYLY_SERVER_ADDRESS` | Server address |
+| `STYLY_DEALER_PORT` | DEALER socket port |
+| `STYLY_SUB_PORT` | SUB socket port |
+| `STYLY_ROOM_ID` | Room ID for testing |
+| `STYLY_TRANSFORM_RATE` | Transform update rate (Hz) |
+| `STYLY_RPC_INTERVAL` | RPC send interval (seconds) |
+| `STYLY_MOVEMENT_RADIUS` | Movement radius for simulation |
+| `STYLY_MOVEMENT_SPEED` | Movement speed multiplier |
+| `STYLY_LOG_LEVEL` | Logging level |
+| `STYLY_DETAILED_LOGGING` | Enable detailed logging |
+
+**Note**: For default values, please refer to `benchmark_config.py`. Configuration values may be adjusted periodically.
 
 ### Example Configuration
 
 ```bash
 # High-frequency test with detailed logging
 export STYLY_TRANSFORM_RATE=100.0
-export STYLY_NETVAR_INTERVAL=30.0
 export STYLY_RPC_INTERVAL=5.0
 export STYLY_DETAILED_LOGGING=true
 export STYLY_LOG_LEVEL=DEBUG
