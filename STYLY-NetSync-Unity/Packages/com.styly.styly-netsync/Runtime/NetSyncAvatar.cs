@@ -37,6 +37,8 @@ namespace Styly.NetSync
         // Reference to NetSyncManager
         private NetSyncManager _netSyncManager;
 
+        private NetSyncAvatarSmoother _smoother;
+
         // Events
         [Header("Network Variable Events")]
         public UnityEvent<string, string, string> OnClientVariableChanged;
@@ -92,6 +94,8 @@ namespace Styly.NetSync
             IsLocalAvatar = false;
             _netSyncManager = manager;
 
+            _smoother = new NetSyncAvatarSmoother();
+
             // No interpolation initialization needed
         }
 
@@ -112,6 +116,13 @@ namespace Styly.NetSync
             }
 #endif
         }
+        private void LateUpdate()
+        {
+            if (IsLocalAvatar || _smoother == null) return;
+
+            _smoother.Apply(_physicalTransform, _head, _rightHand, _leftHand, _virtualTransforms, Time.time);
+        }
+
 
         // Get current transform data for sending
         public ClientTransformData GetTransformData()
@@ -142,54 +153,11 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar) { return; }
 
-            // Set physical transform directly (local space)
-            if (_physicalTransform != null && data.physical != null)
-            {
-                _physicalPosition = data.physical.GetPosition();
-                _physicalRotation = data.physical.GetRotation();
-                _physicalTransform.localPosition = data.physical.GetPosition();
-                _physicalTransform.localRotation = Quaternion.Euler(data.physical.GetRotation());
-            }
+            _smoother ??= new NetSyncAvatarSmoother();
 
-            // Set head transform directly (world space)
-            if (_head != null && data.head != null)
-            {
-                _head.position = data.head.GetPosition();
-                _head.rotation = Quaternion.Euler(data.head.GetRotation());
-            }
+            int virtualLimit = _virtualTransforms != null ? _virtualTransforms.Length : 0;
+            _smoother.Enqueue(data, Time.time, virtualLimit);
 
-            // Set hand transforms directly (world space)
-            if (_rightHand != null && data.rightHand != null)
-            {
-                _rightHand.position = data.rightHand.GetPosition();
-                _rightHand.rotation = Quaternion.Euler(data.rightHand.GetRotation());
-            }
-
-            if (_leftHand != null && data.leftHand != null)
-            {
-                _leftHand.position = data.leftHand.GetPosition();
-                _leftHand.rotation = Quaternion.Euler(data.leftHand.GetRotation());
-            }
-
-            // Set virtual transforms directly (world space)
-            if (_virtualTransforms != null && data.virtuals != null)
-            {
-                int count = Mathf.Min(_virtualTransforms.Length, data.virtuals.Count);
-                for (int i = 0; i < count; i++)
-                {
-                    if (_virtualTransforms[i] != null && data.virtuals[i] != null)
-                    {
-                        var vt = data.virtuals[i];
-                        _virtualTransforms[i].position = vt.GetPosition();
-                        _virtualTransforms[i].rotation = Quaternion.Euler(vt.GetRotation());
-                    }
-                }
-            }
-
-            _physicalPosition = data.physical?.GetPosition() ?? Vector3.zero;
-            _physicalRotation = data.physical?.GetRotation() ?? Vector3.zero;
-
-            // Update client number for remote players
             _clientNo = data.clientNo;
         }
 
