@@ -52,53 +52,68 @@ namespace Styly.NetSync
         // Public RPC methods for external access
         public void RpcBroadcast(string functionName, string[] args)
         {
-            _rpcManager?.SendBroadcast(_roomId, functionName, args);
+            if (_rpcManager != null)
+            {
+                _rpcManager.SendBroadcast(_roomId, functionName, args);
+            }
         }
 
         public void RpcBroadcast(string roomId, string functionName, string[] args)
         {
-            _rpcManager?.SendBroadcast(roomId, functionName, args);
+            if (_rpcManager != null)
+            {
+                _rpcManager.SendBroadcast(roomId, functionName, args);
+            }
         }
 
         public void RpcServer(string functionName, string[] args)
         {
-            _rpcManager?.SendToServer(_roomId, functionName, args);
+            if (_rpcManager != null)
+            {
+                _rpcManager.SendToServer(_roomId, functionName, args);
+            }
         }
 
         public void RpcServer(string roomId, string functionName, string[] args)
         {
-            _rpcManager?.SendToServer(roomId, functionName, args);
+            if (_rpcManager != null)
+            {
+                _rpcManager.SendToServer(roomId, functionName, args);
+            }
         }
 
         public void RpcClient(int targetClientNo, string functionName, string[] args)
         {
-            _rpcManager?.SendToClient(_roomId, targetClientNo, functionName, args);
+            if (_rpcManager != null)
+            {
+                _rpcManager.SendToClient(_roomId, targetClientNo, functionName, args);
+            }
         }
 
         // Network Variables API
         public bool SetGlobalVariable(string name, string value)
         {
-            return _networkVariableManager?.SetGlobalVariable(name, value, _roomId) ?? false;
+            return _networkVariableManager != null ? _networkVariableManager.SetGlobalVariable(name, value, _roomId) : false;
         }
 
         public string GetGlobalVariable(string name, string defaultValue = null)
         {
-            return _networkVariableManager?.GetGlobalVariable(name, defaultValue);
+            return _networkVariableManager != null ? _networkVariableManager.GetGlobalVariable(name, defaultValue) : defaultValue;
         }
 
         public bool SetClientVariable(string name, string value)
         {
-            return _networkVariableManager?.SetClientVariable(_clientNo, name, value, _roomId) ?? false;
+            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(_clientNo, name, value, _roomId) : false;
         }
 
         public bool SetClientVariable(int targetClientNo, string name, string value)
         {
-            return _networkVariableManager?.SetClientVariable(targetClientNo, name, value, _roomId) ?? false;
+            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(targetClientNo, name, value, _roomId) : false;
         }
 
         public string GetClientVariable(int clientNo, string name, string defaultValue = null)
         {
-            return _networkVariableManager?.GetClientVariable(clientNo, name, defaultValue);
+            return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(clientNo, name, defaultValue) : defaultValue;
         }
 
         /// <summary>
@@ -106,7 +121,7 @@ namespace Styly.NetSync
         /// </summary>
         public Dictionary<string, string> GetAllClientVariables(int clientNo)
         {
-            return _networkVariableManager?.GetAllClientVariables(clientNo) ?? new Dictionary<string, string>();
+            return _networkVariableManager != null ? _networkVariableManager.GetAllClientVariables(clientNo) : new Dictionary<string, string>();
         }
 
         /// <summary>
@@ -114,7 +129,7 @@ namespace Styly.NetSync
         /// </summary>
         public Dictionary<string, string> GetAllGlobalVariables()
         {
-            return _networkVariableManager?.GetAllGlobalVariables() ?? new Dictionary<string, string>();
+            return _networkVariableManager != null ? _networkVariableManager.GetAllGlobalVariables() : new Dictionary<string, string>();
         }
 
         /// <summary>
@@ -124,7 +139,7 @@ namespace Styly.NetSync
         /// <returns>True if the client is in stealth mode, false otherwise</returns>
         public bool IsClientStealthMode(int clientNo)
         {
-            return _messageProcessor?.IsClientStealthMode(clientNo) ?? false;
+            return _messageProcessor != null ? _messageProcessor.IsClientStealthMode(clientNo) : false;
         }
 
         #endregion ------------------------------------------------------------------------
@@ -310,26 +325,38 @@ namespace Styly.NetSync
 
         private void OnRemotePlayerDisconnected(int clientNo)
         {
-            OnClientDisconnected?.Invoke(clientNo);
+            if (OnClientDisconnected != null)
+            {
+                OnClientDisconnected.Invoke(clientNo);
+            }
         }
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
         {
             string argsStr = args != null && args.Length > 0 ? string.Join(", ", args) : "none";
             Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
-            OnRPCReceived?.Invoke(senderClientNo, functionName, args);
+            if (OnRPCReceived != null)
+            {
+                OnRPCReceived.Invoke(senderClientNo, functionName, args);
+            }
         }
 
         private void OnGlobalVariableChangedHandler(string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Global Variable Changed - Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
-            OnGlobalVariableChanged?.Invoke(name, oldValue, newValue);
+            if (OnGlobalVariableChanged != null)
+            {
+                OnGlobalVariableChanged.Invoke(name, oldValue, newValue);
+            }
         }
 
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
-            OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
+            if (OnClientVariableChanged != null)
+            {
+                OnClientVariableChanged.Invoke(clientNo, name, oldValue, newValue);
+            }
         }
 
         private void OnLocalClientNoAssigned(int clientNo)

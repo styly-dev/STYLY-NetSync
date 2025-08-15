@@ -152,8 +152,8 @@ namespace Styly.NetSync
 
             _smoother.SetTarget(data);
 
-            _physicalPosition = data.physical?.GetPosition() ?? Vector3.zero;
-            _physicalRotation = data.physical?.GetRotation() ?? Vector3.zero;
+            _physicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
+            _physicalRotation = data.physical != null ? data.physical.GetRotation() : Vector3.zero;
 
             // Update client number for remote players
             _clientNo = data.clientNo;
@@ -193,7 +193,10 @@ namespace Styly.NetSync
             // Only invoke the event if the change is for this client
             if (clientNo == _clientNo)
             {
-                OnClientVariableChanged?.Invoke(name, oldValue, newValue);
+                if (OnClientVariableChanged != null)
+                {
+                    OnClientVariableChanged.Invoke(name, oldValue, newValue);
+                }
             }
         }
 
@@ -203,7 +206,7 @@ namespace Styly.NetSync
         /// </summary>
         public bool SetClientVariable(string name, string value)
         {
-            return NetSyncManager.Instance?.SetClientVariable(_clientNo, name, value) ?? false;
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(_clientNo, name, value) : false;
         }
 
         /// <summary>
@@ -211,7 +214,7 @@ namespace Styly.NetSync
         /// </summary>
         public string GetClientVariable(string name, string defaultValue = null)
         {
-            return NetSyncManager.Instance?.GetClientVariable(_clientNo, name, defaultValue);
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(_clientNo, name, defaultValue) : defaultValue;
         }
 
         /// <summary>
@@ -219,7 +222,7 @@ namespace Styly.NetSync
         /// </summary>
         public bool SetClientVariable(int targetClientNo, string name, string value)
         {
-            return NetSyncManager.Instance?.SetClientVariable(targetClientNo, name, value) ?? false;
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(targetClientNo, name, value) : false;
         }
 
         /// <summary>
@@ -227,7 +230,7 @@ namespace Styly.NetSync
         /// </summary>
         public string GetClientVariable(int clientNo, string name, string defaultValue = null)
         {
-            return NetSyncManager.Instance?.GetClientVariable(clientNo, name, defaultValue);
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(clientNo, name, defaultValue) : defaultValue;
         }
         #endregion
     }

@@ -63,7 +63,7 @@ namespace Styly.NetSync
                 msg.Append(roomId);
                 msg.Append(binaryData);
 
-                return _connectionManager.DealerSocket?.TrySendMultipartMessage(msg) ?? false;
+                return _connectionManager.DealerSocket != null ? _connectionManager.DealerSocket.TrySendMultipartMessage(msg) : false;
             }
             catch (Exception ex)
             {
@@ -169,8 +169,8 @@ namespace Styly.NetSync
 
                     if (variable != null)
                     {
-                        var name = variable.TryGetValue("name", out var nameObj) ? nameObj?.ToString() : null;
-                        var value = variable.TryGetValue("value", out var valueObj) ? valueObj?.ToString() : null;
+                        var name = variable.TryGetValue("name", out var nameObj) ? (nameObj != null ? nameObj.ToString() : null) : null;
+                        var value = variable.TryGetValue("value", out var valueObj) ? (valueObj != null ? valueObj.ToString() : null) : null;
 
                         if (!string.IsNullOrEmpty(name) && value != null)
                         {
@@ -178,7 +178,10 @@ namespace Styly.NetSync
                             _globalVariables[name] = value;
 
                             // Trigger event with direct method call (NOT SendMessage)
-                            OnGlobalVariableChanged?.Invoke(name, oldValue, value);
+                            if (OnGlobalVariableChanged != null)
+                            {
+                                OnGlobalVariableChanged.Invoke(name, oldValue, value);
+                            }
                         }
                     }
                 }
@@ -215,8 +218,8 @@ namespace Styly.NetSync
 
                             if (variable != null)
                             {
-                                var name = variable.TryGetValue("name", out var nameObj) ? nameObj?.ToString() : null;
-                                var value = variable.TryGetValue("value", out var valueObj) ? valueObj?.ToString() : null;
+                                var name = variable.TryGetValue("name", out var nameObj) ? (nameObj != null ? nameObj.ToString() : null) : null;
+                                var value = variable.TryGetValue("value", out var valueObj) ? (valueObj != null ? valueObj.ToString() : null) : null;
 
                                 if (!string.IsNullOrEmpty(name) && value != null)
                                 {
@@ -224,7 +227,10 @@ namespace Styly.NetSync
                                     clientVars[name] = value;
 
                                     // Trigger event with direct method call (NOT SendMessage)
-                                    OnClientVariableChanged?.Invoke(clientNo, name, oldValue, value);
+                                    if (OnClientVariableChanged != null)
+                                    {
+                                        OnClientVariableChanged.Invoke(clientNo, name, oldValue, value);
+                                    }
                                 }
                             }
                         }

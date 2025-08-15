@@ -179,7 +179,10 @@ namespace Styly.NetSync
                                 if (remotePlayerPrefab != null)
                                 {
                                     playerManager.SpawnRemotePlayer(clientNo, deviceId, remotePlayerPrefab, netSyncManager);
-                                    netSyncManager.OnClientConnected?.Invoke(clientNo);
+                                    if (netSyncManager.OnClientConnected != null)
+                                    {
+                                        netSyncManager.OnClientConnected.Invoke(clientNo);
+                                    }
                                 }
                             }
                             else
@@ -239,7 +242,10 @@ namespace Styly.NetSync
                     if (!alive.Contains(clientNo))
                     {
                         playerManager.RemoveClient(clientNo);
-                        playerManager.OnClientDisconnected?.Invoke(clientNo);
+                        if (playerManager.OnClientDisconnected != null)
+                        {
+                            playerManager.OnClientDisconnected.Invoke(clientNo);
+                        }
                     }
                 }
             }
@@ -292,7 +298,10 @@ namespace Styly.NetSync
                 if (!string.IsNullOrEmpty(_localDeviceId) && mapping.deviceId == _localDeviceId)
                 {
                     SetLocalClientNo(mapping.clientNo);
-                    OnLocalClientNoAssigned?.Invoke(mapping.clientNo);
+                    if (OnLocalClientNoAssigned != null)
+                    {
+                        OnLocalClientNoAssigned.Invoke(mapping.clientNo);
+                    }
                 }
 
                 // Check if we have pending clients waiting for this mapping

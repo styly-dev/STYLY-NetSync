@@ -67,7 +67,7 @@ namespace Styly.NetSync
                 WriteTransformData(writer, data.leftHand);
 
                 // Virtual transforms count
-                var virtualCount = data.virtuals?.Count ?? 0;
+                var virtualCount = data.virtuals != null ? data.virtuals.Count : 0;
                 if (virtualCount > MAX_VIRTUAL_TRANSFORMS)
                 {
                     virtualCount = MAX_VIRTUAL_TRANSFORMS;
@@ -349,14 +349,14 @@ namespace Styly.NetSync
             writer.Write(senderClientNo);
 
             // Variable name (max 64 bytes)
-            var varName = data.TryGetValue("variableName", out var nameObj) ? nameObj?.ToString() ?? "" : "";
+            var varName = data.TryGetValue("variableName", out var nameObj) ? (nameObj != null ? nameObj.ToString() : "") : "";
             if (varName.Length > 64) varName = varName.Substring(0, 64);
             var nameBytes = System.Text.Encoding.UTF8.GetBytes(varName);
             writer.Write((byte)nameBytes.Length);
             writer.Write(nameBytes);
 
             // Variable value (max 1024 bytes)
-            var varValue = data.TryGetValue("variableValue", out var valueObj) ? valueObj?.ToString() ?? "" : "";
+            var varValue = data.TryGetValue("variableValue", out var valueObj) ? (valueObj != null ? valueObj.ToString() : "") : "";
             if (varValue.Length > 1024) varValue = varValue.Substring(0, 1024);
             var valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
             writer.Write((ushort)valueBytes.Length);
@@ -389,14 +389,14 @@ namespace Styly.NetSync
             writer.Write(targetClientNo);
 
             // Variable name (max 64 bytes)
-            var varName = data.TryGetValue("variableName", out var nameObj) ? nameObj?.ToString() ?? "" : "";
+            var varName = data.TryGetValue("variableName", out var nameObj) ? (nameObj != null ? nameObj.ToString() : "") : "";
             if (varName.Length > 64) varName = varName.Substring(0, 64);
             var nameBytes = System.Text.Encoding.UTF8.GetBytes(varName);
             writer.Write((byte)nameBytes.Length);
             writer.Write(nameBytes);
 
             // Variable value (max 1024 bytes)
-            var varValue = data.TryGetValue("variableValue", out var valueObj) ? valueObj?.ToString() ?? "" : "";
+            var varValue = data.TryGetValue("variableValue", out var valueObj) ? (valueObj != null ? valueObj.ToString() : "") : "";
             if (varValue.Length > 1024) varValue = varValue.Substring(0, 1024);
             var valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
             writer.Write((ushort)valueBytes.Length);
