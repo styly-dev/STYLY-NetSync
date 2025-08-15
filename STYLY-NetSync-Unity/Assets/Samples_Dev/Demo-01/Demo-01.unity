@@ -1216,12 +1216,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c0132303d300aa7479697a05d5e10784, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _displayDeviceId: 
-  _displayClientNo: 0
+  _deviceId: 
+  _clientNo: 0
   _serverAddress: 
-  _groupId: default_group
-  _localPlayerPrefab: {fileID: 5433920805635859656, guid: 533c4bfc8e64a634c991381ba7791b99, type: 3}
-  _remotePlayerPrefab: {fileID: 4943129801574805003, guid: ab3b1ca71deaa734dabad80f2cbbe3f6, type: 3}
+  _roomId: default_room
+  _localAvatarPrefab: {fileID: 5433920805635859656, guid: 533c4bfc8e64a634c991381ba7791b99, type: 3}
+  _remoteAvatarPrefab: {fileID: 4943129801574805003, guid: ab3b1ca71deaa734dabad80f2cbbe3f6, type: 3}
   OnClientConnected:
     m_PersistentCalls:
       m_Calls: []

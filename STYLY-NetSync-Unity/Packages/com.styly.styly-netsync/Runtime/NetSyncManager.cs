@@ -25,9 +25,9 @@ namespace Styly.NetSync
         private int _beaconPort = 9999;
         private float _discoveryTimeout = 5f;
 
-        [Header("Player Settings")]
-        [SerializeField] private GameObject _localPlayerPrefab;
-        [SerializeField] private GameObject _remotePlayerPrefab;
+        [Header("Avatar Settings")]
+        [SerializeField] private GameObject _localAvatarPrefab;
+        [SerializeField] private GameObject _remoteAvatarPrefab;
 
         // [Header("Transform Sync Settings"), Range(1, 120)]
         private float _sendRate = 10f;
@@ -149,7 +149,7 @@ namespace Styly.NetSync
 
         // Managers
         private ConnectionManager _connectionManager;
-        private PlayerManager _playerManager;
+        private AvatarManager _avatarManager;
         private RPCManager _rpcManager;
         private TransformSyncManager _transformSyncManager;
         private MessageProcessor _messageProcessor;
@@ -172,12 +172,12 @@ namespace Styly.NetSync
         public int ClientNo => _clientNo;
         public string RoomId => _roomId;
         public ConnectionManager ConnectionManager => _connectionManager;
-        public PlayerManager PlayerManager => _playerManager;
+        public AvatarManager AvatarManager => _avatarManager;
         public RPCManager RPCManager => _rpcManager;
         public TransformSyncManager TransformSyncManager => _transformSyncManager;
         public MessageProcessor MessageProcessor => _messageProcessor;
 
-        public GameObject GetRemotePlayerPrefab() => _remotePlayerPrefab;
+        public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
         #endregion ------------------------------------------------------------------------
 
         #region === Unity Callbacks ===
@@ -191,8 +191,8 @@ namespace Styly.NetSync
             _deviceId = GenerateDeviceId();
             _instance = this;
 
-            // Detect stealth mode based on local player prefab
-            _isStealthMode = (_localPlayerPrefab == null);
+            // Detect stealth mode based on local avatar prefab
+            _isStealthMode = (_localAvatarPrefab == null);
 
             InitializeManagers();
             DebugLog($"Device ID: {_deviceId}");
@@ -204,14 +204,14 @@ namespace Styly.NetSync
 
         private void OnEnable()
         {
-            _playerManager.InitializeLocalPlayer(_localPlayerPrefab, _deviceId, this);
+            _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
             StartNetworking();
         }
 
         private void OnDisable()
         {
             StopNetworking();
-            _playerManager.CleanupRemotePlayers();
+            _avatarManager.CleanupRemoteAvatars();
             _instance = null;
         }
 
@@ -290,7 +290,7 @@ namespace Styly.NetSync
             _messageProcessor.SetLocalDeviceId(_deviceId);
             _messageProcessor.OnLocalClientNoAssigned += OnLocalClientNoAssigned;
             _connectionManager = new ConnectionManager(this, _messageProcessor, _enableDebugLogs, _logNetworkTraffic);
-            _playerManager = new PlayerManager(_enableDebugLogs);
+            _avatarManager = new AvatarManager(_enableDebugLogs);
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
@@ -299,7 +299,7 @@ namespace Styly.NetSync
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
-            _playerManager.OnClientDisconnected.AddListener(OnRemotePlayerDisconnected);
+            _avatarManager.OnClientDisconnected.AddListener(OnRemoteAvatarDisconnected);
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
 
             // Setup network variable events
@@ -323,7 +323,7 @@ namespace Styly.NetSync
             DebugLog("Connection established successfully");
         }
 
-        private void OnRemotePlayerDisconnected(int clientNo)
+        private void OnRemoteAvatarDisconnected(int clientNo)
         {
             if (OnClientDisconnected != null)
             {
@@ -451,7 +451,7 @@ namespace Styly.NetSync
 
         private void ProcessMessages()
         {
-            _messageProcessor.ProcessMessageQueue(_playerManager, _rpcManager, _deviceId, this, _networkVariableManager);
+            _messageProcessor.ProcessMessageQueue(_avatarManager, _rpcManager, _deviceId, this, _networkVariableManager);
             _rpcManager.ProcessRPCQueue();
         }
 
@@ -470,8 +470,8 @@ namespace Styly.NetSync
                 else
                 {
                     // Normal transform sending
-                    var localPlayer = _playerManager.LocalPlayerAvatar;
-                    if (!_transformSyncManager.SendLocalTransform(localPlayer, _roomId))
+                    var localAvatar = _avatarManager.LocalAvatar;
+                    if (!_transformSyncManager.SendLocalTransform(localAvatar, _roomId))
                     {
                         HandleConnectionError("Send failed – disconnected?");
                     }
