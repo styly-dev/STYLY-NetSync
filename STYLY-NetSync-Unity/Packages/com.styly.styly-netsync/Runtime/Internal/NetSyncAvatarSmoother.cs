@@ -28,6 +28,9 @@ namespace Styly.NetSync
         private float _leftHandTimestamp;
         private List<float> _virtualTimestamps;
 
+        // Single flag to track if first update has been received
+        private bool _initialized = false;
+
         private const float PacketInterval = 0.1f; // 10 Hz
 
         /// <summary>
@@ -61,6 +64,14 @@ namespace Styly.NetSync
         /// </summary>
         public void SetTarget(ClientTransformData data)
         {
+            // On first update, set positions immediately to avoid interpolation from 0,0,0
+            if (!_initialized)
+            {
+                ApplyTransformsImmediate(data);
+                _initialized = true;
+            }
+
+            // Update targets for interpolation
             float now = Time.time;
 
             if (data.physical != null)
@@ -94,6 +105,49 @@ namespace Styly.NetSync
                 {
                     _targetVirtuals[i] = data.virtuals[i];
                     _virtualTimestamps[i] = now;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Apply transforms immediately without interpolation (for first update).
+        /// </summary>
+        private void ApplyTransformsImmediate(ClientTransformData data)
+        {
+            if (data.physical != null && _physical != null)
+            {
+                _physical.localPosition = data.physical.GetPosition();
+                _physical.localRotation = Quaternion.Euler(data.physical.GetRotation());
+            }
+
+            if (data.head != null && _head != null)
+            {
+                _head.position = data.head.GetPosition();
+                _head.rotation = Quaternion.Euler(data.head.GetRotation());
+            }
+
+            if (data.rightHand != null && _rightHand != null)
+            {
+                _rightHand.position = data.rightHand.GetPosition();
+                _rightHand.rotation = Quaternion.Euler(data.rightHand.GetRotation());
+            }
+
+            if (data.leftHand != null && _leftHand != null)
+            {
+                _leftHand.position = data.leftHand.GetPosition();
+                _leftHand.rotation = Quaternion.Euler(data.leftHand.GetRotation());
+            }
+
+            if (data.virtuals != null && _virtuals != null)
+            {
+                int count = Mathf.Min(data.virtuals.Count, _virtuals.Length);
+                for (int i = 0; i < count; i++)
+                {
+                    if (_virtuals[i] != null)
+                    {
+                        _virtuals[i].position = data.virtuals[i].GetPosition();
+                        _virtuals[i].rotation = Quaternion.Euler(data.virtuals[i].GetRotation());
+                    }
                 }
             }
         }
