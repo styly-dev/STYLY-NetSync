@@ -191,7 +191,7 @@ namespace Styly.NetSync
             _deviceId = GenerateDeviceId();
             _instance = this;
 
-            // Detect stealth mode based on local player prefab
+            // Detect stealth mode based on local avatar prefab
             _isStealthMode = (_localAvatarPrefab == null);
 
             InitializeManagers();
