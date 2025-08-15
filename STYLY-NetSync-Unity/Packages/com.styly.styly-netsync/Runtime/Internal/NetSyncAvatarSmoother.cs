@@ -143,7 +143,28 @@ namespace Styly.NetSync
         /// </summary>
         public void Update(float deltaTime)
         {
-            float t = Mathf.Clamp01(deltaTime / PacketInterval);
+            // Update packet timestamps for interpolation
+            OnNetworkDataReceived();
+        }
+
+        /// <summary>
+        /// Call this method when new network data is received.
+        /// </summary>
+        public void OnNetworkDataReceived()
+        {
+            // Shift current to last, and set current to now
+            _lastPacketTime = _currentPacketTime;
+            _currentPacketTime = Time.time;
+        }
+
+        /// <summary>
+        /// Interpolate transforms towards their targets.
+        /// </summary>
+        public void Update(float deltaTime)
+        {
+            float interval = _currentPacketTime - _lastPacketTime;
+            float sinceLast = Time.time - _lastPacketTime;
+            float t = interval > 0f ? Mathf.Clamp01(sinceLast / interval) : 1f;
 
             if (_physical != null && _targetPhysical != null)
             {
