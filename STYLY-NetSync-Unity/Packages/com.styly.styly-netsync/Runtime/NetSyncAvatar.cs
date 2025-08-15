@@ -29,21 +29,10 @@ namespace Styly.NetSync
 
         [SerializeField] private Transform[] _virtualTransforms; // Object array to sync Virtual position (world coordinate system)
 
-        // [Header("Interpolation Settings")]
-        private float _interpolationSpeed = 10f;
-
         // Properties
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
         public bool IsLocalAvatar { get; private set; }
-
-        // Variables for interpolation
-        private TransformData _targetPhysical;
-        private TransformData _targetHead;
-        private TransformData _targetRightHand;
-        private TransformData _targetLeftHand;
-        private List<TransformData> _targetVirtuals = new List<TransformData>();
-        private bool _hasTargetData = false;
 
         // Reference to NetSyncManager
         private NetSyncManager _netSyncManager;
@@ -92,19 +81,7 @@ namespace Styly.NetSync
                 _clientNo = 0;
             }
 
-            if (!isLocalAvatar)
-            {
-                // For remote players, set initial data for interpolation
-                _targetPhysical = new TransformData();
-                _targetHead = new TransformData();
-                _targetRightHand = new TransformData();
-                _targetLeftHand = new TransformData();
-                _targetVirtuals.Clear();
-                for (int i = 0; i < _virtualTransforms.Length; i++)
-                {
-                    _targetVirtuals.Add(new TransformData());
-                }
-            }
+            // No interpolation initialization needed
         }
 
         // Initialization method for remote players with known client number
@@ -115,29 +92,12 @@ namespace Styly.NetSync
             IsLocalAvatar = false;
             _netSyncManager = manager;
 
-            // For remote players, set initial data for interpolation
-            _targetPhysical = new TransformData();
-            _targetHead = new TransformData();
-            _targetRightHand = new TransformData();
-            _targetLeftHand = new TransformData();
-            _targetVirtuals.Clear();
-            for (int i = 0; i < _virtualTransforms.Length; i++)
-            {
-                _targetVirtuals.Add(new TransformData());
-            }
+            // No interpolation initialization needed
         }
 
         void Update()
         {
-            if (!IsLocalAvatar)
-            {
-                // For remote players, interpolate and update Transform
-                if (_hasTargetData)
-                {
-                    InterpolateTransforms();
-                }
-            }
-            else if (_netSyncManager != null)
+            if (IsLocalAvatar && _netSyncManager != null)
             {
                 // For local player, update client number display
                 _clientNo = _netSyncManager.ClientNo;
@@ -182,60 +142,50 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar) { return; }
 
-            // If this is the first data received, immediately set position to avoid interpolation from origin
-            if (!_hasTargetData)
+            // Set physical transform directly (local space)
+            if (_physicalTransform != null && data.physical != null)
             {
-                // Set physical transform immediately (local space)
-                if (_physicalTransform != null && data.physical != null)
-                {
-                    _physicalPosition = data.physical.GetPosition();
-                    _physicalRotation = data.physical.GetRotation();
-                    _physicalTransform.localPosition = data.physical.GetPosition();
-                    _physicalTransform.localRotation = Quaternion.Euler(data.physical.GetRotation());
-                }
+                _physicalPosition = data.physical.GetPosition();
+                _physicalRotation = data.physical.GetRotation();
+                _physicalTransform.localPosition = data.physical.GetPosition();
+                _physicalTransform.localRotation = Quaternion.Euler(data.physical.GetRotation());
+            }
 
-                // Set head transform immediately (world space)
-                if (_head != null && data.head != null)
-                {
-                    _head.position = data.head.GetPosition();
-                    _head.rotation = Quaternion.Euler(data.head.GetRotation());
-                }
+            // Set head transform directly (world space)
+            if (_head != null && data.head != null)
+            {
+                _head.position = data.head.GetPosition();
+                _head.rotation = Quaternion.Euler(data.head.GetRotation());
+            }
 
-                // Set hand transforms immediately (world space)
-                if (_rightHand != null && data.rightHand != null)
-                {
-                    _rightHand.position = data.rightHand.GetPosition();
-                    _rightHand.rotation = Quaternion.Euler(data.rightHand.GetRotation());
-                }
+            // Set hand transforms directly (world space)
+            if (_rightHand != null && data.rightHand != null)
+            {
+                _rightHand.position = data.rightHand.GetPosition();
+                _rightHand.rotation = Quaternion.Euler(data.rightHand.GetRotation());
+            }
 
-                if (_leftHand != null && data.leftHand != null)
-                {
-                    _leftHand.position = data.leftHand.GetPosition();
-                    _leftHand.rotation = Quaternion.Euler(data.leftHand.GetRotation());
-                }
+            if (_leftHand != null && data.leftHand != null)
+            {
+                _leftHand.position = data.leftHand.GetPosition();
+                _leftHand.rotation = Quaternion.Euler(data.leftHand.GetRotation());
+            }
 
-                // Set virtual transforms immediately (world space)
-                if (_virtualTransforms != null && data.virtuals != null)
+            // Set virtual transforms directly (world space)
+            if (_virtualTransforms != null && data.virtuals != null)
+            {
+                int count = Mathf.Min(_virtualTransforms.Length, data.virtuals.Count);
+                for (int i = 0; i < count; i++)
                 {
-                    int count = Mathf.Min(_virtualTransforms.Length, data.virtuals.Count);
-                    for (int i = 0; i < count; i++)
+                    if (_virtualTransforms[i] != null && data.virtuals[i] != null)
                     {
-                        if (_virtualTransforms[i] != null && data.virtuals[i] != null)
-                        {
-                            var vt = data.virtuals[i];
-                            _virtualTransforms[i].position = vt.GetPosition();
-                            _virtualTransforms[i].rotation = Quaternion.Euler(vt.GetRotation());
-                        }
+                        var vt = data.virtuals[i];
+                        _virtualTransforms[i].position = vt.GetPosition();
+                        _virtualTransforms[i].rotation = Quaternion.Euler(vt.GetRotation());
                     }
                 }
             }
 
-            _targetPhysical = data.physical;
-            _targetHead = data.head;
-            _targetRightHand = data.rightHand;
-            _targetLeftHand = data.leftHand;
-            _targetVirtuals = data.virtuals;
-            _hasTargetData = true;
             _physicalPosition = data.physical?.GetPosition() ?? Vector3.zero;
             _physicalRotation = data.physical?.GetRotation() ?? Vector3.zero;
 
@@ -269,54 +219,6 @@ namespace Styly.NetSync
             var result = new List<TransformData>(transforms.Length);
             foreach (var t in transforms) result.Add(GetWorldTransform(t));
             return result;
-        }
-
-        // Simplified transform interpolation
-        private void InterpolateTransforms()
-        {
-            float deltaTime = Time.deltaTime * _interpolationSpeed;
-
-            // Interpolate physical transform in local space towards target data received from the network
-            if (_physicalTransform != null && _targetPhysical != null)
-            {
-                _physicalTransform.localPosition = Vector3.Lerp(_physicalTransform.localPosition, _targetPhysical.GetPosition(), deltaTime);
-                _physicalTransform.localRotation = Quaternion.Lerp(_physicalTransform.localRotation, Quaternion.Euler(_targetPhysical.GetRotation()), deltaTime);
-            }
-
-            // Head Transform interpolation (world space)
-            if (_head != null && _targetHead != null)
-            {
-                _head.position = Vector3.Lerp(_head.position, _targetHead.GetPosition(), deltaTime);
-                _head.rotation = Quaternion.Lerp(_head.rotation, Quaternion.Euler(_targetHead.GetRotation()), deltaTime);
-            }
-
-            // Right Hand Transform interpolation (world space)
-            if (_rightHand != null && _targetRightHand != null)
-            {
-                _rightHand.position = Vector3.Lerp(_rightHand.position, _targetRightHand.GetPosition(), deltaTime);
-                _rightHand.rotation = Quaternion.Lerp(_rightHand.rotation, Quaternion.Euler(_targetRightHand.GetRotation()), deltaTime);
-            }
-
-            // Left Hand Transform interpolation (world space)
-            if (_leftHand != null && _targetLeftHand != null)
-            {
-                _leftHand.position = Vector3.Lerp(_leftHand.position, _targetLeftHand.GetPosition(), deltaTime);
-                _leftHand.rotation = Quaternion.Lerp(_leftHand.rotation, Quaternion.Euler(_targetLeftHand.GetRotation()), deltaTime);
-            }
-
-            // Virtual Transforms interpolation (world space)
-            if (_virtualTransforms != null && _targetVirtuals != null)
-            {
-                int count = Mathf.Min(_virtualTransforms.Length, _targetVirtuals.Count);
-                for (int i = 0; i < count; i++)
-                {
-                    if (_virtualTransforms[i] != null && _targetVirtuals[i] != null)
-                    {
-                        _virtualTransforms[i].position = Vector3.Lerp(_virtualTransforms[i].position, _targetVirtuals[i].GetPosition(), deltaTime);
-                        _virtualTransforms[i].rotation = Quaternion.Lerp(_virtualTransforms[i].rotation, Quaternion.Euler(_targetVirtuals[i].GetRotation()), deltaTime);
-                    }
-                }
-            }
         }
 
         // Handle client variable changes from NetSyncManager
