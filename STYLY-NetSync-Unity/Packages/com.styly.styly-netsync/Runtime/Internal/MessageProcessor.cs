@@ -122,14 +122,14 @@ namespace Styly.NetSync
             }
         }
 
-        public void ProcessMessageQueue(PlayerManager playerManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
+        public void ProcessMessageQueue(AvatarManager avatarManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
         {
             while (_messageQueue.TryDequeue(out var msg))
             {
                 switch (msg.type)
                 {
                     case "room_transform":
-                        ProcessRoomTransform(msg.data, playerManager, localDeviceId, netSyncManager);
+                        ProcessRoomTransform(msg.data, avatarManager, localDeviceId, netSyncManager);
                         break;
 
                     case "rpc":
@@ -167,18 +167,18 @@ namespace Styly.NetSync
                         // Update device ID
                         pendingClient.deviceId = deviceId;
 
-                        // Spawn the player
-                        if (!playerManager.ConnectedPeers.ContainsKey(clientNo))
+                        // Spawn the avatar
+                        if (!avatarManager.ConnectedPeers.ContainsKey(clientNo))
                         {
                             // Spawning pending client
 
-                            // Spawn the remote player with the device ID
+                            // Spawn the remote avatar with the device ID
                             if (netSyncManager != null)
                             {
-                                var remotePlayerPrefab = netSyncManager.GetRemotePlayerPrefab();
-                                if (remotePlayerPrefab != null)
+                                var remoteAvatarPrefab = netSyncManager.GetRemoteAvatarPrefab();
+                                if (remoteAvatarPrefab != null)
                                 {
-                                    playerManager.SpawnRemotePlayer(clientNo, deviceId, remotePlayerPrefab, netSyncManager);
+                                    avatarManager.SpawnRemoteAvatar(clientNo, deviceId, remoteAvatarPrefab, netSyncManager);
                                     if (netSyncManager.OnClientConnected != null)
                                     {
                                         netSyncManager.OnClientConnected.Invoke(clientNo);
@@ -187,8 +187,8 @@ namespace Styly.NetSync
                             }
                             else
                             {
-                                // Fallback to just updating the player if NetSyncManager is not available
-                                playerManager.UpdateRemotePlayer(clientNo, pendingClient);
+                                // Fallback to just updating the avatar if NetSyncManager is not available
+                                avatarManager.UpdateRemoteAvatar(clientNo, pendingClient);
                             }
                         }
 
@@ -199,7 +199,7 @@ namespace Styly.NetSync
             }
         }
 
-        private void ProcessRoomTransform(string json, PlayerManager playerManager, string localDeviceId, NetSyncManager netSyncManager = null)
+        private void ProcessRoomTransform(string json, AvatarManager avatarManager, string localDeviceId, NetSyncManager netSyncManager = null)
         {
             if (string.IsNullOrEmpty(json))
             {
@@ -215,16 +215,16 @@ namespace Styly.NetSync
                 var alive = new HashSet<int>();
                 foreach (var c in room.clients)
                 {
-                    // Skip local player by client number
+                    // Skip local avatar by client number
                     if (c.clientNo == _localClientNo) { continue; }
 
                     alive.Add(c.clientNo);
 
-                    // Check if player already exists and just needs update
-                    if (playerManager.ConnectedPeers.ContainsKey(c.clientNo))
+                    // Check if avatar already exists and just needs update
+                    if (avatarManager.ConnectedPeers.ContainsKey(c.clientNo))
                     {
-                        // Update existing player
-                        playerManager.UpdateRemotePlayer(c.clientNo, c);
+                        // Update existing avatar
+                        avatarManager.UpdateRemoteAvatar(c.clientNo, c);
                     }
                     else
                     {
@@ -236,15 +236,15 @@ namespace Styly.NetSync
                 }
 
                 // Check for disconnected clients (including stealth clients)
-                var currentClients = playerManager.GetAliveClients(this, includeStealthClients: true);
+                var currentClients = avatarManager.GetAliveClients(this, includeStealthClients: true);
                 foreach (var clientNo in currentClients)
                 {
                     if (!alive.Contains(clientNo))
                     {
-                        playerManager.RemoveClient(clientNo);
-                        if (playerManager.OnClientDisconnected != null)
+                        avatarManager.RemoveClient(clientNo);
+                        if (avatarManager.OnClientDisconnected != null)
                         {
-                            playerManager.OnClientDisconnected.Invoke(clientNo);
+                            avatarManager.OnClientDisconnected.Invoke(clientNo);
                         }
                     }
                 }

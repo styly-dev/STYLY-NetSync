@@ -16,7 +16,7 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private int _clientNo;
 
         [Header("Transform Sync Settings")]
-        [SerializeField, ReadOnly] private Transform _physicalTransform; // Object to sync Physical position (local coordinate system). _head will be used for physical transform of local player
+        [SerializeField, ReadOnly] private Transform _physicalTransform; // Object to sync Physical position (local coordinate system). _head will be used for physical transform of local avatar
 
         [Header("Physical Transform Data (Runtime)")]
         [SerializeField, ReadOnly] private Vector3 _physicalPosition;
@@ -48,7 +48,7 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar)
             {
-                // Use head as the physical transform for local player
+                // Use head as the physical transform for local avatar
                 _physicalTransform = _head;
             }
         }
@@ -80,14 +80,14 @@ namespace Styly.NetSync
 
             if (isLocalAvatar)
             {
-                // For local player, client number will be updated via NetSyncManager
+                // For local avatar, client number will be updated via NetSyncManager
                 _clientNo = 0;
             }
 
             _smoother.Initialize(_physicalTransform, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
-        // Initialization method for remote players with known client number
+        // Initialization method for remote avatars with known client number
         public void InitializeRemote(int clientNo, NetSyncManager manager)
         {
             _clientNo = clientNo;
@@ -102,7 +102,7 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar && _netSyncManager != null)
             {
-                // For local player, update client number display
+                // For local avatar, update client number display
                 _clientNo = _netSyncManager.ClientNo;
             }
 
@@ -145,7 +145,7 @@ namespace Styly.NetSync
             }
         }
 
-        // Receive and apply transform data (for remote players)
+        // Receive and apply transform data (for remote avatars)
         public void SetTransformData(ClientTransformData data)
         {
             if (IsLocalAvatar) { return; }
@@ -155,7 +155,7 @@ namespace Styly.NetSync
             _physicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
             _physicalRotation = data.physical != null ? data.physical.GetRotation() : Vector3.zero;
 
-            // Update client number for remote players
+            // Update client number for remote avatars
             _clientNo = data.clientNo;
         }
 

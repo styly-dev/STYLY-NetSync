@@ -22,14 +22,14 @@ namespace Styly.NetSync
             SendRate = sendRate;
         }
 
-        public bool SendLocalTransform(NetSyncAvatar localPlayerAvatar, string roomId)
+        public bool SendLocalTransform(NetSyncAvatar localAvatar, string roomId)
         {
-            if (localPlayerAvatar == null || _connectionManager.DealerSocket == null)
+            if (localAvatar == null || _connectionManager.DealerSocket == null)
                 return false;
 
             try
             {
-                var tx = localPlayerAvatar.GetTransformData();
+                var tx = localAvatar.GetTransformData();
                 var binaryData = BinarySerializer.SerializeClientTransform(tx);
 
                 var msg = new NetMQMessage();

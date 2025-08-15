@@ -1,77 +1,77 @@
-// PlayerManager.cs - Handles player spawning and lifecycle management
+// AvatarManager.cs - Handles avatar spawning and lifecycle management
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 
 namespace Styly.NetSync
 {
-    public class PlayerManager
+    public class AvatarManager
     {
         private readonly Dictionary<int, GameObject> _connectedPeers = new();
-        private NetSyncAvatar _localPlayerAvatar;
+        private NetSyncAvatar _localAvatar;
         private bool _enableDebugLogs;
 
         public UnityEvent<int> OnClientConnected { get; } = new();
         public UnityEvent<int> OnClientDisconnected { get; } = new();
 
-        public NetSyncAvatar LocalPlayerAvatar => _localPlayerAvatar;
+        public NetSyncAvatar LocalAvatar => _localAvatar;
         public IReadOnlyDictionary<int, GameObject> ConnectedPeers => _connectedPeers;
 
-        public PlayerManager(bool enableDebugLogs)
+        public AvatarManager(bool enableDebugLogs)
         {
             _enableDebugLogs = enableDebugLogs;
         }
 
-        public void InitializeLocalPlayer(GameObject localPlayerPrefab, string deviceId, NetSyncManager netSyncManager)
+        public void InitializeLocalAvatar(GameObject localAvatarPrefab, string deviceId, NetSyncManager netSyncManager)
         {
-            if (localPlayerPrefab == null)
+            if (localAvatarPrefab == null)
             {
-                Debug.Log("[NetSync] ***** Stealth mode enabled ***** - No local player avatar will be spawned (LocalPlayerPrefab not set)");
+                Debug.Log("[NetSync] ***** Stealth mode enabled ***** - No local avatar will be spawned (LocalAvatarPrefab not set)");
                 return;
             }
 
             // Instantiate a local avatar prefab asset
             GameObject localGO = null;
-            if (localPlayerPrefab.scene.IsValid())
+            if (localAvatarPrefab.scene.IsValid())
             {
-                Debug.LogError("LocalPlayer Prefab should not be a scene object. Please use a prefab asset instead.");
+                Debug.LogError("LocalAvatar Prefab should not be a scene object. Please use a prefab asset instead.");
             }
             else
             {
-                // If XR Origin exists, instantiate the local player prefab as a child of the XR Origin
+                // If XR Origin exists, instantiate the local avatar prefab as a child of the XR Origin
                 var xrOrigin = Object.FindFirstObjectByType<Unity.XR.CoreUtils.XROrigin>();
                 if (xrOrigin != null)
                 {
-                    localGO = Object.Instantiate(localPlayerPrefab, xrOrigin.transform);
+                    localGO = Object.Instantiate(localAvatarPrefab, xrOrigin.transform);
                 }
                 else
                 {
-                    localGO = Object.Instantiate(localPlayerPrefab);
+                    localGO = Object.Instantiate(localAvatarPrefab);
                 }
             }
 
-            _localPlayerAvatar = localGO.GetComponent<NetSyncAvatar>();
-            if (_localPlayerAvatar == null)
+            _localAvatar = localGO.GetComponent<NetSyncAvatar>();
+            if (_localAvatar == null)
             {
-                Debug.LogError("LocalPlayer Prefab requires NetSyncAvatar component");
+                Debug.LogError("LocalAvatar Prefab requires NetSyncAvatar component");
                 return;
             }
 
-            _localPlayerAvatar.Initialize(deviceId, true, netSyncManager);
-            DebugLog($"Local player initialized with ID: {deviceId}");
+            _localAvatar.Initialize(deviceId, true, netSyncManager);
+            DebugLog($"Local avatar initialized with ID: {deviceId}");
         }
 
-        public void SpawnRemotePlayer(int clientNo, string deviceId, GameObject remotePlayerPrefab, NetSyncManager netSyncManager)
+        public void SpawnRemoteAvatar(int clientNo, string deviceId, GameObject remoteAvatarPrefab, NetSyncManager netSyncManager)
         {
-            if (remotePlayerPrefab == null || _connectedPeers.ContainsKey(clientNo)) { return; }
+            if (remoteAvatarPrefab == null || _connectedPeers.ContainsKey(clientNo)) { return; }
 
             if (string.IsNullOrEmpty(deviceId))
             {
-                Debug.LogError($"Cannot spawn remote player {clientNo} without device ID");
+                Debug.LogError($"Cannot spawn remote avatar {clientNo} without device ID");
                 return;
             }
 
-            var go = Object.Instantiate(remotePlayerPrefab);
+            var go = Object.Instantiate(remoteAvatarPrefab);
             var net = go.GetComponent<NetSyncAvatar>();
             if (!net)
             {
@@ -85,10 +85,10 @@ namespace Styly.NetSync
 
             // Set the GameObject name to include the client ID instead of "(Clone)"
             // Get the original prefab name without "(Clone)" suffix
-            string prefabName = remotePlayerPrefab.name;
+            string prefabName = remoteAvatarPrefab.name;
             go.name = $"{prefabName} ({clientNo})";
 
-            DebugLog($"Remote player spawned: clientNo={clientNo}, deviceId={deviceId}");
+            DebugLog($"Remote avatar spawned: clientNo={clientNo}, deviceId={deviceId}");
         }
 
         public void RemoveClient(int clientNo)
@@ -96,19 +96,19 @@ namespace Styly.NetSync
             if (_connectedPeers.Remove(clientNo, out var go) && go)
             {
                 Object.Destroy(go);
-                DebugLog($"Remote player removed: clientNo={clientNo}");
+                DebugLog($"Remote avatar removed: clientNo={clientNo}");
             }
         }
 
-        public void CleanupRemotePlayers()
+        public void CleanupRemoteAvatars()
         {
             foreach (var go in _connectedPeers.Values) { if (go) { Object.Destroy(go); } }
 
             _connectedPeers.Clear();
-            DebugLog("All remote players cleaned up");
+            DebugLog("All remote avatars cleaned up");
         }
 
-        public void UpdateRemotePlayer(int clientNo, ClientTransformData transformData)
+        public void UpdateRemoteAvatar(int clientNo, ClientTransformData transformData)
         {
             if (_connectedPeers.TryGetValue(clientNo, out var go))
             {
@@ -139,7 +139,7 @@ namespace Styly.NetSync
 
         private void DebugLog(string msg)
         {
-            if (_enableDebugLogs) { Debug.Log($"[PlayerManager] {msg}"); }
+            if (_enableDebugLogs) { Debug.Log($"[AvatarManager] {msg}"); }
         }
     }
 }
