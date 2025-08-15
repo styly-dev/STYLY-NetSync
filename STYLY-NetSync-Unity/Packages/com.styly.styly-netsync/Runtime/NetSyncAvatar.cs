@@ -266,17 +266,8 @@ namespace Styly.NetSync
         // Convert transform array to TransformData list (world space)
         private List<TransformData> GetWorldTransformList(Transform[] transforms)
         {
-            var result = new List<TransformData>();
-            if (transforms != null)
-            {
-                foreach (var t in transforms)
-                {
-                    if (t != null)
-                    {
-                        result.Add(GetWorldTransform(t));
-                    }
-                }
-            }
+            var result = new List<TransformData>(transforms.Length);
+            foreach (var t in transforms) result.Add(GetWorldTransform(t));
             return result;
         }
 
@@ -284,28 +275,28 @@ namespace Styly.NetSync
         private void InterpolateTransforms()
         {
             float deltaTime = Time.deltaTime * _interpolationSpeed;
-            
+
             // Interpolate physical transform in local space towards target data received from the network
             if (_physicalTransform != null && _targetPhysical != null)
             {
                 _physicalTransform.localPosition = Vector3.Lerp(_physicalTransform.localPosition, _targetPhysical.GetPosition(), deltaTime);
                 _physicalTransform.localRotation = Quaternion.Lerp(_physicalTransform.localRotation, Quaternion.Euler(_targetPhysical.GetRotation()), deltaTime);
             }
-            
+
             // Head Transform interpolation (world space)
             if (_head != null && _targetHead != null)
             {
                 _head.position = Vector3.Lerp(_head.position, _targetHead.GetPosition(), deltaTime);
                 _head.rotation = Quaternion.Lerp(_head.rotation, Quaternion.Euler(_targetHead.GetRotation()), deltaTime);
             }
-            
+
             // Right Hand Transform interpolation (world space)
             if (_rightHand != null && _targetRightHand != null)
             {
                 _rightHand.position = Vector3.Lerp(_rightHand.position, _targetRightHand.GetPosition(), deltaTime);
                 _rightHand.rotation = Quaternion.Lerp(_rightHand.rotation, Quaternion.Euler(_targetRightHand.GetRotation()), deltaTime);
             }
-            
+
             // Left Hand Transform interpolation (world space)
             if (_leftHand != null && _targetLeftHand != null)
             {
