@@ -22,12 +22,6 @@ namespace Styly.NetSync
         private TransformData _targetLeftHand;
         private List<TransformData> _targetVirtuals;
 
-        private float _physicalTimestamp;
-        private float _headTimestamp;
-        private float _rightHandTimestamp;
-        private float _leftHandTimestamp;
-        private List<float> _virtualTimestamps;
-
         // Single flag to track if first update has been received
         private bool _initialized = false;
 
@@ -51,11 +45,9 @@ namespace Styly.NetSync
 
             int count = virtuals != null ? virtuals.Length : 0;
             _targetVirtuals = new List<TransformData>(count);
-            _virtualTimestamps = new List<float>(count);
             for (int i = 0; i < count; i++)
             {
                 _targetVirtuals.Add(new TransformData());
-                _virtualTimestamps.Add(0f);
             }
         }
 
@@ -72,30 +64,25 @@ namespace Styly.NetSync
             }
 
             // Update targets for interpolation
-            float now = Time.time;
 
             if (data.physical != null)
             {
                 _targetPhysical = data.physical;
-                _physicalTimestamp = now;
             }
 
             if (data.head != null)
             {
                 _targetHead = data.head;
-                _headTimestamp = now;
             }
 
             if (data.rightHand != null)
             {
                 _targetRightHand = data.rightHand;
-                _rightHandTimestamp = now;
             }
 
             if (data.leftHand != null)
             {
                 _targetLeftHand = data.leftHand;
-                _leftHandTimestamp = now;
             }
 
             if (data.virtuals != null && _virtuals != null)
@@ -104,7 +91,6 @@ namespace Styly.NetSync
                 for (int i = 0; i < count; i++)
                 {
                     _targetVirtuals[i] = data.virtuals[i];
-                    _virtualTimestamps[i] = now;
                 }
             }
         }
