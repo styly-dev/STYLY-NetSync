@@ -230,6 +230,10 @@ namespace Styly.NetSync
             HandleReconnection();
             ProcessMessages();
             SendTransformUpdates();
+            
+            // Process Network Variables debounced updates
+            _networkVariableManager?.Tick(Time.realtimeSinceStartupAsDouble, _roomId);
+            
             LogStatistics();
         }
         #endregion ------------------------------------------------------------------------

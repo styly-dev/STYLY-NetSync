@@ -24,6 +24,19 @@ namespace Styly.NetSync
         private const int MAX_VAR_NAME_LENGTH = 64;
         private const int MAX_VAR_VALUE_LENGTH = 1024;
 
+        // Debounce configuration
+        private const double DEBOUNCE_INTERVAL = 0.1; // 100ms debounce
+
+        // Send-side dedupe caches
+        private readonly Dictionary<string, string> _lastSentGlobal = new();
+        private readonly Dictionary<(int, string), string> _lastSentClient = new();
+
+        // Debounce buffers for pending sends
+        private readonly Dictionary<string, string> _pendingGlobal = new();
+        private readonly Dictionary<string, double> _dueGlobal = new();
+        private readonly Dictionary<(int, string), string> _pendingClient = new();
+        private readonly Dictionary<(int, string), double> _dueClient = new();
+
         // Events (using C# events, NOT SendMessage)
         public event Action<string, string, string> OnGlobalVariableChanged;
         public event Action<int, string, string, string> OnClientVariableChanged;
@@ -47,6 +60,21 @@ namespace Styly.NetSync
                 return false;
             }
 
+            // Dedupe: check if value is same as last sent
+            if (_lastSentGlobal.TryGetValue(name, out var lastSent) && lastSent == value)
+            {
+                return false; // Value unchanged, don't send
+            }
+
+            // Buffer with debounce
+            _pendingGlobal[name] = value;
+            _dueGlobal[name] = UnityEngine.Time.realtimeSinceStartupAsDouble + DEBOUNCE_INTERVAL;
+            return true; // Buffered for later send
+        }
+
+        // Internal method to send now (used by flush)
+        private bool TrySendGlobalNow(string name, string value, string roomId)
+        {
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             var data = new Dictionary<string, object>
             {
@@ -63,7 +91,12 @@ namespace Styly.NetSync
                 msg.Append(roomId);
                 msg.Append(binaryData);
 
-                return _connectionManager.DealerSocket != null ? _connectionManager.DealerSocket.TrySendMultipartMessage(msg) : false;
+                bool sent = _connectionManager.DealerSocket != null ? _connectionManager.DealerSocket.TrySendMultipartMessage(msg) : false;
+                if (sent)
+                {
+                    _lastSentGlobal[name] = value; // Update last sent cache
+                }
+                return sent;
             }
             catch (Exception ex)
             {
@@ -93,6 +126,22 @@ namespace Styly.NetSync
                 return false;
             }
 
+            // Dedupe: check if value is same as last sent
+            var key = (targetClientNo, name);
+            if (_lastSentClient.TryGetValue(key, out var lastSent) && lastSent == value)
+            {
+                return false; // Value unchanged, don't send
+            }
+
+            // Buffer with debounce
+            _pendingClient[key] = value;
+            _dueClient[key] = UnityEngine.Time.realtimeSinceStartupAsDouble + DEBOUNCE_INTERVAL;
+            return true; // Buffered for later send
+        }
+
+        // Internal method to send now (used by flush)
+        private bool TrySendClientNow(int targetClientNo, string name, string value, string roomId)
+        {
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             var data = new Dictionary<string, object>
             {
@@ -115,7 +164,13 @@ namespace Styly.NetSync
                 msg.Append(roomId);
                 msg.Append(binaryData);
 
-                return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                bool sent = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                if (sent)
+                {
+                    var key = (targetClientNo, name);
+                    _lastSentClient[key] = value; // Update last sent cache
+                }
+                return sent;
             }
             catch (Exception ex)
             {
@@ -274,6 +329,69 @@ namespace Styly.NetSync
                 return new Dictionary<string, string>(clientVars);
             }
             return new Dictionary<string, string>();
+        }
+
+        // Tick method to process pending NV updates
+        public void Tick(double nowSeconds, string roomId)
+        {
+            FlushPendingGlobal(nowSeconds, roomId);
+            FlushPendingClient(nowSeconds, roomId);
+        }
+
+        private void FlushPendingGlobal(double nowSeconds, string roomId)
+        {
+            var toFlush = new List<(string name, string value)>();
+
+            // Find all due items
+            foreach (var kvp in _dueGlobal)
+            {
+                if (kvp.Value <= nowSeconds)
+                {
+                    if (_pendingGlobal.TryGetValue(kvp.Key, out var value))
+                    {
+                        toFlush.Add((kvp.Key, value));
+                    }
+                }
+            }
+
+            // Flush due items
+            foreach (var (name, value) in toFlush)
+            {
+                if (TrySendGlobalNow(name, value, roomId))
+                {
+                    // Remove from pending
+                    _pendingGlobal.Remove(name);
+                    _dueGlobal.Remove(name);
+                }
+            }
+        }
+
+        private void FlushPendingClient(double nowSeconds, string roomId)
+        {
+            var toFlush = new List<((int targetClientNo, string name) key, string value)>();
+
+            // Find all due items
+            foreach (var kvp in _dueClient)
+            {
+                if (kvp.Value <= nowSeconds)
+                {
+                    if (_pendingClient.TryGetValue(kvp.Key, out var value))
+                    {
+                        toFlush.Add((kvp.Key, value));
+                    }
+                }
+            }
+
+            // Flush due items
+            foreach (var (key, value) in toFlush)
+            {
+                if (TrySendClientNow(key.Item1, key.Item2, value, roomId))
+                {
+                    // Remove from pending
+                    _pendingClient.Remove(key);
+                    _dueClient.Remove(key);
+                }
+            }
         }
     }
 }
