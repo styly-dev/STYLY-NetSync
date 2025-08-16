@@ -64,9 +64,9 @@ namespace Styly.NetSync
                 return false;
             }
 
-            // Dedupe: same as the last actually sent value -> skip
+            // Dedupe: same as the last actually sent value -> skip, but treat as success
             if (_lastSentGlobal.TryGetValue(name, out var lastSent) && lastSent == value)
-                return false;
+                return true;
 
             double now = UnityEngine.Time.realtimeSinceStartupAsDouble;
 
@@ -152,9 +152,9 @@ namespace Styly.NetSync
 
             var key = (targetClientNo, name);
 
-            // Dedupe: same as the last actually sent value -> skip
+            // Dedupe: same as the last actually sent value -> skip, but treat as success
             if (_lastSentClient.TryGetValue(key, out var lastSent) && lastSent == value)
-                return false;
+                return true;
 
             double now = UnityEngine.Time.realtimeSinceStartupAsDouble;
 
