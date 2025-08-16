@@ -68,7 +68,7 @@ namespace Styly.NetSync
             if (_lastSentGlobal.TryGetValue(name, out var lastSent) && lastSent == value)
                 return true;
 
-            double now = UnityEngine.Time.realtimeSinceStartupAsDouble;
+            double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
 
             // Leading-edge attempt if cooldown elapsed (or not set)
             bool allowImmediate = !_nextAllowedGlobal.TryGetValue(name, out var next) || now >= next;
@@ -156,7 +156,7 @@ namespace Styly.NetSync
             if (_lastSentClient.TryGetValue(key, out var lastSent) && lastSent == value)
                 return true;
 
-            double now = UnityEngine.Time.realtimeSinceStartupAsDouble;
+            double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
 
             // Leading-edge attempt if cooldown elapsed
             bool allowImmediate = !_nextAllowedClient.TryGetValue(key, out var next) || now >= next;
