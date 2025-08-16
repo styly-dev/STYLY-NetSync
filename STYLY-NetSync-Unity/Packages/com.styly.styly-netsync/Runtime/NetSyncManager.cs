@@ -50,45 +50,22 @@ namespace Styly.NetSync
         public static NetSyncManager Instance => _instance;
 
         // Public RPC methods for external access
-        public void RpcBroadcast(string functionName, string[] args)
+        public void Rpc(string functionName, string[] args)
         {
             if (_rpcManager != null)
             {
-                _rpcManager.SendBroadcast(_roomId, functionName, args);
+                _rpcManager.Send(_roomId, functionName, args);
             }
         }
 
-        public void RpcBroadcast(string roomId, string functionName, string[] args)
+        public void Rpc(string roomId, string functionName, string[] args)
         {
             if (_rpcManager != null)
             {
-                _rpcManager.SendBroadcast(roomId, functionName, args);
+                _rpcManager.Send(roomId, functionName, args);
             }
         }
 
-        public void RpcServer(string functionName, string[] args)
-        {
-            if (_rpcManager != null)
-            {
-                _rpcManager.SendToServer(_roomId, functionName, args);
-            }
-        }
-
-        public void RpcServer(string roomId, string functionName, string[] args)
-        {
-            if (_rpcManager != null)
-            {
-                _rpcManager.SendToServer(roomId, functionName, args);
-            }
-        }
-
-        public void RpcClient(int targetClientNo, string functionName, string[] args)
-        {
-            if (_rpcManager != null)
-            {
-                _rpcManager.SendToClient(_roomId, targetClientNo, functionName, args);
-            }
-        }
 
         // Network Variables API
         public bool SetGlobalVariable(string name, string value)

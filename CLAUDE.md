@@ -129,9 +129,9 @@ The system uses ZeroMQ with binary serialization for efficient networking:
 ```csharp
 MSG_CLIENT_TRANSFORM = 1    // Client → Server: Transform update
 MSG_ROOM_TRANSFORM = 2     // Server → Clients: Broadcast all transforms
-MSG_RPC_BROADCAST = 3       // Client → Server → All: Broadcast RPC
-MSG_RPC_SERVER = 4          // Client → Server: Server RPC
-MSG_RPC_CLIENT = 5          // Client → Server → Client: Direct RPC
+MSG_RPC = 3                 // Client → Server → All: Remote procedure call
+MSG_RPC_SERVER = 4          // Reserved for future use
+MSG_RPC_CLIENT = 5          // Reserved for future use
 MSG_DEVICE_ID_MAPPING = 6   // Server → Clients: Device ID ↔ client number mappings
 MSG_SET_GLOBAL_VAR = 7      // Client → Server: Set global network variable
 MSG_SET_CLIENT_VAR = 8      // Client → Server: Set client network variable
@@ -160,14 +160,8 @@ MSG_NETWORK_VARS = 9        // Server → Clients: Network variable updates
 ### RPC System
 
 ```csharp
-// Broadcast to all clients in room
-NetSyncManager.Instance.RpcBroadcast("FunctionName", new string[] { "arg1", "arg2" });
-
-// Send to server
-NetSyncManager.Instance.RpcServer("ServerFunction", new string[] { "data" });
-
-// Send to specific client (using client number)
-NetSyncManager.Instance.RpcClient(targetClientNo, "DirectMessage", new string[] { "hello" });
+// Send RPC to all clients in room
+NetSyncManager.Instance.Rpc("FunctionName", new string[] { "arg1", "arg2" });
 
 // Receive RPCs
 NetSyncManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName, args) => {

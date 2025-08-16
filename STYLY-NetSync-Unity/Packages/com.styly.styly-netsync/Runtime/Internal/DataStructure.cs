@@ -66,7 +66,7 @@ namespace Styly.NetSync
         public object dataObj; // For preserving object types without JSON conversion
     }
 
-    // RPC message structure for broadcast calls
+    // RPC message structure
     [Serializable]
     public class RPCMessage
     {
@@ -78,19 +78,6 @@ namespace Styly.NetSync
         public string argumentsJson;
     }
 
-    // RPC message structure for client-targeted calls
-    [Serializable]
-    public class RPCClientMessage
-    {
-        // Client number of the sender
-        public int senderClientNo;
-        // Client number of the target
-        public int targetClientNo;
-        // Name of function to call
-        public string functionName;
-        // JSON-serialized function arguments array
-        public string argumentsJson;
-    }
 
     // Device ID mapping data
     [Serializable]

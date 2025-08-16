@@ -167,12 +167,6 @@ class NetSyncServer:
                 return self.room_device_id_to_client_no[room_id].get(device_id, 0)
         return 0
 
-    def _get_device_id_from_client_no(self, room_id: str, client_no: int) -> str:
-        """Get device ID from client number in a room"""
-        with self._rooms_lock:
-            if room_id in self.room_client_no_to_device_id:
-                return self.room_client_no_to_device_id[room_id].get(client_no, None)
-        return None
 
     def _find_reusable_client_no(self, room_id: str) -> int:
         """Find a client number that can be reused (from expired device IDs)"""
@@ -332,25 +326,15 @@ class NetSyncServer:
                             msg_type, data, raw_payload = binary_serializer.deserialize(message_bytes)
                             if msg_type == binary_serializer.MSG_CLIENT_TRANSFORM:
                                 self._handle_client_transform(client_identity, room_id, data, raw_payload)
-                            elif msg_type == binary_serializer.MSG_RPC_BROADCAST:
+                            elif msg_type == binary_serializer.MSG_RPC:
                                 # Get sender's client number from client identity
                                 sender_device_id = self._get_device_id_from_identity(client_identity, room_id)
                                 if sender_device_id:
                                     sender_client_no = self._get_client_no_for_device_id(room_id, sender_device_id)
                                     data['senderClientNo'] = sender_client_no
-                                # Broadcast RPC to room excluding sender
-                                self._broadcast_rpc_to_room(room_id, data)
-                            elif msg_type == binary_serializer.MSG_RPC_SERVER:
-                                # Handle client-to-server RPC request
-                                self._handle_rpc_request(client_identity, room_id, data)
-                            elif msg_type == binary_serializer.MSG_RPC_CLIENT:
-                                # Get sender's client number
-                                sender_device_id = self._get_device_id_from_identity(client_identity, room_id)
-                                if sender_device_id:
-                                    sender_client_no = self._get_client_no_for_device_id(room_id, sender_device_id)
-                                    data['senderClientNo'] = sender_client_no
-                                # Handle client-to-client RPC request
-                                self._handle_rpc_client_request(room_id, data)
+                                # Send RPC to room excluding sender
+                                self._send_rpc_to_room(room_id, data)
+                            # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
                             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
                                 # Handle global variable set request
                                 sender_device_id = self._get_device_id_from_identity(client_identity, room_id)
@@ -394,13 +378,9 @@ class NetSyncServer:
             if msg_type in [0, "ClientTransform", "client_transform"]:
                 self._handle_client_transform(client_identity, room_id, data)
             # JSON-based RPC broadcast
-            elif msg_type in ["RpcBroadcast", "rpc_broadcast"]:
-                logger.info(f"JSON RPC broadcast received in room {room_id}: {data}")
-                self._broadcast_rpc_to_room(room_id, data)
-            # JSON-based RPC server request
-            elif msg_type in ["RpcServer", "rpc_server"]:
-                logger.info(f"JSON RPC request received from {client_identity.hex()[:8]} in room {room_id}: {data}")
-                self._handle_rpc_request(client_identity, room_id, data)
+            elif msg_type in ["Rpc", "rpc"]:
+                logger.info(f"JSON RPC received in room {room_id}: {data}")
+                self._send_rpc_to_room(room_id, data)
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
 
@@ -466,13 +446,13 @@ class NetSyncServer:
             self._broadcast_id_mappings(room_id)
             self._sync_network_variables_to_new_client(room_id)
 
-    def _broadcast_rpc_to_room(self, room_id: str, rpc_data: Dict[str, Any]):
-        """Broadcast RPC to all clients in room except sender"""
-        # Log RPC broadcast
+    def _send_rpc_to_room(self, room_id: str, rpc_data: Dict[str, Any]):
+        """Send RPC to all clients in room except sender"""
+        # Log RPC
         sender_client_no = rpc_data.get('senderClientNo', 0)
         function_name = rpc_data.get('functionName', 'unknown')
         args = rpc_data.get('args', [])
-        logger.info(f"RPC Broadcast: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}")
+        logger.info(f"RPC: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}")
 
         # Prepare topic and payload
         topic_bytes = room_id.encode('utf-8')
@@ -485,60 +465,6 @@ class NetSyncServer:
         except Exception as e:
             logger.error(f"Failed to broadcast RPC to room {room_id}: {e}")
 
-    def _handle_rpc_request(self, client_identity: bytes, room_id: str, rpc_data: Dict[str, Any]):
-        """Handle client-to-server RPC request"""
-        # Log RPC server request
-        sender_client_no = rpc_data.get('senderClientNo', 0)
-        function_name = rpc_data.get('functionName', 'unknown')
-        args = rpc_data.get('args', [])
-        logger.info(f"RPC Server Request: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}")
-        # Here you can add your server-side RPC handling logic
-        pass
-
-    def _handle_rpc_client_request(self, room_id: str, rpc_data: Dict[str, Any]):
-        """Handle client-to-client RPC request"""
-        # Log RPC client request
-        sender_client_no = rpc_data.get('senderClientNo', 0)
-        target_client_no = rpc_data.get('targetClientNo', 0)
-        function_name = rpc_data.get('functionName', 'unknown')
-        args = rpc_data.get('args', [])
-        logger.info(f"RPC Client Request: sender={sender_client_no}, target={target_client_no}, function={function_name}, args={args}, room={room_id}")
-
-        # Resolve target device ID from client number
-        target_device_id = self._get_device_id_from_client_no(room_id, target_client_no)
-        if not target_device_id:
-            logger.warning(f"Unknown target client number: {target_client_no} in room {room_id}")
-            return
-
-        # Send RPC to specific target client
-        self._send_rpc_to_client(room_id, target_device_id, rpc_data)
-
-    def _send_rpc_to_client(self, room_id: str, target_device_id: str, rpc_data: Dict[str, Any]):
-        """Send RPC to a specific client in the room"""
-        with self._rooms_lock:
-            # Find the target client in the room
-            room_clients = self.rooms.get(room_id, {})
-            target_client_data = room_clients.get(target_device_id)
-
-            if target_client_data:
-                # Get the client's identity for direct messaging
-                target_identity = target_client_data.get('identity')
-                if target_identity:
-                    try:
-                        # Prepare topic and payload
-                        topic_bytes = room_id.encode('utf-8')
-                        message_bytes = binary_serializer.serialize_rpc_client_message(rpc_data)
-
-                        # Send directly to the target client via PUB socket
-                        # The client will receive this on their SUB socket subscribed to the room
-                        self.pub.send_multipart([topic_bytes, message_bytes])
-                        self._increment_stat('broadcast_count')
-                    except Exception as e:
-                        logger.error(f"Failed to send RPC to client {target_device_id[:8]}... in room {room_id}: {e}")
-                else:
-                    logger.warning(f"Target client {target_device_id[:8]}... has no identity in room {room_id}")
-            else:
-                logger.warning(f"Target client {target_device_id[:8]}... not found in room {room_id}")
 
     def _check_rate_limit(self, room_id: str, device_id: str) -> bool:
         """Check if client is within rate limit for Network Variables requests"""

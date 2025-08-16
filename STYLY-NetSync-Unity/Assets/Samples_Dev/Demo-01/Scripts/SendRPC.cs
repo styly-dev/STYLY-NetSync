@@ -9,7 +9,7 @@ public class SendRPC : MonoBehaviour
 
         // Send an RPC with the color of this object
         Color color = GetComponent<Renderer>().material.color;
-        NetSyncManager.Instance.RpcBroadcast("ChangeColor", new[] {
+        NetSyncManager.Instance.Rpc("ChangeColor", new[] {
             color.r.ToString(),
             color.g.ToString(),
             color.b.ToString()

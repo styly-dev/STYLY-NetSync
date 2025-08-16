@@ -58,7 +58,7 @@ namespace Styly.NetSync
                         _messagesReceived++;
                         break;
 
-                    case BinarySerializer.MSG_RPC_BROADCAST when data is RPCMessage rpc:
+                    case BinarySerializer.MSG_RPC when data is RPCMessage rpc:
                         var args = JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson);
                         _messageQueue.Enqueue(new NetworkMessage
                         {
@@ -68,15 +68,6 @@ namespace Styly.NetSync
                         _messagesReceived++;
                         break;
 
-                    case BinarySerializer.MSG_RPC_CLIENT when data is RPCClientMessage clientRpc:
-                        var clientArgs = JsonConvert.DeserializeObject<string[]>(clientRpc.argumentsJson);
-                        _messageQueue.Enqueue(new NetworkMessage
-                        {
-                            type = "rpc",
-                            data = JsonConvert.SerializeObject(new { senderClientNo = clientRpc.senderClientNo, clientRpc.functionName, args = clientArgs })
-                        });
-                        _messagesReceived++;
-                        break;
 
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
                         // Process ID mappings immediately (don't queue)
