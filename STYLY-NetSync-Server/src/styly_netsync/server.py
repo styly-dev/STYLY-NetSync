@@ -326,14 +326,14 @@ class NetSyncServer:
                             msg_type, data, raw_payload = binary_serializer.deserialize(message_bytes)
                             if msg_type == binary_serializer.MSG_CLIENT_TRANSFORM:
                                 self._handle_client_transform(client_identity, room_id, data, raw_payload)
-                            elif msg_type == binary_serializer.MSG_RPC_BROADCAST:
+                            elif msg_type == binary_serializer.MSG_RPC:
                                 # Get sender's client number from client identity
                                 sender_device_id = self._get_device_id_from_identity(client_identity, room_id)
                                 if sender_device_id:
                                     sender_client_no = self._get_client_no_for_device_id(room_id, sender_device_id)
                                     data['senderClientNo'] = sender_client_no
-                                # Broadcast RPC to room excluding sender
-                                self._broadcast_rpc_to_room(room_id, data)
+                                # Send RPC to room excluding sender
+                                self._send_rpc_to_room(room_id, data)
                             # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
                             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
                                 # Handle global variable set request
@@ -378,9 +378,9 @@ class NetSyncServer:
             if msg_type in [0, "ClientTransform", "client_transform"]:
                 self._handle_client_transform(client_identity, room_id, data)
             # JSON-based RPC broadcast
-            elif msg_type in ["RpcBroadcast", "rpc_broadcast"]:
-                logger.info(f"JSON RPC broadcast received in room {room_id}: {data}")
-                self._broadcast_rpc_to_room(room_id, data)
+            elif msg_type in ["Rpc", "rpc"]:
+                logger.info(f"JSON RPC received in room {room_id}: {data}")
+                self._send_rpc_to_room(room_id, data)
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
 
@@ -446,13 +446,13 @@ class NetSyncServer:
             self._broadcast_id_mappings(room_id)
             self._sync_network_variables_to_new_client(room_id)
 
-    def _broadcast_rpc_to_room(self, room_id: str, rpc_data: Dict[str, Any]):
-        """Broadcast RPC to all clients in room except sender"""
-        # Log RPC broadcast
+    def _send_rpc_to_room(self, room_id: str, rpc_data: Dict[str, Any]):
+        """Send RPC to all clients in room except sender"""
+        # Log RPC
         sender_client_no = rpc_data.get('senderClientNo', 0)
         function_name = rpc_data.get('functionName', 'unknown')
         args = rpc_data.get('args', [])
-        logger.info(f"RPC Broadcast: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}")
+        logger.info(f"RPC: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}")
 
         # Prepare topic and payload
         topic_bytes = room_id.encode('utf-8')

@@ -23,7 +23,7 @@ namespace Styly.NetSync
             _netSyncManager = netSyncManager;
         }
 
-        public void SendBroadcast(string roomId, string functionName, string[] args)
+        public void Send(string roomId, string functionName, string[] args)
         {
             if (_connectionManager.DealerSocket == null) { return; }
 

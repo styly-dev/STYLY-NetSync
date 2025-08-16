@@ -58,7 +58,7 @@ namespace Styly.NetSync
                         _messagesReceived++;
                         break;
 
-                    case BinarySerializer.MSG_RPC_BROADCAST when data is RPCMessage rpc:
+                    case BinarySerializer.MSG_RPC when data is RPCMessage rpc:
                         var args = JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson);
                         _messageQueue.Enqueue(new NetworkMessage
                         {

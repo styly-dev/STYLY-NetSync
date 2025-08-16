@@ -18,7 +18,7 @@ and exercises all major features of the multiplayer framework:
    - Both variables are synchronized across all clients in the room
 
 3. Remote Procedure Calls (RPC):
-   - Broadcast RPC: Sends 'BroadcastRPC' to all clients every 10 seconds
+   - Sends 'TestRPC' to all clients every 10 seconds
    - Includes current timestamp (HH:MM:SS format) as arguments
 
 The client logs all activities including:
@@ -214,7 +214,7 @@ class TestClient:
             logger.info(f"Set client variable TimeLocal = {current_time_str}")
 
     def send_rpcs(self):
-        """Send RPC messages every 10 seconds"""
+        """Send RPC message every 10 seconds"""
         current_time = time.time()
         if current_time - self.last_rpc_update < 10:  # 10 second interval
             return
@@ -225,15 +225,15 @@ class TestClient:
         if self.client_no is None:
             return
 
-        # Broadcast RPC
-        broadcast_data = {
+        # Send RPC
+        rpc_data = {
             'senderClientNo': self.client_no,
-            'functionName': 'BroadcastRPC',
-            'argumentsJson': json.dumps(['BroadcastRPC', current_time_str])
+            'functionName': 'TestRPC',
+            'argumentsJson': json.dumps(['TestRPC', current_time_str])
         }
-        message = serialize_rpc_message(broadcast_data)
+        message = serialize_rpc_message(rpc_data)
         self.dealer_socket.send_multipart([self.room_id.encode('utf-8'), message])
-        logger.info(f"Sent broadcast RPC: BroadcastRPC({current_time_str})")
+        logger.info(f"Sent RPC: TestRPC({current_time_str})")
 
     def receive_messages(self):
         """Receive and process messages from the server"""
@@ -271,7 +271,7 @@ class TestClient:
                                 for var in variables:
                                     logger.info(f"Client {client_no} variable update: {var['name']} = {var['value']}")
 
-                        # RPC broadcast messages would be received here
+                        # RPC messages would be received here
 
             except zmq.Again:
                 pass
@@ -314,7 +314,7 @@ class TestClient:
         logger.info("- Transform: Circular movement at 50Hz")
         logger.info("- Global variable 'TimeGlobal': Updated every minute")
         logger.info("- Client variable 'TimeLocal': Updated every minute")
-        logger.info("- RPCs: Broadcast, Server, and Client-to-Client every 10 seconds")
+        logger.info("- RPCs: Sends RPC every 10 seconds")
 
         try:
             # Run send loop in main thread

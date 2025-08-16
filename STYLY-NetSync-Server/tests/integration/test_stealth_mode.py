@@ -64,13 +64,13 @@ def test_stealth_client():
     dealer.send_multipart([room_id.encode('utf-8'), handshake])
     print("Stealth handshake sent")
 
-    # Test RPC broadcast
+    # Test RPC
     time.sleep(1)
-    print("\nTesting RPC broadcast from stealth client...")
+    print("\nTesting RPC from stealth client...")
 
-    # Create RPC broadcast message (MSG_RPC_BROADCAST = 3)
+    # Create RPC message (MSG_RPC = 3)
     rpc_buffer = bytearray()
-    rpc_buffer.append(3)  # MSG_RPC_BROADCAST
+    rpc_buffer.append(3)  # MSG_RPC
 
     # Sender client number (will be overwritten by server)
     rpc_buffer.extend(struct.pack('<H', 0))
@@ -88,7 +88,7 @@ def test_stealth_client():
     rpc_buffer.extend(args_bytes)
 
     dealer.send_multipart([room_id.encode('utf-8'), bytes(rpc_buffer)])
-    print("RPC broadcast sent")
+    print("RPC sent")
 
     # Listen for messages
     print("\nListening for room transforms (should not see stealth client)...")
@@ -133,8 +133,8 @@ def test_stealth_client():
                                         print("  ⚠️  WARNING: Stealth client visible in room transform!")
                                     else:
                                         print("  ✓ Stealth client not visible")
-                        elif msg_type == 3:  # MSG_RPC_BROADCAST
-                            print(f"  RPC broadcast received on {topic}")
+                        elif msg_type == 3:  # MSG_RPC
+                            print(f"  RPC received on {topic}")
                         elif msg_type == 6:  # MSG_DEVICE_ID_MAPPING
                             print(f"  ID mapping received on {topic}")
                             # Check if stealth client appears in mapping

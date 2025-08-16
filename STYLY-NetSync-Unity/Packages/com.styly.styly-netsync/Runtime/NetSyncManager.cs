@@ -50,19 +50,19 @@ namespace Styly.NetSync
         public static NetSyncManager Instance => _instance;
 
         // Public RPC methods for external access
-        public void RpcBroadcast(string functionName, string[] args)
+        public void Rpc(string functionName, string[] args)
         {
             if (_rpcManager != null)
             {
-                _rpcManager.SendBroadcast(_roomId, functionName, args);
+                _rpcManager.Send(_roomId, functionName, args);
             }
         }
 
-        public void RpcBroadcast(string roomId, string functionName, string[] args)
+        public void Rpc(string roomId, string functionName, string[] args)
         {
             if (_rpcManager != null)
             {
-                _rpcManager.SendBroadcast(roomId, functionName, args);
+                _rpcManager.Send(roomId, functionName, args);
             }
         }
 

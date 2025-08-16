@@ -10,7 +10,7 @@ namespace Styly.NetSync
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
         public const byte MSG_ROOM_TRANSFORM = 2;  // Room transform with short IDs only
-        public const byte MSG_RPC_BROADCAST = 3;   // Broadcast function call
+        public const byte MSG_RPC = 3;             // Remote procedure call
         public const byte MSG_RPC_SERVER = 4;   // Reserved for future use
         public const byte MSG_RPC_CLIENT = 5;   // Reserved for future use
         public const byte MSG_DEVICE_ID_MAPPING = 6;  // Device ID mapping notification
@@ -162,7 +162,7 @@ namespace Styly.NetSync
                     //     return (messageType, DeserializeClientTransform(reader));
                     case MSG_ROOM_TRANSFORM:
                         return (messageType, DeserializeRoomTransform(reader));
-                    case MSG_RPC_BROADCAST:
+                    case MSG_RPC:
                         // RPC message
                         return (messageType, DeserializeRPCMessage(reader));
                     // MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
@@ -258,14 +258,14 @@ namespace Styly.NetSync
         #endregion
 
         /// <summary>
-        /// Serialize an RPC broadcast message
+        /// Serialize an RPC message
         /// </summary>
         public static byte[] SerializeRPCMessage(RPCMessage msg)
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
             // Message type
-            writer.Write(MSG_RPC_BROADCAST);
+            writer.Write(MSG_RPC);
             // Sender client number (2 bytes)
             writer.Write((ushort)msg.senderClientNo);
             // Function name (length-prefixed byte)
@@ -358,7 +358,7 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Deserialize an RPC broadcast message
+        /// Deserialize an RPC message
         /// </summary>
         private static RPCMessage DeserializeRPCMessage(BinaryReader reader)
         {

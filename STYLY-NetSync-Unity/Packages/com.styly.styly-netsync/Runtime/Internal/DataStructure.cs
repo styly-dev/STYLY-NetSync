@@ -66,7 +66,7 @@ namespace Styly.NetSync
         public object dataObj; // For preserving object types without JSON conversion
     }
 
-    // RPC message structure for broadcast calls
+    // RPC message structure
     [Serializable]
     public class RPCMessage
     {

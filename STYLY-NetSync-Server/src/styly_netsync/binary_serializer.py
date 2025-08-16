@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple, Union
 # Message type identifiers
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Room transform with short IDs only
-MSG_RPC_BROADCAST = 3  # Broadcast function call
+MSG_RPC = 3            # Remote procedure call
 MSG_RPC_SERVER    = 4  # Reserved for future use
 MSG_RPC_CLIENT    = 5  # Reserved for future use
 MSG_DEVICE_ID_MAPPING = 6  # Device ID mapping notification
@@ -204,9 +204,9 @@ def _serialize_rpc_base(buffer: bytearray, data: Dict[str, Any], msg_type: int) 
 
 
 def serialize_rpc_message(data: Dict[str, Any]) -> bytes:
-    """Serialize RPC broadcast message"""
+    """Serialize RPC message"""
     buffer = bytearray()
-    _serialize_rpc_base(buffer, data, MSG_RPC_BROADCAST)
+    _serialize_rpc_base(buffer, data, MSG_RPC)
     return bytes(buffer)
 
 
@@ -369,7 +369,7 @@ def deserialize(data: bytes) -> Tuple[int, Union[Dict[str, Any], None], bytes]:
             return message_type, _deserialize_client_transform(data, offset), raw_client_data
         elif message_type == MSG_ROOM_TRANSFORM:
             return message_type, _deserialize_room_transform(data, offset), b''
-        elif message_type == MSG_RPC_BROADCAST:
+        elif message_type == MSG_RPC:
             return message_type, _deserialize_rpc_message(data, offset), b''
         # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
         elif message_type == MSG_DEVICE_ID_MAPPING:
@@ -421,7 +421,7 @@ def _deserialize_client_transform(data: bytes, offset: int) -> Dict[str, Any]:
     return result
 
 def _deserialize_rpc_message(data: bytes, offset: int) -> Dict[str, Any]:
-    """Deserialize RPC broadcast or server message with sender client number"""
+    """Deserialize RPC message with sender client number"""
     result: Dict[str, Any] = {}
 
     # Sender client number (2 bytes)
