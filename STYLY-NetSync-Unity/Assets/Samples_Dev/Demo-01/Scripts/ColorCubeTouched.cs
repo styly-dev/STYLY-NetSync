@@ -1,7 +1,7 @@
 using UnityEngine;
 using Styly.NetSync;
 
-public class SendRPC : MonoBehaviour
+public class ColorCubeTouched : MonoBehaviour
 {
     void OnTriggerEnter(Collider other)
     {
@@ -14,5 +14,8 @@ public class SendRPC : MonoBehaviour
             color.g.ToString(),
             color.b.ToString()
         });
+
+        // Set the client variable for the touched color
+        NetSyncManager.Instance.SetClientVariable("Touched Color", color.ToString());
     }
 }

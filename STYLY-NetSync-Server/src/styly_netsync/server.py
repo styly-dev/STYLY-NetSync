@@ -70,14 +70,29 @@ class NetSyncServer:
         # Network Variables storage
         self.global_variables: Dict[str, Dict[str, Any]] = {}  # room_id -> {var_name: {value, timestamp, lastWriterClientNo}}
         self.client_variables: Dict[str, Dict[int, Dict[str, Any]]] = {}  # room_id -> {client_no -> {var_name: {value, timestamp, lastWriterClientNo}}}
-        self.client_rate_limiter: Dict[str, Dict[str, float]] = {}  # room_id -> {device_id: last_request_times}
+        
+        # NV Pending buffers for coalescing (latest-wins per key)
+        self.pending_global_nv: Dict[str, Dict[str, tuple]] = {}  # room_id -> {var_name: (sender_client_no, value, timestamp)}
+        self.pending_client_nv: Dict[str, Dict[tuple, tuple]] = {}  # room_id -> {(target_client_no, var_name): (sender_client_no, value, timestamp)}
+        
+        # NV fairness and rate control
+        self.nv_flush_interval = 0.05  # 50ms flush cadence
+        self.nv_per_client_rate = 5.0  # 5 updates/second per client
+        self.nv_per_room_cap = 50.0  # 50 updates/second per room
+        self.room_last_nv_flush: Dict[str, float] = {}  # room_id -> last_flush_time
+        self.room_client_nv_allowance: Dict[str, Dict[int, float]] = {}  # room_id -> {client_no: fractional_allowance}
+        self.room_nv_allowance: Dict[str, float] = {}  # room_id -> fractional_allowance
+        
+        # NV monitoring window (1s sliding window for logging only)
+        self.nv_monitor_window: Dict[str, list] = {}  # room_id -> [timestamps]
+        self.nv_monitor_window_size = 1.0  # 1 second window
+        self.nv_monitor_threshold = 100  # Log warning if > 100 NV req/s
 
         # Network Variables limits
         self.MAX_GLOBAL_VARS = 20
         self.MAX_CLIENT_VARS = 20
         self.MAX_VAR_NAME_LENGTH = 64
         self.MAX_VAR_VALUE_LENGTH = 1024
-        self.MAX_REQUESTS_PER_SECOND = 10
 
         # Thread synchronization
         self._rooms_lock = threading.RLock()  # Reentrant lock for nested access
@@ -147,7 +162,16 @@ class NetSyncServer:
             # Initialize Network Variables for the room
             self.global_variables[room_id] = {}
             self.client_variables[room_id] = {}
-            self.client_rate_limiter[room_id] = {}
+            
+            # Initialize NV pending buffers and rate control
+            self.pending_global_nv[room_id] = {}
+            self.pending_client_nv[room_id] = {}
+            self.room_last_nv_flush[room_id] = 0
+            self.room_client_nv_allowance[room_id] = {}
+            self.room_nv_allowance[room_id] = 0.0
+            
+            # Initialize monitoring window
+            self.nv_monitor_window[room_id] = []
 
             logger.info(f"Created new room: {room_id}")
 
@@ -336,15 +360,13 @@ class NetSyncServer:
                                 self._send_rpc_to_room(room_id, data)
                             # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
                             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
-                                # Handle global variable set request
-                                sender_device_id = self._get_device_id_from_identity(client_identity, room_id)
-                                if sender_device_id and self._check_rate_limit(room_id, sender_device_id):
-                                    self._handle_global_var_set(room_id, data)
+                                # Buffer global variable set request (no rate limit drops)
+                                self._buffer_global_var_set(room_id, data)
+                                self._monitor_nv_sliding_window(room_id)
                             elif msg_type == binary_serializer.MSG_CLIENT_VAR_SET:
-                                # Handle client variable set request
-                                sender_device_id = self._get_device_id_from_identity(client_identity, room_id)
-                                if sender_device_id and self._check_rate_limit(room_id, sender_device_id):
-                                    self._handle_client_var_set(room_id, data)
+                                # Buffer client variable set request (no rate limit drops)
+                                self._buffer_client_var_set(room_id, data)
+                                self._monitor_nv_sliding_window(room_id)
                             else:
                                 logger.warning(f"Unknown binary msg_type: {msg_type}")
                         except Exception:
@@ -466,30 +488,28 @@ class NetSyncServer:
             logger.error(f"Failed to broadcast RPC to room {room_id}: {e}")
 
 
-    def _check_rate_limit(self, room_id: str, device_id: str) -> bool:
-        """Check if client is within rate limit for Network Variables requests"""
+    def _monitor_nv_sliding_window(self, room_id: str):
+        """Monitor NV request rate for logging only (no gating)"""
         current_time = time.time()
         with self._rooms_lock:
-            if room_id not in self.client_rate_limiter:
-                self.client_rate_limiter[room_id] = {}
+            if room_id not in self.nv_monitor_window:
+                self.nv_monitor_window[room_id] = []
+            
+            window = self.nv_monitor_window[room_id]
+            
+            # Add current timestamp
+            window.append(current_time)
+            
+            # Remove old timestamps outside window
+            cutoff_time = current_time - self.nv_monitor_window_size
+            self.nv_monitor_window[room_id] = [t for t in window if t > cutoff_time]
+            
+            # Check if over threshold and log warning
+            if len(self.nv_monitor_window[room_id]) > self.nv_monitor_threshold:
+                logger.warning(f"High NV request rate in room {room_id}: {len(self.nv_monitor_window[room_id])} req/s")
 
-            client_times = self.client_rate_limiter[room_id].get(device_id, [])
-
-            # Remove old timestamps
-            cutoff_time = current_time - 1.0  # 1 second window
-            client_times = [t for t in client_times if t > cutoff_time]
-
-            # Check if under limit
-            if len(client_times) < self.MAX_REQUESTS_PER_SECOND:
-                client_times.append(current_time)
-                self.client_rate_limiter[room_id][device_id] = client_times
-                return True
-            else:
-                logger.warning(f"Rate limit exceeded for device {device_id[:8]}... in room {room_id}")
-                return False
-
-    def _handle_global_var_set(self, room_id: str, data: Dict[str, Any]):
-        """Handle global variable set request"""
+    def _buffer_global_var_set(self, room_id: str, data: Dict[str, Any]):
+        """Buffer global variable set request for later processing"""
         sender_client_no = data.get('senderClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
@@ -500,18 +520,24 @@ class NetSyncServer:
 
         with self._rooms_lock:
             self._initialize_room(room_id)
+            
+            # Buffer the update (latest-wins per key)
+            self.pending_global_nv[room_id][var_name] = (sender_client_no, var_value, timestamp)
 
+    def _apply_global_var_set(self, room_id: str, sender_client_no: int, var_name: str, var_value: str, timestamp: float) -> bool:
+        """Apply global variable update (used by flush, returns True if applied)"""
+        with self._rooms_lock:
             # Check limits
             global_vars = self.global_variables[room_id]
             if var_name not in global_vars and len(global_vars) >= self.MAX_GLOBAL_VARS:
                 logger.warning(f"Global variable limit reached in room {room_id}")
-                return
+                return False
 
             # Conflict resolution: last-writer-wins with timestamp comparison
             if var_name in global_vars:
                 existing = global_vars[var_name]
                 if timestamp < existing['timestamp'] or (timestamp == existing['timestamp'] and sender_client_no < existing['lastWriterClientNo']):
-                    return  # Ignore older or lower priority update
+                    return False  # Ignore older or lower priority update
 
             # Store old value for logging
             old_value = global_vars.get(var_name, {}).get('value', None)
@@ -524,12 +550,24 @@ class NetSyncServer:
             }
 
             logger.info(f"Global Variable Changed: room={room_id}, client={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'")
+            return True
 
+    def _handle_global_var_set(self, room_id: str, data: Dict[str, Any]):
+        """Handle global variable set request (for backward compat - immediate apply+broadcast)"""
+        sender_client_no = data.get('senderClientNo', 0)
+        var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
+        var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
+        timestamp = data.get('timestamp', time.time())
+
+        if not var_name:
+            return
+
+        if self._apply_global_var_set(room_id, sender_client_no, var_name, var_value, timestamp):
             # Broadcast sync to all clients
             self._broadcast_global_var_sync(room_id)
 
-    def _handle_client_var_set(self, room_id: str, data: Dict[str, Any]):
-        """Handle client variable set request"""
+    def _buffer_client_var_set(self, room_id: str, data: Dict[str, Any]):
+        """Buffer client variable set request for later processing"""
         sender_client_no = data.get('senderClientNo', 0)
         target_client_no = data.get('targetClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
@@ -541,7 +579,14 @@ class NetSyncServer:
 
         with self._rooms_lock:
             self._initialize_room(room_id)
+            
+            # Buffer the update (latest-wins per key)
+            key = (target_client_no, var_name)
+            self.pending_client_nv[room_id][key] = (sender_client_no, var_value, timestamp)
 
+    def _apply_client_var_set(self, room_id: str, sender_client_no: int, target_client_no: int, var_name: str, var_value: str, timestamp: float) -> bool:
+        """Apply client variable update (used by flush, returns True if applied)"""
+        with self._rooms_lock:
             # Initialize client variables for target if needed
             if target_client_no not in self.client_variables[room_id]:
                 self.client_variables[room_id][target_client_no] = {}
@@ -551,13 +596,13 @@ class NetSyncServer:
             # Check limits
             if var_name not in client_vars and len(client_vars) >= self.MAX_CLIENT_VARS:
                 logger.warning(f"Client variable limit reached for client {target_client_no} in room {room_id}")
-                return
+                return False
 
             # Conflict resolution: last-writer-wins with timestamp comparison
             if var_name in client_vars:
                 existing = client_vars[var_name]
                 if timestamp < existing['timestamp'] or (timestamp == existing['timestamp'] and sender_client_no < existing['lastWriterClientNo']):
-                    return  # Ignore older or lower priority update
+                    return False  # Ignore older or lower priority update
 
             # Store old value for logging
             old_value = client_vars.get(var_name, {}).get('value', None)
@@ -570,7 +615,20 @@ class NetSyncServer:
             }
 
             logger.info(f"Client Variable Changed: room={room_id}, target={target_client_no}, sender={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'")
+            return True
 
+    def _handle_client_var_set(self, room_id: str, data: Dict[str, Any]):
+        """Handle client variable set request (for backward compat - immediate apply+broadcast)"""
+        sender_client_no = data.get('senderClientNo', 0)
+        target_client_no = data.get('targetClientNo', 0)
+        var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
+        var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
+        timestamp = data.get('timestamp', time.time())
+
+        if not var_name:
+            return
+
+        if self._apply_client_var_set(room_id, sender_client_no, target_client_no, var_name, var_value, timestamp):
             # Broadcast sync to all clients
             self._broadcast_client_var_sync(room_id)
 
@@ -632,6 +690,150 @@ class NetSyncServer:
         """Send current Network Variables state to a newly connected client"""
         self._broadcast_global_var_sync(room_id)
         self._broadcast_client_var_sync(room_id)
+    
+    def _flush_network_variable_updates(self, current_time: float):
+        """Flush pending NV updates with fairness and rate limiting"""
+        with self._rooms_lock:
+            rooms_to_process = list(self.rooms.keys())
+        
+        for room_id in rooms_to_process:
+            with self._rooms_lock:
+                # Skip if less than 50ms since last flush
+                last_flush = self.room_last_nv_flush.get(room_id, 0)
+                if current_time - last_flush < self.nv_flush_interval:
+                    continue
+                
+                # Get pending updates
+                pending_global = self.pending_global_nv.get(room_id, {})
+                pending_client = self.pending_client_nv.get(room_id, {})
+                
+                if not pending_global and not pending_client:
+                    continue
+                
+                # Update flush time
+                interval = current_time - last_flush if last_flush > 0 else self.nv_flush_interval
+                self.room_last_nv_flush[room_id] = current_time
+                
+                # Update room-level allowance (no burst - cap at 1.0)
+                room_allowance = self.room_nv_allowance.get(room_id, 0.0)
+                room_allowance = min(1.0, room_allowance + self.nv_per_room_cap * interval)
+                self.room_nv_allowance[room_id] = room_allowance
+                
+                # Track which clients have pending updates to ensure fairness
+                client_updates = {}  # client_no -> [(is_global, key, data)]
+                
+                # Organize by sender client
+                for var_name, (sender_no, value, timestamp) in pending_global.items():
+                    if sender_no not in client_updates:
+                        client_updates[sender_no] = []
+                    client_updates[sender_no].append((True, var_name, (sender_no, value, timestamp)))
+                
+                for (target_no, var_name), (sender_no, value, timestamp) in pending_client.items():
+                    if sender_no not in client_updates:
+                        client_updates[sender_no] = []
+                    client_updates[sender_no].append((False, (target_no, var_name), (sender_no, value, timestamp)))
+                
+                # Update per-client allowances
+                client_allowances = self.room_client_nv_allowance.get(room_id, {})
+                for client_no in client_updates.keys():
+                    if client_no not in client_allowances:
+                        client_allowances[client_no] = 0.0
+                    # Update allowance (no burst - cap at 1.0)
+                    client_allowances[client_no] = min(1.0, client_allowances[client_no] + self.nv_per_client_rate * interval)
+                self.room_client_nv_allowance[room_id] = client_allowances
+                
+                # Round-robin across clients for fairness
+                global_dirty = False
+                client_dirty = False
+                processed_global = []
+                processed_client = []
+                
+                # Process in round-robin fashion with dynamic processing
+                client_list = list(client_updates.keys())
+                max_safety_iterations = 1000  # Safety limit to prevent infinite loops
+                iteration_count = 0
+                
+                # Dynamically process all available updates within rate limits
+                while client_list and iteration_count < max_safety_iterations:
+                    progress_made = False
+                    clients_to_process = len(client_list)
+                    
+                    for _ in range(clients_to_process):
+                        if not client_list:
+                            break
+                        
+                        iteration_count += 1
+                        
+                        # Round-robin: take first client, move to back
+                        client_no = client_list.pop(0)
+                        
+                        if client_no not in client_updates or not client_updates[client_no]:
+                            continue  # No more updates for this client
+                        
+                        # Check client allowance
+                        if client_allowances.get(client_no, 0) < 1.0:
+                            client_list.append(client_no)  # Try again later in next round
+                            continue
+                        
+                        # Check room allowance
+                        if room_allowance < 1.0:
+                            # Room cap reached - put client back and stop processing
+                            client_list.insert(0, client_no)
+                            break
+                        
+                        # Process one update from this client
+                        is_global, key, data = client_updates[client_no].pop(0)
+                        
+                        if is_global:
+                            # Apply global variable
+                            var_name = key
+                            sender_no, value, timestamp = data
+                            if self._apply_global_var_set(room_id, sender_no, var_name, value, timestamp):
+                                global_dirty = True
+                                processed_global.append(var_name)
+                                # Consume allowances
+                                client_allowances[client_no] -= 1.0
+                                room_allowance -= 1.0
+                                progress_made = True
+                        else:
+                            # Apply client variable
+                            target_no, var_name = key
+                            sender_no, value, timestamp = data
+                            if self._apply_client_var_set(room_id, sender_no, target_no, var_name, value, timestamp):
+                                client_dirty = True
+                                processed_client.append(key)
+                                # Consume allowances
+                                client_allowances[client_no] -= 1.0
+                                room_allowance -= 1.0
+                                progress_made = True
+                        
+                        # Put client back in rotation if they have more updates
+                        if client_updates[client_no]:
+                            client_list.append(client_no)
+                    
+                    # Exit if no progress was made (all clients are rate-limited or no updates)
+                    if not progress_made or room_allowance < 1.0:
+                        break
+                
+                # Log warning if we hit the safety limit
+                if iteration_count >= max_safety_iterations:
+                    logger.warning(f"Network variable processing hit safety limit for room {room_id}")
+                
+                # Update remaining allowances
+                self.room_client_nv_allowance[room_id] = client_allowances
+                self.room_nv_allowance[room_id] = room_allowance
+                
+                # Remove processed items from pending
+                for var_name in processed_global:
+                    del self.pending_global_nv[room_id][var_name]
+                for key in processed_client:
+                    del self.pending_client_nv[room_id][key]
+                
+            # Broadcast changes (outside lock)
+            if global_dirty:
+                self._broadcast_global_var_sync(room_id)
+            if client_dirty:
+                self._broadcast_client_var_sync(room_id)
 
     def _broadcast_id_mappings(self, room_id: str):
         """Broadcast all device ID mappings for a room (including stealth clients with flag)"""
@@ -674,6 +876,8 @@ class NetSyncServer:
                 # Check for broadcasts at higher frequency but only broadcast when needed
                 if current_time - last_broadcast_check >= self.BROADCAST_CHECK_INTERVAL:
                     self._adaptive_broadcast_all_rooms(current_time)
+                    # Also flush Network Variables updates
+                    self._flush_network_variable_updates(current_time)
                     last_broadcast_check = current_time
 
                 # Cleanup at regular intervals
@@ -822,6 +1026,24 @@ class NetSyncServer:
                         del self.room_device_id_to_client_no[room_id]
                     if room_id in self.room_client_no_to_device_id:
                         del self.room_client_no_to_device_id[room_id]
+                    
+                    # Clean up NV-related structures
+                    if room_id in self.global_variables:
+                        del self.global_variables[room_id]
+                    if room_id in self.client_variables:
+                        del self.client_variables[room_id]
+                    if room_id in self.pending_global_nv:
+                        del self.pending_global_nv[room_id]
+                    if room_id in self.pending_client_nv:
+                        del self.pending_client_nv[room_id]
+                    if room_id in self.room_last_nv_flush:
+                        del self.room_last_nv_flush[room_id]
+                    if room_id in self.room_client_nv_allowance:
+                        del self.room_client_nv_allowance[room_id]
+                    if room_id in self.room_nv_allowance:
+                        del self.room_nv_allowance[room_id]
+                    if room_id in self.nv_monitor_window:
+                        del self.nv_monitor_window[room_id]
 
                     logger.info(f"Removed empty room: {room_id}")
 
