@@ -19,9 +19,7 @@ and exercises all major features of the multiplayer framework:
 
 3. Remote Procedure Calls (RPC):
    - Broadcast RPC: Sends 'BroadcastRPC' to all clients every 10 seconds
-   - Server RPC: Sends 'ServerRPC' to server every 10 seconds
-   - Client-to-Client RPC: Sends 'ClientToClientRPC' to itself every 10 seconds
-   - All RPCs include current timestamp (HH:MM:SS format) as arguments
+   - Includes current timestamp (HH:MM:SS format) as arguments
 
 The client logs all activities including:
 - Connection status and client number assignment
@@ -62,9 +60,7 @@ from styly_netsync.binary_serializer import (
     serialize_client_transform,
     serialize_client_var_set,
     serialize_global_var_set,
-    serialize_rpc_client_message,
     serialize_rpc_message,
-    serialize_rpc_request,
 )
 
 # Configure logging
@@ -239,27 +235,6 @@ class TestClient:
         self.dealer_socket.send_multipart([self.room_id.encode('utf-8'), message])
         logger.info(f"Sent broadcast RPC: BroadcastRPC({current_time_str})")
 
-        # Server RPC
-        server_data = {
-            'senderClientNo': self.client_no,
-            'functionName': 'ServerRPC',
-            'argumentsJson': json.dumps(['ServerRPC', current_time_str])
-        }
-        message = serialize_rpc_request(server_data)
-        self.dealer_socket.send_multipart([self.room_id.encode('utf-8'), message])
-        logger.info(f"Sent server RPC: ServerRPC({current_time_str})")
-
-        # Client-to-Client RPC (to self)
-        client_data = {
-            'senderClientNo': self.client_no,
-            'targetClientNo': self.client_no,  # Send to self
-            'functionName': 'ClientToClientRPC',
-            'argumentsJson': json.dumps(['ClientToClientRPC', current_time_str])
-        }
-        message = serialize_rpc_client_message(client_data)
-        self.dealer_socket.send_multipart([self.room_id.encode('utf-8'), message])
-        logger.info(f"Sent client-to-client RPC to self: ClientToClientRPC({current_time_str})")
-
     def receive_messages(self):
         """Receive and process messages from the server"""
         poller = zmq.Poller()
@@ -296,7 +271,7 @@ class TestClient:
                                 for var in variables:
                                     logger.info(f"Client {client_no} variable update: {var['name']} = {var['value']}")
 
-                        # RPC messages would be received here if server forwarded them
+                        # RPC broadcast messages would be received here
 
             except zmq.Again:
                 pass

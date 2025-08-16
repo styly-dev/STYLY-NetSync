@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Tuple, Union
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Room transform with short IDs only
 MSG_RPC_BROADCAST = 3  # Broadcast function call
-MSG_RPC_SERVER    = 4  # Client-to-server RPC call
-MSG_RPC_CLIENT    = 5  # Client-to-client RPC call
+MSG_RPC_SERVER    = 4  # Reserved for future use
+MSG_RPC_CLIENT    = 5  # Reserved for future use
 MSG_DEVICE_ID_MAPPING = 6  # Device ID mapping notification
 MSG_GLOBAL_VAR_SET = 7  # Set global variable
 MSG_GLOBAL_VAR_SYNC = 8  # Sync global variables
@@ -198,19 +198,10 @@ def _serialize_rpc_base(buffer: bytearray, data: Dict[str, Any], msg_type: int) 
     sender_client_no = data.get('senderClientNo', 0)
     buffer.extend(struct.pack('<H', sender_client_no))
 
-    if msg_type == MSG_RPC_CLIENT:
-        # Target client number (2 bytes)
-        target_client_no = data.get('targetClientNo', 0)
-        buffer.extend(struct.pack('<H', target_client_no))
 
     _pack_string(buffer, data.get('functionName', ''))
     _pack_string(buffer, data.get('argumentsJson', ''), use_ushort=True)
 
-def serialize_rpc_request(data: Dict[str, Any]) -> bytes:
-    """Serialize client-to-server RPC request"""
-    buffer = bytearray()
-    _serialize_rpc_base(buffer, data, MSG_RPC_SERVER)
-    return bytes(buffer)
 
 def serialize_rpc_message(data: Dict[str, Any]) -> bytes:
     """Serialize RPC broadcast message"""
@@ -218,11 +209,6 @@ def serialize_rpc_message(data: Dict[str, Any]) -> bytes:
     _serialize_rpc_base(buffer, data, MSG_RPC_BROADCAST)
     return bytes(buffer)
 
-def serialize_rpc_client_message(data: Dict[str, Any]) -> bytes:
-    """Serialize client-to-client RPC message"""
-    buffer = bytearray()
-    _serialize_rpc_base(buffer, data, MSG_RPC_CLIENT)
-    return bytes(buffer)
 
 def serialize_device_id_mapping(mappings: List[Tuple[int, str, bool]]) -> bytes:
     """Serialize device ID mapping message
@@ -385,10 +371,7 @@ def deserialize(data: bytes) -> Tuple[int, Union[Dict[str, Any], None], bytes]:
             return message_type, _deserialize_room_transform(data, offset), b''
         elif message_type == MSG_RPC_BROADCAST:
             return message_type, _deserialize_rpc_message(data, offset), b''
-        elif message_type == MSG_RPC_SERVER:
-            return message_type, _deserialize_rpc_message(data, offset), b''
-        elif message_type == MSG_RPC_CLIENT:
-            return message_type, _deserialize_rpc_client_message(data, offset), b''
+        # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
         elif message_type == MSG_DEVICE_ID_MAPPING:
             return message_type, _deserialize_device_id_mapping(data, offset), b''
         elif message_type == MSG_GLOBAL_VAR_SET:
@@ -449,21 +432,6 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> Dict[str, Any]:
     result['argumentsJson'], offset = _unpack_string(data, offset, use_ushort=True)
     return result
 
-def _deserialize_rpc_client_message(data: bytes, offset: int) -> Dict[str, Any]:
-    """Deserialize client-to-client RPC message with sender and target client numbers"""
-    result: Dict[str, Any] = {}
-
-    # Sender client number (2 bytes)
-    result['senderClientNo'] = struct.unpack('<H', data[offset:offset+2])[0]
-    offset += 2
-
-    # Target client number (2 bytes)
-    result['targetClientNo'] = struct.unpack('<H', data[offset:offset+2])[0]
-    offset += 2
-
-    result['functionName'], offset = _unpack_string(data, offset)
-    result['argumentsJson'], offset = _unpack_string(data, offset, use_ushort=True)
-    return result
 
 def _deserialize_room_transform(data: bytes, offset: int) -> Dict[str, Any]:
     """Deserialize room transform with client numbers only"""

@@ -42,44 +42,6 @@ namespace Styly.NetSync
             _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
         }
 
-        public void SendToServer(string roomId, string functionName, string[] args)
-        {
-            if (_connectionManager.DealerSocket == null) { return; }
-
-            var rpcMsg = new RPCMessage
-            {
-                functionName = functionName,
-                argumentsJson = JsonConvert.SerializeObject(args),
-                senderClientNo = _netSyncManager.ClientNo
-            };
-            var binary = BinarySerializer.SerializeRPCRequest(rpcMsg);
-
-            var msg = new NetMQMessage();
-            msg.Append(roomId);
-            msg.Append(binary);
-
-            _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-        }
-
-        public void SendToClient(string roomId, int targetClientNo, string functionName, string[] args)
-        {
-            if (_connectionManager.DealerSocket == null) { return; }
-
-            var rpcMsg = new RPCClientMessage
-            {
-                functionName = functionName,
-                argumentsJson = JsonConvert.SerializeObject(args),
-                senderClientNo = _netSyncManager.ClientNo,
-                targetClientNo = targetClientNo
-            };
-            var binary = BinarySerializer.SerializeRPCClientMessage(rpcMsg);
-
-            var msg = new NetMQMessage();
-            msg.Append(roomId);
-            msg.Append(binary);
-
-            _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-        }
 
         public void ProcessRPCQueue()
         {
