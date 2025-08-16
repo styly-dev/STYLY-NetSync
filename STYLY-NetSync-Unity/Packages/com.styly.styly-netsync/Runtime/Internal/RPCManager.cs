@@ -25,6 +25,11 @@ namespace Styly.NetSync
         private int _rpcLimit = 30;                          // max RPCs per window (<=0 disables)
         private double _lastWarnAt = -999.0;                 // last warning time
         private double _warnCooldown = 0.5;                  // min seconds between warnings
+        // Outgoing RPC queue for pre-ready state
+        private readonly ConcurrentQueue<(string fn, string[] args, double enqueuedAt)> _pendingOut = new ConcurrentQueue<(string fn, string[] args, double enqueuedAt)>();
+        [SerializeField] private int _maxPendingRpc = 100;     // drop oldest beyond this
+        [SerializeField] private double _rpcTtlSeconds = 5.0;  // drop when too old
+        [SerializeField] private int _maxFlushPerFrame = 10;   // to avoid burst on first ready frame
 
         /// <summary>Override defaults at runtime (rpcLimit<=0 disables RL).</summary>
         public void ConfigureRpcLimit(int rpcLimit, double windowSeconds, double warnCooldown = 0.5)
@@ -48,7 +53,7 @@ namespace Styly.NetSync
         /// <summary>Consume one slot if available. Returns true if allowed to send.</summary>
         private bool TryConsumeQuota(out double retryAfterSec, out int currentCount)
         {
-            var now = Time.realtimeSinceStartupAsDouble;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             lock (_rlLock)
             {
                 // Disabled?
@@ -75,27 +80,20 @@ namespace Styly.NetSync
             }
         }
 
-        public RPCManager(ConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
+        private bool TrySendNow(string roomId, string functionName, string[] args)
         {
-            _connectionManager = connectionManager;
-            _deviceId = deviceId;
-            _netSyncManager = netSyncManager;
-        }
-
-        public void Send(string roomId, string functionName, string[] args)
-        {
-            if (_connectionManager.DealerSocket == null) { return; }
+            if (_connectionManager.DealerSocket == null) { return false; }
 
             // === Rate limit preflight (single global cap) ===
             if (!TryConsumeQuota(out var retryAfter, out var count))
             {
-                var now = Time.realtimeSinceStartupAsDouble;
+                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
                 if (now - _lastWarnAt >= _warnCooldown)
                 {
                     Debug.LogWarning($"[NetSync/RPC] Rate limited: dropped '{functionName}' (count={count}/{_rpcLimit} in {_windowSeconds:0.##}s). Retry in ~{retryAfter:0.##}s.");
                     _lastWarnAt = now;
                 }
-                return;
+                return false;
             }
 
             var rpcMsg = new RPCMessage
@@ -110,7 +108,73 @@ namespace Styly.NetSync
             msg.Append(roomId);
             msg.Append(binary);
 
-            _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+            try
+            {
+                return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NetSync/RPC] Failed to send RPC '{functionName}': {ex.Message}");
+                return false;
+            }
+        }
+
+        public RPCManager(ConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
+        {
+            _connectionManager = connectionManager;
+            _deviceId = deviceId;
+            _netSyncManager = netSyncManager;
+        }
+
+        public void Send(string roomId, string functionName, string[] args)
+        {
+            if (!_netSyncManager.IsReady)
+            {
+                // Queue for later when ready
+                _pendingOut.Enqueue((functionName, args, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0));
+                
+                // Check if queue is too large
+                while (_pendingOut.Count > _maxPendingRpc)
+                {
+                    if (_pendingOut.TryDequeue(out var dropped))
+                    {
+                        Debug.LogWarning($"[NetSync/RPC] Pending queue overflow: dropped '{dropped.fn}' (queue size exceeded {_maxPendingRpc})");
+                    }
+                }
+                return;
+            }
+
+            TrySendNow(roomId, functionName, args);
+        }
+
+        public void FlushPendingIfReady(string roomId)
+        {
+            if (!_netSyncManager.IsReady) return;
+
+            int sentThisFrame = 0;
+            while (sentThisFrame < _maxFlushPerFrame && _pendingOut.TryPeek(out var item))
+            {
+                var (fn, args, enqAt) = item;
+
+                // TTL check
+                if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 - enqAt > _rpcTtlSeconds)
+                {
+                    _pendingOut.TryDequeue(out _); // drop expired
+                    Debug.LogWarning($"[NetSync/RPC] Dropped expired pending RPC '{fn}' (TTL {_rpcTtlSeconds}s exceeded)");
+                    continue;
+                }
+
+                // Try to send with rate limit
+                if (TrySendNow(roomId, fn, args))
+                {
+                    _pendingOut.TryDequeue(out _);
+                    sentThisFrame++;
+                    continue;
+                }
+
+                // If rate-limited, stop draining this frame (don't drop)
+                break;
+            }
         }
 
 

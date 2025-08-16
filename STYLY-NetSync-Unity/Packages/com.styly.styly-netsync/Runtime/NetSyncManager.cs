@@ -43,6 +43,8 @@ namespace Styly.NetSync
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
+        [HideInInspector]
+        public UnityEvent OnReady;
         #endregion ------------------------------------------------------------------------
 
         #region === Singleton & Public API ===
@@ -94,6 +96,11 @@ namespace Styly.NetSync
 
         public bool SetClientVariable(string name, string value)
         {
+            if (_clientNo <= 0)
+            {
+                _pendingSelfClientNV.Add((name, value)); // late-binding until handshake
+                return true; // accepted
+            }
             return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(_clientNo, name, value, _roomId) : false;
         }
 
@@ -156,6 +163,9 @@ namespace Styly.NetSync
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
         private float _reconnectAt;
+        private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
+        private bool _hasInvokedReady = false;
+        private bool _shouldCheckReady = false;
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
@@ -166,6 +176,9 @@ namespace Styly.NetSync
         public AvatarManager AvatarManager => _avatarManager;
         public RPCManager RPCManager => _rpcManager;
         public TransformSyncManager TransformSyncManager => _transformSyncManager;
+        public bool HasServerConnection => _connectionManager?.IsConnected == true && !_connectionManager.IsConnectionError;
+        public bool HasHandshake => _clientNo > 0;
+        public bool IsReady => HasServerConnection && HasHandshake;
         public MessageProcessor MessageProcessor => _messageProcessor;
 
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
@@ -240,13 +253,23 @@ namespace Styly.NetSync
 
         private void Update()
         {
+            // Check ready state on main thread
+            if (_shouldCheckReady)
+            {
+                _shouldCheckReady = false;
+                CheckAndFireReady();
+            }
+            
             HandleDiscovery();
             HandleReconnection();
             ProcessMessages();
             SendTransformUpdates();
             
             // Process Network Variables debounced updates
-            _networkVariableManager?.Tick(Time.realtimeSinceStartupAsDouble, _roomId);
+            _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
+            
+            // Flush pending RPCs
+            _rpcManager?.FlushPendingIfReady(_roomId);
             
             LogStatistics();
         }
@@ -316,6 +339,7 @@ namespace Styly.NetSync
         private void OnConnectionEstablished()
         {
             DebugLog("Connection established successfully");
+            _shouldCheckReady = true;
         }
 
         private void OnRemoteAvatarDisconnected(int clientNo)
@@ -358,6 +382,29 @@ namespace Styly.NetSync
         {
             _clientNo = clientNo;
             DebugLog($"Local client number assigned: {clientNo}");
+            
+            // Flush pending self client NV
+            foreach (var (name, value) in _pendingSelfClientNV)
+            {
+                _networkVariableManager?.SetClientVariable(_clientNo, name, value, _roomId);
+            }
+            _pendingSelfClientNV.Clear();
+            
+            // Set flag to check ready state on main thread
+            _shouldCheckReady = true;
+        }
+
+        private void CheckAndFireReady()
+        {
+            if (IsReady && !_hasInvokedReady)
+            {
+                _hasInvokedReady = true;
+                DebugLog("NetSyncManager is now Ready (connected and handshaken)");
+                OnReady?.Invoke();
+                
+                // Don't flush immediately - let Update() handle it on next frame
+                // This avoids potential socket state issues
+            }
         }
 
         private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
@@ -498,6 +545,9 @@ namespace Styly.NetSync
             if (_connectionManager.IsConnectionError) { return; }
             Debug.LogError($"[NetSyncManager] {reason}");
             _reconnectAt = Time.time + ReconnectDelay;
+            _clientNo = 0; // Reset client number
+            _hasInvokedReady = false; // Reset ready state
+            _shouldCheckReady = false; // Reset check flag
             StopNetworking();
         }
 
