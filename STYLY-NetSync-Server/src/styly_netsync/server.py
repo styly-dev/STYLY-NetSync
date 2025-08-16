@@ -748,56 +748,76 @@ class NetSyncServer:
                 processed_global = []
                 processed_client = []
                 
-                # Process in round-robin fashion
+                # Process in round-robin fashion with dynamic processing
                 client_list = list(client_updates.keys())
-                max_iterations = len(client_list) * 2  # At most 2 items per client (1 global, 1 client)
+                max_safety_iterations = 1000  # Safety limit to prevent infinite loops
+                iteration_count = 0
                 
-                for _ in range(max_iterations):
-                    if not client_list:
+                # Dynamically process all available updates within rate limits
+                while client_list and iteration_count < max_safety_iterations:
+                    progress_made = False
+                    clients_to_process = len(client_list)
+                    
+                    for _ in range(clients_to_process):
+                        if not client_list:
+                            break
+                        
+                        iteration_count += 1
+                        
+                        # Round-robin: take first client, move to back
+                        client_no = client_list.pop(0)
+                        
+                        if client_no not in client_updates or not client_updates[client_no]:
+                            continue  # No more updates for this client
+                        
+                        # Check client allowance
+                        if client_allowances.get(client_no, 0) < 1.0:
+                            client_list.append(client_no)  # Try again later in next round
+                            continue
+                        
+                        # Check room allowance
+                        if room_allowance < 1.0:
+                            # Room cap reached - put client back and stop processing
+                            client_list.insert(0, client_no)
+                            break
+                        
+                        # Process one update from this client
+                        is_global, key, data = client_updates[client_no].pop(0)
+                        
+                        if is_global:
+                            # Apply global variable
+                            var_name = key
+                            sender_no, value, timestamp = data
+                            if self._apply_global_var_set(room_id, sender_no, var_name, value, timestamp):
+                                global_dirty = True
+                                processed_global.append(var_name)
+                                # Consume allowances
+                                client_allowances[client_no] -= 1.0
+                                room_allowance -= 1.0
+                                progress_made = True
+                        else:
+                            # Apply client variable
+                            target_no, var_name = key
+                            sender_no, value, timestamp = data
+                            if self._apply_client_var_set(room_id, sender_no, target_no, var_name, value, timestamp):
+                                client_dirty = True
+                                processed_client.append(key)
+                                # Consume allowances
+                                client_allowances[client_no] -= 1.0
+                                room_allowance -= 1.0
+                                progress_made = True
+                        
+                        # Put client back in rotation if they have more updates
+                        if client_updates[client_no]:
+                            client_list.append(client_no)
+                    
+                    # Exit if no progress was made (all clients are rate-limited or no updates)
+                    if not progress_made or room_allowance < 1.0:
                         break
-                    
-                    # Round-robin: take first client, move to back
-                    client_no = client_list.pop(0)
-                    
-                    if client_no not in client_updates or not client_updates[client_no]:
-                        continue  # No more updates for this client
-                    
-                    # Check client allowance
-                    if client_allowances.get(client_no, 0) < 1.0:
-                        client_list.append(client_no)  # Try again later
-                        continue
-                    
-                    # Check room allowance
-                    if room_allowance < 1.0:
-                        break  # Room cap reached
-                    
-                    # Process one update from this client
-                    is_global, key, data = client_updates[client_no].pop(0)
-                    
-                    if is_global:
-                        # Apply global variable
-                        var_name = key
-                        sender_no, value, timestamp = data
-                        if self._apply_global_var_set(room_id, sender_no, var_name, value, timestamp):
-                            global_dirty = True
-                            processed_global.append(var_name)
-                            # Consume allowances
-                            client_allowances[client_no] -= 1.0
-                            room_allowance -= 1.0
-                    else:
-                        # Apply client variable
-                        target_no, var_name = key
-                        sender_no, value, timestamp = data
-                        if self._apply_client_var_set(room_id, sender_no, target_no, var_name, value, timestamp):
-                            client_dirty = True
-                            processed_client.append(key)
-                            # Consume allowances
-                            client_allowances[client_no] -= 1.0
-                            room_allowance -= 1.0
-                    
-                    # Put client back in rotation if they have more updates
-                    if client_updates[client_no]:
-                        client_list.append(client_no)
+                
+                # Log warning if we hit the safety limit
+                if iteration_count >= max_safety_iterations:
+                    logger.warning(f"Network variable processing hit safety limit for room {room_id}")
                 
                 # Update remaining allowances
                 self.room_client_nv_allowance[room_id] = client_allowances
