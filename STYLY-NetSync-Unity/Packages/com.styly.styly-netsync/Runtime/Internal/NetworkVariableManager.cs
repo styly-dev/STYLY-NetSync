@@ -31,6 +31,10 @@ namespace Styly.NetSync
         private readonly Dictionary<string, string> _lastSentGlobal = new();
         private readonly Dictionary<(int, string), string> _lastSentClient = new();
 
+        // Leading-edge throttles (cooldowns) for NV sends
+        private readonly Dictionary<string, double> _nextAllowedGlobal = new();
+        private readonly Dictionary<(int clientNo, string name), double> _nextAllowedClient = new();
+
         // Debounce buffers for pending sends
         private readonly Dictionary<string, string> _pendingGlobal = new();
         private readonly Dictionary<string, double> _dueGlobal = new();
@@ -60,16 +64,36 @@ namespace Styly.NetSync
                 return false;
             }
 
-            // Dedupe: check if value is same as last sent
+            // Dedupe: same as the last actually sent value -> skip
             if (_lastSentGlobal.TryGetValue(name, out var lastSent) && lastSent == value)
+                return false;
+
+            double now = UnityEngine.Time.realtimeSinceStartupAsDouble;
+
+            // Leading-edge attempt if cooldown elapsed (or not set)
+            bool allowImmediate = !_nextAllowedGlobal.TryGetValue(name, out var next) || now >= next;
+            if (allowImmediate)
             {
-                return false; // Value unchanged, don't send
+                // Try immediate send; only start cooldown if it *actually* sent
+                if (TrySendGlobalNow(name, value, roomId))
+                {
+                    _nextAllowedGlobal[name] = now + DEBOUNCE_INTERVAL;
+                }
+
+                // Always schedule trailing edge (latest-wins) and DO NOT extend it later
+                _pendingGlobal[name] = value;
+                if (!_dueGlobal.ContainsKey(name))
+                    _dueGlobal[name] = now + DEBOUNCE_INTERVAL;
+
+                return true;
             }
 
-            // Buffer with debounce
+            // Inside cooldown: update pending value but keep the original deadline
             _pendingGlobal[name] = value;
-            _dueGlobal[name] = UnityEngine.Time.realtimeSinceStartupAsDouble + DEBOUNCE_INTERVAL;
-            return true; // Buffered for later send
+            if (!_dueGlobal.ContainsKey(name))
+                _dueGlobal[name] = next;
+
+            return true;
         }
 
         // Internal method to send now (used by flush)
@@ -126,17 +150,37 @@ namespace Styly.NetSync
                 return false;
             }
 
-            // Dedupe: check if value is same as last sent
             var key = (targetClientNo, name);
+
+            // Dedupe: same as the last actually sent value -> skip
             if (_lastSentClient.TryGetValue(key, out var lastSent) && lastSent == value)
+                return false;
+
+            double now = UnityEngine.Time.realtimeSinceStartupAsDouble;
+
+            // Leading-edge attempt if cooldown elapsed
+            bool allowImmediate = !_nextAllowedClient.TryGetValue(key, out var next) || now >= next;
+            if (allowImmediate)
             {
-                return false; // Value unchanged, don't send
+                if (TrySendClientNow(targetClientNo, name, value, roomId))
+                {
+                    _nextAllowedClient[key] = now + DEBOUNCE_INTERVAL;
+                }
+
+                // Schedule trailing and keep its deadline fixed
+                _pendingClient[key] = value;
+                if (!_dueClient.ContainsKey(key))
+                    _dueClient[key] = now + DEBOUNCE_INTERVAL;
+
+                return true;
             }
 
-            // Buffer with debounce
+            // Inside cooldown: update pending value but keep original due time
             _pendingClient[key] = value;
-            _dueClient[key] = UnityEngine.Time.realtimeSinceStartupAsDouble + DEBOUNCE_INTERVAL;
-            return true; // Buffered for later send
+            if (!_dueClient.ContainsKey(key))
+                _dueClient[key] = next;
+
+            return true;
         }
 
         // Internal method to send now (used by flush)
@@ -342,27 +386,33 @@ namespace Styly.NetSync
         {
             var toFlush = new List<(string name, string value)>();
 
-            // Find all due items
             foreach (var kvp in _dueGlobal)
             {
-                if (kvp.Value <= nowSeconds)
+                if (kvp.Value <= nowSeconds && _pendingGlobal.TryGetValue(kvp.Key, out var value))
                 {
-                    if (_pendingGlobal.TryGetValue(kvp.Key, out var value))
-                    {
-                        toFlush.Add((kvp.Key, value));
-                    }
+                    toFlush.Add((kvp.Key, value));
                 }
             }
 
-            // Flush due items
             foreach (var (name, value) in toFlush)
             {
-                if (TrySendGlobalNow(name, value, roomId))
+                // Skip if trailing value equals the last sent value
+                if (_lastSentGlobal.TryGetValue(name, out var last) && last == value)
                 {
-                    // Remove from pending
                     _pendingGlobal.Remove(name);
                     _dueGlobal.Remove(name);
+                    continue;
                 }
+
+                if (TrySendGlobalNow(name, value, roomId))
+                {
+                    _pendingGlobal.Remove(name);
+                    _dueGlobal.Remove(name);
+
+                    // Start a new cooldown window from the trailing edge
+                    _nextAllowedGlobal[name] = nowSeconds + DEBOUNCE_INTERVAL;
+                }
+                // If send fails, keep entries so a later tick can retry.
             }
         }
 
@@ -370,27 +420,33 @@ namespace Styly.NetSync
         {
             var toFlush = new List<((int targetClientNo, string name) key, string value)>();
 
-            // Find all due items
             foreach (var kvp in _dueClient)
             {
-                if (kvp.Value <= nowSeconds)
+                if (kvp.Value <= nowSeconds && _pendingClient.TryGetValue(kvp.Key, out var value))
                 {
-                    if (_pendingClient.TryGetValue(kvp.Key, out var value))
-                    {
-                        toFlush.Add((kvp.Key, value));
-                    }
+                    toFlush.Add((kvp.Key, value));
                 }
             }
 
-            // Flush due items
             foreach (var (key, value) in toFlush)
             {
-                if (TrySendClientNow(key.Item1, key.Item2, value, roomId))
+                // Dedupe against last actually sent
+                if (_lastSentClient.TryGetValue(key, out var last) && last == value)
                 {
-                    // Remove from pending
                     _pendingClient.Remove(key);
                     _dueClient.Remove(key);
+                    continue;
                 }
+
+                if (TrySendClientNow(key.Item1, key.Item2, value, roomId))
+                {
+                    _pendingClient.Remove(key);
+                    _dueClient.Remove(key);
+
+                    // Start a new cooldown window from the trailing edge
+                    _nextAllowedClient[key] = nowSeconds + DEBOUNCE_INTERVAL;
+                }
+                // If send fails, keep entries to retry on subsequent ticks.
             }
         }
     }
