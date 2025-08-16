@@ -43,6 +43,7 @@ namespace Styly.NetSync
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
+        [HideInInspector]
         public UnityEvent OnReady;
         #endregion ------------------------------------------------------------------------
 
