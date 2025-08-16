@@ -10,6 +10,11 @@ This is a multi-project repository containing:
 - **STYLY-NetSync-Unity**: Unity 6 client package and demo scenes
 - **STYLY-NetSync-Server**: Python server for multiplayer coordination
 
+### Requirements
+- **Python**: 3.8+ (for server)
+- **Unity**: 6000.0.48f1 or later (Unity 6)
+- **Dependencies**: pyzmq>=26.0.0 (auto-installed)
+
 ## Common Development Commands
 
 ### Python Server
@@ -27,25 +32,34 @@ pip install -e ".[dev]"
 styly-netsync-server                           # Using CLI entry point
 python -m styly_netsync                        # As Python module
 python src/styly_netsync/server.py             # Direct script
+dev                                             # Convenience script (after pip install -e .)
 
 # Server options
-styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999
+styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999 --name "My-Server"
 styly-netsync-server --no-beacon               # Disable UDP discovery
+
+# Using uv (recommended for quick testing)
+uvx styly-netsync-server                       # One-time execution without installation
+uv run dev                                      # Development mode with auto-dependency installation
+uv run dev --dealer-port 6000 --pub-port 6001  # With custom ports
+uvx --from . styly-netsync-server              # Run from current directory
+uvx --from . styly-netsync-simulator --clients 50  # Test with simulator
 
 # Run client simulator
 styly-netsync-simulator --clients 100 --server tcp://localhost --room default_room
 python src/styly_netsync/client_simulator.py --clients 100  # Alternative
 
 # Development tools
-black src/                 # Format code
-ruff check src/            # Lint code  
+black src/ tests/          # Format code (includes tests)
+ruff check src/ tests/     # Lint code  
 mypy src/                  # Type check
 pytest                     # Run all tests
+pytest --cov=src           # Run tests with coverage
 pytest tests/test_all_run_methods.py  # Test all documented run methods
 pytest tests/integration/  # Run integration tests
 pytest -k test_stealth     # Run specific test by name pattern
 
-# Run specific test scripts
+# Run specific test scripts directly
 python tests/integration/test_client.py         # Test basic client functionality
 python tests/integration/test_stealth_mode.py   # Test stealth mode feature
 
@@ -254,6 +268,31 @@ When debugging issues:
 3. Use `test_client.py` for isolated testing
 4. Monitor with `lsof` or `netstat` for port issues
 
+### Programmatic Server Usage
+
+Create custom server scripts for testing:
+```python
+from styly_netsync import NetSyncServer
+import time
+
+# Create and start server
+server = NetSyncServer(
+    dealer_port=5555,
+    pub_port=5556,
+    enable_beacon=True,
+    beacon_port=9999,
+    server_name="STYLY-NetSync-Server"
+)
+
+try:
+    server.start()
+    # Keep server running
+    while True:
+        time.sleep(1)
+except KeyboardInterrupt:
+    server.stop()
+```
+
 ## Troubleshooting
 
 ### Common Issues
@@ -308,3 +347,9 @@ kill -9 <PID>
 - `Assets/Samples_Dev/Demo-01/Scripts/ReceiveRPC_to_ChangeColor.cs`: Example RPC receiver
 - `Assets/Samples_Dev/Demo-01/Scripts/SendRPC.cs`: Example RPC sender
 - `Assets/Samples_Dev/Debug/DebugMoveAvatar.cs`: Debug avatar movement
+
+## Project Resources
+
+- **Homepage**: https://styly.inc
+- **Repository**: https://github.com/styly-dev/STYLY-NetSync
+- **Issues**: https://github.com/styly-dev/STYLY-NetSync/issues
