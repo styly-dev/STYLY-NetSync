@@ -66,6 +66,20 @@ namespace Styly.NetSync
             }
         }
 
+        /// <summary>
+        /// Configure the RPC rate limit. Set rpcLimit to 0 or less to disable rate limiting.
+        /// </summary>
+        /// <param name="rpcLimit">Maximum number of RPCs allowed per window (0 or less disables)</param>
+        /// <param name="windowSeconds">Time window in seconds</param>
+        /// <param name="warnCooldown">Minimum seconds between warning messages</param>
+        public void ConfigureRpcLimit(int rpcLimit, double windowSeconds = 1.0, double warnCooldown = 0.5)
+        {
+            if (_rpcManager != null)
+            {
+                _rpcManager.ConfigureRpcLimit(rpcLimit, windowSeconds, warnCooldown);
+            }
+        }
+
 
         // Network Variables API
         public bool SetGlobalVariable(string name, string value)
