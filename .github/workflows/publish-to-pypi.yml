@@ -73,7 +73,6 @@ jobs:
 
       - name: Publish to PyPI (OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          # verify-metadata: true is default (runs twine check)
-          # attestations: true is also default (software signing)
-          # verbose: true  # Enable for debugging if necessary
+        # verify-metadata: true is default (runs twine check)
+        # attestations: true is also default (software signing)
+        # verbose: true  # Enable for debugging if necessary
