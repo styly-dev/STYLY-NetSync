@@ -102,8 +102,11 @@ namespace Styly.NetSync
 
             try
             {
-                _discoveryClient?.Close();
-                _discoveryClient?.Dispose();
+                if (_discoveryClient != null)
+                {
+                    _discoveryClient.Close();
+                    _discoveryClient.Dispose();
+                }
                 _discoveryClient = null;
 
                 // Wait for discovery thread to exit
@@ -138,8 +141,11 @@ namespace Styly.NetSync
 
                     DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
 
-                    OnServerDiscovered?.Invoke(serverAddress, dealerPort, subPort);
-                    
+                    if (OnServerDiscovered != null)
+                    {
+                        OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort);
+                    }
+
                     // Stop sending more discovery requests once we found a server
                     lock (_lockObject)
                     {

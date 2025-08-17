@@ -10,7 +10,7 @@ public class ReceiveRPC_to_ChangeColor : MonoBehaviour
     /// </summary>
     public void HandleRPC(int senderClientNo, string functionName, string[] args)
     {
-        Debug.Log($"[RPC] From client {senderClientNo} → {functionName}({string.Join(", ", args)})");
+        Debug.Log($"[ChangeColor-RPC] From client {senderClientNo} → {functionName}({string.Join(", ", args)})");
 
         if (functionName == "ChangeColor")
         {

@@ -1,6 +1,7 @@
 // NetSyncManager.cs
 using System;
 using System.Collections.Generic;
+using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -9,20 +10,24 @@ namespace Styly.NetSync
     public class NetSyncManager : MonoBehaviour
     {
         #region === Inspector ===
+        [Header("Network Info")]
+        [SerializeField, ReadOnly] private string _deviceId;
+        [SerializeField, ReadOnly] private int _clientNo = 0;
+
         [Header("Connection Settings")]
-        [SerializeField] private string _serverAddress = "tcp://localhost";
+        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
         private int _dealerPort = 5555;
         private int _subPort = 5556;
-        [SerializeField] private string _groupId = "default_group";
+        [SerializeField] private string _roomId = "default_room";
 
         // [Header("Discovery Settings")]
         private bool _enableDiscovery = true;
         private int _beaconPort = 9999;
         private float _discoveryTimeout = 5f;
 
-        [Header("Player Settings")]
-        [SerializeField] private GameObject _localPlayerPrefab;
-        [SerializeField] private GameObject _remotePlayerPrefab;
+        [Header("Avatar Settings")]
+        [SerializeField] private GameObject _localAvatarPrefab;
+        [SerializeField] private GameObject _remoteAvatarPrefab;
 
         // [Header("Transform Sync Settings"), Range(1, 120)]
         private float _sendRate = 10f;
@@ -38,6 +43,8 @@ namespace Styly.NetSync
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
+        [HideInInspector]
+        public UnityEvent OnReady;
         #endregion ------------------------------------------------------------------------
 
         #region === Singleton & Public API ===
@@ -45,63 +52,74 @@ namespace Styly.NetSync
         public static NetSyncManager Instance => _instance;
 
         // Public RPC methods for external access
-        public void RpcBroadcast(string functionName, string[] args)
+        public void Rpc(string functionName, string[] args)
         {
-            _rpcManager?.SendBroadcast(_groupId, functionName, args);
+            if (_rpcManager != null)
+            {
+                _rpcManager.Send(_roomId, functionName, args);
+            }
         }
 
-        public void RpcBroadcast(string groupId, string functionName, string[] args)
+        public void Rpc(string roomId, string functionName, string[] args)
         {
-            _rpcManager?.SendBroadcast(groupId, functionName, args);
+            if (_rpcManager != null)
+            {
+                _rpcManager.Send(roomId, functionName, args);
+            }
         }
 
-        public void RpcServer(string functionName, string[] args)
+        /// <summary>
+        /// Configure the RPC rate limit. Set rpcLimit to 0 or less to disable rate limiting.
+        /// </summary>
+        /// <param name="rpcLimit">Maximum number of RPCs allowed per window (0 or less disables)</param>
+        /// <param name="windowSeconds">Time window in seconds</param>
+        /// <param name="warnCooldown">Minimum seconds between warning messages</param>
+        public void ConfigureRpcLimit(int rpcLimit, double windowSeconds = 1.0, double warnCooldown = 0.5)
         {
-            _rpcManager?.SendToServer(_groupId, functionName, args);
+            if (_rpcManager != null)
+            {
+                _rpcManager.ConfigureRpcLimit(rpcLimit, windowSeconds, warnCooldown);
+            }
         }
 
-        public void RpcServer(string groupId, string functionName, string[] args)
-        {
-            _rpcManager?.SendToServer(groupId, functionName, args);
-        }
-
-        public void RpcClient(int targetClientNo, string functionName, string[] args)
-        {
-            _rpcManager?.SendToClient(_groupId, targetClientNo, functionName, args);
-        }
 
         // Network Variables API
         public bool SetGlobalVariable(string name, string value)
         {
-            return _networkVariableManager?.SetGlobalVariable(name, value, _groupId) ?? false;
+            return _networkVariableManager != null ? _networkVariableManager.SetGlobalVariable(name, value, _roomId) : false;
         }
 
-        public string GetGlobalVariable(string name)
+        public string GetGlobalVariable(string name, string defaultValue = null)
         {
-            return _networkVariableManager?.GetGlobalVariable(name);
+            return _networkVariableManager != null ? _networkVariableManager.GetGlobalVariable(name, defaultValue) : defaultValue;
         }
 
         public bool SetClientVariable(string name, string value)
         {
-            return _networkVariableManager?.SetClientVariable(_clientNo, name, value, _groupId) ?? false;
+            if (_clientNo <= 0)
+            {
+                _pendingSelfClientNV.Add((name, value)); // late-binding until handshake
+                return true; // accepted
+            }
+            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(_clientNo, name, value, _roomId) : false;
         }
 
         public bool SetClientVariable(int targetClientNo, string name, string value)
         {
-            return _networkVariableManager?.SetClientVariable(targetClientNo, name, value, _groupId) ?? false;
+            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(targetClientNo, name, value, _roomId) : false;
         }
 
-        public string GetClientVariable(int clientNo, string name)
+        public string GetClientVariable(int clientNo, string name, string defaultValue = null)
         {
-            return _networkVariableManager?.GetClientVariable(clientNo, name);
+            return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(clientNo, name, defaultValue) : defaultValue;
         }
-        
+
         /// <summary>
         /// Gets all variables for a specific client (for debugging)
         /// </summary>
         public Dictionary<string, string> GetAllClientVariables(int clientNo)
         {
-            return _networkVariableManager?.GetAllClientVariables(clientNo) ?? new Dictionary<string, string>();
+            return _networkVariableManager != null ? _networkVariableManager.GetAllClientVariables(clientNo) : new Dictionary<string, string>();
         }
 
         /// <summary>
@@ -109,19 +127,27 @@ namespace Styly.NetSync
         /// </summary>
         public Dictionary<string, string> GetAllGlobalVariables()
         {
-            return _networkVariableManager?.GetAllGlobalVariables() ?? new Dictionary<string, string>();
+            return _networkVariableManager != null ? _networkVariableManager.GetAllGlobalVariables() : new Dictionary<string, string>();
         }
-        
+
+        /// <summary>
+        /// Checks if a client is in stealth mode (no visible avatar)
+        /// </summary>
+        /// <param name="clientNo">The client number to check</param>
+        /// <returns>True if the client is in stealth mode, false otherwise</returns>
+        public bool IsClientStealthMode(int clientNo)
+        {
+            return _messageProcessor != null ? _messageProcessor.IsClientStealthMode(clientNo) : false;
+        }
+
         #endregion ------------------------------------------------------------------------
 
         #region === Runtime Fields ===
-        private string _deviceId;
-        private int _clientNo = 0;  // Assigned by server
         private static bool _netMqInit;
 
         // Managers
         private ConnectionManager _connectionManager;
-        private PlayerManager _playerManager;
+        private AvatarManager _avatarManager;
         private RPCManager _rpcManager;
         private TransformSyncManager _transformSyncManager;
         private MessageProcessor _messageProcessor;
@@ -130,25 +156,32 @@ namespace Styly.NetSync
 
         // State
         private bool _isDiscovering;
+        private bool _isStealthMode;
         private string _discoveredServer;
         private int _discoveredDealerPort;
         private int _discoveredSubPort;
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
         private float _reconnectAt;
+        private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
+        private bool _hasInvokedReady = false;
+        private bool _shouldCheckReady = false;
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
-        public string GroupId => _groupId;
+        public string RoomId => _roomId;
         public ConnectionManager ConnectionManager => _connectionManager;
-        public PlayerManager PlayerManager => _playerManager;
+        public AvatarManager AvatarManager => _avatarManager;
         public RPCManager RPCManager => _rpcManager;
         public TransformSyncManager TransformSyncManager => _transformSyncManager;
+        public bool HasServerConnection => _connectionManager?.IsConnected == true && !_connectionManager.IsConnectionError;
+        public bool HasHandshake => _clientNo > 0;
+        public bool IsReady => HasServerConnection && HasHandshake;
         public MessageProcessor MessageProcessor => _messageProcessor;
-        
-        public GameObject GetRemotePlayerPrefab() => _remotePlayerPrefab;
+
+        public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
         #endregion ------------------------------------------------------------------------
 
         #region === Unity Callbacks ===
@@ -162,20 +195,27 @@ namespace Styly.NetSync
             _deviceId = GenerateDeviceId();
             _instance = this;
 
+            // Detect stealth mode based on local avatar prefab
+            _isStealthMode = (_localAvatarPrefab == null);
+
             InitializeManagers();
             DebugLog($"Device ID: {_deviceId}");
+            if (_isStealthMode)
+            {
+                DebugLog("Stealth mode enabled (no local avatar prefab)");
+            }
         }
 
         private void OnEnable()
         {
-            _playerManager.InitializeLocalPlayer(_localPlayerPrefab, _deviceId, this);
+            _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
             StartNetworking();
         }
 
         private void OnDisable()
         {
             StopNetworking();
-            _playerManager.CleanupRemotePlayers();
+            _avatarManager.CleanupRemoteAvatars();
             _instance = null;
         }
 
@@ -183,10 +223,10 @@ namespace Styly.NetSync
 
         private void OnApplicationPause(bool paused)
         {
-            if (paused) 
-            { 
+            if (paused)
+            {
                 DebugLog("Application paused - stopping network");
-                StopNetworking(); 
+                StopNetworking();
             }
             else
             {
@@ -213,10 +253,24 @@ namespace Styly.NetSync
 
         private void Update()
         {
+            // Check ready state on main thread
+            if (_shouldCheckReady)
+            {
+                _shouldCheckReady = false;
+                CheckAndFireReady();
+            }
+            
             HandleDiscovery();
             HandleReconnection();
             ProcessMessages();
             SendTransformUpdates();
+            
+            // Process Network Variables debounced updates
+            _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
+            
+            // Flush pending RPCs
+            _rpcManager?.FlushPendingIfReady(_roomId);
+            
             LogStatistics();
         }
         #endregion ------------------------------------------------------------------------
@@ -246,7 +300,7 @@ namespace Styly.NetSync
             return fallbackGuid;
 #endif
         }
-        
+
         private void InitializeManagers()
         {
             // Initialize managers
@@ -254,7 +308,7 @@ namespace Styly.NetSync
             _messageProcessor.SetLocalDeviceId(_deviceId);
             _messageProcessor.OnLocalClientNoAssigned += OnLocalClientNoAssigned;
             _connectionManager = new ConnectionManager(this, _messageProcessor, _enableDebugLogs, _logNetworkTraffic);
-            _playerManager = new PlayerManager(_enableDebugLogs);
+            _avatarManager = new AvatarManager(_enableDebugLogs);
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
@@ -263,16 +317,16 @@ namespace Styly.NetSync
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
-            _playerManager.OnClientDisconnected.AddListener(OnRemotePlayerDisconnected);
+            _avatarManager.OnClientDisconnected.AddListener(OnRemoteAvatarDisconnected);
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
-            
+
             // Setup network variable events
             if (_networkVariableManager != null)
             {
                 _networkVariableManager.OnGlobalVariableChanged += OnGlobalVariableChangedHandler;
                 _networkVariableManager.OnClientVariableChanged += OnClientVariableChangedHandler;
             }
-            
+
             // Setup discovery event
             if (_discoveryManager != null)
             {
@@ -285,45 +339,86 @@ namespace Styly.NetSync
         private void OnConnectionEstablished()
         {
             DebugLog("Connection established successfully");
+            _shouldCheckReady = true;
         }
 
-        private void OnRemotePlayerDisconnected(int clientNo)
+        private void OnRemoteAvatarDisconnected(int clientNo)
         {
-            OnClientDisconnected?.Invoke(clientNo);
+            if (OnClientDisconnected != null)
+            {
+                OnClientDisconnected.Invoke(clientNo);
+            }
         }
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
         {
-            OnRPCReceived?.Invoke(senderClientNo, functionName, args);
+            string argsStr = args != null && args.Length > 0 ? string.Join(", ", args) : "none";
+            Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
+            if (OnRPCReceived != null)
+            {
+                OnRPCReceived.Invoke(senderClientNo, functionName, args);
+            }
         }
-        
+
         private void OnGlobalVariableChangedHandler(string name, string oldValue, string newValue)
         {
-            OnGlobalVariableChanged?.Invoke(name, oldValue, newValue);
+            Debug.Log($"[NetSyncManager] Global Variable Changed - Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
+            if (OnGlobalVariableChanged != null)
+            {
+                OnGlobalVariableChanged.Invoke(name, oldValue, newValue);
+            }
         }
-        
+
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
-            OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
+            Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
+            if (OnClientVariableChanged != null)
+            {
+                OnClientVariableChanged.Invoke(clientNo, name, oldValue, newValue);
+            }
         }
-        
+
         private void OnLocalClientNoAssigned(int clientNo)
         {
             _clientNo = clientNo;
             DebugLog($"Local client number assigned: {clientNo}");
+            
+            // Flush pending self client NV
+            foreach (var (name, value) in _pendingSelfClientNV)
+            {
+                _networkVariableManager?.SetClientVariable(_clientNo, name, value, _roomId);
+            }
+            _pendingSelfClientNV.Clear();
+            
+            // Set flag to check ready state on main thread
+            _shouldCheckReady = true;
         }
-        
+
+        private void CheckAndFireReady()
+        {
+            if (IsReady && !_hasInvokedReady)
+            {
+                _hasInvokedReady = true;
+                DebugLog("NetSyncManager is now Ready (connected and handshaken)");
+                OnReady?.Invoke();
+                
+                // Don't flush immediately - let Update() handle it on next frame
+                // This avoids potential socket state issues
+            }
+        }
+
         private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
         {
             _discoveredServer = serverAddress;
             _discoveredDealerPort = dealerPort;
             _discoveredSubPort = subPort;
-            
+
             // Update the server address for future connections
-            _serverAddress = serverAddress;
+            // Remove tcp:// prefix (discovery always returns with tcp://)
+            _serverAddress = serverAddress.Substring(6);
             _dealerPort = dealerPort;
             _subPort = subPort;
-            
+
             DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
         }
         #endregion ------------------------------------------------------------------------
@@ -338,7 +433,9 @@ namespace Styly.NetSync
                 return;
             }
 
-            _connectionManager.Connect(_serverAddress, _dealerPort, _subPort, _groupId);
+            // Add tcp:// prefix
+            string fullAddress = $"tcp://{_serverAddress}";
+            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId);
         }
 
         private void StopNetworking()
@@ -350,7 +447,7 @@ namespace Styly.NetSync
         private void StartDiscovery()
         {
             if (_discoveryManager == null) { return; }
-            _connectionManager.StartDiscovery(_discoveryManager, _groupId);
+            _connectionManager.StartDiscovery(_discoveryManager, _roomId);
             _isDiscovering = true;
             _discoveryStartTime = Time.time;
         }
@@ -371,7 +468,7 @@ namespace Styly.NetSync
             {
                 DebugLog("Discovery timeout - falling back to localhost");
                 StopDiscovery();
-                _serverAddress = "tcp://localhost";
+                _serverAddress = "localhost";
                 StartNetworking();
             }
 
@@ -396,18 +493,30 @@ namespace Styly.NetSync
 
         private void ProcessMessages()
         {
-            _messageProcessor.ProcessMessageQueue(_playerManager, _rpcManager, _deviceId, this, _networkVariableManager);
+            _messageProcessor.ProcessMessageQueue(_avatarManager, _rpcManager, _deviceId, this, _networkVariableManager);
             _rpcManager.ProcessRPCQueue();
         }
 
         private void SendTransformUpdates()
         {
-            if (!_connectionManager.IsConnectionError && _transformSyncManager.ShouldSendTransform(Time.time))
+            if (_connectionManager.IsConnected && !_connectionManager.IsConnectionError && _transformSyncManager.ShouldSendTransform(Time.time))
             {
-                var localPlayer = _playerManager.LocalPlayerAvatar;
-                if (!_transformSyncManager.SendLocalTransform(localPlayer, _groupId))
+                if (_isStealthMode)
                 {
-                    HandleConnectionError("Send failed – disconnected?");
+                    // Send stealth handshake instead of regular transform
+                    if (!_transformSyncManager.SendStealthHandshake(_roomId))
+                    {
+                        HandleConnectionError("Send failed – disconnected?");
+                    }
+                }
+                else
+                {
+                    // Normal transform sending
+                    var localAvatar = _avatarManager.LocalAvatar;
+                    if (!_transformSyncManager.SendLocalTransform(localAvatar, _roomId))
+                    {
+                        HandleConnectionError("Send failed – disconnected?");
+                    }
                 }
                 _transformSyncManager.UpdateLastSendTime(Time.time);
             }
@@ -436,6 +545,9 @@ namespace Styly.NetSync
             if (_connectionManager.IsConnectionError) { return; }
             Debug.LogError($"[NetSyncManager] {reason}");
             _reconnectAt = Time.time + ReconnectDelay;
+            _clientNo = 0; // Reset client number
+            _hasInvokedReady = false; // Reset ready state
+            _shouldCheckReady = false; // Reset check flag
             StopNetworking();
         }
 

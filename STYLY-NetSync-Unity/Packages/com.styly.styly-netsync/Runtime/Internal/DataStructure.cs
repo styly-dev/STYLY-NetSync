@@ -5,9 +5,9 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    // Unified transform data structure (supports both local and world coordinates)
+    // Simple transform data structure (position + rotation euler angles)
     [Serializable]
-    public class Transform3D
+    public class TransformData
     {
         public float posX;
         public float posY;
@@ -15,33 +15,25 @@ namespace Styly.NetSync
         public float rotX;
         public float rotY;
         public float rotZ;
-        public bool isLocalSpace; // true for local/physical, false for world/virtual
 
-        public Transform3D() { }
-
-        // Constructor for physical/local transforms (XZ position, Y rotation only)
-        public Transform3D(float x, float z, float rotY, bool local = true)
+        public TransformData()
         {
-            posX = x;
-            posY = 0;
-            posZ = z;
-            rotX = 0;
-            this.rotY = rotY;
-            rotZ = 0;
-            isLocalSpace = local;
+            posX = posY = posZ = 0;
+            rotX = rotY = rotZ = 0;
         }
 
-        // Constructor for virtual/world transforms (full 6DOF)
-        public Transform3D(float x, float y, float z, float rotX, float rotY, float rotZ, bool local = false)
+        public TransformData(Vector3 pos, Vector3 rot)
         {
-            posX = x;
-            posY = y;
-            posZ = z;
-            this.rotX = rotX;
-            this.rotY = rotY;
-            this.rotZ = rotZ;
-            isLocalSpace = local;
+            posX = pos.x;
+            posY = pos.y;
+            posZ = pos.z;
+            rotX = rot.x;
+            rotY = rot.y;
+            rotZ = rot.z;
         }
+
+        public Vector3 GetPosition() => new Vector3(posX, posY, posZ);
+        public Vector3 GetRotation() => new Vector3(rotX, rotY, rotZ);
     }
 
     // Client transform data using unified structure
@@ -50,18 +42,18 @@ namespace Styly.NetSync
     {
         public string deviceId;
         public int clientNo;  // Client number assigned by server (0 if not assigned)
-        public Transform3D physical;
-        public Transform3D head;
-        public Transform3D rightHand;
-        public Transform3D leftHand;
-        public List<Transform3D> virtuals;
+        public TransformData physical;
+        public TransformData head;
+        public TransformData rightHand;
+        public TransformData leftHand;
+        public List<TransformData> virtuals;
     }
 
-    // Group data from server
+    // Room data from server
     [Serializable]
-    public class GroupTransformData
+    public class RoomTransformData
     {
-        public string groupId;
+        public string roomId;
         public List<ClientTransformData> clients;
     }
 
@@ -69,12 +61,12 @@ namespace Styly.NetSync
     [Serializable]
     public class NetworkMessage
     {
-        public string type; // "client_transform" or "group_transform"
+        public string type; // "client_transform" or "room_transform"
         public string data;
         public object dataObj; // For preserving object types without JSON conversion
     }
 
-    // RPC message structure for broadcast calls
+    // RPC message structure
     [Serializable]
     public class RPCMessage
     {
@@ -86,28 +78,16 @@ namespace Styly.NetSync
         public string argumentsJson;
     }
 
-    // RPC message structure for client-targeted calls
-    [Serializable]
-    public class RPCClientMessage
-    {
-        // Client number of the sender
-        public int senderClientNo;
-        // Client number of the target
-        public int targetClientNo;
-        // Name of function to call
-        public string functionName;
-        // JSON-serialized function arguments array
-        public string argumentsJson;
-    }
-    
+
     // Device ID mapping data
     [Serializable]
     public class DeviceIdMapping
     {
         public int clientNo;
         public string deviceId;
+        public bool isStealthMode;
     }
-    
+
     // Device ID mapping notification message
     [Serializable]
     public class DeviceIdMappingData

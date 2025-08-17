@@ -10,6 +10,11 @@ This is a multi-project repository containing:
 - **STYLY-NetSync-Unity**: Unity 6 client package and demo scenes
 - **STYLY-NetSync-Server**: Python server for multiplayer coordination
 
+### Requirements
+- **Python**: 3.8+ (for server)
+- **Unity**: 6000.0.48f1 or later (Unity 6)
+- **Dependencies**: pyzmq>=26.0.0 (auto-installed)
+
 ## Common Development Commands
 
 ### Python Server
@@ -18,44 +23,69 @@ This is a multi-project repository containing:
 # Navigate to server directory
 cd STYLY-NetSync-Server
 
-# Install dependencies
-pip install -r requirements.txt
+# Install as package (recommended for development)
+pip install -e .
+# Or install with dev dependencies
+pip install -e ".[dev]"
 
-# Run the server
-python server.py
+# Run server (after installation)
+styly-netsync-server                           # Using CLI entry point
+python -m styly_netsync                        # As Python module
+python src/styly_netsync/server.py             # Direct script
+dev                                             # Convenience script (after pip install -e .)
 
-# Run with custom ports
-python server.py --dealer-port 5555 --pub-port 5556 --beacon-port 9999
+# Server options
+styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999 --name "My-Server"
+styly-netsync-server --no-beacon               # Disable UDP discovery
 
-# Run without UDP discovery
-python server.py --no-beacon
+# Using uv (recommended for quick testing)
+uvx styly-netsync-server                       # One-time execution without installation
+uv run dev                                      # Development mode with auto-dependency installation
+uv run dev --dealer-port 6000 --pub-port 6001  # With custom ports
+uvx --from . styly-netsync-server              # Run from current directory
+uvx --from . styly-netsync-simulator --clients 50  # Test with simulator
 
-# Run client simulator for load testing
-python client_simulator.py --clients 100 --server tcp://localhost --group default_group
+# Run client simulator
+styly-netsync-simulator --clients 100 --server tcp://localhost --room default_room
+python src/styly_netsync/client_simulator.py --clients 100  # Alternative
 
-# Check for port conflicts (Linux/Mac)
-lsof -i :5555
-kill <PID>
+# Development tools
+black src/ tests/          # Format code (includes tests)
+ruff check src/ tests/     # Lint code  
+mypy src/                  # Type check
+pytest                     # Run all tests
+pytest --cov=src           # Run tests with coverage
+pytest tests/test_all_run_methods.py  # Test all documented run methods
+pytest tests/integration/  # Run integration tests
+pytest -k test_stealth     # Run specific test by name pattern
 
-# Check for port conflicts (Windows)
-netstat -ano | findstr :5555
-taskkill /PID <PID> /F
+# Run specific test scripts directly
+python tests/integration/test_client.py         # Test basic client functionality
+python tests/integration/test_stealth_mode.py   # Test stealth mode feature
+
+# Debug port conflicts
+lsof -i :5555              # Linux/Mac: Find process using port
+kill -9 <PID>              # Linux/Mac: Kill process
+pkill -f styly-netsync     # Linux/Mac: Kill all STYLY processes
+
+netstat -ano | findstr :5555   # Windows: Find process using port
+taskkill /PID <PID> /F         # Windows: Kill process
 ```
 
 ### Unity Client
 
 - **Unity Version**: Unity 6000.0.48f1 or later (Unity 6)
 - **Build**: Use Unity Editor GUI (no command-line build scripts)
-- **Package Location**: `STYLY-NetSync-Unity/Packages/com.styly.styly-lbe-multiplayer`
+- **Package Location**: `STYLY-NetSync-Unity/Packages/com.styly.styly-netsync`
 - **Package Name**: com.styly.styly-netsync
 - **Dependencies**: 
   - NetMQ 4.0.2 (NuGet)
   - Unity XR Core Utils 2.1.1
+  - Newtonsoft.Json 3.2.1
+  - STYLY XR Rig 0.4.1
 - **Demo Scenes**: 
   - `Assets/Samples_Dev/Demo-01/Demo-01.unity` - Main demo
   - `Assets/Samples_Dev/Debug/Debug Scene.unity` - Debug testing
-
-**Note**: No test or lint commands are currently configured for either Python or Unity code.
 
 ## High-Level Architecture
 
@@ -67,14 +97,14 @@ Unity Clients (DEALER→ROUTER, SUB←PUB) ←→ Python Server (ROUTER→DEALER
 
 The system uses ZeroMQ with binary serialization for efficient networking:
 - **DEALER→ROUTER**: Clients send their state to server (port 5555)
-- **PUB→SUB**: Server broadcasts combined group state to all clients (port 5556)
+- **PUB→SUB**: Server broadcasts combined room state to all clients (port 5556)
 - **UDP Discovery**: Optional server discovery service (port 9999)
 - **Binary Protocol**: ~60% bandwidth reduction vs JSON
 
 ### Key Components
 
-#### 1. Python Server (`server.py`)
-- **MultiplayerServer**: Main server class with thread-safe group management
+#### 1. Python Server (`src/styly_netsync/server.py`)
+- **NetSyncServer**: Main server class with thread-safe room management
 - **Threading Model**:
   - Main thread: Lifecycle management
   - Receive thread: Process client messages
@@ -83,33 +113,39 @@ The system uses ZeroMQ with binary serialization for efficient networking:
 - **Client Number System**: Maps device IDs to 2-byte numbers for efficiency
 - **Binary Caching**: Server caches client binary data to avoid re-serialization
 - **Client Timeout**: 1 second of inactivity = disconnect
+- **Stealth Mode Support**: Clients can connect without visible avatars (NaN handshake)
 
 #### 2. Unity Client Architecture
 
-**Manager Components** (all internal to NetworkManager, namespace Styly.NetSync):
+**Manager Components** (all internal to NetSyncManager, namespace Styly.NetSync):
 - **ConnectionManager**: ZeroMQ socket management (DEALER/SUB)
 - **PlayerManager**: Spawn/despawn local and remote players
 - **TransformSyncManager**: Position synchronization (1-120Hz)
 - **RPCManager**: Remote procedure calls
-- **NetworkVariableManager**: Synchronized key-value storage (new)
+- **NetworkVariableManager**: Synchronized key-value storage
 - **MessageProcessor**: Binary message parsing
 - **ServerDiscoveryManager**: UDP discovery client
 
-**NetworkObject Component**:
+**NetSyncAvatar Component**:
 - Attached to synchronized GameObjects
 - **Physical Transform**: Local space (X,Z position, Y rotation only)
 - **Head/Hands**: World space full 6DOF
 - **Virtual Objects**: Array of additional world transforms
+
+**Stealth Mode**:
+- Enable by setting local player prefab to null in NetSyncManager
+- Client sends NaN handshake to maintain connection without avatar
+- Useful for spectator clients or server-side controllers
 
 #### 3. Binary Protocol
 
 **Message Types**:
 ```csharp
 MSG_CLIENT_TRANSFORM = 1    // Client → Server: Transform update
-MSG_GROUP_TRANSFORM = 2     // Server → Clients: Broadcast all transforms
-MSG_RPC_BROADCAST = 3       // Client → Server → All: Broadcast RPC
-MSG_RPC_SERVER = 4          // Client → Server: Server RPC
-MSG_RPC_CLIENT = 5          // Client → Server → Client: Direct RPC
+MSG_ROOM_TRANSFORM = 2     // Server → Clients: Broadcast all transforms
+MSG_RPC = 3                 // Client → Server → All: Remote procedure call
+MSG_RPC_SERVER = 4          // Reserved for future use
+MSG_RPC_CLIENT = 5          // Reserved for future use
 MSG_DEVICE_ID_MAPPING = 6   // Server → Clients: Device ID ↔ client number mappings
 MSG_SET_GLOBAL_VAR = 7      // Client → Server: Set global network variable
 MSG_SET_CLIENT_VAR = 8      // Client → Server: Set client network variable
@@ -121,13 +157,14 @@ MSG_NETWORK_VARS = 9        // Server → Clients: Network variable updates
 - Server broadcasts use client numbers (2 bytes)
 - Physical transform: 3 floats (X, Z, rotY)
 - Virtual transforms: 6 floats (full position + rotation)
+- Stealth handshake: NaN values for all transform components
 
 ### Threading Model
 
 **Server**:
 - Thread-safe with reentrant locks (RLock)
 - Context managers for safe lock acquisition
-- Atomic operations for group cleanup
+- Atomic operations for room cleanup
 
 **Unity**:
 - Main thread: Unity Update/UI
@@ -137,17 +174,11 @@ MSG_NETWORK_VARS = 9        // Server → Clients: Network variable updates
 ### RPC System
 
 ```csharp
-// Broadcast to all clients in group
-NetworkManager.Instance.RpcBroadcast("FunctionName", new string[] { "arg1", "arg2" });
-
-// Send to server
-NetworkManager.Instance.RpcServer("ServerFunction", new string[] { "data" });
-
-// Send to specific client (using client number)
-NetworkManager.Instance.RpcClient(targetClientNo, "DirectMessage", new string[] { "hello" });
+// Send RPC to all clients in room
+NetSyncManager.Instance.Rpc("FunctionName", new string[] { "arg1", "arg2" });
 
 // Receive RPCs
-NetworkManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName, args) => {
+NetSyncManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName, args) => {
     switch (functionName)
     {
         case "FunctionName":
@@ -157,30 +188,33 @@ NetworkManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName,
 });
 ```
 
-#### Network Variables System
+### Network Variables System
 
 ```csharp
-// Set global variable (shared across all clients in group)
-NetworkManager.Instance.SetGlobalVariable("gameState", "playing");
+// Set global variable (shared across all clients in room)
+NetSyncManager.Instance.SetGlobalVariable("gameState", "playing");
 
-// Set client-specific variable (set your own)
-NetworkManager.Instance.SetClientVariable("playerScore", "100");
+// Set client-specific variable
+NetSyncManager.Instance.SetClientVariable("playerScore", "100");
 
 // Set another client's variable (requires their client number)
-NetworkManager.Instance.SetClientVariable(targetClientNo, "health", "50");
+NetSyncManager.Instance.SetClientVariable(targetClientNo, "health", "50");
 
-// Get variables
-string gameState = NetworkManager.Instance.GetGlobalVariable("gameState");
-string score = NetworkManager.Instance.GetClientVariable(clientNo, "playerScore");
+// Get variables with default value support
+string gameState = NetSyncManager.Instance.GetGlobalVariable("gameState", "waiting");
+string score = NetSyncManager.Instance.GetClientVariable(clientNo, "playerScore", "0");
 
 // Listen for changes
-NetworkManager.Instance.OnGlobalVariableChanged.AddListener((name, oldVal, newVal) => {
+NetSyncManager.Instance.OnGlobalVariableChanged.AddListener((name, oldVal, newVal) => {
     Debug.Log($"Global var {name} changed: {oldVal} -> {newVal}");
 });
 
-NetworkManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, oldVal, newVal) => {
+NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, oldVal, newVal) => {
     Debug.Log($"Client {clientNo} var {name} changed: {oldVal} -> {newVal}");
 });
+
+// Check if client is in stealth mode
+bool isStealth = NetSyncManager.Instance.IsClientStealthMode(clientNo);
 ```
 
 ## Important Implementation Details
@@ -190,6 +224,7 @@ NetworkManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 - **Physical**: Local coordinates, ground movement only
 - **Virtual**: World coordinates, full 6DOF
 - **Interpolation**: Smooth movement for remote players
+- **Stealth Mode**: NaN values indicate invisible client
 
 ### Connection Handling
 - **Discovery**: UDP "STYLY-NETSYNC-DISCOVER" → "STYLY-NETSYNC|dealerPort|subPort|serverName"
@@ -197,11 +232,12 @@ NetworkManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 - **Platform-specific**: Special NetMQ cleanup for different platforms
 - **Fallback**: Localhost if discovery fails
 - **Client Number Assignment**: Server assigns 2-byte IDs to clients, broadcasted to all
+- **Handshake**: Periodic transform or stealth handshake to maintain connection
 
 ### Performance Optimizations
 - Binary protocol with struct packing
 - Client number system (2 bytes vs 36 byte device ID)
-- Adaptive broadcasting based on group activity
+- Adaptive broadcasting based on room activity
 - Binary caching on server side
 - Message queue high-water marks
 
@@ -224,28 +260,96 @@ When adding features:
 1. Define message type constant in both codebases
 2. Implement serialization in BinarySerializer
 3. Add handler in MessageProcessor
-4. Expose API through NetworkManager
+4. Expose API through NetSyncManager
+
+When debugging issues:
+1. Enable debug logs in NetSyncManager inspector
+2. Check server logs for connection/room information
+3. Use `test_client.py` for isolated testing
+4. Monitor with `lsof` or `netstat` for port issues
+
+### Programmatic Server Usage
+
+Create custom server scripts for testing:
+```python
+from styly_netsync import NetSyncServer
+import time
+
+# Create and start server
+server = NetSyncServer(
+    dealer_port=5555,
+    pub_port=5556,
+    enable_beacon=True,
+    beacon_port=9999,
+    server_name="STYLY-NetSync-Server"
+)
+
+try:
+    server.start()
+    # Keep server running
+    while True:
+        time.sleep(1)
+except KeyboardInterrupt:
+    server.stop()
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**Port Already in Use**:
+```bash
+# Find and kill process using the port
+lsof -i :5555  # Mac/Linux
+kill -9 <PID>
+```
+
+**Client Not Connecting**:
+1. Check firewall settings
+2. Verify server is running
+3. Confirm correct IP address
+4. Test with `test_client.py` first
+
+**Transforms Not Syncing**:
+1. Check send rate settings
+2. Verify room ID matches
+3. Ensure prefabs have NetSyncAvatar component
+4. Check debug logs for errors
 
 ## Key Files Reference
 
 ### Server (`STYLY-NetSync-Server/`)
-- `server.py`: Main server with group management
-- `binary_serializer.py`: Binary protocol implementation
-- `client_simulator.py`: Load testing with movement patterns
+- `src/styly_netsync/server.py`: Main server with room management
+- `src/styly_netsync/binary_serializer.py`: Binary protocol implementation
+- `src/styly_netsync/client_simulator.py`: Load testing with movement patterns
+- `src/styly_netsync/cli.py`: CLI entry point wrapper
+- `src/styly_netsync/__main__.py`: Module execution support
 - `requirements.txt`: Python dependencies (pyzmq 26.4.0)
+- `pyproject.toml`: Package configuration with dev tools
+- `tests/integration/test_client.py`: Basic client integration test
+- `tests/integration/test_stealth_mode.py`: Stealth mode feature test
+- `tests/test_all_run_methods.py`: Test all documented execution methods
 
-### Unity Package (`STYLY-NetSync-Unity/Packages/com.styly.styly-lbe-multiplayer/`)
-- `Runtime/NetworkManager.cs`: Main singleton entry point
-- `Runtime/NetworkObject.cs`: Component for sync
+### Unity Package (`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/`)
+- `Runtime/NetSyncManager.cs`: Main singleton entry point
+- `Runtime/NetSyncAvatar.cs`: Component for sync
 - `Runtime/Internal/BinarySerializer.cs`: Binary protocol
-- `Runtime/Internal/DataStructure.cs`: Shared data structures (ClientData, DeviceIdMapping)
+- `Runtime/Internal/DataStructure.cs`: Shared data structures
 - `Runtime/Internal/ConnectionManager.cs`: ZeroMQ handling
 - `Runtime/Internal/MessageProcessor.cs`: Message parsing
-- `Runtime/Internal/NetworkVariableManager.cs`: Network Variables system
-- `Runtime/Internal/PlayerManager.cs`: Player spawn/despawn logic
+- `Runtime/Internal/NetworkVariableManager.cs`: Network variables
+- `Runtime/Internal/PlayerManager.cs`: Player spawn/despawn
 - `Runtime/Internal/TransformSyncManager.cs`: Transform interpolation
 - `Runtime/Internal/RPCManager.cs`: RPC handling
 - `Runtime/Internal/ServerDiscoveryManager.cs`: UDP discovery
 
 ### Demo Scenes
 - `Assets/Samples_Dev/Demo-01/Scripts/ReceiveRPC_to_ChangeColor.cs`: Example RPC receiver
+- `Assets/Samples_Dev/Demo-01/Scripts/SendRPC.cs`: Example RPC sender
+- `Assets/Samples_Dev/Debug/DebugMoveAvatar.cs`: Debug avatar movement
+
+## Project Resources
+
+- **Homepage**: https://styly.inc
+- **Repository**: https://github.com/styly-dev/STYLY-NetSync
+- **Issues**: https://github.com/styly-dev/STYLY-NetSync/issues

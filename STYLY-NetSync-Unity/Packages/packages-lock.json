@@ -8,11 +8,11 @@
         "org.nuget.netmq": "4.0.2",
         "com.unity.xr.core-utils": "2.1.1",
         "com.unity.nuget.newtonsoft-json": "3.2.1",
-        "com.styly.styly-xr-rig": "0.4.1"
+        "com.styly.styly-xr-rig": "0.4.2"
       }
     },
     "com.styly.styly-xr-rig": {
-      "version": "0.4.1",
+      "version": "0.4.2",
       "depth": 1,
       "source": "registry",
       "dependencies": {
@@ -242,6 +242,16 @@
     },
     "com.unity.toolchain.macos-arm64-linux-x86_64": {
       "version": "2.0.4",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.sysroot": "2.0.10",
+        "com.unity.sysroot.linux-x86_64": "2.0.9"
+      },
+      "url": "https://packages.unity.com"
+    },
+    "com.unity.toolchain.win-x86_64-linux-x86_64": {
+      "version": "2.0.10",
       "depth": 0,
       "source": "registry",
       "dependencies": {

@@ -1,0 +1,198 @@
+name: 'Check Main Branch Manual PR'
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  check-pr-to-main:
+    runs-on: ubuntu-latest
+    # Only run on open PRs, not closed/merged ones
+    if: github.event.pull_request.state == 'open'
+    
+    steps:
+      - name: Check if PR is from develop branch
+        id: check_branch
+        run: |
+          HEAD_BRANCH="${{ github.head_ref }}"
+          BASE_BRANCH="${{ github.base_ref }}"
+          
+          echo "PR from: $HEAD_BRANCH to: $BASE_BRANCH"
+          
+          if [ "$HEAD_BRANCH" == "develop" ]; then
+            echo "is_from_develop=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_from_develop=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post warning comment
+        if: steps.check_branch.outputs.is_from_develop == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            
+            // Check if warning comment already exists
+            const comments = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: prNumber
+            });
+            
+            const botComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('⚠️ **Warning: Manual PR to main branch detected**')
+            );
+            
+            if (!botComment) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body: `⚠️ **Warning: Manual PR to main branch detected**\n\nThis repository uses an automated workflow for merging to the main branch.\n\n## Recommended Process\n\nInstead of creating a manual PR, please use the GitHub Actions workflow:\n\n1. Go to [Set Version for Unity & Python and Merge to Main](https://github.com/${owner}/${repo}/actions/workflows/set-version-and-make-release-draft.yml)\n2. Click **\"Run workflow\"**\n3. Enter the version number (e.g., 1.0.0 or 1.0.0-beta.1)\n4. The workflow will:\n   - Update version in both Unity and Python projects\n   - Commit changes to develop branch\n   - Fast-forward merge to main branch\n   - Ensure version consistency across projects\n\n## If you must proceed with this PR\n\nPlease ensure:\n1. Version numbers are updated in both:\n   - \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json\`\n   - \`STYLY-NetSync-Server/pyproject.toml\`\n2. The versions match exactly\n3. The version follows semantic versioning (x.x.x or x.x.x-tag)`
+              });
+            }
+
+      - name: Add PR labels
+        if: steps.check_branch.outputs.is_from_develop == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            
+            try {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: prNumber,
+                labels: ['needs-workflow', 'manual-pr-warning']
+              });
+            } catch (error) {
+              console.log('Labels might not exist, skipping label addition:', error.message);
+            }
+
+      - name: Check version consistency
+        if: steps.check_branch.outputs.is_from_develop == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Validate version files
+        if: steps.check_branch.outputs.is_from_develop == 'true'
+        id: version_check
+        run: |
+          # Check if version files exist and extract versions
+          UNITY_PACKAGE="STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json"
+          PYTHON_PROJECT="STYLY-NetSync-Server/pyproject.toml"
+          
+          if [ -f "$UNITY_PACKAGE" ]; then
+            UNITY_VERSION=$(grep -o '"version": *"[^"]*"' "$UNITY_PACKAGE" | cut -d'"' -f4)
+            echo "Unity version: $UNITY_VERSION"
+          else
+            echo "Unity package.json not found"
+            UNITY_VERSION="NOT_FOUND"
+          fi
+          
+          if [ -f "$PYTHON_PROJECT" ]; then
+            PYTHON_VERSION=$(grep '^version = ' "$PYTHON_PROJECT" | cut -d'"' -f2)
+            echo "Python version: $PYTHON_VERSION"
+          else
+            echo "Python pyproject.toml not found"
+            PYTHON_VERSION="NOT_FOUND"
+          fi
+          
+          # Check if versions match
+          if [ "$UNITY_VERSION" != "$PYTHON_VERSION" ]; then
+            echo "version_mismatch=true" >> $GITHUB_OUTPUT
+            echo "unity_version=$UNITY_VERSION" >> $GITHUB_OUTPUT
+            echo "python_version=$PYTHON_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "version_mismatch=false" >> $GITHUB_OUTPUT
+            echo "current_version=$UNITY_VERSION" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post version mismatch warning
+        if: steps.check_branch.outputs.is_from_develop == 'true' && steps.version_check.outputs.version_mismatch == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = context.issue.number;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const unityVersion = '${{ steps.version_check.outputs.unity_version }}';
+            const pythonVersion = '${{ steps.version_check.outputs.python_version }}';
+            
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: prNumber,
+              body: `🚨 **Critical: Version Mismatch Detected**
+            
+            The Unity and Python project versions do not match:
+            - Unity package version: \`${unityVersion}\`
+            - Python project version: \`${pythonVersion}\`
+            
+            **This PR should not be merged until versions are synchronized.**
+            
+            Please close this PR and use the automated workflow instead:
+            [Run Set Version Workflow](https://github.com/${owner}/${repo}/actions/workflows/set-version-and-merge-to-main.yml)`
+            });
+            
+            // Mark PR checks as failed
+            await github.rest.repos.createCommitStatus({
+              owner,
+              repo,
+              sha: context.payload.pull_request.head.sha,
+              state: 'error',
+              description: 'Version mismatch between Unity and Python projects',
+              context: 'version-check'
+            });
+
+      - name: Set PR status check
+        if: steps.check_branch.outputs.is_from_develop == 'true' && steps.version_check.outputs.version_mismatch == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = context.payload.pull_request.head.sha;
+            const currentVersion = '${{ steps.version_check.outputs.current_version }}';
+            
+            await github.rest.repos.createCommitStatus({
+              owner,
+              repo,
+              sha,
+              state: 'warning',
+              description: `Manual PR detected. Current version: ${currentVersion}. Consider using automated workflow.`,
+              context: 'version-check',
+              target_url: `https://github.com/${owner}/${repo}/actions/workflows/set-version-and-merge-to-main.yml`
+            });
+
+      - name: Summary in PR checks
+        if: steps.check_branch.outputs.is_from_develop == 'true'
+        run: |
+          echo "## PR Check Summary"
+          echo ""
+          if [ "${{ steps.version_check.outputs.version_mismatch }}" == "true" ]; then
+            echo "❌ **Version Mismatch**: Unity and Python versions do not match"
+            echo "- Unity: ${{ steps.version_check.outputs.unity_version }}"
+            echo "- Python: ${{ steps.version_check.outputs.python_version }}"
+          else
+            echo "⚠️ **Manual PR Warning**: Consider using the automated workflow"
+            echo "- Current version: ${{ steps.version_check.outputs.current_version }}"
+          fi
+          echo ""
+          echo "📋 **Recommendation**: Use the [Set Version and Merge workflow](https://github.com/${{ github.repository }}/actions/workflows/set-version-and-merge-to-main.yml)"

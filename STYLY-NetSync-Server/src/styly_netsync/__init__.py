@@ -21,8 +21,7 @@ Example:
     server.start()
 """
 
-from .server import NetSyncServer
-from .server import main
+from .server import NetSyncServer, main
 
 # Export public API
 __all__ = [

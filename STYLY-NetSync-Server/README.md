@@ -19,13 +19,16 @@ cd STYLY-LBE-Multiplayer/STYLY-NetSync-Server
 pip install -e .
 ```
 
-### Using uvx (recommended for one-time use)
+### Using uv (recommended)
 ```bash
-# Run without installing
+# Run without installing (one-time use)
 uvx styly-netsync-server
 
 # Run with custom options
 uvx styly-netsync-server --dealer-port 5555 --pub-port 5556
+
+# Run with uv (automatically installs dependencies)
+uv run dev  # Convenience script for development
 ```
 
 ## Usage
@@ -78,8 +81,8 @@ Test the server with simulated clients:
 # Simulate 100 clients
 styly-netsync-simulator --clients 100
 
-# Custom server and group
-styly-netsync-simulator --server tcp://localhost --group my_group --clients 50
+# Custom server and room
+styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 ```
 
 ## Architecture
@@ -119,9 +122,15 @@ python -m styly_netsync
 python -m styly_netsync --dealer-port 6000 --pub-port 6001
 ```
 
-#### 3. Use uvx Without Installation
+#### 3. Use uv for Development
 ```bash
-# Run from the project directory
+# Run using convenience script (automatically installs dependencies)
+uv run dev
+
+# Run with custom options
+uv run dev --dealer-port 6000 --pub-port 6001
+
+# Use uvx for one-time execution without installation
 uvx --from . styly-netsync-server
 
 # Test with client simulator
@@ -158,7 +167,7 @@ python test_client.py
 styly-netsync-server
 
 # In another terminal, simulate multiple clients
-styly-netsync-simulator --clients 100 --group test_group
+styly-netsync-simulator --clients 100 --room test_room
 
 # Monitor server logs for performance metrics
 ```

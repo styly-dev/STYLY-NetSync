@@ -11,31 +11,31 @@ namespace Styly.NetSync
         private readonly string _deviceId;
         private int _messagesSent;
         private float _lastSendTime;
-        
+
         public float SendRate { get; set; } = 10f;
         public int MessagesSent => _messagesSent;
-        
+
         public TransformSyncManager(ConnectionManager connectionManager, string deviceId, float sendRate)
         {
             _connectionManager = connectionManager;
             _deviceId = deviceId;
             SendRate = sendRate;
         }
-        
-        public bool SendLocalTransform(NetSyncAvatar localPlayerAvatar, string groupId)
+
+        public bool SendLocalTransform(NetSyncAvatar localAvatar, string roomId)
         {
-            if (localPlayerAvatar == null || _connectionManager.DealerSocket == null)
-                return true;
-            
+            if (localAvatar == null || _connectionManager.DealerSocket == null)
+                return false;
+
             try
             {
-                var tx = localPlayerAvatar.GetTransformData();
+                var tx = localAvatar.GetTransformData();
                 var binaryData = BinarySerializer.SerializeClientTransform(tx);
-                
+
                 var msg = new NetMQMessage();
-                msg.Append(groupId);
+                msg.Append(roomId);
                 msg.Append(binaryData);
-                
+
                 var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
                 if (ok) _messagesSent++;
                 return ok;
@@ -46,17 +46,41 @@ namespace Styly.NetSync
                 return false;
             }
         }
-        
+
+        public bool SendStealthHandshake(string roomId)
+        {
+            if (_connectionManager.DealerSocket == null)
+                return false;
+
+            try
+            {
+                var binaryData = BinarySerializer.SerializeStealthHandshake(_deviceId);
+
+                var msg = new NetMQMessage();
+                msg.Append(roomId);
+                msg.Append(binaryData);
+
+                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                if (ok) _messagesSent++;
+                return ok;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SendStealthHandshake: {ex.Message}");
+                return false;
+            }
+        }
+
         public void IncrementMessagesSent()
         {
             _messagesSent++;
         }
-        
+
         public bool ShouldSendTransform(float currentTime)
         {
             return currentTime - _lastSendTime >= 1f / SendRate;
         }
-        
+
         public void UpdateLastSendTime(float currentTime)
         {
             _lastSendTime = currentTime;

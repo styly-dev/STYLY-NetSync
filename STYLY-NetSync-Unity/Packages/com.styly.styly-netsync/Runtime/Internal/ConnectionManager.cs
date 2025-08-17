@@ -20,7 +20,7 @@ namespace Styly.NetSync
         private bool _connectionError;
         private float _reconnectDelay = 10f;
         private ServerDiscoveryManager _discoveryManager;
-        private string _currentGroupId;
+        private string _currentRoomId;
 
         public DealerSocket DealerSocket => _dealerSocket;
         public SubscriberSocket SubSocket => _subSocket;
@@ -41,17 +41,17 @@ namespace Styly.NetSync
             _logNetworkTraffic = logNetworkTraffic;
         }
 
-        public void Connect(string serverAddress, int dealerPort, int subPort, string groupId)
+        public void Connect(string serverAddress, int dealerPort, int subPort, string roomId)
         {
             if (_receiveThread != null)
             {
                 return; // Already connected
             }
 
-            _currentGroupId = groupId;
+            _currentRoomId = roomId;
             _connectionError = false;
             _shouldStop = false;
-            _receiveThread = new Thread(() => NetworkLoop(serverAddress, dealerPort, subPort, groupId))
+            _receiveThread = new Thread(() => NetworkLoop(serverAddress, dealerPort, subPort, roomId))
             {
                 IsBackground = true,
                 Name = "STYLY_NetworkThread"
@@ -67,8 +67,14 @@ namespace Styly.NetSync
             _shouldStop = true;
 
             // Dispose sockets
-            _subSocket?.Dispose();
-            _dealerSocket?.Dispose();
+            if (_subSocket != null)
+            {
+                _subSocket.Dispose();
+            }
+            if (_dealerSocket != null)
+            {
+                _dealerSocket.Dispose();
+            }
 
             _subSocket = null;
             _dealerSocket = null;
@@ -81,7 +87,7 @@ namespace Styly.NetSync
             SafeNetMQCleanup();
         }
 
-        private void NetworkLoop(string serverAddress, int dealerPort, int subPort, string groupId)
+        private void NetworkLoop(string serverAddress, int dealerPort, int subPort, string roomId)
         {
             try
             {
@@ -99,19 +105,22 @@ namespace Styly.NetSync
                 sub.Options.Linger = TimeSpan.Zero;
                 sub.Options.ReceiveHighWatermark = 10;
                 sub.Connect($"{serverAddress}:{subPort}");
-                sub.Subscribe(groupId);
+                sub.Subscribe(roomId);
                 _subSocket = sub;
 
                 DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
 
                 // Notify connection established
-                OnConnectionEstablished?.Invoke();
+                if (OnConnectionEstablished != null)
+                {
+                    OnConnectionEstablished.Invoke();
+                }
 
                 while (!_shouldStop)
                 {
                     if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
                     if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
-                    if (topic != groupId) { continue; }
+                    if (topic != roomId) { continue; }
 
                     try
                     {
@@ -129,7 +138,10 @@ namespace Styly.NetSync
                 {
                     Debug.LogError($"Network thread error: {ex.Message}");
                     _connectionError = true;
-                    OnConnectionError?.Invoke(ex.Message);
+                    if (OnConnectionError != null)
+                    {
+                        OnConnectionError.Invoke(ex.Message);
+                    }
                 }
             }
         }
@@ -176,10 +188,10 @@ namespace Styly.NetSync
             }
         }
 
-        public void StartDiscovery(ServerDiscoveryManager discoveryManager, string groupId)
+        public void StartDiscovery(ServerDiscoveryManager discoveryManager, string roomId)
         {
             _discoveryManager = discoveryManager;
-            _currentGroupId = groupId;
+            _currentRoomId = roomId;
             if (_discoveryManager != null)
             {
                 _discoveryManager.StartDiscovery();
@@ -193,7 +205,7 @@ namespace Styly.NetSync
             {
                 _discoveryManager.StopDiscovery();
             }
-            Connect(serverAddress, dealerPort, subPort, _currentGroupId);
+            Connect(serverAddress, dealerPort, subPort, _currentRoomId);
         }
 
         public void DebugLog(string msg)

@@ -8,15 +8,20 @@ import argparse
 import logging
 import math
 import random
-import time
 import threading
+import time
 import uuid
 from enum import Enum
 from typing import Dict, List, Tuple
+
 import zmq
 
 # Import the binary serializer from the same package
-from .binary_serializer import serialize_client_transform
+try:
+    from .binary_serializer import serialize_client_transform
+except ImportError:
+    # Fallback for direct script execution
+    from binary_serializer import serialize_client_transform
 
 class MovementPattern(Enum):
     """Movement patterns matching DebugMoveAvatar.cs"""
@@ -312,13 +317,13 @@ class ClientSimulator:
         server_addr: str,
         dealer_port: int,
         sub_port: int,
-        group_id: str,
+        room_id: str,
         num_clients: int,
     ):
         self.server_addr = server_addr
         self.dealer_port = dealer_port
         self.sub_port = sub_port
-        self.group_id = group_id
+        self.room_id = room_id
         self.num_clients = num_clients
         self.clients: List[SimulatedClient] = []
         self.running = False
@@ -331,13 +336,13 @@ class ClientSimulator:
         """Start the simulation."""
         self.running = True
         self.logger.info(f"Starting simulation with {self.num_clients} clients")
-        
+
         # Check system limits first
         import resource
         try:
             soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
             self.logger.info(f"System file descriptor limits: soft={soft_limit}, hard={hard_limit}")
-            
+
             # Warn if trying to create too many clients
             # Each client needs 1 socket + overhead for other system files
             estimated_fds = self.num_clients + 50  # Add buffer for system files
@@ -373,7 +378,7 @@ class ClientSimulator:
                 target=self._run_client, args=(client,), daemon=True
             )
             self.threads.append(thread)
-            
+
             try:
                 thread.start()
                 self.logger.info(
@@ -391,7 +396,7 @@ class ClientSimulator:
 
         if failed_clients > 0:
             self.logger.warning(f"Failed to start {failed_clients} clients due to resource limits.")
-        
+
         self.logger.info("All clients started. Press Ctrl+C to stop simulation.")
 
         # Wait for all threads with proper interrupt handling
@@ -417,33 +422,33 @@ class ClientSimulator:
                 thread.join(timeout=2.0)
                 if thread.is_alive():
                     self.logger.warning(f"Device thread {i} did not finish within timeout")
-        
+
         # Terminate the shared context after all threads are done
         try:
             self.context.term()
         except Exception as e:
             self.logger.error(f"Error terminating ZMQ context: {e}")
-        
+
         self.logger.info("Simulation stopped.")
 
     def _run_client(self, client: SimulatedClient):
         """Run a single client simulation in its own thread."""
         dealer_socket = None
-        
+
         try:
             # Use the shared context instead of creating a new one
             dealer_socket = self.context.socket(zmq.DEALER)
-            
+
             # Set socket options to prevent hanging
             dealer_socket.setsockopt(zmq.LINGER, 0)
             dealer_socket.setsockopt(zmq.RCVTIMEO, 1000)  # 1 second timeout
-            
+
             # Connect to server
             dealer_endpoint = f"{self.server_addr}:{self.dealer_port}"
             dealer_socket.connect(dealer_endpoint)
             client.logger.info(f"Connected to server at {dealer_endpoint}")
 
-            # Send initial join group message (simplified - just send transform data)
+            # Send initial join room message (simplified - just send transform data)
             # In a real implementation, you would implement proper handshake
 
             # Main update loop - 10Hz (100ms interval)
@@ -460,10 +465,10 @@ class ClientSimulator:
                     # Serialize to binary format
                     binary_data = serialize_client_transform(transform_data)
 
-                    # Send to server with group_id as separate frame
+                    # Send to server with room_id as separate frame
                     dealer_socket.send_multipart(
                         [
-                            self.group_id.encode("utf-8"),  # group_id
+                            self.room_id.encode("utf-8"),  # room_id
                             binary_data,  # message
                         ]
                     )
@@ -476,10 +481,10 @@ class ClientSimulator:
 
                 # Small sleep to prevent busy waiting
                 time.sleep(0.01)
-                
+
         except zmq.error.ZMQError as e:
             if "Too many open files" in str(e):
-                client.logger.error(f"Socket creation failed - too many open files. Consider reducing the number of clients or increasing system ulimit.")
+                client.logger.error("Socket creation failed - too many open files. Consider reducing the number of clients or increasing system ulimit.")
             else:
                 client.logger.error(f"ZMQ error in client simulation: {e}")
         except Exception as e:
@@ -515,10 +520,10 @@ def main():
         "--sub-port", type=int, default=5556, help="SUB port (default: 5556)"
     )
     parser.add_argument(
-        "--group",
+        "--room",
         type=str,
-        default="default_group",
-        help="Group ID (default: default_group)",
+        default="default_room",
+        help="Room ID (default: default_room)",
     )
     parser.add_argument(
         "--log-level",
@@ -543,7 +548,7 @@ def main():
     logger.info(f"  Server: {args.server}")
     logger.info(f"  DEALER port: {args.dealer_port}")
     logger.info(f"  SUB port: {args.sub_port}")
-    logger.info(f"  Group: {args.group}")
+    logger.info(f"  Room: {args.room}")
     logger.info(f"  Clients: {args.clients}")
     logger.info("=" * 80)
 
@@ -552,7 +557,7 @@ def main():
         server_addr=args.server,
         dealer_port=args.dealer_port,
         sub_port=args.sub_port,
-        group_id=args.group,
+        room_id=args.room,
         num_clients=args.clients,
     )
 

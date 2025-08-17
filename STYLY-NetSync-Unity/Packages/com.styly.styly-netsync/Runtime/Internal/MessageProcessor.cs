@@ -15,6 +15,7 @@ namespace Styly.NetSync
         private int _messagesReceived;
         private readonly Dictionary<int, string> _clientNoToDeviceId = new();
         private readonly Dictionary<string, int> _deviceIdToClientNo = new();
+        private readonly Dictionary<int, bool> _clientNoToIsStealthMode = new();
         private readonly Dictionary<int, ClientTransformData> _pendingClients = new(); // Clients waiting for ID mapping
         private string _localDeviceId;
         private int _localClientNo = 0;
@@ -26,12 +27,12 @@ namespace Styly.NetSync
         {
             _logNetworkTraffic = logNetworkTraffic;
         }
-        
+
         public void SetLocalDeviceId(string deviceId)
         {
             _localDeviceId = deviceId;
         }
-        
+
         public void SetLocalClientNo(int clientNo)
         {
             _localClientNo = clientNo;
@@ -51,13 +52,13 @@ namespace Styly.NetSync
 
                 switch (msgType)
                 {
-                    case BinarySerializer.MSG_GROUP_TRANSFORM when data is GroupTransformData:
+                    case BinarySerializer.MSG_ROOM_TRANSFORM when data is RoomTransformData:
                         var json = JsonConvert.SerializeObject(data);
-                        _messageQueue.Enqueue(new NetworkMessage { type = "group_transform", data = json });
+                        _messageQueue.Enqueue(new NetworkMessage { type = "room_transform", data = json });
                         _messagesReceived++;
                         break;
 
-                    case BinarySerializer.MSG_RPC_BROADCAST when data is RPCMessage rpc:
+                    case BinarySerializer.MSG_RPC when data is RPCMessage rpc:
                         var args = JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson);
                         _messageQueue.Enqueue(new NetworkMessage
                         {
@@ -67,16 +68,7 @@ namespace Styly.NetSync
                         _messagesReceived++;
                         break;
 
-                    case BinarySerializer.MSG_RPC_CLIENT when data is RPCClientMessage clientRpc:
-                        var clientArgs = JsonConvert.DeserializeObject<string[]>(clientRpc.argumentsJson);
-                        _messageQueue.Enqueue(new NetworkMessage
-                        {
-                            type = "rpc",
-                            data = JsonConvert.SerializeObject(new { senderClientNo = clientRpc.senderClientNo, clientRpc.functionName, args = clientArgs })
-                        });
-                        _messagesReceived++;
-                        break;
-                    
+
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
                         // Process ID mappings immediately (don't queue)
                         // ID mapping data received
@@ -105,13 +97,13 @@ namespace Styly.NetSync
             {
                 // Log error with more context for debugging
                 Debug.LogError($"Binary parse error: {ex.Message}");
-                
+
                 // Log first few bytes of payload for debugging
                 if (payload != null && payload.Length > 0)
                 {
                     var hexDump = BitConverter.ToString(payload.Take(Math.Min(32, payload.Length)).ToArray());
                     Debug.LogError($"First bytes of problematic payload: {hexDump} (length: {payload.Length})");
-                    
+
                     // Log the message type byte specifically
                     if (payload.Length >= 1)
                     {
@@ -121,14 +113,14 @@ namespace Styly.NetSync
             }
         }
 
-        public void ProcessMessageQueue(PlayerManager playerManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
+        public void ProcessMessageQueue(AvatarManager avatarManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
         {
             while (_messageQueue.TryDequeue(out var msg))
             {
                 switch (msg.type)
                 {
-                    case "group_transform":
-                        ProcessGroupTransform(msg.data, playerManager, localDeviceId, netSyncManager);
+                    case "room_transform":
+                        ProcessRoomTransform(msg.data, avatarManager, localDeviceId, netSyncManager);
                         break;
 
                     case "rpc":
@@ -144,7 +136,7 @@ namespace Styly.NetSync
                         break;
                 }
             }
-            
+
             // Check for pending clients that now have ID mappings
             if (_pendingClients.Count > 0)
             {
@@ -157,37 +149,40 @@ namespace Styly.NetSync
                         // Found ID mapping for pending client
                     }
                 }
-                
+
                 foreach (var clientNo in pendingToProcess)
                 {
-                    if (_pendingClients.TryGetValue(clientNo, out var pendingClient) && 
+                    if (_pendingClients.TryGetValue(clientNo, out var pendingClient) &&
                         _clientNoToDeviceId.TryGetValue(clientNo, out var deviceId))
                     {
                         // Update device ID
                         pendingClient.deviceId = deviceId;
-                        
-                        // Spawn the player
-                        if (!playerManager.ConnectedPeers.ContainsKey(clientNo))
+
+                        // Spawn the avatar
+                        if (!avatarManager.ConnectedPeers.ContainsKey(clientNo))
                         {
                             // Spawning pending client
-                            
-                            // Spawn the remote player with the device ID
+
+                            // Spawn the remote avatar with the device ID
                             if (netSyncManager != null)
                             {
-                                var remotePlayerPrefab = netSyncManager.GetRemotePlayerPrefab();
-                                if (remotePlayerPrefab != null)
+                                var remoteAvatarPrefab = netSyncManager.GetRemoteAvatarPrefab();
+                                if (remoteAvatarPrefab != null)
                                 {
-                                    playerManager.SpawnRemotePlayer(clientNo, deviceId, remotePlayerPrefab, netSyncManager);
-                                    netSyncManager.OnClientConnected?.Invoke(clientNo);
+                                    avatarManager.SpawnRemoteAvatar(clientNo, deviceId, remoteAvatarPrefab, netSyncManager);
+                                    if (netSyncManager.OnClientConnected != null)
+                                    {
+                                        netSyncManager.OnClientConnected.Invoke(clientNo);
+                                    }
                                 }
                             }
                             else
                             {
-                                // Fallback to just updating the player if NetSyncManager is not available
-                                playerManager.UpdateRemotePlayer(clientNo, pendingClient);
+                                // Fallback to just updating the avatar if NetSyncManager is not available
+                                avatarManager.UpdateRemoteAvatar(clientNo, pendingClient);
                             }
                         }
-                        
+
                         // Remove from pending
                         _pendingClients.Remove(clientNo);
                     }
@@ -195,56 +190,59 @@ namespace Styly.NetSync
             }
         }
 
-        private void ProcessGroupTransform(string json, PlayerManager playerManager, string localDeviceId, NetSyncManager netSyncManager = null)
+        private void ProcessRoomTransform(string json, AvatarManager avatarManager, string localDeviceId, NetSyncManager netSyncManager = null)
         {
             if (string.IsNullOrEmpty(json))
             {
-                Debug.LogError("GroupTransform: empty JSON");
+                Debug.LogError("RoomTransform: empty JSON");
                 return;
             }
 
             try
             {
-                var group = JsonConvert.DeserializeObject<GroupTransformData>(json);
-                if (group == null) { return; }
+                var room = JsonConvert.DeserializeObject<RoomTransformData>(json);
+                if (room == null) { return; }
 
                 var alive = new HashSet<int>();
-                foreach (var c in group.clients)
+                foreach (var c in room.clients)
                 {
-                    // Skip local player by client number
+                    // Skip local avatar by client number
                     if (c.clientNo == _localClientNo) { continue; }
-                    
+
                     alive.Add(c.clientNo);
-                    
-                    // Check if player already exists and just needs update
-                    if (playerManager.ConnectedPeers.ContainsKey(c.clientNo))
+
+                    // Check if avatar already exists and just needs update
+                    if (avatarManager.ConnectedPeers.ContainsKey(c.clientNo))
                     {
-                        // Update existing player
-                        playerManager.UpdateRemotePlayer(c.clientNo, c);
+                        // Update existing avatar
+                        avatarManager.UpdateRemoteAvatar(c.clientNo, c);
                     }
                     else
                     {
                         // Store in pending queue for processing in ProcessMessageQueue
                         _pendingClients[c.clientNo] = c;
-                        
+
                         // Client added to pending queue
                     }
                 }
 
-                // Check for disconnected clients
-                var currentClients = playerManager.GetAliveClients();
+                // Check for disconnected clients (including stealth clients)
+                var currentClients = avatarManager.GetAliveClients(this, includeStealthClients: true);
                 foreach (var clientNo in currentClients)
                 {
                     if (!alive.Contains(clientNo))
                     {
-                        playerManager.RemoveClient(clientNo);
-                        playerManager.OnClientDisconnected?.Invoke(clientNo);
+                        avatarManager.RemoveClient(clientNo);
+                        if (avatarManager.OnClientDisconnected != null)
+                        {
+                            avatarManager.OnClientDisconnected.Invoke(clientNo);
+                        }
                     }
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogError($"GroupTransform error: {ex.Message}");
+                Debug.LogError($"RoomTransform error: {ex.Message}");
             }
         }
 
@@ -270,46 +268,51 @@ namespace Styly.NetSync
             public string functionName { get; set; }
             public string[] args { get; set; }
         }
-        
+
         private void ProcessIdMappings(DeviceIdMappingData mappingData)
         {
             // Clear existing mappings
             _clientNoToDeviceId.Clear();
             _deviceIdToClientNo.Clear();
-            
+            _clientNoToIsStealthMode.Clear();
+
             // Add new mappings
             foreach (var mapping in mappingData.mappings)
             {
                 _clientNoToDeviceId[mapping.clientNo] = mapping.deviceId;
                 _deviceIdToClientNo[mapping.deviceId] = mapping.clientNo;
-                
+                _clientNoToIsStealthMode[mapping.clientNo] = mapping.isStealthMode;
+
                 // ID Mapping: ClientNo => Device ID
-                
+
                 // Check if this is the local client's mapping
                 if (!string.IsNullOrEmpty(_localDeviceId) && mapping.deviceId == _localDeviceId)
                 {
                     SetLocalClientNo(mapping.clientNo);
-                    OnLocalClientNoAssigned?.Invoke(mapping.clientNo);
+                    if (OnLocalClientNoAssigned != null)
+                    {
+                        OnLocalClientNoAssigned.Invoke(mapping.clientNo);
+                    }
                 }
-                
+
                 // Check if we have pending clients waiting for this mapping
                 if (_pendingClients.TryGetValue(mapping.clientNo, out var pendingClient))
                 {
                     // Update device ID
                     pendingClient.deviceId = mapping.deviceId;
-                    
+
                     // Remove from pending
                     _pendingClients.Remove(mapping.clientNo);
-                    
+
                     // Client now has device ID mapping
                 }
             }
-            
+
             // ID mappings updated
-            
+
             // Pending clients will be processed in ProcessMessageQueue on the main thread
         }
-        
+
         public int GetClientNo(string deviceId)
         {
             if (_deviceIdToClientNo.TryGetValue(deviceId, out var clientNo))
@@ -331,14 +334,19 @@ namespace Styly.NetSync
             return _clientNoToDeviceId.TryGetValue(clientNo, out var deviceId) ? deviceId : null;
         }
 
+        public bool IsClientStealthMode(int clientNo)
+        {
+            return _clientNoToIsStealthMode.TryGetValue(clientNo, out var isStealthMode) && isStealthMode;
+        }
+
         private void ProcessGlobalVariableSync(Dictionary<string, object> variableData, NetworkVariableManager networkVariableManager)
         {
             if (networkVariableManager == null || variableData == null) return;
-            
+
             try
             {
                 networkVariableManager.HandleGlobalVariableSync(variableData);
-                
+
                 // Processed global variable sync
             }
             catch (Exception ex)
@@ -354,19 +362,19 @@ namespace Styly.NetSync
                 Debug.LogWarning("[MessageProcessor] NetworkVariableManager is null, cannot process client variable sync");
                 return;
             }
-            
+
             if (variableData == null)
             {
                 Debug.LogWarning("[MessageProcessor] Variable data is null");
                 return;
             }
-            
+
             try
             {
                 // Processing client variable sync data
-                
+
                 networkVariableManager.HandleClientVariableSync(variableData);
-                
+
                 // Processed client variable sync
             }
             catch (Exception ex)
