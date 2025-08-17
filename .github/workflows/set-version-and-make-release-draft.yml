@@ -115,7 +115,7 @@ jobs:
           git push origin develop
           echo "✅ Pushed changes to develop branch"
 
-      - name: Merge develop into main (fast-forward)
+      - name: Merge develop into main
         run: |
           # Fetch main branch
           git fetch origin main
@@ -123,15 +123,10 @@ jobs:
           # Checkout main branch
           git checkout main
           
-          # Attempt fast-forward merge
-          if ! git merge --ff-only develop; then
-            echo "❌ Error: Cannot fast-forward merge develop into main"
-            echo "This usually happens when main has commits that develop doesn't have."
-            echo "Please resolve any conflicts manually and ensure develop includes all main commits."
-            exit 1
-          fi
+          # Merge develop into main (create merge commit if needed)
+          git merge --no-ff develop -m "Merge develop into main for release v${{ github.event.inputs.version }}"
           
-          echo "✅ Successfully merged develop into main (fast-forward)"
+          echo "✅ Successfully merged develop into main"
 
       - name: Push main branch
         run: |
