@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "styly-netsync-server"
-version = "0.0.3"
+version = "0.0.4"
 description = "STYLY NetSync Server - Multiplayer framework for Location-Based Entertainment VR/MR experiences"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -63,7 +63,6 @@ Issues = "https://github.com/styly-dev/STYLY-NetSync/issues"
 [project.scripts]
 styly-netsync-server = "styly_netsync.cli:cli_main"
 styly-netsync-simulator = "styly_netsync.client_simulator:main"
-dev = "styly_netsync.__main__:main"
 
 # Tell setuptools we use the src/ layout
 [tool.setuptools.packages.find]

@@ -29,7 +29,14 @@ __all__ = [
     'main'
 ]
 
-# Package metadata
-__version__ = "1.0.0"
-__author__ = "STYLY Team"
-__description__ = "STYLY NetSync Server - Multiplayer framework for Location-Based Entertainment VR/AR"
+# Runtime version access (optional)
+# Using importlib.metadata for standard compliance
+try:
+    from importlib.metadata import version, PackageNotFoundError
+    try:
+        __version__ = version("styly-netsync-server")
+    except PackageNotFoundError:
+        __version__ = "unknown"
+except ImportError:
+    # Python < 3.8 fallback
+    __version__ = "unknown"
