@@ -1,0 +1,6 @@
+#!/usr/bin/env python
+"""Development script for STYLY NetSync Server."""
+from styly_netsync import main
+
+if __name__ == "__main__":
+    main()
