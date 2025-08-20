@@ -163,8 +163,9 @@ class STYLYNetSyncUser(User):
                 metrics_collector=global_metrics
             )
             
-            # Set callback for transform receive metrics
+            # Set callbacks for metrics recording
             self.client.on_transform_received = self._record_transform_received
+            self.client.on_rpc_response_received = self._record_rpc_response_received
             
             # Connect to server
             if self.client.connect():
@@ -195,6 +196,31 @@ class STYLYNetSyncUser(User):
                 
         except Exception as e:
             logger.warning(f"Failed to record transform receive metrics: {e}")
+    
+    def _record_rpc_response_received(self, latency_ms: float, function_name: str, message_id: str):
+        """Record RPC response latency in Locust metrics."""
+        try:
+            if latency_ms:
+                self.environment.events.request.fire(
+                    request_type="STYLY",
+                    name="rpc_response",
+                    response_time=latency_ms,
+                    response_length=0,  # RPC responses don't have meaningful length
+                    exception=None,
+                    context={
+                        "function_name": function_name,
+                        "message_id": message_id,
+                        "user_id": self.user_id
+                    }
+                )
+                if config.detailed_logging:
+                    logger.debug(f"Recorded RPC response latency: {latency_ms:.1f}ms for {function_name} (message_id: {message_id})")
+            else:
+                logger.info(f"no matching rpc data for message_id: {message_id}")
+            
+                
+        except Exception as e:
+            logger.warning(f"Failed to record RPC response metrics: {e}")
     
     def on_stop(self):
         """Called when a user stops."""
