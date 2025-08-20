@@ -6,8 +6,8 @@
 
 ## 機能
 
-- **Transform同期**: 設定可能なレート（デフォルト：50Hz）で円形パターンで移動するVR/MRユーザーをシミュレート
-- **RPC呼び出し**: ブロードキャスト、サーバー、クライアント間のリモートプロシージャ呼び出しをテスト
+- **Transform同期**: 設定可能なレートで円形パターンで移動するVR/MRユーザーをシミュレート
+- **RPC呼び出し**: リモートプロシージャ呼び出しをテスト
 - **包括的メトリクス**: レイテンシ、スループット、パケットロス、接続安定性の測定
 - **リアルタイム監視**: STYLY固有のカスタムメトリクスを持つLocust Web UI
 - **柔軟な設定**: 環境変数ベースの設定
@@ -28,8 +28,8 @@ cd benchmark
 # uvで依存関係をインストール（自動で仮想環境作成）
 uv sync
 
-# またはrequirements.txtから直接インストール
-uv pip install -r requirements.txt
+# または初回ユーザーは requirements.txt から直接インストール  
+uv pip install -r requirements.txt .
 ```
 
 ### 2. STYLY NetSyncサーバーを起動
@@ -278,9 +278,9 @@ This directory contains Locust-based benchmarking tools for load testing the STY
 
 ## Features
 
-- **Transform Synchronization**: Simulates VR/MR users moving in circular patterns at configurable rates (default: 50Hz)
+- **Transform Synchronization**: Simulates VR/MR users moving in circular patterns at configurable rates
 - **Network Variables**: Tests global and client-specific variable synchronization
-- **RPC Calls**: Tests broadcast, server, and client-to-client remote procedure calls
+- **RPC Calls**: Tests remote procedure calls
 - **Comprehensive Metrics**: Latency, throughput, packet loss, and connection stability measurements
 - **Real-time Monitoring**: Locust web UI with custom STYLY-specific metrics
 - **Flexible Configuration**: Environment variable-based configuration
@@ -301,8 +301,8 @@ cd benchmark
 # Install dependencies with uv (automatically creates virtual environment)
 uv sync
 
-# Or install directly from requirements.txt
-uv pip install -r requirements.txt
+# Or for first-time users, install directly from requirements.txt
+uv pip install -r requirements.txt .
 ```
 
 ### 2. Start STYLY NetSync Server
