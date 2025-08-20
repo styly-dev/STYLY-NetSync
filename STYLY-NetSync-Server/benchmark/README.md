@@ -76,7 +76,6 @@ STYLY_SERVER_ADDRESS=192.168.1.100 STYLY_ROOM_ID=load_test uv run locust -f locu
 | `STYLY_RPC_INTERVAL` | RPC送信間隔（秒） |
 | `STYLY_MOVEMENT_RADIUS` | シミュレーション用移動半径 |
 | `STYLY_MOVEMENT_SPEED` | 移動速度倍率 |
-| `STYLY_LOG_LEVEL` | ログレベル |
 | `STYLY_DETAILED_LOGGING` | 詳細ログを有効化 |
 
 **注意**: デフォルト値については `benchmark_config.py` を参照してください。設定値は定期的に調整される場合があります。
@@ -88,9 +87,17 @@ STYLY_SERVER_ADDRESS=192.168.1.100 STYLY_ROOM_ID=load_test uv run locust -f locu
 export STYLY_TRANSFORM_RATE=100.0
 export STYLY_RPC_INTERVAL=5.0
 export STYLY_DETAILED_LOGGING=true
-export STYLY_LOG_LEVEL=DEBUG
 
 uv run locust -f locustfile.py --host=tcp://localhost:5555
+```
+
+## ログレベル制御
+
+ログ出力レベルはLocustの`--loglevel`オプションで制御できます：
+
+```bash
+# デバッグログを表示
+uv run locust -f locustfile.py --host=tcp://localhost:5555 --loglevel=DEBUG
 ```
 
 ## ベンチマークシナリオ
@@ -342,7 +349,6 @@ Configure the benchmark using environment variables:
 | `STYLY_RPC_INTERVAL` | RPC send interval (seconds) |
 | `STYLY_MOVEMENT_RADIUS` | Movement radius for simulation |
 | `STYLY_MOVEMENT_SPEED` | Movement speed multiplier |
-| `STYLY_LOG_LEVEL` | Logging level |
 | `STYLY_DETAILED_LOGGING` | Enable detailed logging |
 
 **Note**: For default values, please refer to `benchmark_config.py`. Configuration values may be adjusted periodically.
@@ -354,9 +360,17 @@ Configure the benchmark using environment variables:
 export STYLY_TRANSFORM_RATE=100.0
 export STYLY_RPC_INTERVAL=5.0
 export STYLY_DETAILED_LOGGING=true
-export STYLY_LOG_LEVEL=DEBUG
 
 uv run locust -f locustfile.py --host=tcp://localhost:5555
+```
+
+## Log Level Control
+
+Log output level can be controlled with Locust's `--loglevel` option:
+
+```bash
+# Show debug logs
+uv run locust -f locustfile.py --host=tcp://localhost:5555 --loglevel=DEBUG
 ```
 
 ## Benchmark Scenarios

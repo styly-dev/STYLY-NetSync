@@ -36,12 +36,6 @@ from styly_client import STYLYNetSyncClient
 from metrics_collector import MetricsCollector
 from benchmark_config import config
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, config.log_level),
-    format='[%(asctime)s] %(levelname)s: %(message)s',
-    datefmt='%H:%M:%S'
-)
 logger = logging.getLogger(__name__)
 
 # Global metrics collector for aggregating data across all users
@@ -273,6 +267,7 @@ class STYLYNetSyncUser(User):
             args = [f"arg_{i}" for i in range(random.randint(1, 3))]
             
             success = self.client.send_rpc(function_name, args)
+            logger.debug(f"send_rpc success:{success}")
             
             response_time = (time.time() - start_time) * 1000
             

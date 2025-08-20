@@ -356,6 +356,7 @@ class STYLYNetSyncClient:
                     logger.debug(f"Received room transform with {len(clients)} clients")
             
             elif msg_type == MSG_RPC:
+                logger.debug("_process_received_message: MSG_RPC")
                 # RPC messages
                 with self._lock:
                     self.received_rpcs.append({
