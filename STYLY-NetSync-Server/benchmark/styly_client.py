@@ -26,13 +26,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 from styly_netsync.binary_serializer import (
     MSG_DEVICE_ID_MAPPING,
     MSG_ROOM_TRANSFORM,
-    MSG_RPC_BROADCAST,
-    MSG_RPC_CLIENT,
+    MSG_RPC,
     deserialize,
     serialize_client_transform,
-    serialize_rpc_client_message,
     serialize_rpc_message,
-    serialize_rpc_request,
 )
 
 from benchmark_config import config
@@ -199,8 +196,7 @@ class STYLYNetSyncClient:
                     'posZ': self.position_z,
                     'rotX': 0.0,
                     'rotY': self.rotation_y,
-                    'rotZ': 0.0,
-                    'isLocalSpace': True
+                    'rotZ': 0.0
                 },
                 'head': {
                     'posX': self.position_x,
@@ -208,8 +204,7 @@ class STYLYNetSyncClient:
                     'posZ': self.position_z,
                     'rotX': 0.0,
                     'rotY': self.rotation_y,
-                    'rotZ': 0.0,
-                    'isLocalSpace': False
+                    'rotZ': 0.0
                 },
                 'rightHand': {
                     'posX': self.position_x + 0.3,
@@ -217,8 +212,7 @@ class STYLYNetSyncClient:
                     'posZ': self.position_z,
                     'rotX': 0.0,
                     'rotY': 0.0,
-                    'rotZ': 0.0,
-                    'isLocalSpace': False
+                    'rotZ': 0.0
                 },
                 'leftHand': {
                     'posX': self.position_x - 0.3,
@@ -226,8 +220,7 @@ class STYLYNetSyncClient:
                     'posZ': self.position_z,
                     'rotX': 0.0,
                     'rotY': 0.0,
-                    'rotZ': 0.0,
-                    'isLocalSpace': False
+                    'rotZ': 0.0
                 },
                 'virtuals': []
             }
@@ -250,7 +243,7 @@ class STYLYNetSyncClient:
             return True
             
         except zmq.Again:
-            logger.error(f"Failed to send transform update: {e}")
+            logger.error(f"Failed to send transform update")
             self.metrics.record_connection_error()
             return False
 
@@ -259,7 +252,7 @@ class STYLYNetSyncClient:
             self.metrics.record_connection_error()
             return False
     
-    def send_rpc(self, function_name: str, args: List[Any], rpc_type: str = "broadcast") -> bool:
+    def send_rpc(self, function_name: str, args: List[Any]) -> bool:
         """Send an RPC message."""
         if not self.connected or not self.dealer_socket or not self.client_no:
             return False
@@ -267,36 +260,15 @@ class STYLYNetSyncClient:
         try:
             current_time = time.time()
             
-            if rpc_type == "broadcast":
-                # Broadcast RPC
-                rpc_data = {
-                    'senderClientNo': self.client_no,
-                    'functionName': function_name,
-                    'argumentsJson': json.dumps(args)
-                }
-                message_bytes = serialize_rpc_message(rpc_data)
-            elif rpc_type == "server":
-                # Server RPC
-                rpc_data = {
-                    'senderClientNo': self.client_no,
-                    'functionName': function_name,
-                    'argumentsJson': json.dumps(args)
-                }
-                message_bytes = serialize_rpc_request(rpc_data)
-            elif rpc_type == "client":
-                # Client-to-client RPC (to self for testing)
-                rpc_data = {
-                    'senderClientNo': self.client_no,
-                    'targetClientNo': self.client_no,
-                    'functionName': function_name,
-                    'argumentsJson': json.dumps(args)
-                }
-                message_bytes = serialize_rpc_client_message(rpc_data)
-            else:
-                logger.error(f"Unknown RPC type: {rpc_type}")
-                return False
+            # Use single RPC type as per current server implementation
+            rpc_data = {
+                'senderClientNo': self.client_no,
+                'functionName': function_name,
+                'argumentsJson': json.dumps(args)
+            }
+            message_bytes = serialize_rpc_message(rpc_data)
             
-            message_id = f"rpc_{rpc_type}_{self.device_id}_{current_time}"
+            message_id = f"rpc_{self.device_id}_{current_time}"
             
             self.dealer_socket.send_multipart([
                 config.room_id.encode('utf-8'),
@@ -304,10 +276,10 @@ class STYLYNetSyncClient:
             ])
             
             # Record metrics
-            self.metrics.record_message_sent(message_id, f"rpc_{rpc_type}", len(message_bytes))
+            self.metrics.record_message_sent(message_id, "rpc", len(message_bytes))
             
             if config.detailed_logging:
-                logger.debug(f"Sent {rpc_type} RPC: {function_name}({args})")
+                logger.info(f"Sent RPC: {function_name}({args})")
             
             return True
             
@@ -383,7 +355,7 @@ class STYLYNetSyncClient:
                 if config.detailed_logging:
                     logger.debug(f"Received room transform with {len(clients)} clients")
             
-            elif msg_type in [MSG_RPC_BROADCAST, MSG_RPC_CLIENT]:
+            elif msg_type == MSG_RPC:
                 # RPC messages
                 with self._lock:
                     self.received_rpcs.append({
@@ -421,9 +393,7 @@ class STYLYNetSyncClient:
         # RPC updates
         if (current_time - self.last_rpc_update) >= config.rpc_send_interval:
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.send_rpc("BenchmarkRPC", ["benchmark", timestamp, self.user_id], "broadcast")
-            self.send_rpc("ServerRPC", ["server_test", timestamp], "server")
-            self.send_rpc("ClientRPC", ["client_test", timestamp], "client")
+            self.send_rpc("BenchmarkRPC", ["benchmark", timestamp, self.user_id])
             self.last_rpc_update = current_time
     
     def __del__(self):
