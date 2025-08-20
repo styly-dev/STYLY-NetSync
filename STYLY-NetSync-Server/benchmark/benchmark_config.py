@@ -35,7 +35,6 @@ class BenchmarkConfig:
     max_wait_time: int = 50  # milliseconds
     
     # Logging
-    log_level: str = "DEBUG"
     detailed_logging: bool = True
     
     @classmethod
@@ -55,7 +54,6 @@ class BenchmarkConfig:
             packet_loss_measurement_enabled=os.getenv("STYLY_MEASURE_PACKET_LOSS", "true").lower() == "true",
             min_wait_time=int(os.getenv("STYLY_MIN_WAIT", "10")),
             max_wait_time=int(os.getenv("STYLY_MAX_WAIT", "50")),
-            log_level=os.getenv("STYLY_LOG_LEVEL", "INFO"),
             detailed_logging=os.getenv("STYLY_DETAILED_LOGGING", "false").lower() == "true",
         )
 
