@@ -41,6 +41,17 @@ class PacketLossMetric:
 
 
 @dataclass
+class MessageResult:
+    """Result of recording a received message."""
+    message_id: Optional[str]
+    message_type: str
+    message_size: int
+    timestamp: float
+    latency_ms: Optional[float] = None  # None if no latency could be calculated
+    had_pending_measurement: bool = False  # True if we found a matching sent message
+
+
+@dataclass
 class BenchmarkStats:
     """Aggregated benchmark statistics."""
     # Latency statistics
@@ -119,17 +130,21 @@ class MetricsCollector:
             for msg_id in expired_ids:
                 del self.pending_latency_measurements[msg_id]
     
-    def record_message_received(self, message_id: Optional[str], message_type: str, message_size: int):
-        """Record a message being received."""
+    def record_message_received(self, message_id: Optional[str], message_type: str, message_size: int) -> MessageResult:
+        """Record a message being received and return the result."""
         with self._lock:
             current_time = time.time()
             self.messages_received_counter += 1
             self.bytes_received_counter += message_size
             
+            latency_ms = None
+            had_pending_measurement = False
+            
             # Calculate latency if we have the sent timestamp
             if message_id and message_id in self.pending_latency_measurements:
                 sent_time, sent_type = self.pending_latency_measurements.pop(message_id)
                 latency_ms = (current_time - sent_time) * 1000
+                had_pending_measurement = True
                 
                 # Record latency metric
                 latency_metric = LatencyMetric(
@@ -139,6 +154,16 @@ class MetricsCollector:
                 )
                 self.latency_metrics.append(latency_metric)
                 self.message_type_stats[sent_type].append(latency_ms)
+            
+            # Return structured result
+            return MessageResult(
+                message_id=message_id,
+                message_type=message_type,
+                message_size=message_size,
+                timestamp=current_time,
+                latency_ms=latency_ms,
+                had_pending_measurement=had_pending_measurement
+            )
     
     def record_connection_error(self):
         """Record a connection error."""
@@ -269,7 +294,43 @@ class MetricsCollector:
         logger.info(f"Throughput: avg={stats.avg_messages_per_sec:.1f} msg/s, peak={stats.peak_messages_per_sec:.1f} msg/s")
         logger.info(f"Bandwidth: avg={stats.avg_bytes_per_sec/1024:.1f} KB/s, peak={stats.peak_bytes_per_sec/1024:.1f} KB/s")
         logger.info(f"Errors: {stats.connection_errors} connection errors, {stats.reconnection_count} reconnections")
+        
+        # Log RPC latency details
+        self.log_rpc_latency_summary()
+        
         logger.info("==========================================")
+    
+    def log_rpc_latency_summary(self):
+        """Log detailed RPC latency statistics."""
+        with self._lock:
+            # Get RPC latencies from the last 60 seconds
+            current_time = time.time()
+            cutoff_time = current_time - 60.0
+            
+            rpc_latencies = [
+                metric.latency_ms for metric in self.latency_metrics
+                if metric.timestamp >= cutoff_time and metric.message_type == "rpc"
+            ]
+            
+            if rpc_latencies:
+                avg_rpc_latency = statistics.mean(rpc_latencies)
+                min_rpc_latency = min(rpc_latencies)
+                max_rpc_latency = max(rpc_latencies)
+                
+                if len(rpc_latencies) >= 2:
+                    p95_rpc_latency = statistics.quantiles(rpc_latencies, n=20)[18] if len(rpc_latencies) >= 20 else max_rpc_latency
+                    p99_rpc_latency = statistics.quantiles(rpc_latencies, n=100)[98] if len(rpc_latencies) >= 100 else max_rpc_latency
+                else:
+                    p95_rpc_latency = p99_rpc_latency = avg_rpc_latency
+                
+                logger.info(f"RPC Latency (last 60s): count={len(rpc_latencies)}, "
+                          f"avg={avg_rpc_latency:.1f}ms, min={min_rpc_latency:.1f}ms, max={max_rpc_latency:.1f}ms, "
+                          f"p95={p95_rpc_latency:.1f}ms, p99={p99_rpc_latency:.1f}ms")
+            else:
+                logger.info("RPC Latency: No RPC latency measurements available")
+            
+            # Log pending measurement count
+            logger.info(f"Pending measurements: {len(self.pending_latency_measurements)} messages awaiting response")
     
     def export_to_dict(self) -> Dict:
         """Export all metrics to a dictionary for external analysis."""

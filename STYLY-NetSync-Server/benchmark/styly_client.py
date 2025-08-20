@@ -85,8 +85,9 @@ class STYLYNetSyncClient:
         self.running = False
         self._lock = threading.RLock()
         
-        # Callback for metrics recording
+        # Callbacks for metrics recording
         self.on_transform_received = None
+        self.on_rpc_response_received = None  # Callback for RPC response latency recording
         
         logger.info(f"STYLYNetSyncClient initialized: user_id={self.user_id}, device_id={self.device_id[:8]}...")
     
@@ -253,33 +254,37 @@ class STYLYNetSyncClient:
             return False
     
     def send_rpc(self, function_name: str, args: List[Any]) -> bool:
-        """Send an RPC message."""
+        """Send an RPC message with message_id for latency tracking."""
         if not self.connected or not self.dealer_socket or not self.client_no:
             return False
         
         try:
             current_time = time.time()
             
+            # Generate unique message_id for latency tracking
+            message_id = f"rpc_{self.device_id}_{uuid.uuid4().hex[:8]}_{int(current_time * 1000)}"
+            
+            # Add message_id as the first argument for latency tracking
+            args_with_message_id = [message_id] + list(args)
+            
             # Use single RPC type as per current server implementation
             rpc_data = {
                 'senderClientNo': self.client_no,
                 'functionName': function_name,
-                'argumentsJson': json.dumps(args)
+                'argumentsJson': json.dumps(args_with_message_id)
             }
             message_bytes = serialize_rpc_message(rpc_data)
-            
-            message_id = f"rpc_{self.device_id}_{current_time}"
             
             self.dealer_socket.send_multipart([
                 config.room_id.encode('utf-8'),
                 message_bytes
             ])
             
-            # Record metrics
+            # Record metrics with message_id for latency tracking
             self.metrics.record_message_sent(message_id, "rpc", len(message_bytes))
             
             if config.detailed_logging:
-                logger.info(f"Sent RPC: {function_name}({args})")
+                logger.info(f"Sent RPC: {function_name}({args_with_message_id}) with message_id={message_id}")
             
             return True
             
@@ -328,10 +333,10 @@ class STYLYNetSyncClient:
             msg_type, msg_data, _ = deserialize(message_data)
             current_time = time.time()
             
-            # Record received message
-            self.metrics.record_message_received(None, f"received_{msg_type}", len(message_data))
-            
             if msg_type == MSG_DEVICE_ID_MAPPING:
+                # Record message for counters
+                result = self.metrics.record_message_received(None, "device_id_mapping", len(message_data))
+                
                 # Device ID mapping - find our client number
                 for mapping in msg_data.get('mappings', []):
                     if mapping.get('deviceId') == self.device_id:
@@ -340,6 +345,9 @@ class STYLYNetSyncClient:
                         break
             
             elif msg_type == MSG_ROOM_TRANSFORM:
+                # Record message for counters
+                result = self.metrics.record_message_received(None, "room_transform", len(message_data))
+                
                 # Room transform data
                 clients = msg_data.get('clients', [])
                 with self._lock:
@@ -357,17 +365,48 @@ class STYLYNetSyncClient:
             
             elif msg_type == MSG_RPC:
                 logger.debug("_process_received_message: MSG_RPC")
-                # RPC messages
+                # RPC messages - extract message_id for latency tracking
+                function_name = msg_data.get('functionName', 'unknown')
+                arguments_json = msg_data.get('argumentsJson', '[]')
+                
+                try:
+                    # Parse arguments to extract message_id (should be first argument)
+                    args = json.loads(arguments_json) if arguments_json else []
+                    message_id = args[0] if args and isinstance(args[0], str) and args[0].startswith('rpc_') else None
+                    
+                    # Record message received for latency measurement
+                    result = self.metrics.record_message_received(message_id, "rpc", len(message_data))
+                    
+                    # Use the returned result for callback
+                    if self.on_rpc_response_received and result.latency_ms is not None:
+                        self.on_rpc_response_received(result.latency_ms, function_name, message_id or "unknown")
+                    
+                    if config.detailed_logging:
+                        if result.latency_ms is not None:
+                            logger.debug(f"Recorded RPC latency for message_id: {message_id}, latency: {result.latency_ms:.1f}ms")
+                        else:
+                            logger.debug(f"Received RPC without latency measurement: message_id={message_id}")
+                        
+                except (json.JSONDecodeError, IndexError, TypeError) as e:
+                    logger.warning(f"Failed to parse RPC arguments for latency tracking: {e}")
+                    result = self.metrics.record_message_received(None, "rpc", len(message_data))
+                
                 with self._lock:
                     self.received_rpcs.append({
                         'timestamp': current_time,
                         'type': msg_type,
-                        'data': msg_data
+                        'data': msg_data,
+                        'message_id': message_id
                     })
                 
                 if config.detailed_logging:
-                    function_name = msg_data.get('functionName', 'unknown')
-                    logger.debug(f"Received RPC: {function_name}")
+                    logger.debug(f"Received RPC: {function_name} with message_id={message_id}, data: {msg_data}")
+            
+            else:
+                # Handle unknown or future message types - still count them
+                result = self.metrics.record_message_received(None, f"unknown_{msg_type}", len(message_data))
+                if config.detailed_logging:
+                    logger.debug(f"Received unknown message type: {msg_type}")
             
         except Exception as e:
             logger.error(f"Error processing received message: {e}")
