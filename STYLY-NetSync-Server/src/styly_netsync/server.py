@@ -7,6 +7,7 @@ import threading
 import time
 import traceback
 from typing import Any, Dict
+from queue import Queue, Empty, Full
 
 import zmq
 
@@ -53,7 +54,14 @@ class NetSyncServer:
 
         # Sockets
         self.router = None  # ROUTER socket for receiving from clients
-        self.pub = None  # PUB socket for broadcasting to clients
+        self.pub = None  # Will be created/owned by Publisher thread only
+
+        # Publisher thread infrastructure
+        self._pub_queue = Queue(maxsize=10000)    # tuneable
+        self._publisher_thread = None
+        self._publisher_running = False
+        self._pub_ready = threading.Event()       # signaled after successful bind
+        self._publisher_exception = None          # bind/run errors are stored here
 
         # Thread-safe room management with locks
         self.rooms: Dict[str, Dict[str, Any]] = {}  # room_id -> {device_id: {client_data}}
@@ -118,6 +126,57 @@ class NetSyncServer:
         """Thread-safe increment of statistics"""
         with self._stats_lock:
             setattr(self, stat_name, getattr(self, stat_name) + amount)
+
+    def _publisher_loop(self):
+        """The only place that owns/uses self.pub and performs ZMQ sends."""
+        try:
+            # Create/bind PUB in this thread to avoid cross-thread use
+            self.pub = self.context.socket(zmq.PUB)
+            self.pub.bind(f"tcp://*:{self.pub_port}")
+            logger.info(f"PUB socket bound to port {self.pub_port} (PublisherThread)")
+            self._pub_ready.set()
+
+            while self._publisher_running:
+                try:
+                    item = self._pub_queue.get(timeout=0.05)
+                except Empty:
+                    continue
+
+                # Sentinel for shutdown
+                if not item or item[0] is None:
+                    break
+
+                topic_bytes, message_bytes = item
+
+                try:
+                    self.pub.send_multipart([topic_bytes, message_bytes])
+                    # Count only *actual* sends
+                    self._increment_stat('broadcast_count')
+                except Exception as e:
+                    logger.error(f"Publisher failed to send: {e}")
+
+        except Exception as e:
+            # On bind or loop failure, publish the exception and wake starters
+            self._publisher_exception = e
+            self._pub_ready.set()
+            logger.error(f"Publisher error during startup/run: {e}")
+        finally:
+            if self.pub is not None:
+                try:
+                    self.pub.close()
+                except Exception:
+                    pass
+                self.pub = None
+            logger.info("Publisher loop ended")
+
+    def _enqueue_pub(self, topic_bytes: bytes, message_bytes: bytes):
+        """Thread-safe enqueue of a broadcast. Never touches self.pub directly."""
+        try:
+            self._pub_queue.put_nowait((topic_bytes, message_bytes))
+        except Full:
+            # Backpressure policy: drop oldest-style or simply count the drop
+            self._increment_stat('skipped_broadcasts')
+            logger.debug("PUB queue full: dropping a message")
 
     def _get_or_assign_client_no(self, room_id: str, device_id: str) -> int:
         """Get existing client number or assign a new one for the given device ID in the room"""
@@ -251,9 +310,23 @@ class NetSyncServer:
             self.router.bind(f"tcp://*:{self.dealer_port}")
             logger.info(f"ROUTER socket bound to port {self.dealer_port}")
 
-            self.pub = self.context.socket(zmq.PUB)
-            self.pub.bind(f"tcp://*:{self.pub_port}")
-            logger.info(f"PUB socket bound to port {self.pub_port}")
+            # Start Publisher thread (it creates/binds PUB)
+            self._publisher_running = True
+            self._publisher_thread = threading.Thread(
+                target=self._publisher_loop, name="PublisherThread", daemon=True
+            )
+            self._publisher_thread.start()
+
+            # Wait for PUB bind or failure
+            if not self._pub_ready.wait(timeout=5.0):
+                raise RuntimeError(
+                    "Timed out waiting for Publisher thread to bind PUB socket"
+                )
+            if self._publisher_exception:
+                if self.router:
+                    self.router.close()
+                self.context.term()
+                raise self._publisher_exception
 
             self.running = True
 
@@ -284,8 +357,6 @@ class NetSyncServer:
                 # Clean up sockets if partially created
                 if self.router:
                     self.router.close()
-                if self.pub:
-                    self.pub.close()
                 self.context.term()
                 raise SystemExit(1)
             else:
@@ -312,10 +383,26 @@ class NetSyncServer:
             self.periodic_thread.join()
             logger.info("Periodic thread stopped")
 
+        # Stop Publisher thread
+        self._publisher_running = False
+        try:
+            self._pub_queue.put_nowait((None, None))  # sentinel
+        except Full:
+            # Best-effort to make room, then send sentinel
+            try:
+                _ = self._pub_queue.get_nowait()
+            except Empty:
+                pass
+            try:
+                self._pub_queue.put_nowait((None, None))
+            except Full:
+                pass
+        if self._publisher_thread:
+            self._publisher_thread.join()
+            logger.info("Publisher thread stopped")
+
         if self.router:
             self.router.close()
-        if self.pub:
-            self.pub.close()
         if self.context:
             self.context.term()
 
@@ -482,8 +569,7 @@ class NetSyncServer:
 
         # Send multipart [roomId, payload]
         try:
-            self.pub.send_multipart([topic_bytes, message_bytes])
-            self._increment_stat('broadcast_count')
+            self._enqueue_pub(topic_bytes, message_bytes)
         except Exception as e:
             logger.error(f"Failed to broadcast RPC to room {room_id}: {e}")
 
@@ -651,8 +737,7 @@ class NetSyncServer:
                 try:
                     topic_bytes = room_id.encode('utf-8')
                     message_bytes = binary_serializer.serialize_global_var_sync({'variables': variables})
-                    self.pub.send_multipart([topic_bytes, message_bytes])
-                    self._increment_stat('broadcast_count')
+                    self._enqueue_pub(topic_bytes, message_bytes)
                     logger.debug(f"Broadcasted {len(variables)} global variables to room {room_id}")
                 except Exception as e:
                     logger.error(f"Failed to broadcast global variables to room {room_id}: {e}")
@@ -680,8 +765,7 @@ class NetSyncServer:
                 try:
                     topic_bytes = room_id.encode('utf-8')
                     message_bytes = binary_serializer.serialize_client_var_sync({'clientVariables': client_variables})
-                    self.pub.send_multipart([topic_bytes, message_bytes])
-                    self._increment_stat('broadcast_count')
+                    self._enqueue_pub(topic_bytes, message_bytes)
                     logger.debug(f"Broadcasted client variables for {len(client_variables)} clients to room {room_id}")
                 except Exception as e:
                     logger.error(f"Failed to broadcast client variables to room {room_id}: {e}")
@@ -855,7 +939,7 @@ class NetSyncServer:
                     # Serialize and broadcast the mappings
                     topic_bytes = room_id.encode('utf-8')
                     message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
-                    self.pub.send_multipart([topic_bytes, message_bytes])
+                    self._enqueue_pub(topic_bytes, message_bytes)
                     logger.info(f"Broadcasted {len(mappings)} ID mappings to room {room_id}: {[(cno, did[:8], 'stealth' if stealth else 'normal') for cno, did, stealth in mappings]}")
                 except Exception as e:
                     logger.error(f"Failed to broadcast ID mappings to room {room_id}: {e}")
@@ -969,8 +1053,7 @@ class NetSyncServer:
             # Send binary format with client numbers
             topic_bytes = room_id.encode("utf-8")
             message_bytes = binary_serializer.serialize_room_transform(room_transform)
-            self.pub.send_multipart([topic_bytes, message_bytes])
-            self._increment_stat('broadcast_count')
+            self._enqueue_pub(topic_bytes, message_bytes)
 
 
     def _cleanup_clients(self, current_time):
