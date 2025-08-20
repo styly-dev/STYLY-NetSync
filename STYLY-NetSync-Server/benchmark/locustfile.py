@@ -268,19 +268,18 @@ class STYLYNetSyncUser(User):
         start_time = time.time()
         
         try:
-            # Randomly choose RPC type
-            rpc_type = random.choice(["broadcast", "server", "client"])
-            function_name = f"benchmark_{rpc_type}_function"
+            # Single RPC type as per server implementation
+            function_name = "benchmark_rpc_function"
             args = [f"arg_{i}" for i in range(random.randint(1, 3))]
             
-            success = self.client.send_rpc(function_name, args, rpc_type)
+            success = self.client.send_rpc(function_name, args)
             
             response_time = (time.time() - start_time) * 1000
             
             if success:
                 self.environment.events.request.fire(
                     request_type="STYLY",
-                    name=f"rpc_{rpc_type}",
+                    name="rpc",
                     response_time=response_time,
                     response_length=0,
                     exception=None,
@@ -289,17 +288,18 @@ class STYLYNetSyncUser(User):
             else:
                 self.environment.events.request.fire(
                     request_type="STYLY",
-                    name=f"rpc_{rpc_type}",
+                    name="rpc",
                     response_time=response_time,
                     response_length=0,
-                    exception=Exception(f"RPC {rpc_type} failed"),
+                    exception=Exception("RPC failed"),
                     context={}
                 )
                 
         except Exception as e:
+            logger.error(f"send rpc exception: {e}")
             self.environment.events.request.fire(
                 request_type="STYLY",
-                name="rpc_message",
+                name="rpc",
                 response_time=(time.time() - start_time) * 1000,
                 response_length=0,
                 exception=e,
