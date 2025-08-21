@@ -28,7 +28,7 @@ uvx styly-netsync-server
 uvx styly-netsync-server --dealer-port 5555 --pub-port 5556
 
 # Run with uv (automatically installs dependencies)
-uv run dev  # Convenience script for development
+uv run ./dev  # Convenience script for development
 ```
 
 ## Usage
@@ -125,10 +125,10 @@ python -m styly_netsync --dealer-port 6000 --pub-port 6001
 #### 3. Use uv for Development
 ```bash
 # Run using convenience script (automatically installs dependencies)
-uv run dev
+uv run ./dev
 
 # Run with custom options
-uv run dev --dealer-port 6000 --pub-port 6001
+uv run ./dev --dealer-port 6000 --pub-port 6001
 
 # Use uvx for one-time execution without installation
 uvx --from . styly-netsync-server
