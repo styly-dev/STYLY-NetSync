@@ -595,7 +595,7 @@ class NetSyncServer:
         sender_client_no = data.get('senderClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -639,7 +639,7 @@ class NetSyncServer:
         sender_client_no = data.get('senderClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -654,7 +654,7 @@ class NetSyncServer:
         target_client_no = data.get('targetClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -705,7 +705,7 @@ class NetSyncServer:
         target_client_no = data.get('targetClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
