@@ -1,12 +1,15 @@
 # server.py
 import argparse
+import base64
 import json
 import logging
 import socket
+import sys
 import threading
 import time
 import traceback
 from typing import Any, Dict
+from queue import Queue, Empty, Full
 
 import zmq
 
@@ -52,8 +55,15 @@ class NetSyncServer:
         self.beacon_running = False
 
         # Sockets
-        self.router = None  # ROUTER socket for receiving from clients
-        self.pub = None  # PUB socket for broadcasting to clients
+        self.router = None
+        self.pub = None  # Will be created/owned by Publisher thread only
+
+        # Publisher thread infrastructure
+        self._pub_queue = Queue(maxsize=10000)    # tuneable
+        self._publisher_thread = None
+        self._publisher_running = False
+        self._pub_ready = threading.Event()       # signaled after successful bind
+        self._publisher_exception = None          # bind/run errors are stored here
 
         # Thread-safe room management with locks
         self.rooms: Dict[str, Dict[str, Any]] = {}  # room_id -> {device_id: {client_data}}
@@ -119,6 +129,57 @@ class NetSyncServer:
         with self._stats_lock:
             setattr(self, stat_name, getattr(self, stat_name) + amount)
 
+    def _publisher_loop(self):
+        """The only place that owns/uses self.pub and performs ZMQ sends."""
+        try:
+            # Create/bind PUB in this thread to avoid cross-thread use
+            self.pub = self.context.socket(zmq.PUB)
+            self.pub.bind(f"tcp://*:{self.pub_port}")
+            logger.info(f"PUB socket bound to port {self.pub_port} (PublisherThread)")
+            self._pub_ready.set()
+
+            while self._publisher_running:
+                try:
+                    item = self._pub_queue.get(timeout=0.05)
+                except Empty:
+                    continue
+
+                # Sentinel for shutdown
+                if not item or item[0] is None:
+                    break
+
+                topic_bytes, message_bytes = item
+
+                try:
+                    self.pub.send_multipart([topic_bytes, message_bytes])
+                    # Count only *actual* sends
+                    self._increment_stat('broadcast_count')
+                except Exception as e:
+                    logger.error(f"Publisher failed to send: {e}")
+
+        except Exception as e:
+            # On bind or loop failure, publish the exception and wake starters
+            self._publisher_exception = e
+            self._pub_ready.set()
+            logger.error(f"Publisher error during startup/run: {e}")
+        finally:
+            if self.pub is not None:
+                try:
+                    self.pub.close()
+                except Exception:
+                    pass
+                self.pub = None
+            logger.info("Publisher loop ended")
+
+    def _enqueue_pub(self, topic_bytes: bytes, message_bytes: bytes):
+        """Thread-safe enqueue of a broadcast. Never touches self.pub directly."""
+        try:
+            self._pub_queue.put_nowait((topic_bytes, message_bytes))
+        except Full:
+            # Backpressure policy: drop oldest-style or simply count the drop
+            self._increment_stat('skipped_broadcasts')
+            logger.debug("PUB queue full: dropping a message")
+
     def _get_or_assign_client_no(self, room_id: str, device_id: str) -> int:
         """Get existing client number or assign a new one for the given device ID in the room"""
         with self._rooms_lock:
@@ -126,7 +187,7 @@ class NetSyncServer:
             self._initialize_room(room_id)
 
             # Update last seen time
-            self.device_id_last_seen[device_id] = time.time()
+            self.device_id_last_seen[device_id] = time.monotonic()
 
             # Check if device ID already has a client number in this room
             if device_id in self.room_device_id_to_client_no[room_id]:
@@ -194,7 +255,7 @@ class NetSyncServer:
 
     def _find_reusable_client_no(self, room_id: str) -> int:
         """Find a client number that can be reused (from expired device IDs)"""
-        current_time = time.time()
+        current_time = time.monotonic()
 
         # Check all client numbers in the room
         for client_no, device_id in list(self.room_client_no_to_device_id[room_id].items()):
@@ -246,18 +307,31 @@ class NetSyncServer:
         )
 
         try:
-            # Setup sockets
+            # Setup ROUTER socket
             self.router = self.context.socket(zmq.ROUTER)
             self.router.bind(f"tcp://*:{self.dealer_port}")
             logger.info(f"ROUTER socket bound to port {self.dealer_port}")
 
-            self.pub = self.context.socket(zmq.PUB)
-            self.pub.bind(f"tcp://*:{self.pub_port}")
-            logger.info(f"PUB socket bound to port {self.pub_port}")
+            # Start Publisher thread (it creates/binds PUB)
+            self._publisher_running = True
+            self._publisher_thread = threading.Thread(
+                target=self._publisher_loop, name="PublisherThread", daemon=True
+            )
+            self._publisher_thread.start()
+
+            # Wait for PUB bind or failure
+            if not self._pub_ready.wait(timeout=5.0):
+                raise RuntimeError("Timed out waiting for Publisher thread to bind PUB socket")
+            if self._publisher_exception:
+                # Clean up and re-raise the failure so callers get a proper error
+                if self.router:
+                    self.router.close()
+                self.context.term()
+                raise self._publisher_exception
 
             self.running = True
 
-            # Start threads
+            # Start other threads
             self.receive_thread = threading.Thread(
                 target=self._receive_loop, name="ReceiveThread"
             )
@@ -284,8 +358,6 @@ class NetSyncServer:
                 # Clean up sockets if partially created
                 if self.router:
                     self.router.close()
-                if self.pub:
-                    self.pub.close()
                 self.context.term()
                 raise SystemExit(1)
             else:
@@ -312,10 +384,26 @@ class NetSyncServer:
             self.periodic_thread.join()
             logger.info("Periodic thread stopped")
 
+        # Stop Publisher thread
+        self._publisher_running = False
+        try:
+            self._pub_queue.put_nowait((None, None))  # sentinel
+        except Full:
+            # Best-effort to make room, then send sentinel
+            try:
+                _ = self._pub_queue.get_nowait()
+            except Empty:
+                pass
+            try:
+                self._pub_queue.put_nowait((None, None))
+            except Full:
+                pass
+        if self._publisher_thread:
+            self._publisher_thread.join()
+            logger.info("Publisher thread stopped")
+
         if self.router:
             self.router.close()
-        if self.pub:
-            self.pub.close()
         if self.context:
             self.context.term()
 
@@ -437,7 +525,7 @@ class NetSyncServer:
             if is_new_client:
                 self.rooms[room_id][device_id] = {
                     "identity": client_identity,
-                    "last_update": time.time(),
+                    "last_update": time.monotonic(),
                     "transform_data": data_with_client_no,
                     "client_no": client_no,
                     "is_stealth": is_stealth,
@@ -452,7 +540,7 @@ class NetSyncServer:
             else:
                 # Update existing client and mark room as dirty
                 self.rooms[room_id][device_id]["transform_data"] = data_with_client_no
-                self.rooms[room_id][device_id]["last_update"] = time.time()
+                self.rooms[room_id][device_id]["last_update"] = time.monotonic()
                 self.rooms[room_id][device_id]["client_no"] = client_no
                 self.rooms[room_id][device_id]["is_stealth"] = is_stealth
 
@@ -481,16 +569,12 @@ class NetSyncServer:
         message_bytes = binary_serializer.serialize_rpc_message(rpc_data)
 
         # Send multipart [roomId, payload]
-        try:
-            self.pub.send_multipart([topic_bytes, message_bytes])
-            self._increment_stat('broadcast_count')
-        except Exception as e:
-            logger.error(f"Failed to broadcast RPC to room {room_id}: {e}")
+        self._enqueue_pub(topic_bytes, message_bytes)
 
 
     def _monitor_nv_sliding_window(self, room_id: str):
         """Monitor NV request rate for logging only (no gating)"""
-        current_time = time.time()
+        current_time = time.monotonic()
         with self._rooms_lock:
             if room_id not in self.nv_monitor_window:
                 self.nv_monitor_window[room_id] = []
@@ -513,7 +597,7 @@ class NetSyncServer:
         sender_client_no = data.get('senderClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -557,7 +641,7 @@ class NetSyncServer:
         sender_client_no = data.get('senderClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -572,7 +656,7 @@ class NetSyncServer:
         target_client_no = data.get('targetClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -623,7 +707,7 @@ class NetSyncServer:
         target_client_no = data.get('targetClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -648,14 +732,10 @@ class NetSyncServer:
                 })
 
             if variables:
-                try:
-                    topic_bytes = room_id.encode('utf-8')
-                    message_bytes = binary_serializer.serialize_global_var_sync({'variables': variables})
-                    self.pub.send_multipart([topic_bytes, message_bytes])
-                    self._increment_stat('broadcast_count')
-                    logger.debug(f"Broadcasted {len(variables)} global variables to room {room_id}")
-                except Exception as e:
-                    logger.error(f"Failed to broadcast global variables to room {room_id}: {e}")
+                topic_bytes = room_id.encode('utf-8')
+                message_bytes = binary_serializer.serialize_global_var_sync({'variables': variables})
+                self._enqueue_pub(topic_bytes, message_bytes)
+                logger.debug(f"Broadcasted {len(variables)} global variables to room {room_id}")
 
     def _broadcast_client_var_sync(self, room_id: str):
         """Broadcast client variables sync to all clients in room"""
@@ -677,14 +757,10 @@ class NetSyncServer:
                     client_variables[str(client_no)] = client_vars
 
             if client_variables:
-                try:
-                    topic_bytes = room_id.encode('utf-8')
-                    message_bytes = binary_serializer.serialize_client_var_sync({'clientVariables': client_variables})
-                    self.pub.send_multipart([topic_bytes, message_bytes])
-                    self._increment_stat('broadcast_count')
-                    logger.debug(f"Broadcasted client variables for {len(client_variables)} clients to room {room_id}")
-                except Exception as e:
-                    logger.error(f"Failed to broadcast client variables to room {room_id}: {e}")
+                topic_bytes = room_id.encode('utf-8')
+                message_bytes = binary_serializer.serialize_client_var_sync({'clientVariables': client_variables})
+                self._enqueue_pub(topic_bytes, message_bytes)
+                logger.debug(f"Broadcasted client variables for {len(client_variables)} clients to room {room_id}")
 
     def _sync_network_variables_to_new_client(self, room_id: str):
         """Send current Network Variables state to a newly connected client"""
@@ -851,14 +927,11 @@ class NetSyncServer:
                 mappings.append((client_no, device_id, is_stealth))
 
             if mappings:
-                try:
-                    # Serialize and broadcast the mappings
-                    topic_bytes = room_id.encode('utf-8')
-                    message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
-                    self.pub.send_multipart([topic_bytes, message_bytes])
-                    logger.info(f"Broadcasted {len(mappings)} ID mappings to room {room_id}: {[(cno, did[:8], 'stealth' if stealth else 'normal') for cno, did, stealth in mappings]}")
-                except Exception as e:
-                    logger.error(f"Failed to broadcast ID mappings to room {room_id}: {e}")
+                # Serialize and broadcast the mappings
+                topic_bytes = room_id.encode('utf-8')
+                message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
+                self._enqueue_pub(topic_bytes, message_bytes)
+                logger.info(f"Broadcasted {len(mappings)} ID mappings to room {room_id}: {[(cno, did[:8], 'stealth' if stealth else 'normal') for cno, did, stealth in mappings]}")
 
     def _periodic_loop(self):
         """Combined broadcast and cleanup loop with adaptive rates"""
@@ -866,12 +939,12 @@ class NetSyncServer:
         last_broadcast_check = 0
         last_cleanup = 0
         last_device_id_cleanup = 0
-        last_log = time.time()
+        last_log = time.monotonic()
         DEVICE_ID_CLEANUP_INTERVAL = 60.0  # Clean up expired device IDs every minute
 
         while self.running:
             try:
-                current_time = time.time()
+                current_time = time.monotonic()
 
                 # Check for broadcasts at higher frequency but only broadcast when needed
                 if current_time - last_broadcast_check >= self.BROADCAST_CHECK_INTERVAL:
@@ -969,8 +1042,7 @@ class NetSyncServer:
             # Send binary format with client numbers
             topic_bytes = room_id.encode("utf-8")
             message_bytes = binary_serializer.serialize_room_transform(room_transform)
-            self.pub.send_multipart([topic_bytes, message_bytes])
-            self._increment_stat('broadcast_count')
+            self._enqueue_pub(topic_bytes, message_bytes)
 
 
     def _cleanup_clients(self, current_time):
@@ -1111,7 +1183,12 @@ class NetSyncServer:
                 if self.beacon_running:  # Only log if we're still supposed to be running
                     logger.error(f"Discovery service error: {e}")
 
-
+def display_logo():
+    logo = """
+CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3ilojilojilojilojilojilojilZcg4paI4paI4pWXICAg4paI4paI4pWXIOKWiOKWiOKVlyAgICAbWzM4OzU7MjE2bSAg4paI4paI4pWXICAg4paI4paI4pWXG1szOW0KG1szODs1OzIxNm0g4paI4paI4pWU4pWQ4pWQ4pWQ4pWQ4pWdIOKVmuKVkBtbMzg7NTsyMTBt4pWQ4paI4paI4pWU4pWQ4pWQ4pWdIOKVmuKWiOKWiOKVlyDilojilojilZTilZ0g4paI4paI4pWRICAgIBtbMzg7NTsyMTZtICDilZrilojilojilZcg4paI4paI4pWU4pWdG1szOW0KG1szODs1OzIxNm0g4paI4paI4paI4paI4paI4paI4paI4pWXICAgG1szODs1OzIxMG0g4paI4paI4pWRICAgICDilZrilojilojilojilojilZTilZ0gIOKWiOKWiOKVkSAgICAbWzM4OzU7MjE2bSAgIOKVmuKWiOKWiOKWiOKWiOKVlOKVnSAbWzM5bQobWzM4OzU7MjE2bSDilZrilZDilZDilZDilZDilojilojilZEgICAbWzM4OzU7MjEwbSDilojilojilZEgICAgICDilZrilojilojilZTilZ0gICDilojilojilZEgICAgG1szODs1OzIxNm0gICAg4pWa4paI4paI4pWU4pWdICAbWzM5bQobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZEgICAbWzM4OzU7MjEwbSDilojilojilZEgICAgICAg4paI4paI4pWRICAgIOKWiOKWiOKWiOKWiOKWiOKWiOKWiBtbMzg7NTsyMTZt4pWXICAgIOKWiOKWiOKVkSAgIBtbMzltChtbMzg7NTsyMTZtIOKVmuKVkOKVkOKVkOKVkOKVkOKVkOKVnSAgIBtbMzg7NTsyMTBtIOKVmuKVkOKVnSAgICAgICDilZrilZDilZ0gICAg4pWa4pWQ4pWQ4pWQ4pWQ4pWQ4pWQG1szODs1OzIxNm3ilZ0gICAg4pWa4pWQ4pWdICAgG1szOW0KChtbMzg7NTsyMTZtIOKWiOKWiOKWiOKVlyAgIOKWiOKWiOKVlyDilojilojilojilojilojilogbWzM4OzU7MjEwbeKWiOKVlyDilojilojilojilojilojilojilojilojilZcg4paI4paI4paI4paI4paI4paI4paI4pWXIOKWiOKWiOKVlyAgIOKWiOKWiOKVlyDilojilojilojilZcbWzM4OzU7MjE2bSAgIOKWiOKWiOKVlyAg4paI4paI4paI4paI4paI4paI4pWXG1szOW0KG1szODs1OzIxNm0g4paI4paI4paI4paI4pWXICDilojilojilZEg4paI4paI4pWU4pWQ4pWQ4pWQG1szODs1OzIxMG3ilZDilZ0g4pWa4pWQ4pWQ4paI4paI4pWU4pWQ4pWQ4pWdIOKWiOKWiOKVlOKVkOKVkOKVkOKVkOKVnSDilZrilojilojilZcg4paI4paI4pWU4pWdIOKWiOKWiOKWiOKWiBtbMzg7NTsyMTZt4pWXICDilojilojilZEg4paI4paI4pWU4pWQ4pWQ4pWQ4pWQ4pWdG1szOW0KG1szODs1OzIxNm0g4paI4paI4pWU4paI4paI4pWXIOKWiOKWiOKVkSDilojilojilojilojilojilZcbWzM4OzU7MjEwbSAgICAgIOKWiOKWiOKVkSAgICDilojilojilojilojilojilojilojilZcgIOKVmuKWiOKWiOKWiOKWiOKVlOKVnSAg4paI4paI4pWU4paIG1szODs1OzIxNm3ilojilZcg4paI4paI4pWRIOKWiOKWiOKVkSAgICAgG1szOW0KG1szODs1OzIxNm0g4paI4paI4pWR4pWa4paI4paI4pWX4paI4paI4pWRIOKWiOKWiOKVlOKVkOKVkOKVnRtbMzg7NTsyMTBtICAgICAg4paI4paI4pWRICAgIOKVmuKVkOKVkOKVkOKVkOKWiOKWiOKVkSAgIOKVmuKWiOKWiOKVlOKVnSAgIOKWiOKWiOKVkeKVmhtbMzg7NTsyMTZt4paI4paI4pWX4paI4paI4pWRIOKWiOKWiOKVkSAgICAgG1szOW0KG1szODs1OzIxNm0g4paI4paI4pWRIOKVmuKWiOKWiOKWiOKWiOKVkSDilojilojilojilojilojilogbWzM4OzU7MjEwbeKWiOKVlyAgICDilojilojilZEgICAg4paI4paI4paI4paI4paI4paI4paI4pWRICAgIOKWiOKWiOKVkSAgICDilojilojilZEgG1szODs1OzIxNm3ilZrilojilojilojilojilZEg4pWa4paI4paI4paI4paI4paI4paI4pWXG1szOW0KG1szODs1OzIxNm0g4pWa4pWQ4pWdICDilZrilZDilZDilZDilZ0g4pWa4pWQ4pWQ4pWQ4pWQ4pWQG1szODs1OzIxMG3ilZDilZ0gICAg4pWa4pWQ4pWdICAgIOKVmuKVkOKVkOKVkOKVkOKVkOKVkOKVnSAgICDilZrilZDilZ0gICAg4pWa4pWQ4pWdIBtbMzg7NTsyMTZtIOKVmuKVkOKVkOKVkOKVnSAg4pWa4pWQ4pWQ4pWQ4pWQ4pWQ4pWdG1szOW0KCgo=
+""".strip()
+    sys.stdout.buffer.write(base64.b64decode(logo))
+    sys.stdout.flush()
 
 def main():
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
@@ -1127,6 +1204,8 @@ def main():
                         help='Disable beacon discovery')
 
     args = parser.parse_args()
+
+    display_logo()
 
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")

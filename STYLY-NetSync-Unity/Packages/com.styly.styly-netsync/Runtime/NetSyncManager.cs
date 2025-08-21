@@ -7,6 +7,7 @@ using UnityEngine.Events;
 
 namespace Styly.NetSync
 {
+    [DefaultExecutionOrder(-1000)]
     public class NetSyncManager : MonoBehaviour
     {
         #region === Inspector ===
@@ -38,12 +39,11 @@ namespace Styly.NetSync
         private bool _logNetworkTraffic = false;
 
         [Header("Events")]
-        public UnityEvent<int> OnClientConnected;
+        public UnityEvent<int> OnAvatarConnected;
         public UnityEvent<int> OnClientDisconnected;
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
-        [HideInInspector]
         public UnityEvent OnReady;
         #endregion ------------------------------------------------------------------------
 
@@ -259,18 +259,18 @@ namespace Styly.NetSync
                 _shouldCheckReady = false;
                 CheckAndFireReady();
             }
-            
+
             HandleDiscovery();
             HandleReconnection();
             ProcessMessages();
             SendTransformUpdates();
-            
+
             // Process Network Variables debounced updates
             _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
-            
+
             // Flush pending RPCs
             _rpcManager?.FlushPendingIfReady(_roomId);
-            
+
             LogStatistics();
         }
         #endregion ------------------------------------------------------------------------
@@ -382,14 +382,14 @@ namespace Styly.NetSync
         {
             _clientNo = clientNo;
             DebugLog($"Local client number assigned: {clientNo}");
-            
+
             // Flush pending self client NV
             foreach (var (name, value) in _pendingSelfClientNV)
             {
                 _networkVariableManager?.SetClientVariable(_clientNo, name, value, _roomId);
             }
             _pendingSelfClientNV.Clear();
-            
+
             // Set flag to check ready state on main thread
             _shouldCheckReady = true;
         }
@@ -401,7 +401,7 @@ namespace Styly.NetSync
                 _hasInvokedReady = true;
                 DebugLog("NetSyncManager is now Ready (connected and handshaken)");
                 OnReady?.Invoke();
-                
+
                 // Don't flush immediately - let Update() handle it on next frame
                 // This avoids potential socket state issues
             }

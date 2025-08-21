@@ -45,7 +45,7 @@ class SimulatedClient:
         self.movement_pattern = movement_pattern
         self.start_position = start_position
         self.current_position = list(start_position)
-        self.start_time = time.time()
+        self.start_time = time.monotonic()
 
         # Movement parameters (matching DebugMoveAvatar.cs defaults)
         self.move_speed = 2.0
@@ -61,7 +61,7 @@ class SimulatedClient:
         self.random_walk_range = 5.0
         self.random_walk_timer = 0.0
         self.current_target = list(start_position)
-        self.last_update_time = time.time()
+        self.last_update_time = time.monotonic()
 
         # Virtual items setup (2-3 random virtual objects)
         self.virtual_count = random.randint(2, 3)
@@ -82,7 +82,7 @@ class SimulatedClient:
 
     def update(self) -> Dict:
         """Update client position and return transform data."""
-        current_time = time.time()
+        current_time = time.monotonic()
         elapsed_time = current_time - self.start_time
         delta_time = current_time - self.last_update_time
         self.last_update_time = current_time
@@ -453,10 +453,10 @@ class ClientSimulator:
 
             # Main update loop - 10Hz (100ms interval)
             update_interval = 0.1  # 100ms
-            last_update = time.time()
+            last_update = time.monotonic()
 
             while self.running:
-                current_time = time.time()
+                current_time = time.monotonic()
 
                 if current_time - last_update >= update_interval:
                     # Update client state and get transform data
