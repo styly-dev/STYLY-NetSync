@@ -182,7 +182,7 @@ class TestClient:
 
     def update_network_variables(self):
         """Update network variables every minute"""
-        current_time = time.time()
+        current_time = time.monotonic()
         if current_time - self.last_variable_update < 60:  # 1 minute interval
             return
 
@@ -215,7 +215,7 @@ class TestClient:
 
     def send_rpcs(self):
         """Send RPC message every 10 seconds"""
-        current_time = time.time()
+        current_time = time.monotonic()
         if current_time - self.last_rpc_update < 10:  # 10 second interval
             return
 
