@@ -170,9 +170,9 @@ namespace Styly.NetSync
                                 if (remoteAvatarPrefab != null)
                                 {
                                     avatarManager.SpawnRemoteAvatar(clientNo, deviceId, remoteAvatarPrefab, netSyncManager);
-                                    if (netSyncManager.OnClientConnected != null)
+                                    if (netSyncManager.OnAvatarConnected != null)
                                     {
-                                        netSyncManager.OnClientConnected.Invoke(clientNo);
+                                        netSyncManager.OnAvatarConnected.Invoke(clientNo);
                                     }
                                 }
                             }

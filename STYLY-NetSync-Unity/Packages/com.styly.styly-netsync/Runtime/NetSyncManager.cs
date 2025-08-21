@@ -38,7 +38,7 @@ namespace Styly.NetSync
         private bool _logNetworkTraffic = false;
 
         [Header("Events")]
-        public UnityEvent<int> OnClientConnected;
+        public UnityEvent<int> OnAvatarConnected;
         public UnityEvent<int> OnClientDisconnected;
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
