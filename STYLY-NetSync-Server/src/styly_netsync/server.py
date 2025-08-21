@@ -185,7 +185,7 @@ class NetSyncServer:
             self._initialize_room(room_id)
 
             # Update last seen time
-            self.device_id_last_seen[device_id] = time.time()
+            self.device_id_last_seen[device_id] = time.monotonic()
 
             # Check if device ID already has a client number in this room
             if device_id in self.room_device_id_to_client_no[room_id]:
@@ -253,7 +253,7 @@ class NetSyncServer:
 
     def _find_reusable_client_no(self, room_id: str) -> int:
         """Find a client number that can be reused (from expired device IDs)"""
-        current_time = time.time()
+        current_time = time.monotonic()
 
         # Check all client numbers in the room
         for client_no, device_id in list(self.room_client_no_to_device_id[room_id].items()):
@@ -523,7 +523,7 @@ class NetSyncServer:
             if is_new_client:
                 self.rooms[room_id][device_id] = {
                     "identity": client_identity,
-                    "last_update": time.time(),
+                    "last_update": time.monotonic(),
                     "transform_data": data_with_client_no,
                     "client_no": client_no,
                     "is_stealth": is_stealth,
@@ -538,7 +538,7 @@ class NetSyncServer:
             else:
                 # Update existing client and mark room as dirty
                 self.rooms[room_id][device_id]["transform_data"] = data_with_client_no
-                self.rooms[room_id][device_id]["last_update"] = time.time()
+                self.rooms[room_id][device_id]["last_update"] = time.monotonic()
                 self.rooms[room_id][device_id]["client_no"] = client_no
                 self.rooms[room_id][device_id]["is_stealth"] = is_stealth
 
@@ -572,7 +572,7 @@ class NetSyncServer:
 
     def _monitor_nv_sliding_window(self, room_id: str):
         """Monitor NV request rate for logging only (no gating)"""
-        current_time = time.time()
+        current_time = time.monotonic()
         with self._rooms_lock:
             if room_id not in self.nv_monitor_window:
                 self.nv_monitor_window[room_id] = []
@@ -595,7 +595,7 @@ class NetSyncServer:
         sender_client_no = data.get('senderClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -639,7 +639,7 @@ class NetSyncServer:
         sender_client_no = data.get('senderClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -654,7 +654,7 @@ class NetSyncServer:
         target_client_no = data.get('targetClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -705,7 +705,7 @@ class NetSyncServer:
         target_client_no = data.get('targetClientNo', 0)
         var_name = data.get('variableName', '')[:self.MAX_VAR_NAME_LENGTH]
         var_value = data.get('variableValue', '')[:self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get('timestamp', time.time())
+        timestamp = data.get('timestamp', time.monotonic())
 
         if not var_name:
             return
@@ -937,12 +937,12 @@ class NetSyncServer:
         last_broadcast_check = 0
         last_cleanup = 0
         last_device_id_cleanup = 0
-        last_log = time.time()
+        last_log = time.monotonic()
         DEVICE_ID_CLEANUP_INTERVAL = 60.0  # Clean up expired device IDs every minute
 
         while self.running:
             try:
-                current_time = time.time()
+                current_time = time.monotonic()
 
                 # Check for broadcasts at higher frequency but only broadcast when needed
                 if current_time - last_broadcast_check >= self.BROADCAST_CHECK_INTERVAL:

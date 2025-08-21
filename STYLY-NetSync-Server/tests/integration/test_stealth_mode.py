@@ -93,14 +93,14 @@ def test_stealth_client():
     # Listen for messages
     print("\nListening for room transforms (should not see stealth client)...")
 
-    start_time = time.time()
+    start_time = time.monotonic()
     message_count = 0
     last_handshake_time = start_time
 
     try:
-        while time.time() - start_time < 10:
+        while time.monotonic() - start_time < 10:
             # Send periodic handshake to maintain connection (once per second)
-            current_time = time.time()
+            current_time = time.monotonic()
             if current_time - last_handshake_time >= 1.0:
                 dealer.send_multipart([room_id.encode('utf-8'), handshake])
                 last_handshake_time = current_time

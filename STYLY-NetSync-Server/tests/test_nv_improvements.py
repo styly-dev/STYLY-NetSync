@@ -77,7 +77,7 @@ def test_dedupe_and_debounce():
     
     # Send rapid updates to same variable (simulating slider spam)
     print("Sending 100 rapid updates to 'slider_value'...")
-    start_time = time.time()
+    start_time = time.monotonic()
     for i in range(100):
         send_nv_update(dealer, room_id, 1, "global", "slider_value", str(i))
         time.sleep(0.001)  # 1ms between updates = 1000Hz
@@ -93,8 +93,8 @@ def test_dedupe_and_debounce():
     poller = zmq.Poller()
     poller.register(sub, zmq.POLLIN)
     
-    collect_start = time.time()
-    while time.time() - collect_start < 1.0:
+    collect_start = time.monotonic()
+    while time.monotonic() - collect_start < 1.0:
         if poller.poll(100):
             msg = sub.recv_multipart()
             if len(msg) >= 2:
@@ -107,7 +107,7 @@ def test_dedupe_and_debounce():
                 except:
                     pass
     
-    elapsed = time.time() - start_time
+    elapsed = time.monotonic() - start_time
     print(f"Sent 100 updates in {elapsed:.2f}s ({100/elapsed:.0f} updates/sec)")
     print(f"Received {broadcast_count} broadcasts (expected ≤20 due to 50ms flush)")
     print(f"Final value: {last_value} (expected: 99)")
