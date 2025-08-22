@@ -196,6 +196,9 @@ namespace Styly.NetSync
         #region === Unity Callbacks ===
         private void Awake()
         {
+            // Log package version
+            DebugLog($"STYLY-NetSync Version: {GetVersion()}");
+
             Application.runInBackground = true;
 
             if (!_netMqInit) { AsyncIO.ForceDotNet.Force(); _netMqInit = true; }
