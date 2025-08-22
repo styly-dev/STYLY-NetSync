@@ -21,12 +21,13 @@ Example:
     server.start()
 """
 
-from .server import NetSyncServer, main
+from .server import NetSyncServer, main, get_version
 
 # Export public API
 __all__ = [
     'NetSyncServer',
-    'main'
+    'main',
+    'get_version'
 ]
 
 # Runtime version access (optional)

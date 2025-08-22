@@ -1,15 +1,27 @@
 # server.py
+import sys
+
+# Python version check - must be at the very beginning
+MIN_PY = (3, 11)
+if sys.version_info < MIN_PY:
+    sys.stderr.write(
+        f"ERROR: STYLY NetSync Server requires Python {MIN_PY[0]}.{MIN_PY[1]}+ "
+        f"(current: {sys.version.split()[0]}).\n"
+    )
+    sys.exit(1)
+
 import argparse
 import base64
 import json
 import logging
 import socket
-import sys
 import threading
 import time
 import traceback
 from typing import Any, Dict
 from queue import Queue, Empty, Full
+from pathlib import Path
+from functools import lru_cache
 
 import zmq
 
@@ -26,6 +38,42 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+@lru_cache(maxsize=1)
+def get_version() -> str:
+    """
+    Return the server version.
+    Priority:
+      1) importlib.metadata for 'styly-netsync-server' (when installed)
+      2) parse nearest pyproject.toml (when running from source)
+      3) 'unknown'
+    """
+    # Python 3.11+ guaranteed, so we can use these imports directly
+    import importlib.metadata as im
+    import tomllib
+    
+    # 1) Try installed package metadata first
+    try:
+        return im.version("styly-netsync-server")
+    except im.PackageNotFoundError:
+        # Fallback: reverse lookup from package name to distribution
+        for dist in im.packages_distributions().get("styly_netsync", []):
+            try:
+                return im.version(dist)
+            except im.PackageNotFoundError:
+                pass
+    
+    # 2) Source execution fallback - parse pyproject.toml properly
+    for parent in Path(__file__).resolve().parents:
+        toml_path = parent / "pyproject.toml"
+        if toml_path.exists():
+            data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+            v = (data.get("project") or {}).get("version")
+            if v:
+                return v
+            break
+    
+    return "unknown"
 
 
 class NetSyncServer:
@@ -1202,6 +1250,9 @@ def main():
                         help='Server name for discovery (default: STYLY-NetSync-Server)')
     parser.add_argument('--no-beacon', action='store_true',
                         help='Disable beacon discovery')
+    parser.add_argument('-V', '--version', action='version',
+                        version=f'%(prog)s {get_version()}',
+                        help='Show version and exit')
 
     args = parser.parse_args()
 
@@ -1210,6 +1261,7 @@ def main():
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
     logger.info("=" * 80)
+    logger.info(f"  Version: {get_version()}")
     logger.info(f"  DEALER port: {args.dealer_port}")
     logger.info(f"  PUB port: {args.pub_port}")
     if not args.no_beacon:

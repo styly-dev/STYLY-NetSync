@@ -51,6 +51,15 @@ namespace Styly.NetSync
         private static NetSyncManager _instance;
         public static NetSyncManager Instance => _instance;
 
+        /// <summary>
+        /// Get the version of STYLY NetSync.
+        /// </summary>
+        /// <returns></returns>
+        public string GetVersion()
+        {
+            return Util.GetVersion();
+        }
+
         // Public RPC methods for external access
         public void Rpc(string functionName, string[] args)
         {
