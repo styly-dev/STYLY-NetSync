@@ -71,6 +71,23 @@ jobs:
           echo "Updated content:"
           cat "$PACKAGE_FILE"
 
+      - name: Update Unity version.txt file
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          VERSION_FILE="STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt"
+          
+          if [ ! -f "$VERSION_FILE" ]; then
+            echo "❌ Error: Unity version.txt not found at $VERSION_FILE"
+            exit 1
+          fi
+          
+          # Update version.txt file
+          echo "$VERSION" > "$VERSION_FILE"
+          
+          echo "✅ Updated Unity version.txt file to $VERSION"
+          echo "Updated content:"
+          cat "$VERSION_FILE"
+
       - name: Update Python pyproject.toml version
         run: |
           VERSION="${{ github.event.inputs.version }}"
@@ -92,8 +109,9 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           
-          # Add both files
+          # Add all version files
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json
+          git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt
           git add STYLY-NetSync-Server/pyproject.toml
           
           # Check if there are changes to commit
@@ -106,6 +124,7 @@ jobs:
           git commit -m "chore: bump version to $VERSION
           
           - Updated Unity package version in package.json
+          - Updated Unity version.txt file for runtime version retrieval
           - Updated Python server version in pyproject.toml"
           
           echo "✅ Committed version changes"
@@ -175,6 +194,7 @@ jobs:
               echo "| Step | Status | Description |"
               echo "|------|--------|-------------|"
               echo "| Version Update | ✅ | Updated Unity package.json to \`$VERSION\` |"
+              echo "| Version Update | ✅ | Updated Unity version.txt to \`$VERSION\` |"
               echo "| Version Update | ✅ | Updated Python pyproject.toml to \`$VERSION\` |"
               echo "| Git Commit | ✅ | Committed changes to develop branch |"
               echo "| Branch Merge | ✅ | Fast-forward merged develop → main |"
@@ -183,6 +203,7 @@ jobs:
               echo "### 📦 Updated Files"
               echo ""
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json\`"
+              echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt\`"
               echo "- \`STYLY-NetSync-Server/pyproject.toml\`"
               echo ""
               echo "### 🚀 Next Steps"
