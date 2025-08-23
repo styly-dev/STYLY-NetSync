@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    public static class BinarySerializer
+    internal static class BinarySerializer
     {
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;

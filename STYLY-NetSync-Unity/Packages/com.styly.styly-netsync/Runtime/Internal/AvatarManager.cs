@@ -5,7 +5,7 @@ using UnityEngine.Events;
 
 namespace Styly.NetSync
 {
-    public class AvatarManager
+    internal class AvatarManager
     {
         private readonly Dictionary<int, GameObject> _connectedPeers = new();
         private NetSyncAvatar _localAvatar;

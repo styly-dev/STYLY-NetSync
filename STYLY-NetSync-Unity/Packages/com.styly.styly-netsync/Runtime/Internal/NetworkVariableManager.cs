@@ -8,7 +8,7 @@ using Newtonsoft.Json.Linq;
 
 namespace Styly.NetSync
 {
-    public class NetworkVariableManager
+    internal class NetworkVariableManager
     {
         private readonly ConnectionManager _connectionManager;
         private readonly string _deviceId;

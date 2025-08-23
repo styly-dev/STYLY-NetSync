@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    public class TransformSyncManager
+    internal class TransformSyncManager
     {
         private readonly ConnectionManager _connectionManager;
         private readonly string _deviceId;

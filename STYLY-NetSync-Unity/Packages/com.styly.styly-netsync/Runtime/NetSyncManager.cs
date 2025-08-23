@@ -181,15 +181,16 @@ namespace Styly.NetSync
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
         public string RoomId => _roomId;
-        public ConnectionManager ConnectionManager => _connectionManager;
-        public AvatarManager AvatarManager => _avatarManager;
-        public RPCManager RPCManager => _rpcManager;
-        public TransformSyncManager TransformSyncManager => _transformSyncManager;
+        internal ConnectionManager ConnectionManager => _connectionManager;
+        internal AvatarManager AvatarManager => _avatarManager;
+        internal RPCManager RPCManager => _rpcManager;
+        internal TransformSyncManager TransformSyncManager => _transformSyncManager;
+        internal MessageProcessor MessageProcessor => _messageProcessor;
         public bool HasServerConnection => _connectionManager?.IsConnected == true && !_connectionManager.IsConnectionError;
         public bool HasHandshake => _clientNo > 0;
         public bool IsReady => HasServerConnection && HasHandshake;
-        public MessageProcessor MessageProcessor => _messageProcessor;
 
+        public GameObject GetLocalAvatarPrefab() => _localAvatarPrefab;
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
         #endregion ------------------------------------------------------------------------
 

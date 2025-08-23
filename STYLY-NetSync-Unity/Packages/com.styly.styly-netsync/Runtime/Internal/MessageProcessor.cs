@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    public class MessageProcessor
+    internal class MessageProcessor
     {
         private readonly ConcurrentQueue<NetworkMessage> _messageQueue = new();
         private readonly bool _logNetworkTraffic;
