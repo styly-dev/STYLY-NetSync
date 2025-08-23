@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    class Util
+    internal class Util
     {
         /// <summary>
         /// The package name of STYLY NetSync.
