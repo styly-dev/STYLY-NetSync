@@ -23,11 +23,10 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private Vector3 _physicalRotation;
 
         [Header("Body Parts")]
-        [SerializeField] private Transform _head;
-        [SerializeField] private Transform _rightHand;
-        [SerializeField] private Transform _leftHand;
-
-        [SerializeField] private Transform[] _virtualTransforms; // Object array to sync Virtual position (world coordinate system)
+        public Transform _head;
+        public Transform _rightHand;
+        public Transform _leftHand;
+        public Transform[] _virtualTransforms; // Object array to sync Virtual position (world coordinate system)
 
         // Properties
         public string DeviceId => _deviceId;
