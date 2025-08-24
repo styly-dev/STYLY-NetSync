@@ -47,7 +47,7 @@ namespace Styly.NetSync
             }
         }
 
-        public bool SendStealthHandshake(string roomId)
+        internal bool SendStealthHandshake(string roomId)
         {
             if (_connectionManager.DealerSocket == null)
                 return false;
