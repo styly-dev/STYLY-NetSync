@@ -7,33 +7,52 @@ a Python server with ZeroMQ networking and binary serialization.
 
 Main Classes:
     NetSyncServer: The main server class for multiplayer coordination
-    
+    net_sync_manager: Python client for connecting to NetSync servers
+
 Main Functions:
     main: Command-line entry point for running the server
+    create_manager: Factory function for creating client managers
 
-Example:
-    # Run as a module
+Examples:
+    # Run server as a module
     python -m styly_netsync
-    
-    # Use programmatically
+
+    # Use server programmatically
     from styly_netsync import NetSyncServer
     server = NetSyncServer(dealer_port=5555, pub_port=5556)
     server.start()
+
+    # Use client programmatically
+    from styly_netsync import create_manager
+    manager = create_manager(server="tcp://localhost", room="my_room")
+    manager.start()
+    snapshot = manager.latest_room()
 """
 
-from .server import NetSyncServer, main, get_version
+from .client import create_manager, net_sync_manager
+from .server import NetSyncServer, get_version, main
+from .types import client_transform, room_snapshot, transform
 
 # Export public API
 __all__ = [
-    'NetSyncServer',
-    'main',
-    'get_version'
+    # Server API
+    "NetSyncServer",
+    "main",
+    "get_version",
+    # Client API
+    "create_manager",
+    "net_sync_manager",
+    # Data types
+    "transform",
+    "client_transform",
+    "room_snapshot",
 ]
 
 # Runtime version access (optional)
 # Using importlib.metadata for standard compliance
 try:
-    from importlib.metadata import version, PackageNotFoundError
+    from importlib.metadata import PackageNotFoundError, version
+
     try:
         __version__ = version("styly-netsync-server")
     except PackageNotFoundError:
