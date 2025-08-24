@@ -22,12 +22,19 @@ Example:
 """
 
 from .server import NetSyncServer, main, get_version
+from .client import create_manager, net_sync_manager
+from .types import transform, client_transform, room_snapshot
 
 # Export public API
 __all__ = [
     'NetSyncServer',
     'main',
-    'get_version'
+    'get_version',
+    'create_manager',
+    'net_sync_manager',
+    'transform',
+    'client_transform',
+    'room_snapshot'
 ]
 
 # Runtime version access (optional)
