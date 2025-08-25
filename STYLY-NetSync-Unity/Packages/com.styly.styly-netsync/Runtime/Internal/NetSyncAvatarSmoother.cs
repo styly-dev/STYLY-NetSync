@@ -8,7 +8,7 @@ namespace Styly.NetSync
     /// Helper component that smooths remote avatar transforms between network updates.
     /// Physical transform is handled in local space, others in world space.
     /// </summary>
-    public class NetSyncAvatarSmoother
+    internal class NetSyncAvatarSmoother
     {
         private Transform _physical;
         private Transform _head;

@@ -9,7 +9,7 @@ using UnityEngine.Events;
 
 namespace Styly.NetSync
 {
-    public class RPCManager
+    internal class RPCManager
     {
         private readonly ConnectionManager _connectionManager;
         private readonly string _deviceId;

@@ -7,7 +7,7 @@ namespace Styly.NetSync
 {
     // Simple transform data structure (position + rotation euler angles)
     [Serializable]
-    public class TransformData
+    internal class TransformData
     {
         public float posX;
         public float posY;
@@ -38,7 +38,7 @@ namespace Styly.NetSync
 
     // Client transform data using unified structure
     [Serializable]
-    public class ClientTransformData
+    internal class ClientTransformData
     {
         public string deviceId;
         public int clientNo;  // Client number assigned by server (0 if not assigned)
@@ -51,7 +51,7 @@ namespace Styly.NetSync
 
     // Room data from server
     [Serializable]
-    public class RoomTransformData
+    internal class RoomTransformData
     {
         public string roomId;
         public List<ClientTransformData> clients;
@@ -59,7 +59,7 @@ namespace Styly.NetSync
 
     // Network message with string-based message types for better readability
     [Serializable]
-    public class NetworkMessage
+    internal class NetworkMessage
     {
         public string type; // "client_transform" or "room_transform"
         public string data;
@@ -68,7 +68,7 @@ namespace Styly.NetSync
 
     // RPC message structure
     [Serializable]
-    public class RPCMessage
+    internal class RPCMessage
     {
         // Client number of the sender
         public int senderClientNo;
@@ -81,7 +81,7 @@ namespace Styly.NetSync
 
     // Device ID mapping data
     [Serializable]
-    public class DeviceIdMapping
+    internal class DeviceIdMapping
     {
         public int clientNo;
         public string deviceId;
@@ -90,7 +90,7 @@ namespace Styly.NetSync
 
     // Device ID mapping notification message
     [Serializable]
-    public class DeviceIdMappingData
+    internal class DeviceIdMappingData
     {
         public List<DeviceIdMapping> mappings;
     }

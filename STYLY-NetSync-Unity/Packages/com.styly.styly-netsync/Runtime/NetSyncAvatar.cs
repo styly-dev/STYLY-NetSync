@@ -3,9 +3,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
-using UnityEngine.XR;
 using Unity.XR.CoreUtils;
-
 
 namespace Styly.NetSync
 {
@@ -23,11 +21,10 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private Vector3 _physicalRotation;
 
         [Header("Body Parts")]
-        [SerializeField] private Transform _head;
-        [SerializeField] private Transform _rightHand;
-        [SerializeField] private Transform _leftHand;
-
-        [SerializeField] private Transform[] _virtualTransforms; // Object array to sync Virtual position (world coordinate system)
+        public Transform _head;
+        public Transform _rightHand;
+        public Transform _leftHand;
+        public Transform[] _virtualTransforms; // Object array to sync Virtual position (world coordinate system)
 
         // Properties
         public string DeviceId => _deviceId;
@@ -72,7 +69,7 @@ namespace Styly.NetSync
         }
 
         // Initialization method called from NetSyncManager
-        public void Initialize(string deviceId, bool isLocalAvatar, NetSyncManager manager)
+        internal void Initialize(string deviceId, bool isLocalAvatar, NetSyncManager manager)
         {
             _deviceId = deviceId;
             IsLocalAvatar = isLocalAvatar;
@@ -88,7 +85,7 @@ namespace Styly.NetSync
         }
 
         // Initialization method for remote avatars with known client number
-        public void InitializeRemote(int clientNo, NetSyncManager manager)
+        internal void InitializeRemote(int clientNo, NetSyncManager manager)
         {
             _clientNo = clientNo;
             _deviceId = null; // Will be set when ID mapping is received
@@ -122,7 +119,7 @@ namespace Styly.NetSync
         }
 
         // Get current transform data for sending
-        public ClientTransformData GetTransformData()
+        internal ClientTransformData GetTransformData()
         {
             return new ClientTransformData
             {
@@ -137,7 +134,7 @@ namespace Styly.NetSync
         }
 
         // Update device ID when mapping is received
-        public void UpdateDeviceId(string deviceId)
+        internal void UpdateDeviceId(string deviceId)
         {
             if (!IsLocalAvatar && !string.IsNullOrEmpty(deviceId))
             {
@@ -146,7 +143,7 @@ namespace Styly.NetSync
         }
 
         // Receive and apply transform data (for remote avatars)
-        public void SetTransformData(ClientTransformData data)
+        internal void SetTransformData(ClientTransformData data)
         {
             if (IsLocalAvatar) { return; }
 
@@ -160,7 +157,7 @@ namespace Styly.NetSync
         }
 
         // Get physical transform data (local space, full 6DOF)
-        private TransformData GetPhysicalTransform()
+        internal TransformData GetPhysicalTransform()
         {
             if (_physicalTransform == null) return new TransformData();
             return new TransformData(
@@ -170,7 +167,7 @@ namespace Styly.NetSync
         }
 
         // Get world transform data (world space, full 6DOF)
-        private TransformData GetWorldTransform(Transform transform)
+        internal TransformData GetWorldTransform(Transform transform)
         {
             if (transform == null) return new TransformData();
             return new TransformData(
@@ -180,7 +177,7 @@ namespace Styly.NetSync
         }
 
         // Convert transform array to TransformData list (world space)
-        private List<TransformData> GetWorldTransformList(Transform[] transforms)
+        internal List<TransformData> GetWorldTransformList(Transform[] transforms)
         {
             var result = new List<TransformData>(transforms.Length);
             foreach (var t in transforms) result.Add(GetWorldTransform(t));
@@ -188,7 +185,7 @@ namespace Styly.NetSync
         }
 
         // Handle client variable changes from NetSyncManager
-        private void HandleClientVariableChanged(int clientNo, string name, string oldValue, string newValue)
+        internal void HandleClientVariableChanged(int clientNo, string name, string oldValue, string newValue)
         {
             // Only invoke the event if the change is for this client
             if (clientNo == _clientNo)

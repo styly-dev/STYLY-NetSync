@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    public class ServerDiscoveryManager
+    internal class ServerDiscoveryManager
     {
         private UdpClient _discoveryClient;
         private Thread _discoveryThread;

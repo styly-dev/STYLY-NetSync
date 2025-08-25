@@ -2,10 +2,13 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.XR;
+using UnityEngine.XR.Interaction.Toolkit.Inputs.Composites;
 
 namespace Styly.NetSync
 {
-    public class AvatarManager
+    internal class AvatarManager
     {
         private readonly Dictionary<int, GameObject> _connectedPeers = new();
         private NetSyncAvatar _localAvatar;
@@ -56,6 +59,9 @@ namespace Styly.NetSync
                 Debug.LogError("LocalAvatar Prefab requires NetSyncAvatar component");
                 return;
             }
+
+            // Add TrackedPoseDriver component to the local avatar
+            AddTrackedPoseDriverToLocalAvatar();
 
             _localAvatar.Initialize(deviceId, true, netSyncManager);
             DebugLog($"Local avatar initialized with ID: {deviceId}");
@@ -135,6 +141,95 @@ namespace Styly.NetSync
                 }
             }
             return result;
+        }
+
+        private void AddTrackedPoseDriverToLocalAvatar()
+        {
+            if (!_localAvatar.gameObject.TryGetComponent<NetSyncAvatar>(out var netSyncAvatar)) return;
+
+            // Ensure XRI fallback composites are registered (safe if called multiple times)
+            InputSystem.RegisterBindingComposite<Vector3FallbackComposite>();
+            InputSystem.RegisterBindingComposite<QuaternionFallbackComposite>();
+
+            var head = netSyncAvatar._head;
+            var rightHand = netSyncAvatar._rightHand;
+            var leftHand = netSyncAvatar._leftHand;
+
+            if (head != null)
+            {
+                var _tpd = head.gameObject.AddComponent<TrackedPoseDriver>();
+
+                // --- Position (Vector3 Fallback) ---
+                InputAction _positionAction = new(name: "Head Position", type: InputActionType.Value, expectedControlType: "Vector3");
+                var pos = _positionAction.AddCompositeBinding("Vector3Fallback");
+                pos.With("First", "<XRHMD>/centerEyePosition");
+                pos.With("Second", "<XRHMD>/devicePosition");
+                pos.With("Third", "<HandheldARInputDevice>/devicePosition");
+
+                // --- Rotation (Quaternion Fallback) ---
+                InputAction _rotationAction = new(name: "Head Rotation", type: InputActionType.Value, expectedControlType: "Quaternion");
+                var rot = _rotationAction.AddCompositeBinding("QuaternionFallback");
+                rot.With("First", "<XRHMD>/centerEyeRotation");
+                rot.With("Second", "<XRHMD>/deviceRotation");
+                rot.With("Third", "<HandheldARInputDevice>/deviceRotation");
+
+                // Assign to Tracked Pose Driver
+                _tpd.positionAction = _positionAction;
+                _tpd.rotationAction = _rotationAction;
+                _positionAction.Enable();
+                _rotationAction.Enable();
+
+            }
+
+            if (rightHand != null)
+            {
+                var _tpd = rightHand.gameObject.AddComponent<TrackedPoseDriver>();
+
+                // --- Position (Vector3 Fallback) ---
+                InputAction _positionAction = new(name: "Right Position", type: InputActionType.Value, expectedControlType: "Vector3");
+                var pos = _positionAction.AddCompositeBinding("Vector3Fallback");
+                pos.With("First", "<XRController>{RightHand}/pointerPosition");
+                pos.With("Second", "<XRController>{RightHand}/devicePosition");
+                pos.With("Third", "<XRHandDevice>{RightHand}/devicePosition");
+
+                // --- Rotation (Quaternion Fallback) ---
+                InputAction _rotationAction = new(name: "Right Rotation", type: InputActionType.Value, expectedControlType: "Quaternion");
+                var rot = _rotationAction.AddCompositeBinding("QuaternionFallback");
+                rot.With("First", "<XRController>{RightHand}/pointerRotation");
+                rot.With("Second", "<XRController>{RightHand}/deviceRotation");
+                rot.With("Third", "<XRHandDevice>{RightHand}/deviceRotation");
+
+                // Assign to Tracked Pose Driver
+                _tpd.positionAction = _positionAction;
+                _tpd.rotationAction = _rotationAction;
+                _positionAction.Enable();
+                _rotationAction.Enable();
+            }
+
+            if (leftHand != null)
+            {
+                var _tpd = leftHand.gameObject.AddComponent<TrackedPoseDriver>();
+
+                // --- Position (Vector3 Fallback) ---
+                InputAction _positionAction = new(name: "Left Position", type: InputActionType.Value, expectedControlType: "Vector3");
+                var pos = _positionAction.AddCompositeBinding("Vector3Fallback");
+                pos.With("First", "<XRController>{LeftHand}/pointerPosition");
+                pos.With("Second", "<XRController>{LeftHand}/devicePosition");
+                pos.With("Third", "<XRHandDevice>{LeftHand}/devicePosition");
+
+                // --- Rotation (Quaternion Fallback) ---
+                InputAction _rotationAction = new(name: "Left Rotation", type: InputActionType.Value, expectedControlType: "Quaternion");
+                var rot = _rotationAction.AddCompositeBinding("QuaternionFallback");
+                rot.With("First", "<XRController>{LeftHand}/pointerRotation");
+                rot.With("Second", "<XRController>{LeftHand}/deviceRotation");
+                rot.With("Third", "<XRHandDevice>{LeftHand}/deviceRotation");
+
+                // Assign to Tracked Pose Driver
+                _tpd.positionAction = _positionAction;
+                _tpd.rotationAction = _rotationAction;
+                _positionAction.Enable();
+                _rotationAction.Enable();
+            }
         }
 
         private void DebugLog(string msg)

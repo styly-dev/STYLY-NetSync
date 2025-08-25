@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    public class TransformSyncManager
+    internal class TransformSyncManager
     {
         private readonly ConnectionManager _connectionManager;
         private readonly string _deviceId;
@@ -47,7 +47,7 @@ namespace Styly.NetSync
             }
         }
 
-        public bool SendStealthHandshake(string roomId)
+        internal bool SendStealthHandshake(string roomId)
         {
             if (_connectionManager.DealerSocket == null)
                 return false;
