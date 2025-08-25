@@ -147,9 +147,10 @@ MSG_RPC = 3                 // Client → Server → All: Remote procedure call
 MSG_RPC_SERVER = 4          // Reserved for future use
 MSG_RPC_CLIENT = 5          // Reserved for future use
 MSG_DEVICE_ID_MAPPING = 6   // Server → Clients: Device ID ↔ client number mappings
-MSG_SET_GLOBAL_VAR = 7      // Client → Server: Set global network variable
-MSG_SET_CLIENT_VAR = 8      // Client → Server: Set client network variable
-MSG_NETWORK_VARS = 9        // Server → Clients: Network variable updates
+MSG_GLOBAL_VAR_SET = 7      // Client → Server: Set global network variable
+MSG_GLOBAL_VAR_SYNC = 8     // Server → Clients: Sync global variables
+MSG_CLIENT_VAR_SET = 9      // Client → Server: Set client network variable
+MSG_CLIENT_VAR_SYNC = 10    // Server → Clients: Sync client variables
 ```
 
 **Optimization**:

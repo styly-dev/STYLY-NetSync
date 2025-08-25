@@ -13,7 +13,7 @@ from .server import main
 def cli_main() -> None:
     """
     Main CLI entry point for the styly-netsync-server command.
-    
+
     This function is referenced in pyproject.toml as the console script entry point.
     It delegates to the main() function which handles argument parsing and server setup.
     """

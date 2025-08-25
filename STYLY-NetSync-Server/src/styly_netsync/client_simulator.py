@@ -12,7 +12,6 @@ import threading
 import time
 import uuid
 from enum import Enum
-from typing import Dict, List, Tuple
 
 import zmq
 
@@ -23,6 +22,7 @@ except ImportError:
     # Fallback for direct script execution
     from binary_serializer import serialize_client_transform
 
+
 class MovementPattern(Enum):
     """Movement patterns matching DebugMoveAvatar.cs"""
 
@@ -32,6 +32,7 @@ class MovementPattern(Enum):
     LINEAR_PING_PONG = 3
     SPIRAL = 4
 
+
 class SimulatedClient:
     """Represents a single simulated client with movement patterns."""
 
@@ -39,7 +40,7 @@ class SimulatedClient:
         self,
         device_id: str,
         movement_pattern: MovementPattern,
-        start_position: Tuple[float, float, float],
+        start_position: tuple[float, float, float],
     ):
         self.device_id = device_id
         self.movement_pattern = movement_pattern
@@ -80,7 +81,7 @@ class SimulatedClient:
         # Logging (use only last 8 chars of UUID for readability)
         self.logger = logging.getLogger(f"Device-{device_id[-8:]}")
 
-    def update(self) -> Dict:
+    def update(self) -> dict:
         """Update client position and return transform data."""
         current_time = time.monotonic()
         elapsed_time = current_time - self.start_time
@@ -148,7 +149,7 @@ class SimulatedClient:
 
         return transform_data
 
-    def _update_movement(self, elapsed_time: float, delta_time: float) -> List[float]:
+    def _update_movement(self, elapsed_time: float, delta_time: float) -> list[float]:
         """Update movement based on selected pattern."""
         if self.movement_pattern == MovementPattern.CIRCLE:
             return self._calculate_circle_movement(elapsed_time)
@@ -163,7 +164,7 @@ class SimulatedClient:
         else:
             return list(self.start_position)
 
-    def _calculate_circle_movement(self, elapsed_time: float) -> List[float]:
+    def _calculate_circle_movement(self, elapsed_time: float) -> list[float]:
         """Circle movement pattern."""
         angle = elapsed_time * self.move_speed
         return [
@@ -172,7 +173,7 @@ class SimulatedClient:
             self.start_position[2] + math.sin(angle) * self.movement_radius,
         ]
 
-    def _calculate_figure8_movement(self, elapsed_time: float) -> List[float]:
+    def _calculate_figure8_movement(self, elapsed_time: float) -> list[float]:
         """Figure-8 movement pattern."""
         t = elapsed_time * self.move_speed * 0.5
         return [
@@ -181,7 +182,7 @@ class SimulatedClient:
             self.start_position[2] + math.sin(2 * t) * self.movement_radius * 0.5,
         ]
 
-    def _calculate_random_walk_movement(self, delta_time: float) -> List[float]:
+    def _calculate_random_walk_movement(self, delta_time: float) -> list[float]:
         """Random walk movement pattern."""
         self.random_walk_timer += delta_time
 
@@ -216,7 +217,7 @@ class SimulatedClient:
 
         return self.current_position
 
-    def _calculate_linear_ping_pong_movement(self, elapsed_time: float) -> List[float]:
+    def _calculate_linear_ping_pong_movement(self, elapsed_time: float) -> list[float]:
         """Linear ping-pong movement pattern."""
         # Create a value that goes from -1 to 1 and back
         ping_pong = math.sin(elapsed_time * self.move_speed)
@@ -226,7 +227,7 @@ class SimulatedClient:
             self.start_position[2] + ping_pong * self.movement_radius,
         ]
 
-    def _calculate_spiral_movement(self, elapsed_time: float) -> List[float]:
+    def _calculate_spiral_movement(self, elapsed_time: float) -> list[float]:
         """Spiral movement pattern."""
         angle = elapsed_time * self.move_speed
         radius = (self.movement_radius * 0.5) + math.sin(elapsed_time * 0.5) * (
@@ -240,8 +241,8 @@ class SimulatedClient:
         ]
 
     def _calculate_hand_position(
-        self, base_position: List[float], elapsed_time: float, is_right: bool
-    ) -> List[float]:
+        self, base_position: list[float], elapsed_time: float, is_right: bool
+    ) -> list[float]:
         """Calculate hand position with swing motion."""
         # Base offset from body center
         lateral_offset = 0.3 if is_right else -0.3
@@ -273,8 +274,8 @@ class SimulatedClient:
         ]
 
     def _calculate_virtual_positions(
-        self, base_position: List[float], elapsed_time: float
-    ) -> List[Dict]:
+        self, base_position: list[float], elapsed_time: float
+    ) -> list[dict]:
         """Calculate positions for virtual objects orbiting the avatar."""
         virtuals = []
         avatar_center = [
@@ -325,9 +326,9 @@ class ClientSimulator:
         self.sub_port = sub_port
         self.room_id = room_id
         self.num_clients = num_clients
-        self.clients: List[SimulatedClient] = []
+        self.clients: list[SimulatedClient] = []
         self.running = False
-        self.threads: List[threading.Thread] = []
+        self.threads: list[threading.Thread] = []
         self.logger = logging.getLogger("ClientSimulator")
         # Create a single shared ZMQ context for all clients
         self.context = zmq.Context()
@@ -339,9 +340,12 @@ class ClientSimulator:
 
         # Check system limits first
         import resource
+
         try:
             soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-            self.logger.info(f"System file descriptor limits: soft={soft_limit}, hard={hard_limit}")
+            self.logger.info(
+                f"System file descriptor limits: soft={soft_limit}, hard={hard_limit}"
+            )
 
             # Warn if trying to create too many clients
             # Each client needs 1 socket + overhead for other system files
@@ -395,7 +399,9 @@ class ClientSimulator:
                     break
 
         if failed_clients > 0:
-            self.logger.warning(f"Failed to start {failed_clients} clients due to resource limits.")
+            self.logger.warning(
+                f"Failed to start {failed_clients} clients due to resource limits."
+            )
 
         self.logger.info("All clients started. Press Ctrl+C to stop simulation.")
 
@@ -421,7 +427,9 @@ class ClientSimulator:
                 self.logger.debug(f"Waiting for device thread {i} to finish...")
                 thread.join(timeout=2.0)
                 if thread.is_alive():
-                    self.logger.warning(f"Device thread {i} did not finish within timeout")
+                    self.logger.warning(
+                        f"Device thread {i} did not finish within timeout"
+                    )
 
         # Terminate the shared context after all threads are done
         try:
@@ -484,7 +492,9 @@ class ClientSimulator:
 
         except zmq.error.ZMQError as e:
             if "Too many open files" in str(e):
-                client.logger.error("Socket creation failed - too many open files. Consider reducing the number of clients or increasing system ulimit.")
+                client.logger.error(
+                    "Socket creation failed - too many open files. Consider reducing the number of clients or increasing system ulimit."
+                )
             else:
                 client.logger.error(f"ZMQ error in client simulation: {e}")
         except Exception as e:
@@ -498,9 +508,7 @@ class ClientSimulator:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="STYLY NetSync Client Simulator"
-    )
+    parser = argparse.ArgumentParser(description="STYLY NetSync Client Simulator")
     parser.add_argument(
         "--clients",
         type=int,
