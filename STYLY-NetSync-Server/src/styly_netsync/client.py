@@ -24,7 +24,7 @@ from .adapters import (
     is_stealth_transform,
 )
 from .events import EventHandler
-from .types import client_transform, room_snapshot
+from .types import client_transform_data, room_transform_data
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class net_sync_manager:
     """
     NetSync client manager providing pull-based transform consumption and event-based RPC/NV.
 
-    Design: Pull-based transforms (latest_room()) with optional event callbacks for RPC and Network Variables.
+    Design: Pull-based transforms (get_room_transform_data()) with optional event callbacks for RPC and Network Variables.
     """
 
     def __init__(
@@ -42,7 +42,7 @@ class net_sync_manager:
         dealer_port: int = 5555,
         sub_port: int = 5556,
         room: str = "default_room",
-        auto_dispatch: bool = False,
+        auto_dispatch: bool = True,
         queue_max: int = 10000,
     ):
         """
@@ -56,10 +56,10 @@ class net_sync_manager:
             auto_dispatch: If True, callbacks fire on receive thread
             queue_max: Max queued events for RPC/NV
         """
-        self._server = server
+        self._server_address = server
         self._dealer_port = dealer_port
         self._sub_port = sub_port
-        self._room = room
+        self._room_id = room
         self._auto_dispatch = auto_dispatch
         self._queue_max = queue_max
 
@@ -76,9 +76,10 @@ class net_sync_manager:
         # Device/client identification
         self._device_id = str(uuid.uuid4())
         self._client_no: int | None = None
+        self._is_ready = False
 
         # Pull-based transform state (single latest snapshot)
-        self._latest_room_snapshot: room_snapshot | None = None
+        self._latest_room_snapshot: room_transform_data | None = None
         self._snapshot_lock = threading.Lock()
 
         # Device ID mapping
@@ -98,6 +99,9 @@ class net_sync_manager:
         self.on_rpc_received = EventHandler()
         self.on_global_variable_changed = EventHandler()
         self.on_client_variable_changed = EventHandler()
+        self.on_avatar_connected = EventHandler()
+        self.on_client_disconnected = EventHandler()
+        self.on_server_discovered = EventHandler()
 
         # Discovery
         self._discovery_socket: socket.socket | None = None
@@ -120,14 +124,14 @@ class net_sync_manager:
         return self._running
 
     @property
-    def room(self) -> str:
+    def room_id(self) -> str:
         """Current room ID."""
-        return self._room
+        return self._room_id
 
     @property
-    def server(self) -> str:
+    def server_address(self) -> str:
         """Server address."""
-        return self._server
+        return self._server_address
 
     @property
     def dealer_port(self) -> int:
@@ -138,6 +142,21 @@ class net_sync_manager:
     def sub_port(self) -> int:
         """Subscriber port."""
         return self._sub_port
+
+    @property
+    def client_no(self) -> int | None:
+        """Assigned client number."""
+        return self._client_no
+
+    @property
+    def device_id(self) -> str:
+        """Unique device identifier."""
+        return self._device_id
+
+    @property
+    def is_ready(self) -> bool:
+        """True once client number is assigned."""
+        return self._is_ready
 
     def start(self) -> "net_sync_manager":
         """Start the client and connect to server."""
@@ -151,14 +170,14 @@ class net_sync_manager:
 
                 # DEALER socket for uplink
                 self._dealer_socket = self._context.socket(zmq.DEALER)
-                dealer_addr = f"{self._server}:{self._dealer_port}"
+                dealer_addr = f"{self._server_address}:{self._dealer_port}"
                 self._dealer_socket.connect(dealer_addr)
 
                 # SUB socket for downlink
                 self._sub_socket = self._context.socket(zmq.SUB)
-                sub_addr = f"{self._server}:{self._sub_port}"
+                sub_addr = f"{self._server_address}:{self._sub_port}"
                 self._sub_socket.connect(sub_addr)
-                self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
+                self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room_id.encode("utf-8"))
 
                 # Start receive thread
                 self._running = True
@@ -168,7 +187,7 @@ class net_sync_manager:
                 self._receive_thread.start()
 
                 logger.info(
-                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
+                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room_id}"
                 )
 
             except Exception as e:
@@ -271,11 +290,22 @@ class net_sync_manager:
                 if ct.client_no is not None and not is_stealth_transform(ct):
                     clients[ct.client_no] = ct
 
-            # Update single latest snapshot (O(1) access)
+            # Update single latest snapshot (O(1) access) and diff clients
             with self._snapshot_lock:
-                self._latest_room_snapshot = room_snapshot(
+                prev_clients = (
+                    set(self._latest_room_snapshot.clients.keys())
+                    if self._latest_room_snapshot
+                    else set()
+                )
+                self._latest_room_snapshot = room_transform_data(
                     room_id=room_id, clients=clients, timestamp=time.monotonic()
                 )
+                new_clients = set(clients.keys())
+
+            for client_no in new_clients - prev_clients:
+                self.on_avatar_connected.invoke(client_no)
+            for client_no in prev_clients - new_clients:
+                self.on_client_disconnected.invoke(client_no)
 
             self._stats["transforms_received"] += 1
             self._stats["last_snapshot_time"] = time.monotonic()
@@ -306,6 +336,7 @@ class net_sync_manager:
                     # Check if this is our mapping
                     if device_id == self._device_id:
                         self._client_no = client_no
+                        self._is_ready = True
                         logger.info(f"Assigned client number: {client_no}")
 
         except Exception as e:
@@ -359,10 +390,10 @@ class net_sync_manager:
                 if old_value != value:
                     self._stats["nv_updates"] += 1
 
-                    event = ("global", name, old_value, value, var)
+                    event = ("global", name, old_value, value)
                     if self._auto_dispatch:
                         self.on_global_variable_changed.invoke(
-                            name, old_value, value, var
+                            name, old_value, value
                         )
                     else:
                         try:
@@ -401,10 +432,10 @@ class net_sync_manager:
                     if old_value != value:
                         self._stats["nv_updates"] += 1
 
-                        event = ("client", client_no, name, old_value, value, var)
+                        event = ("client", client_no, name, old_value, value)
                         if self._auto_dispatch:
                             self.on_client_variable_changed.invoke(
-                                client_no, name, old_value, value, var
+                                client_no, name, old_value, value
                             )
                         else:
                             try:
@@ -420,20 +451,22 @@ class net_sync_manager:
             logger.error(f"Error processing client var sync: {e}")
 
     # Transform API (pull-based)
-    def latest_room(self) -> room_snapshot | None:
+    def get_room_transform_data(self) -> room_transform_data | None:
         """Get the latest room snapshot (pull-based consumption)."""
         with self._snapshot_lock:
             return self._latest_room_snapshot
 
-    def latest_client_transform(self, client_no: int) -> client_transform | None:
+    def get_client_transform_data(
+        self, client_no: int
+    ) -> client_transform_data | None:
         """Get latest transform for a specific client."""
-        snapshot = self.latest_room()
+        snapshot = self.get_room_transform_data()
         if snapshot and client_no in snapshot.clients:
             return snapshot.clients[client_no]
         return None
 
     # Sending API
-    def send_transform(self, tx: client_transform) -> bool:
+    def send_transform(self, tx: client_transform_data) -> bool:
         """Send client transform to server."""
         if not self._running or not self._dealer_socket:
             return False
@@ -444,7 +477,7 @@ class net_sync_manager:
             message = binary_serializer.serialize_client_transform(wire_data)
 
             # Send with room topic
-            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
+            self._dealer_socket.send_multipart([self._room_id.encode("utf-8"), message])
             return True
 
         except Exception as e:
@@ -469,7 +502,7 @@ class net_sync_manager:
                 "argumentsJson": json.dumps(args),
             }
             message = binary_serializer.serialize_rpc_message(rpc_data)
-            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
+            self._dealer_socket.send_multipart([self._room_id.encode("utf-8"), message])
             return True
 
         except Exception as e:
@@ -490,7 +523,7 @@ class net_sync_manager:
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_global_var_set(var_data)
-            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
+            self._dealer_socket.send_multipart([self._room_id.encode("utf-8"), message])
             return True
 
         except Exception as e:
@@ -511,7 +544,7 @@ class net_sync_manager:
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_client_var_set(var_data)
-            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
+            self._dealer_socket.send_multipart([self._room_id.encode("utf-8"), message])
             return True
 
         except Exception as e:
@@ -530,17 +563,29 @@ class net_sync_manager:
             return self._client_variables[client_no].get(name, default)
         return default
 
+    def get_all_global_variables(self) -> dict[str, str]:
+        """Return a copy of all global variables."""
+        return self._global_variables.copy()
+
+    def get_all_client_variables(self, client_no: int) -> dict[str, str]:
+        """Return a copy of all variables for the given client."""
+        return self._client_variables.get(client_no, {}).copy()
+
+    def is_client_stealth_mode(self, client_no: int) -> bool:
+        """Check if the client is in stealth mode."""
+        return self._client_stealth_flags.get(client_no, False)
+
     # Device mapping API
     def get_client_no(self, device_id: str) -> int | None:
         """Get client number for device ID."""
         return self._device_to_client.get(device_id)
 
-    def get_device_id(self, client_no: int) -> str | None:
+    def get_device_id_from_client_no(self, client_no: int) -> str | None:
         """Get device ID for client number."""
         return self._client_to_device.get(client_no)
 
     # Event dispatch control
-    def dispatch_pending(self, max_items: int = 100) -> int:
+    def dispatch_pending_events(self, max_items: int = 100) -> int:
         """Process queued callbacks on caller's thread."""
         if self._auto_dispatch:
             return 0
@@ -562,14 +607,14 @@ class net_sync_manager:
             try:
                 event = self._nv_queue.get_nowait()
                 if event[0] == "global":
-                    _, name, old_value, new_value, meta = event
+                    _, name, old_value, new_value = event
                     self.on_global_variable_changed.invoke(
-                        name, old_value, new_value, meta
+                        name, old_value, new_value
                     )
                 elif event[0] == "client":
-                    _, client_no, name, old_value, new_value, meta = event
+                    _, client_no, name, old_value, new_value = event
                     self.on_client_variable_changed.invoke(
-                        client_no, name, old_value, new_value, meta
+                        client_no, name, old_value, new_value
                     )
                 dispatched += 1
             except Empty:
@@ -637,6 +682,10 @@ class net_sync_manager:
                             logger.info(
                                 f"Discovered server: {server_name} at {addr[0]}:{dealer_port}/{sub_port}"
                             )
+                            server_addr = f"tcp://{addr[0]}"
+                            self.on_server_discovered.invoke(
+                                server_addr, dealer_port, sub_port
+                            )
                             # Could auto-reconnect here if desired
 
                 except TimeoutError:
@@ -656,25 +705,6 @@ class net_sync_manager:
                     time.sleep(1.0)
 
     # Diagnostics
-    def stats(self) -> dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get diagnostic statistics."""
         return self._stats.copy()
-
-
-def create_manager(
-    server: str = "tcp://localhost",
-    dealer_port: int = 5555,
-    sub_port: int = 5556,
-    room: str = "default_room",
-    auto_dispatch: bool = False,
-    queue_max: int = 10000,
-) -> net_sync_manager:
-    """Create a new NetSync client manager."""
-    return net_sync_manager(
-        server=server,
-        dealer_port=dealer_port,
-        sub_port=sub_port,
-        room=room,
-        auto_dispatch=auto_dispatch,
-        queue_max=queue_max,
-    )
