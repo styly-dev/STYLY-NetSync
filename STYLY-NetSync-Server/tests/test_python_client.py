@@ -80,8 +80,10 @@ def test_transforms_pull_based():
         
         # Send transform from client1
         tx = client_transform_data(
-            physical=transform_data(pos_x=5.0, pos_z=10.0, rot_y=90.0, is_local_space=True),
-            head=transform_data(pos_x=5.0, pos_y=1.6, pos_z=10.0)
+            physical=transform_data(
+                pos_x=5.0, pos_z=10.0, rot_y=90.0, is_local_space=True
+            ),
+            head=transform_data(pos_x=5.0, pos_y=1.6, pos_z=10.0),
         )
         client1.send_transform(tx)
         time.sleep(0.1)
@@ -146,20 +148,8 @@ def test_rpc():
     time.sleep(0.5)
     
     try:
-        client1 = net_sync_manager(
-            server="tcp://localhost",
-            dealer_port=5561,
-            sub_port=5562,
-            room="rpc_test",
-            auto_dispatch=False,
-        )
-        client2 = net_sync_manager(
-            server="tcp://localhost",
-            dealer_port=5561,
-            sub_port=5562,
-            room="rpc_test",
-            auto_dispatch=False,
-        )
+        client1 = net_sync_manager(server="tcp://localhost", dealer_port=5561, sub_port=5562, room="rpc_test", auto_dispatch=False)
+        client2 = net_sync_manager(server="tcp://localhost", dealer_port=5561, sub_port=5562, room="rpc_test", auto_dispatch=False)
         
         client1.start()
         client2.start()

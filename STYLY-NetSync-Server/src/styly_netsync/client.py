@@ -56,10 +56,10 @@ class net_sync_manager:
             auto_dispatch: If True, callbacks fire on receive thread
             queue_max: Max queued events for RPC/NV
         """
-        self._server_address = server
+        self._server = server
         self._dealer_port = dealer_port
         self._sub_port = sub_port
-        self._room_id = room
+        self._room = room
         self._auto_dispatch = auto_dispatch
         self._queue_max = queue_max
 
@@ -126,12 +126,27 @@ class net_sync_manager:
     @property
     def room_id(self) -> str:
         """Current room ID."""
-        return self._room_id
+        return self._room
 
     @property
     def server_address(self) -> str:
         """Server address."""
-        return self._server_address
+        return self._server
+
+    @property
+    def client_no(self) -> int | None:
+        """Assigned client number (None until mapped)."""
+        return self._client_no
+
+    @property
+    def device_id(self) -> str:
+        """This client's device UUID."""
+        return self._device_id
+
+    @property
+    def is_ready(self) -> bool:
+        """True once client number has been assigned."""
+        return self._is_ready
 
     @property
     def dealer_port(self) -> int:
@@ -142,21 +157,6 @@ class net_sync_manager:
     def sub_port(self) -> int:
         """Subscriber port."""
         return self._sub_port
-
-    @property
-    def client_no(self) -> int | None:
-        """Assigned client number."""
-        return self._client_no
-
-    @property
-    def device_id(self) -> str:
-        """Unique device identifier."""
-        return self._device_id
-
-    @property
-    def is_ready(self) -> bool:
-        """True once client number is assigned."""
-        return self._is_ready
 
     def start(self) -> "net_sync_manager":
         """Start the client and connect to server."""
@@ -170,14 +170,14 @@ class net_sync_manager:
 
                 # DEALER socket for uplink
                 self._dealer_socket = self._context.socket(zmq.DEALER)
-                dealer_addr = f"{self._server_address}:{self._dealer_port}"
+                dealer_addr = f"{self._server}:{self._dealer_port}"
                 self._dealer_socket.connect(dealer_addr)
 
                 # SUB socket for downlink
                 self._sub_socket = self._context.socket(zmq.SUB)
-                sub_addr = f"{self._server_address}:{self._sub_port}"
+                sub_addr = f"{self._server}:{self._sub_port}"
                 self._sub_socket.connect(sub_addr)
-                self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room_id.encode("utf-8"))
+                self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
 
                 # Start receive thread
                 self._running = True
@@ -187,7 +187,7 @@ class net_sync_manager:
                 self._receive_thread.start()
 
                 logger.info(
-                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room_id}"
+                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
                 )
 
             except Exception as e:
@@ -290,21 +290,21 @@ class net_sync_manager:
                 if ct.client_no is not None and not is_stealth_transform(ct):
                     clients[ct.client_no] = ct
 
-            # Update single latest snapshot (O(1) access) and diff clients
+            # Update single latest snapshot (O(1) access)
             with self._snapshot_lock:
-                prev_clients = (
-                    set(self._latest_room_snapshot.clients.keys())
-                    if self._latest_room_snapshot
-                    else set()
-                )
+                prev_snapshot = self._latest_room_snapshot
                 self._latest_room_snapshot = room_transform_data(
                     room_id=room_id, clients=clients, timestamp=time.monotonic()
                 )
-                new_clients = set(clients.keys())
 
-            for client_no in new_clients - prev_clients:
+            prev_clients = set(prev_snapshot.clients.keys()) if prev_snapshot else set()
+            new_clients = set(clients.keys())
+            added = new_clients - prev_clients
+            removed = prev_clients - new_clients
+
+            for client_no in added:
                 self.on_avatar_connected.invoke(client_no)
-            for client_no in prev_clients - new_clients:
+            for client_no in removed:
                 self.on_client_disconnected.invoke(client_no)
 
             self._stats["transforms_received"] += 1
@@ -477,7 +477,7 @@ class net_sync_manager:
             message = binary_serializer.serialize_client_transform(wire_data)
 
             # Send with room topic
-            self._dealer_socket.send_multipart([self._room_id.encode("utf-8"), message])
+            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
             return True
 
         except Exception as e:
@@ -502,7 +502,7 @@ class net_sync_manager:
                 "argumentsJson": json.dumps(args),
             }
             message = binary_serializer.serialize_rpc_message(rpc_data)
-            self._dealer_socket.send_multipart([self._room_id.encode("utf-8"), message])
+            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
             return True
 
         except Exception as e:
@@ -523,7 +523,7 @@ class net_sync_manager:
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_global_var_set(var_data)
-            self._dealer_socket.send_multipart([self._room_id.encode("utf-8"), message])
+            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
             return True
 
         except Exception as e:
@@ -544,7 +544,7 @@ class net_sync_manager:
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_client_var_set(var_data)
-            self._dealer_socket.send_multipart([self._room_id.encode("utf-8"), message])
+            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
             return True
 
         except Exception as e:
@@ -563,6 +563,15 @@ class net_sync_manager:
             return self._client_variables[client_no].get(name, default)
         return default
 
+    # Device mapping API
+    def get_client_no(self, device_id: str) -> int | None:
+        """Get client number for device ID."""
+        return self._device_to_client.get(device_id)
+
+    def get_device_id_from_client_no(self, client_no: int) -> str | None:
+        """Get device ID for client number."""
+        return self._client_to_device.get(client_no)
+
     def get_all_global_variables(self) -> dict[str, str]:
         """Return a copy of all global variables."""
         return self._global_variables.copy()
@@ -574,15 +583,6 @@ class net_sync_manager:
     def is_client_stealth_mode(self, client_no: int) -> bool:
         """Check if the client is in stealth mode."""
         return self._client_stealth_flags.get(client_no, False)
-
-    # Device mapping API
-    def get_client_no(self, device_id: str) -> int | None:
-        """Get client number for device ID."""
-        return self._device_to_client.get(device_id)
-
-    def get_device_id_from_client_no(self, client_no: int) -> str | None:
-        """Get device ID for client number."""
-        return self._client_to_device.get(client_no)
 
     # Event dispatch control
     def dispatch_pending_events(self, max_items: int = 100) -> int:
@@ -682,9 +682,9 @@ class net_sync_manager:
                             logger.info(
                                 f"Discovered server: {server_name} at {addr[0]}:{dealer_port}/{sub_port}"
                             )
-                            server_addr = f"tcp://{addr[0]}"
+                            server_address = f"tcp://{addr[0]}"
                             self.on_server_discovered.invoke(
-                                server_addr, dealer_port, sub_port
+                                server_address, dealer_port, sub_port
                             )
                             # Could auto-reconnect here if desired
 

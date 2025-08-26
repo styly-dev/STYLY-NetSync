@@ -38,7 +38,7 @@ def transform_from_wire(data: dict[str, Any]) -> transform_data:
 
 
 def client_transform_to_wire(ct: client_transform_data) -> dict[str, Any]:
-    """Convert snake_case client_transform_data to camelCase wire format."""
+    """Convert snake_case client_transform to camelCase wire format."""
     result = {}
 
     if ct.device_id is not None:
@@ -60,7 +60,7 @@ def client_transform_to_wire(ct: client_transform_data) -> dict[str, Any]:
 
 
 def client_transform_from_wire(data: dict[str, Any]) -> client_transform_data:
-    """Convert camelCase wire format to snake_case client_transform_data."""
+    """Convert camelCase wire format to snake_case client_transform."""
     result = client_transform_data()
 
     result.device_id = data.get("deviceId")
@@ -90,6 +90,7 @@ def create_stealth_transform() -> client_transform_data:
         rot_y=float("nan"),
         rot_z=float("nan"),
     )
+
     return client_transform_data(
         physical=nan_transform,
         head=nan_transform,
@@ -100,7 +101,7 @@ def create_stealth_transform() -> client_transform_data:
 
 
 def is_stealth_transform(ct: client_transform_data) -> bool:
-    """Check if a client_transform_data represents a stealth client (all NaN values)."""
+    """Check if a client_transform represents a stealth client (all NaN values)."""
     if not ct.physical or not ct.head or not ct.right_hand or not ct.left_hand:
         return False
 
