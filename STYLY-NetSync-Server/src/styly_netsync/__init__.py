@@ -11,7 +11,6 @@ Main Classes:
 
 Main Functions:
     main: Command-line entry point for running the server
-    create_manager: Factory function for creating client managers
 
 Examples:
     # Run server as a module
@@ -23,15 +22,15 @@ Examples:
     server.start()
 
     # Use client programmatically
-    from styly_netsync import create_manager
-    manager = create_manager(server="tcp://localhost", room="my_room")
+    from styly_netsync import net_sync_manager
+    manager = net_sync_manager(server="tcp://localhost", room="my_room")
     manager.start()
-    snapshot = manager.latest_room()
+    snapshot = manager.get_room_transform_data()
 """
 
-from .client import create_manager, net_sync_manager
+from .client import net_sync_manager
 from .server import NetSyncServer, get_version, main
-from .types import client_transform, room_snapshot, transform
+from .types import client_transform_data, room_transform_data, transform_data
 
 # Export public API
 __all__ = [
@@ -40,12 +39,11 @@ __all__ = [
     "main",
     "get_version",
     # Client API
-    "create_manager",
     "net_sync_manager",
     # Data types
-    "transform",
-    "client_transform",
-    "room_snapshot",
+    "transform_data",
+    "client_transform_data",
+    "room_transform_data",
 ]
 
 # Runtime version access (optional)

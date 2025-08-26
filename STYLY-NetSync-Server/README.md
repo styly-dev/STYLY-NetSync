@@ -74,6 +74,21 @@ except KeyboardInterrupt:
     server.stop()
 ```
 
+### Python Client
+
+```python
+from styly_netsync import net_sync_manager
+
+manager = net_sync_manager(server="tcp://localhost", room="demo")
+manager.start()
+
+# Access latest room snapshot
+snapshot = manager.get_room_transform_data()
+print(snapshot.room_id if snapshot else "no data")
+
+manager.stop()
+```
+
 ### Client Simulator
 
 Test the server with simulated clients:
