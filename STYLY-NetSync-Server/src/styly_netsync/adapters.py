@@ -8,10 +8,10 @@ This adapter layer converts between Python snake_case and wire format.
 import math
 from typing import Any
 
-from .types import client_transform, transform
+from .types import client_transform_data, transform_data
 
 
-def transform_to_wire(t: transform) -> dict[str, Any]:
+def transform_to_wire(t: transform_data) -> dict[str, Any]:
     """Convert snake_case transform to camelCase wire format."""
     return {
         "posX": t.pos_x,
@@ -24,9 +24,9 @@ def transform_to_wire(t: transform) -> dict[str, Any]:
     }
 
 
-def transform_from_wire(data: dict[str, Any]) -> transform:
+def transform_from_wire(data: dict[str, Any]) -> transform_data:
     """Convert camelCase wire format to snake_case transform."""
-    return transform(
+    return transform_data(
         pos_x=data.get("posX", 0.0),
         pos_y=data.get("posY", 0.0),
         pos_z=data.get("posZ", 0.0),
@@ -37,7 +37,7 @@ def transform_from_wire(data: dict[str, Any]) -> transform:
     )
 
 
-def client_transform_to_wire(ct: client_transform) -> dict[str, Any]:
+def client_transform_to_wire(ct: client_transform_data) -> dict[str, Any]:
     """Convert snake_case client_transform to camelCase wire format."""
     result = {}
 
@@ -59,9 +59,9 @@ def client_transform_to_wire(ct: client_transform) -> dict[str, Any]:
     return result
 
 
-def client_transform_from_wire(data: dict[str, Any]) -> client_transform:
+def client_transform_from_wire(data: dict[str, Any]) -> client_transform_data:
     """Convert camelCase wire format to snake_case client_transform."""
-    result = client_transform()
+    result = client_transform_data()
 
     result.device_id = data.get("deviceId")
     result.client_no = data.get("clientNo")
@@ -80,9 +80,9 @@ def client_transform_from_wire(data: dict[str, Any]) -> client_transform:
     return result
 
 
-def create_stealth_transform() -> client_transform:
+def create_stealth_transform() -> client_transform_data:
     """Create a stealth handshake transform with NaN values."""
-    nan_transform = transform(
+    nan_transform = transform_data(
         pos_x=float("nan"),
         pos_y=float("nan"),
         pos_z=float("nan"),
@@ -91,7 +91,7 @@ def create_stealth_transform() -> client_transform:
         rot_z=float("nan"),
     )
 
-    return client_transform(
+    return client_transform_data(
         physical=nan_transform,
         head=nan_transform,
         right_hand=nan_transform,
@@ -100,12 +100,12 @@ def create_stealth_transform() -> client_transform:
     )
 
 
-def is_stealth_transform(ct: client_transform) -> bool:
+def is_stealth_transform(ct: client_transform_data) -> bool:
     """Check if a client_transform represents a stealth client (all NaN values)."""
     if not ct.physical or not ct.head or not ct.right_hand or not ct.left_hand:
         return False
 
-    def is_nan_transform(t: transform) -> bool:
+    def is_nan_transform(t: transform_data) -> bool:
         return (
             math.isnan(t.pos_x)
             and math.isnan(t.pos_y)

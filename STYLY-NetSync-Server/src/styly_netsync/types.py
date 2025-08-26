@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class transform:
+class transform_data:
     """Transform data with position and rotation."""
 
     pos_x: float = 0.0
@@ -21,22 +21,22 @@ class transform:
 
 
 @dataclass
-class client_transform:
+class client_transform_data:
     """Complete transform data for a client."""
 
     client_no: int | None = None
     device_id: str | None = None
-    physical: transform | None = None
-    head: transform | None = None
-    right_hand: transform | None = None
-    left_hand: transform | None = None
-    virtuals: list[transform] | None = None
+    physical: transform_data | None = None
+    head: transform_data | None = None
+    right_hand: transform_data | None = None
+    left_hand: transform_data | None = None
+    virtuals: list[transform_data] | None = None
 
 
 @dataclass
-class room_snapshot:
+class room_transform_data:
     """Complete snapshot of a room's state."""
 
     room_id: str
-    clients: dict[int, client_transform] = field(default_factory=dict)
+    clients: dict[int, client_transform_data] = field(default_factory=dict)
     timestamp: float = 0.0  # monotonic seconds when snapshot was updated
