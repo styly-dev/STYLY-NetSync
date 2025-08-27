@@ -1,8 +1,8 @@
 **/.DS_Store
-.claude/settings.local.json
 .vscode/settings.json
 .mcp.json
 .serena/*
 **/.serena/*
+**/.claude/settings.local.json
 **/.claude/commands/*
 **/.claude/agents/*
