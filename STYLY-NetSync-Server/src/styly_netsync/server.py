@@ -22,14 +22,8 @@ from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any
-
 import zmq
-
-# Handle both package and direct script execution
-try:
-    from . import binary_serializer
-except ImportError:
-    import binary_serializer
+from . import binary_serializer
 
 # Log configuration
 logging.basicConfig(
@@ -38,7 +32,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
 
 @lru_cache(maxsize=1)
 def get_version() -> str:
