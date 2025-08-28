@@ -110,7 +110,7 @@ class TestAllRunMethods:
         assert code == 0
 
     def test_server_module_execution_help(self):
-        """Test: python -m styly_netsync --help"""
+        """Test: python -m styly_netsync --help (development/debugging)"""
         success, stdout, stderr, code = self.run_command(
             [sys.executable, '-m', 'styly_netsync'],
             args=['--help'],
@@ -120,42 +120,13 @@ class TestAllRunMethods:
         assert "STYLY NetSync Server" in stdout or "STYLY NetSync Server" in stderr
         assert code == 0
 
-    def test_server_direct_script_help(self):
-        """Test: python src/styly_netsync/server.py --help"""
-        success, stdout, stderr, code = self.run_command(
-            [sys.executable, 'src/styly_netsync/server.py'],
-            args=['--help'],
-            expect_help=True
-        )
-        assert success, f"Failed with stderr: {stderr}"
-        assert "STYLY NetSync Server" in stdout or "STYLY NetSync Server" in stderr
-        assert code == 0
+    # Note: Direct script execution (python server.py) is no longer supported
 
     def test_server_cli_entry_point_run(self):
         """Test: styly-netsync-server (brief run)"""
         success, stdout, stderr, code = self.run_command(
             'styly-netsync-server',
             args=['--dealer-port', '15555', '--pub-port', '15556', '--beacon-port', '19999'],
-            expect_help=False,
-            timeout=3
-        )
-        assert success, f"Server failed to start. stderr: {stderr}"
-
-    def test_server_module_execution_run(self):
-        """Test: python -m styly_netsync (brief run)"""
-        success, stdout, stderr, code = self.run_command(
-            [sys.executable, '-m', 'styly_netsync'],
-            args=['--dealer-port', '25555', '--pub-port', '25556', '--beacon-port', '29999'],
-            expect_help=False,
-            timeout=3
-        )
-        assert success, f"Server failed to start. stderr: {stderr}"
-
-    def test_server_direct_script_run(self):
-        """Test: python src/styly_netsync/server.py (brief run)"""
-        success, stdout, stderr, code = self.run_command(
-            [sys.executable, 'src/styly_netsync/server.py'],
-            args=['--dealer-port', '35555', '--pub-port', '35556', '--beacon-port', '39999'],
             expect_help=False,
             timeout=3
         )
@@ -174,27 +145,9 @@ class TestAllRunMethods:
         assert "STYLY NetSync Client Simulator" in stdout or "Client Simulator" in stdout or "client_simulator" in stdout.lower()
         assert code == 0
 
-    def test_simulator_direct_script_help(self):
-        """Test: python src/styly_netsync/client_simulator.py --help"""
-        success, stdout, stderr, code = self.run_command(
-            [sys.executable, 'src/styly_netsync/client_simulator.py'],
-            args=['--help'],
-            expect_help=True
-        )
-        assert success, f"Failed with stderr: {stderr}"
-        assert "STYLY NetSync Client Simulator" in stdout or "Client Simulator" in stdout or "client_simulator" in stdout.lower()
-        assert code == 0
-
-    def test_simulator_module_execution_help(self):
-        """Test: python -m styly_netsync.client_simulator --help"""
-        success, stdout, stderr, code = self.run_command(
-            [sys.executable, '-m', 'styly_netsync.client_simulator'],
-            args=['--help'],
-            expect_help=True
-        )
-        assert success, f"Failed with stderr: {stderr}"
-        assert "STYLY NetSync Client Simulator" in stdout or "Client Simulator" in stdout or "client_simulator" in stdout.lower()
-        assert code == 0
+    # Removed deprecated execution methods:
+    # - python src/styly_netsync/client_simulator.py
+    # - python -m styly_netsync.client_simulator
 
     # Server options tests
 

@@ -28,26 +28,24 @@ pip install -e .
 # Or install with dev dependencies
 pip install -e ".[dev]"
 
-# Run server (after installation)
-styly-netsync-server                           # Using CLI entry point
-python -m styly_netsync                        # As Python module
-python src/styly_netsync/server.py             # Direct script
-dev                                             # Convenience script (after pip install -e .)
-
-# Server options
+# Run server - Method Priority:
+# 1. Recommended: Using installed CLI commands
+styly-netsync-server                           # Default settings
 styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999 --name "My-Server"
 styly-netsync-server --no-beacon               # Disable UDP discovery
 
-# Using uv (recommended for quick testing)
-uvx styly-netsync-server                       # One-time execution without installation
-uv run dev                                      # Development mode with auto-dependency installation
-uv run dev --dealer-port 6000 --pub-port 6001  # With custom ports
+# 2. For development/debugging: Module execution
+python -m styly_netsync                        # Useful for specifying Python version
+python3.11 -m styly_netsync --no-beacon        # Explicit Python version
+venv/bin/python -m styly_netsync               # Specific virtual environment
+
+# 3. Quick testing without installation
+uvx styly-netsync-server                       # One-time execution
 uvx --from . styly-netsync-server              # Run from current directory
 uvx --from . styly-netsync-simulator --clients 50  # Test with simulator
 
 # Run client simulator
 styly-netsync-simulator --clients 100 --server tcp://localhost --room default_room
-python src/styly_netsync/client_simulator.py --clients 100  # Alternative
 
 # Development tools
 black src/ tests/          # Format code (includes tests)
@@ -324,7 +322,7 @@ kill -9 <PID>
 - `src/styly_netsync/binary_serializer.py`: Binary protocol implementation
 - `src/styly_netsync/client_simulator.py`: Load testing with movement patterns
 - `src/styly_netsync/cli.py`: CLI entry point wrapper
-- `src/styly_netsync/__main__.py`: Module execution support
+- `src/styly_netsync/__main__.py`: Module execution support (python -m)
 - `requirements.txt`: Python dependencies (pyzmq 26.4.0)
 - `pyproject.toml`: Package configuration with dev tools
 - `tests/integration/test_client.py`: Basic client integration test
