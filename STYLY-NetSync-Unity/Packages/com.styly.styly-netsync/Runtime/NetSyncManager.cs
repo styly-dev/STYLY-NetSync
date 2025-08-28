@@ -175,6 +175,9 @@ namespace Styly.NetSync
         private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
         private bool _hasInvokedReady = false;
         private bool _shouldCheckReady = false;
+        // Battery monitoring fields
+        private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
+        private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
@@ -283,6 +286,9 @@ namespace Styly.NetSync
 
             // Flush pending RPCs
             _rpcManager?.FlushPendingIfReady(_roomId);
+            
+            // Update battery level periodically (must be in main thread)
+            UpdateBatteryLevel();
 
             LogStatistics();
         }
@@ -353,6 +359,9 @@ namespace Styly.NetSync
         {
             DebugLog("Connection established successfully");
             _shouldCheckReady = true;
+            
+            // Initialize battery level immediately on connection
+            _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
         }
 
         private void OnRemoteAvatarDisconnected(int clientNo)
@@ -567,6 +576,41 @@ namespace Styly.NetSync
         private void DebugLog(string msg)
         {
             if (_enableDebugLogs) { Debug.Log($"[NetSyncManager] {msg}"); }
+        }
+
+        /// <summary>
+        /// Updates battery level information every 60 seconds via client network variable
+        /// </summary>
+        private void UpdateBatteryLevel()
+        {
+            float currentTime = Time.time;
+            if (currentTime - _lastBatteryUpdate >= _batteryUpdateInterval)
+            {
+                _lastBatteryUpdate = currentTime;
+                
+                // Get battery level from Unity SystemInfo
+                float batteryLevel = SystemInfo.batteryLevel;
+                string batteryLevelString;
+                
+                // Handle case where battery level is unavailable (-1)
+                if (batteryLevel < 0)
+                {
+                    batteryLevelString = "N/A";
+                }
+                else
+                {
+                    // Convert to string with 2 decimal places
+                    batteryLevelString = batteryLevel.ToString("F2");
+                }
+                
+                // Set as client network variable so other clients can see this device's battery level
+                SetClientVariable("BatteryLevel", batteryLevelString);
+                
+                if (_enableDebugLogs)
+                {
+                    DebugLog($"Battery level updated: {batteryLevelString}");
+                }
+            }
         }
         #endregion ------------------------------------------------------------------------
     }
