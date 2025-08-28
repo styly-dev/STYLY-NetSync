@@ -84,11 +84,11 @@ class SimulatedClient:
         delta_time = current_time - self.last_update_time
         self.last_update_time = current_time
 
-        # Store previous position for direction calculation
-        self.previous_position = list(self.current_position)
-
         # Update avatar movement
         new_position = self._update_movement(elapsed_time, delta_time)
+
+        # Store previous position for direction calculation
+        self.previous_position = list(self.current_position)
         self.current_position = list(new_position)
 
         # Update rotation to face movement direction
