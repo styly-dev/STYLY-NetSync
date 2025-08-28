@@ -4,11 +4,12 @@ Main entry point for running STYLY NetSync Server as a module.
 This allows the package to be executed with:
     python -m styly_netsync
 
-The main() function from the server module handles all command-line argument parsing
-and server initialization.
+This is useful for development and debugging purposes.
+The recommended way to run the server is using the installed CLI command:
+    styly-netsync-server
 """
 
-from .server import main
+from .cli import cli_main
 
 if __name__ == "__main__":
-    main()
+    cli_main()

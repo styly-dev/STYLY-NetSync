@@ -583,7 +583,3 @@ def main():
         except Exception as e:
             logger.error(f"Error during simulator shutdown: {e}")
         logger.info("Client simulator shutdown complete.")
-
-
-if __name__ == "__main__":
-    main()

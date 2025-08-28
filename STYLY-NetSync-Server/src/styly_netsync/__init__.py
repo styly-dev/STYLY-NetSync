@@ -9,12 +9,10 @@ Main Classes:
     NetSyncServer: The main server class for multiplayer coordination
     net_sync_manager: Python client for connecting to NetSync servers
 
-Main Functions:
-    main: Command-line entry point for running the server
-
 Examples:
-    # Run server as a module
-    python -m styly_netsync
+    # Run server via CLI (after installation)
+    styly-netsync-server
+    styly-netsync-simulator
 
     # Use server programmatically
     from styly_netsync import NetSyncServer
@@ -29,14 +27,13 @@ Examples:
 """
 
 from .client import net_sync_manager
-from .server import NetSyncServer, get_version, main
+from .server import NetSyncServer, get_version
 from .types import client_transform_data, room_transform_data, transform_data
 
 # Export public API
 __all__ = [
     # Server API
     "NetSyncServer",
-    "main",
     "get_version",
     # Client API
     "net_sync_manager",
