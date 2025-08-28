@@ -15,13 +15,7 @@ from enum import Enum
 
 import zmq
 
-# Import the binary serializer from the same package
-try:
-    from .binary_serializer import serialize_client_transform
-except ImportError:
-    # Fallback for direct script execution
-    from binary_serializer import serialize_client_transform
-
+from styly_netsync import binary_serializer
 
 class MovementPattern(Enum):
     """Movement patterns matching DebugMoveAvatar.cs"""
@@ -46,6 +40,8 @@ class SimulatedClient:
         self.movement_pattern = movement_pattern
         self.start_position = start_position
         self.current_position = list(start_position)
+        self.previous_position = list(start_position)
+        self.current_rotation_y = 0.0
         self.start_time = time.monotonic()
 
         # Movement parameters (matching DebugMoveAvatar.cs defaults)
@@ -88,8 +84,15 @@ class SimulatedClient:
         delta_time = current_time - self.last_update_time
         self.last_update_time = current_time
 
+        # Store previous position for direction calculation
+        self.previous_position = list(self.current_position)
+
         # Update avatar movement
         new_position = self._update_movement(elapsed_time, delta_time)
+        self.current_position = list(new_position)
+
+        # Update rotation to face movement direction
+        self._update_rotation(delta_time)
 
         # Calculate head position (1.7m above avatar center)
         head_pos = [new_position[0], new_position[1] + 1.7, new_position[2]]
@@ -113,7 +116,7 @@ class SimulatedClient:
                 "posY": 0,  # Y is always 0 for physical transform
                 "posZ": new_position[2],
                 "rotX": 0,
-                "rotY": 0,  # For simplicity, no rotation in simulation
+                "rotY": self.current_rotation_y,
                 "rotZ": 0,
                 "isLocalSpace": True,
             },
@@ -122,7 +125,7 @@ class SimulatedClient:
                 "posY": head_pos[1],
                 "posZ": head_pos[2],
                 "rotX": 0,
-                "rotY": 0,
+                "rotY": self.current_rotation_y,
                 "rotZ": 0,
                 "isLocalSpace": False,
             },
@@ -148,6 +151,46 @@ class SimulatedClient:
         }
 
         return transform_data
+    
+    def _update_rotation(self, delta_time: float):
+        """Update rotation to face movement direction."""
+        # Calculate movement vector
+        dx = self.current_position[0] - self.previous_position[0]
+        dz = self.current_position[2] - self.previous_position[2]
+        
+        # Only update rotation if there's significant movement (avoid jitter)
+        movement_magnitude = math.sqrt(dx * dx + dz * dz)
+        if movement_magnitude > 0.01:
+            # Calculate angle using atan2 for coordinate system where +Z is "forward"
+            angle = math.atan2(dx, dz)
+            
+            # Smooth rotation interpolation to avoid sudden snaps
+            rotation_speed = 5.0
+            max_rotation_change = rotation_speed * delta_time
+            
+            # Calculate shortest angular distance
+            angle_diff = angle - self.current_rotation_y
+            
+            # Normalize angle difference to [-π, π]
+            while angle_diff > math.pi:
+                angle_diff -= 2 * math.pi
+            while angle_diff < -math.pi:
+                angle_diff += 2 * math.pi
+            
+            # Apply limited rotation change
+            if abs(angle_diff) <= max_rotation_change:
+                self.current_rotation_y = angle
+            else:
+                if angle_diff > 0:
+                    self.current_rotation_y += max_rotation_change
+                else:
+                    self.current_rotation_y -= max_rotation_change
+                
+                # Normalize final angle to [-π, π]
+                while self.current_rotation_y > math.pi:
+                    self.current_rotation_y -= 2 * math.pi
+                while self.current_rotation_y < -math.pi:
+                    self.current_rotation_y += 2 * math.pi
 
     def _update_movement(self, elapsed_time: float, delta_time: float) -> list[float]:
         """Update movement based on selected pattern."""
@@ -471,7 +514,7 @@ class ClientSimulator:
                     transform_data = client.update()
 
                     # Serialize to binary format
-                    binary_data = serialize_client_transform(transform_data)
+                    binary_data = binary_serializer.serialize_client_transform(transform_data)
 
                     # Send to server with room_id as separate frame
                     dealer_socket.send_multipart(
