@@ -28,17 +28,23 @@ namespace Styly.NetSync.Editor
             EditorGUILayout.Space();
             
             // Client Network Variables section
-            _showClientVariables = EditorGUILayout.BeginFoldoutHeaderGroup(_showClientVariables, $"Client Network Variables (Client #{_netSyncAvatar.ClientNo})");
+            int displayClientNo = _netSyncAvatar.ClientNo;
+            if (displayClientNo == 0 && NetSyncManager.Instance != null)
+            {
+                // Fallback to NetSyncManager's client number early in play mode
+                displayClientNo = NetSyncManager.Instance.ClientNo;
+            }
+            _showClientVariables = EditorGUILayout.BeginFoldoutHeaderGroup(_showClientVariables, $"Client Network Variables (Client #{displayClientNo})");
             if (_showClientVariables)
             {
                 EditorGUI.indentLevel++;
                 
-                // Get client variables for this network object's client
-                var clientVars = NetSyncManager.Instance != null ? NetSyncManager.Instance.GetAllClientVariables(_netSyncAvatar.ClientNo) : null;
+                // Get client variables for this network object's client (with fallback)
+                var clientVars = NetSyncManager.Instance != null ? NetSyncManager.Instance.GetAllClientVariables(displayClientNo) : null;
                 
                 if (clientVars == null || clientVars.Count == 0)
                 {
-                    EditorGUILayout.HelpBox($"No client variables set for client #{_netSyncAvatar.ClientNo}", MessageType.Info);
+                    EditorGUILayout.HelpBox($"No client variables set for client #{displayClientNo}", MessageType.Info);
                 }
                 else
                 {
