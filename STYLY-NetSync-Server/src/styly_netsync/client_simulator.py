@@ -34,7 +34,9 @@ import zmq
 # Import public APIs from styly_netsync module
 from styly_netsync.binary_serializer import (
     MSG_CLIENT_TRANSFORM,
+    MSG_DEVICE_ID_MAPPING,
     MSG_CLIENT_VAR_SET,
+    deserialize,
     serialize_client_transform,
     serialize_client_var_set,
 )
@@ -441,25 +443,51 @@ class TransformBuilder:
 # ============================================================================
 
 class NetworkTransport:
-    """Handles ZeroMQ network communication."""
-    
-    def __init__(self, context: zmq.Context, server_addr: str, dealer_port: int):
+    """Handles ZeroMQ network communication (DEALER for send, SUB for recv)."""
+
+    def __init__(
+        self,
+        context: zmq.Context,
+        server_addr: str,
+        dealer_port: int,
+        sub_port: int,
+        room_id: str,
+    ):
         self.context = context
         self.server_addr = server_addr
         self.dealer_port = dealer_port
+        self.sub_port = sub_port
+        self.room_id = room_id
         self.socket: Optional[zmq.Socket] = None
+        self.sub_socket: Optional[zmq.Socket] = None
         self.logger = logging.getLogger(self.__class__.__name__)
-    
+
     def connect(self) -> bool:
-        """Establish connection to server."""
+        """Establish connection to server (both DEALER and SUB)."""
         try:
+            # DEALER for sending
             self.socket = self.context.socket(zmq.DEALER)
             self.socket.setsockopt(zmq.LINGER, 0)
             self.socket.setsockopt(zmq.RCVTIMEO, 1000)
-            
-            endpoint = f"{self.server_addr}:{self.dealer_port}"
-            self.socket.connect(endpoint)
-            self.logger.debug(f"Connected to {endpoint}")
+
+            dealer_endpoint = f"{self.server_addr}:{self.dealer_port}"
+            self.socket.connect(dealer_endpoint)
+            self.logger.debug(f"Connected DEALER to {dealer_endpoint}")
+
+            # SUB for receiving broadcasts (ID mappings, NV syncs, etc.)
+            try:
+                self.sub_socket = self.context.socket(zmq.SUB)
+                self.sub_socket.setsockopt(zmq.LINGER, 0)
+                self.sub_socket.setsockopt(zmq.RCVTIMEO, 10)  # non-blocking-ish
+                sub_endpoint = f"{self.server_addr}:{self.sub_port}"
+                self.sub_socket.connect(sub_endpoint)
+                # Subscribe to room topic
+                self.sub_socket.setsockopt(zmq.SUBSCRIBE, self.room_id.encode("utf-8"))
+                self.logger.debug(f"Connected SUB to {sub_endpoint} topic '{self.room_id}'")
+            except Exception as se:
+                # SUB is optional for transform-only runs; log and continue
+                self.logger.warning(f"Failed to setup SUB socket: {se}")
+
             return True
         except Exception as e:
             self.logger.error(f"Failed to connect: {e}")
@@ -503,12 +531,40 @@ class NetworkTransport:
         except Exception as e:
             self.logger.error(f"Failed to send client variable: {e}")
             return False
+
+    def recv_broadcast(self) -> Optional[Tuple[int, Dict[str, Any]]]:
+        """Receive a single broadcast message if available.
+
+        Returns (msg_type, data) or None when no message is available.
+        """
+        if not self.sub_socket:
+            return None
+        try:
+            parts = self.sub_socket.recv_multipart(flags=zmq.NOBLOCK)
+            if len(parts) != 2:
+                return None
+            topic, payload = parts
+            # Ensure topic matches expected room (defensive)
+            if topic.decode("utf-8", errors="ignore") != self.room_id:
+                return None
+            msg_type, data, _ = deserialize(payload)
+            if data is None:
+                return None
+            return msg_type, data
+        except zmq.Again:
+            return None
+        except Exception as e:
+            self.logger.debug(f"SUB receive error: {e}")
+            return None
     
     def disconnect(self):
         """Close connection to server."""
         if self.socket:
             self.socket.close()
             self.socket = None
+        if self.sub_socket:
+            self.sub_socket.close()
+            self.sub_socket = None
 
 
 # ============================================================================
@@ -544,11 +600,14 @@ class SimulatedClient:
         # Battery simulation state
         self.battery_level = random.uniform(self.BATTERY_INITIAL_MIN, self.BATTERY_INITIAL_MAX)
         self.last_battery_update = self.start_time
-        self.last_battery_send = self.start_time
-        # Use a unique client number based on device ID hash for consistency
-        self.client_number = abs(hash(self.config.device_id)) % 65535 + 1
-        
-        self.logger.info(f"Initialized with battery level: {self.battery_level:.1f}%, client #{self.client_number}")
+        # Force initial battery send as soon as client number is known
+        self.last_battery_send = self.start_time - self.BATTERY_UPDATE_INTERVAL
+        # Client number assigned by server after handshake (0 until assigned)
+        self.client_number = 0
+
+        self.logger.info(
+            f"Initialized with battery level: {self.battery_level:.1f}%, awaiting client number assignment"
+        )
     
     def run(self, stop_event: threading.Event):
         """Run the client simulation loop."""
@@ -586,8 +645,11 @@ class SimulatedClient:
                         self.logger.debug(
                             f"Sent update: pos=({new_position.x:.2f}, {new_position.z:.2f})"
                         )
-                    
-                    # Update battery simulation
+
+                    # Poll incoming broadcasts (ID mappings, etc.) to learn our client number first
+                    self._poll_broadcasts()
+
+                    # Update battery simulation (may send immediately after client no assigned)
                     self._update_battery(current_time)
                     
                     self.last_update_time = current_time
@@ -602,7 +664,7 @@ class SimulatedClient:
             self.running = False
             self.transport.disconnect()
             self.logger.info(f"Client stopped with final battery level: {self.battery_level:.1f}%")
-    
+
     def _update_battery(self, current_time: float):
         """Update battery level and send updates when needed."""
         # Update battery drain
@@ -613,13 +675,32 @@ class SimulatedClient:
         
         # Send battery update periodically
         elapsed_since_send = current_time - self.last_battery_send
-        if elapsed_since_send >= self.BATTERY_UPDATE_INTERVAL:
+        if elapsed_since_send >= self.BATTERY_UPDATE_INTERVAL and self.client_number > 0:
             battery_value = f"{self.battery_level:.1f}"
             if self.transport.send_client_variable(self.room_id, self.client_number, "BatteryLevel", battery_value):
                 self.logger.debug(f"Sent battery level: {battery_value}%")
             else:
                 self.logger.warning("Failed to send battery level update")
             self.last_battery_send = current_time
+
+    def _poll_broadcasts(self):
+        """Poll SUB socket for broadcasts and update local client number when assigned."""
+        msg = self.transport.recv_broadcast()
+        if not msg:
+            return
+        msg_type, data = msg
+        try:
+            if msg_type == MSG_DEVICE_ID_MAPPING:
+                mappings = data.get("mappings", [])
+                for m in mappings:
+                    if m.get("deviceId") == self.config.device_id:
+                        assigned = int(m.get("clientNo", 0))
+                        if assigned and assigned != self.client_number:
+                            self.client_number = assigned
+                            self.logger.info(f"Assigned client number by server: {self.client_number}")
+                        break
+        except Exception as e:
+            self.logger.debug(f"Failed to process broadcast: {e}")
 
 
 # ============================================================================
@@ -780,9 +861,11 @@ class ClientSimulator:
             
             # Create transport
             transport = NetworkTransport(
-                self.context, 
-                self.server_addr, 
-                self.dealer_port
+                self.context,
+                self.server_addr,
+                self.dealer_port,
+                self.sub_port,
+                self.room_id,
             )
             
             # Create client
