@@ -744,6 +744,9 @@ class NetSyncServer:
             # Conflict resolution: last-writer-wins with timestamp comparison
             if var_name in global_vars:
                 existing = global_vars[var_name]
+                # Skip if value unchanged (no-op)
+                if existing.get("value") == var_value:
+                    return False
                 if timestamp < existing["timestamp"] or (
                     timestamp == existing["timestamp"]
                     and sender_client_no < existing["lastWriterClientNo"]
@@ -830,6 +833,9 @@ class NetSyncServer:
             # Conflict resolution: last-writer-wins with timestamp comparison
             if var_name in client_vars:
                 existing = client_vars[var_name]
+                # Skip if value unchanged (no-op)
+                if existing.get("value") == var_value:
+                    return False
                 if timestamp < existing["timestamp"] or (
                     timestamp == existing["timestamp"]
                     and sender_client_no < existing["lastWriterClientNo"]

@@ -274,13 +274,15 @@ namespace Styly.NetSync
                         if (!string.IsNullOrEmpty(name) && value != null)
                         {
                             var oldValue = _globalVariables.TryGetValue(name, out var existing) ? existing : null;
+                            // Skip if value is unchanged
+                            if (oldValue == value)
+                            {
+                                continue;
+                            }
                             _globalVariables[name] = value;
 
-                            // Trigger event with direct method call (NOT SendMessage)
-                            if (OnGlobalVariableChanged != null)
-                            {
-                                OnGlobalVariableChanged.Invoke(name, oldValue, value);
-                            }
+                            // Trigger event only when changed
+                            OnGlobalVariableChanged?.Invoke(name, oldValue, value);
                         }
                     }
                 }
@@ -323,13 +325,16 @@ namespace Styly.NetSync
                                 if (!string.IsNullOrEmpty(name) && value != null)
                                 {
                                     var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
+                                    // Skip if value is unchanged
+                                    if (oldValue == value)
+                                    {
+                                        continue;
+                                    }
+
                                     clientVars[name] = value;
 
-                                    // Trigger event with direct method call (NOT SendMessage)
-                                    if (OnClientVariableChanged != null)
-                                    {
-                                        OnClientVariableChanged.Invoke(clientNo, name, oldValue, value);
-                                    }
+                                    // Trigger event only when changed
+                                    OnClientVariableChanged?.Invoke(clientNo, name, oldValue, value);
                                 }
                             }
                         }
