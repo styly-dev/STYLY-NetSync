@@ -519,10 +519,7 @@ class SimulatedClient:
     """Represents a single simulated client."""
     
     # Battery simulation constants
-    BATTERY_INITIAL_MIN = 50.0        # %
-    BATTERY_INITIAL_MAX = 100.0       # %
-    BATTERY_DRAIN_RATE = 10.0 / 60.0  # %-points lost per second (10%/min)
-    BATTERY_UPDATE_INTERVAL = 60.0     # Send battery updates every 5 seconds
+    BATTERY_UPDATE_INTERVAL = 60.0     # Send battery updates every 60 seconds
     
     def __init__(
         self, 
