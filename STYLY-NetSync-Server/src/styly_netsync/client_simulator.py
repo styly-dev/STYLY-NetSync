@@ -34,7 +34,9 @@ import zmq
 # Import public APIs from styly_netsync module
 from styly_netsync.binary_serializer import (
     MSG_CLIENT_TRANSFORM,
+    MSG_CLIENT_VAR_SET,
     serialize_client_transform,
+    serialize_client_var_set,
 )
 
 
@@ -479,6 +481,29 @@ class NetworkTransport:
             self.logger.error(f"Failed to send transform: {e}")
             return False
     
+    def send_client_variable(self, room_id: str, sender_client_no: int, var_name: str, value: str) -> bool:
+        """Send client variable data to server."""
+        if not self.socket:
+            return False
+        
+        try:
+            var_data = {
+                "senderClientNo": sender_client_no,
+                "targetClientNo": sender_client_no,  # Set variable for ourselves
+                "variableName": var_name,
+                "variableValue": value,
+                "timestamp": time.time(),
+            }
+            binary_data = serialize_client_var_set(var_data)
+            self.socket.send_multipart([
+                room_id.encode("utf-8"),
+                binary_data,
+            ])
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to send client variable: {e}")
+            return False
+    
     def disconnect(self):
         """Close connection to server."""
         if self.socket:
@@ -492,6 +517,12 @@ class NetworkTransport:
 
 class SimulatedClient:
     """Represents a single simulated client."""
+    
+    # Battery simulation constants
+    BATTERY_INITIAL_MIN = 50.0        # %
+    BATTERY_INITIAL_MAX = 100.0       # %
+    BATTERY_DRAIN_RATE = 10.0 / 60.0  # %-points lost per second (10%/min)
+    BATTERY_UPDATE_INTERVAL = 60.0     # Send battery updates every 5 seconds
     
     def __init__(
         self, 
@@ -509,6 +540,15 @@ class SimulatedClient:
         self.start_time = time.monotonic()
         self.last_update_time = self.start_time
         self.running = False
+        
+        # Battery simulation state
+        self.battery_level = random.uniform(self.BATTERY_INITIAL_MIN, self.BATTERY_INITIAL_MAX)
+        self.last_battery_update = self.start_time
+        self.last_battery_send = self.start_time
+        # Use a unique client number based on device ID hash for consistency
+        self.client_number = abs(hash(self.config.device_id)) % 65535 + 1
+        
+        self.logger.info(f"Initialized with battery level: {self.battery_level:.1f}%, client #{self.client_number}")
     
     def run(self, stop_event: threading.Event):
         """Run the client simulation loop."""
@@ -547,6 +587,9 @@ class SimulatedClient:
                             f"Sent update: pos=({new_position.x:.2f}, {new_position.z:.2f})"
                         )
                     
+                    # Update battery simulation
+                    self._update_battery(current_time)
+                    
                     self.last_update_time = current_time
                     last_send_time = current_time
                 
@@ -558,7 +601,25 @@ class SimulatedClient:
         finally:
             self.running = False
             self.transport.disconnect()
-            self.logger.info("Client stopped")
+            self.logger.info(f"Client stopped with final battery level: {self.battery_level:.1f}%")
+    
+    def _update_battery(self, current_time: float):
+        """Update battery level and send updates when needed."""
+        # Update battery drain
+        elapsed_since_battery_update = current_time - self.last_battery_update
+        if elapsed_since_battery_update > 0:
+            self.battery_level = max(0.0, self.battery_level - (elapsed_since_battery_update * self.BATTERY_DRAIN_RATE))
+            self.last_battery_update = current_time
+        
+        # Send battery update periodically
+        elapsed_since_send = current_time - self.last_battery_send
+        if elapsed_since_send >= self.BATTERY_UPDATE_INTERVAL:
+            battery_value = f"{self.battery_level:.1f}"
+            if self.transport.send_client_variable(self.room_id, self.client_number, "BatteryLevel", battery_value):
+                self.logger.debug(f"Sent battery level: {battery_value}%")
+            else:
+                self.logger.warning("Failed to send battery level update")
+            self.last_battery_send = current_time
 
 
 # ============================================================================
