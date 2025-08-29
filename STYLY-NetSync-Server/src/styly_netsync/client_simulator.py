@@ -443,7 +443,7 @@ class TransformBuilder:
 # ============================================================================
 
 class NetworkTransport:
-    """Handles ZeroMQ network communication (DEALER for send, SUB for recv)."""
+    """Handles ZeroMQ network communication (DEALER for send, optional SUB for recv)."""
 
     def __init__(
         self,
@@ -452,12 +452,14 @@ class NetworkTransport:
         dealer_port: int,
         sub_port: int,
         room_id: str,
+        enable_sub: bool = True,
     ):
         self.context = context
         self.server_addr = server_addr
         self.dealer_port = dealer_port
         self.sub_port = sub_port
         self.room_id = room_id
+        self.enable_sub = enable_sub
         self.socket: Optional[zmq.Socket] = None
         self.sub_socket: Optional[zmq.Socket] = None
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -474,19 +476,20 @@ class NetworkTransport:
             self.socket.connect(dealer_endpoint)
             self.logger.debug(f"Connected DEALER to {dealer_endpoint}")
 
-            # SUB for receiving broadcasts (ID mappings, NV syncs, etc.)
-            try:
-                self.sub_socket = self.context.socket(zmq.SUB)
-                self.sub_socket.setsockopt(zmq.LINGER, 0)
-                self.sub_socket.setsockopt(zmq.RCVTIMEO, 10)  # non-blocking-ish
-                sub_endpoint = f"{self.server_addr}:{self.sub_port}"
-                self.sub_socket.connect(sub_endpoint)
-                # Subscribe to room topic
-                self.sub_socket.setsockopt(zmq.SUBSCRIBE, self.room_id.encode("utf-8"))
-                self.logger.debug(f"Connected SUB to {sub_endpoint} topic '{self.room_id}'")
-            except Exception as se:
-                # SUB is optional for transform-only runs; log and continue
-                self.logger.warning(f"Failed to setup SUB socket: {se}")
+            # Optional SUB for receiving broadcasts (ID mappings, NV syncs, etc.)
+            if self.enable_sub:
+                try:
+                    self.sub_socket = self.context.socket(zmq.SUB)
+                    self.sub_socket.setsockopt(zmq.LINGER, 0)
+                    self.sub_socket.setsockopt(zmq.RCVTIMEO, 10)  # non-blocking-ish
+                    sub_endpoint = f"{self.server_addr}:{self.sub_port}"
+                    self.sub_socket.connect(sub_endpoint)
+                    # Subscribe to room topic
+                    self.sub_socket.setsockopt(zmq.SUBSCRIBE, self.room_id.encode("utf-8"))
+                    self.logger.debug(f"Connected SUB to {sub_endpoint} topic '{self.room_id}'")
+                except Exception as se:
+                    # SUB is optional; log and continue
+                    self.logger.warning(f"Failed to setup SUB socket: {se}")
 
             return True
         except Exception as e:
@@ -533,29 +536,49 @@ class NetworkTransport:
             return False
 
     def recv_broadcast(self) -> Optional[Tuple[int, Dict[str, Any]]]:
-        """Receive a single broadcast message if available.
+        """Scan incoming broadcasts quickly and return ID mapping if found.
 
-        Returns (msg_type, data) or None when no message is available.
+        Returns (msg_type, data) for MSG_DEVICE_ID_MAPPING else None. Drains a
+        limited number of messages per call to reduce backlog latency.
         """
         if not self.sub_socket:
             return None
-        try:
-            parts = self.sub_socket.recv_multipart(flags=zmq.NOBLOCK)
+        scans = 0
+        MAX_SCANS = 50  # drain up to 50 messages per tick
+        while scans < MAX_SCANS:
+            scans += 1
+            try:
+                parts = self.sub_socket.recv_multipart(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                return None
+            except Exception as e:
+                self.logger.debug(f"SUB receive error: {e}")
+                return None
+
             if len(parts) != 2:
-                return None
+                continue
             topic, payload = parts
-            # Ensure topic matches expected room (defensive)
             if topic.decode("utf-8", errors="ignore") != self.room_id:
-                return None
-            msg_type, data, _ = deserialize(payload)
-            if data is None:
-                return None
-            return msg_type, data
-        except zmq.Again:
-            return None
-        except Exception as e:
-            self.logger.debug(f"SUB receive error: {e}")
-            return None
+                continue
+
+            # Fast-path: inspect message type byte without full deserialize
+            try:
+                if not payload:
+                    continue
+                msg_type = payload[0]
+            except Exception:
+                continue
+
+            if msg_type == MSG_DEVICE_ID_MAPPING:
+                try:
+                    _, data, _ = deserialize(payload)
+                    if data is not None:
+                        return msg_type, data
+                except Exception:
+                    # ignore malformed
+                    continue
+            # For other message types, drop and continue scanning
+        return None
     
     def disconnect(self):
         """Close connection to server."""
@@ -565,6 +588,105 @@ class NetworkTransport:
         if self.sub_socket:
             self.sub_socket.close()
             self.sub_socket = None
+
+
+# ============================================================================
+# Shared Subscriber (Single SUB socket for all clients)
+# ============================================================================
+
+class SharedSubscriber:
+    """Single SUB socket that receives broadcasts and shares mappings."""
+
+    def __init__(self, context: zmq.Context, server_addr: str, sub_port: int, room_id: str):
+        self.context = context
+        self.server_addr = server_addr
+        self.sub_port = sub_port
+        self.room_id = room_id
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.socket: Optional[zmq.Socket] = None
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+        self._lock = threading.Lock()
+        self._device_to_client: Dict[str, int] = {}
+
+    def start(self) -> bool:
+        try:
+            self.socket = self.context.socket(zmq.SUB)
+            self.socket.setsockopt(zmq.LINGER, 0)
+            self.socket.setsockopt(zmq.RCVTIMEO, 10)
+            endpoint = f"{self.server_addr}:{self.sub_port}"
+            self.socket.connect(endpoint)
+            self.socket.setsockopt(zmq.SUBSCRIBE, self.room_id.encode("utf-8"))
+            self._running = True
+            self._thread = threading.Thread(target=self._loop, name="SharedSubscriber", daemon=True)
+            self._thread.start()
+            self.logger.debug(f"Shared SUB connected to {endpoint} topic '{self.room_id}'")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to start SharedSubscriber: {e}")
+            return False
+
+    def stop(self):
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            try:
+                self._thread.join(timeout=1.0)
+            except Exception:
+                pass
+        if self.socket:
+            try:
+                self.socket.close()
+            except Exception:
+                pass
+            self.socket = None
+
+    def get_client_no(self, device_id: str) -> int:
+        with self._lock:
+            return self._device_to_client.get(device_id, 0)
+
+    def _loop(self):
+        # Drain many messages each tick to avoid backlog
+        while self._running:
+            drained_any = False
+            for _ in range(200):  # aggressive drain
+                try:
+                    parts = self.socket.recv_multipart(flags=zmq.NOBLOCK)
+                except zmq.Again:
+                    break
+                except Exception as e:
+                    self.logger.debug(f"Shared SUB recv error: {e}")
+                    break
+
+                drained_any = True
+                if len(parts) != 2:
+                    continue
+                topic, payload = parts
+                if topic.decode("utf-8", errors="ignore") != self.room_id:
+                    continue
+                try:
+                    if not payload:
+                        continue
+                    msg_type = payload[0]
+                    if msg_type != MSG_DEVICE_ID_MAPPING:
+                        continue
+                    _, data, _ = deserialize(payload)
+                    if not data:
+                        continue
+                    mappings = data.get("mappings", [])
+                    if mappings:
+                        with self._lock:
+                            for m in mappings:
+                                did = m.get("deviceId")
+                                cno = int(m.get("clientNo", 0))
+                                if did and cno:
+                                    self._device_to_client[did] = cno
+                except Exception:
+                    # Ignore malformed
+                    continue
+
+            if not drained_any:
+                # Small sleep when idle
+                time.sleep(0.005)
 
 
 # ============================================================================
@@ -581,10 +703,11 @@ class SimulatedClient:
     BATTERY_UPDATE_INTERVAL = 60.0     # Send battery updates every 60 seconds
     
     def __init__(
-        self, 
+        self,
         config: SimulationConfig,
         transport: NetworkTransport,
-        room_id: str
+        room_id: str,
+        shared_subscriber: Optional["SharedSubscriber"] = None,
     ):
         self.config = config
         self.transport = transport
@@ -592,6 +715,7 @@ class SimulatedClient:
         self.movement = MovementStrategyFactory.create(config.movement_pattern, config)
         self.transform_builder = TransformBuilder(config)
         self.logger = logging.getLogger(f"Client-{config.device_id[-8:]}")
+        self.shared_subscriber = shared_subscriber
         
         self.start_time = time.monotonic()
         self.last_update_time = self.start_time
@@ -655,6 +779,10 @@ class SimulatedClient:
                     self.last_update_time = current_time
                     last_send_time = current_time
                 
+                # Opportunistically drain broadcasts more frequently than send rate
+                # to minimize assignment latency and queue buildup
+                self._poll_broadcasts()
+
                 # Small sleep to prevent busy waiting
                 time.sleep(0.01)
                 
@@ -684,7 +812,16 @@ class SimulatedClient:
             self.last_battery_send = current_time
 
     def _poll_broadcasts(self):
-        """Poll SUB socket for broadcasts and update local client number when assigned."""
+        """Update local client number from shared subscriber or fallback SUB."""
+        # Prefer shared subscriber for scalability
+        if self.shared_subscriber is not None:
+            assigned = self.shared_subscriber.get_client_no(self.config.device_id)
+            if assigned and assigned != self.client_number:
+                self.client_number = assigned
+                self.logger.info(f"Assigned client number by server: {self.client_number}")
+            return
+
+        # Fallback: use own transport SUB if available
         msg = self.transport.recv_broadcast()
         if not msg:
             return
@@ -819,6 +956,7 @@ class ClientSimulator:
         self.thread_pool = ClientThreadPool(num_clients)
         self.running = False
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.shared_subscriber: Optional[SharedSubscriber] = None
         
         # Setup signal handlers
         ResourceManager.setup_signal_handlers(self._signal_handler)
@@ -843,6 +981,11 @@ class ClientSimulator:
         self.logger.info(f"Server: {self.server_addr}:{self.dealer_port}")
         self.logger.info(f"Room: {self.room_id}")
         
+        # Start shared subscriber for ID mappings (single SUB for all clients)
+        self.shared_subscriber = SharedSubscriber(self.context, self.server_addr, self.sub_port, self.room_id)
+        if not self.shared_subscriber.start():
+            self.logger.warning("SharedSubscriber failed to start; falling back to per-client SUBs")
+
         # Create and start clients
         successful_clients = 0
         failed_clients = 0
@@ -866,10 +1009,11 @@ class ClientSimulator:
                 self.dealer_port,
                 self.sub_port,
                 self.room_id,
+                enable_sub=(self.shared_subscriber is None),  # disable per-client SUB if shared is running
             )
             
             # Create client
-            client = SimulatedClient(config, transport, self.room_id)
+            client = SimulatedClient(config, transport, self.room_id, shared_subscriber=self.shared_subscriber)
             
             # Add to thread pool
             if self.thread_pool.add_client(client):
@@ -917,6 +1061,13 @@ class ClientSimulator:
         
         # Stop all threads
         self.thread_pool.stop_all()
+        
+        # Stop shared subscriber
+        try:
+            if self.shared_subscriber:
+                self.shared_subscriber.stop()
+        except Exception as e:
+            self.logger.error(f"Error stopping SharedSubscriber: {e}")
         
         # Cleanup ZMQ context
         try:
