@@ -326,7 +326,7 @@ namespace Styly.NetSync
                                 {
                                     var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
                                     // Skip if value is unchanged
-                                    if (oldValue == value)
+                                    if (string.Equals(oldValue, value, StringComparison.Ordinal))
                                     {
                                         continue;
                                     }
