@@ -275,7 +275,7 @@ namespace Styly.NetSync
                         {
                             var oldValue = _globalVariables.TryGetValue(name, out var existing) ? existing : null;
                             // Skip if value is unchanged
-                            if (oldValue == value)
+                            if (object.Equals(oldValue, value))
                             {
                                 continue;
                             }
