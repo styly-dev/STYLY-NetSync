@@ -8,11 +8,11 @@
         "org.nuget.netmq": "4.0.2",
         "com.unity.xr.core-utils": "2.1.1",
         "com.unity.nuget.newtonsoft-json": "3.2.1",
-        "com.styly.styly-xr-rig": "0.4.4"
+        "com.styly.styly-xr-rig": "0.4.5"
       }
     },
     "com.styly.styly-xr-rig": {
-      "version": "0.4.4",
+      "version": "0.4.5",
       "depth": 1,
       "source": "registry",
       "dependencies": {

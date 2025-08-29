@@ -119,63 +119,6 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1001 &99100142
-PrefabInstance:
-  m_ObjectHideFlags: 0
-  serializedVersion: 2
-  m_Modification:
-    serializedVersion: 3
-    m_TransformParent: {fileID: 0}
-    m_Modifications:
-    - target: {fileID: 4062051036038346442, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_Name
-      value: STYLY XR Rig
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalPosition.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalPosition.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalPosition.z
-      value: -1
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalRotation.w
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalRotation.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalRotation.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalRotation.z
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.x
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 5778849293402468298, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
-      propertyPath: m_LocalEulerAnglesHint.z
-      value: 0
-      objectReference: {fileID: 0}
-    m_RemovedComponents: []
-    m_RemovedGameObjects: []
-    m_AddedGameObjects: []
-    m_AddedComponents: []
-  m_SourcePrefab: {fileID: 100100000, guid: 2f952482bf1d64a0a9fab4329f7e11b2, type: 3}
 --- !u!1 &128240247
 GameObject:
   m_ObjectHideFlags: 0
@@ -902,6 +845,63 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 65e15cd9d8379c449a0cee7e4d444a7a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+--- !u!1001 &1345725595
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 0}
+    m_Modifications:
+    - target: {fileID: 932545197216251793, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_Name
+      value: STYLY XR Rig
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: -1
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 932545197216251794, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
 --- !u!1 &1379146743
 GameObject:
   m_ObjectHideFlags: 0
@@ -1235,7 +1235,7 @@ MonoBehaviour:
   _roomId: default_room
   _localAvatarPrefab: {fileID: 5433920805635859656, guid: 533c4bfc8e64a634c991381ba7791b99, type: 3}
   _remoteAvatarPrefab: {fileID: 4943129801574805003, guid: ab3b1ca71deaa734dabad80f2cbbe3f6, type: 3}
-  OnClientConnected:
+  OnAvatarConnected:
     m_PersistentCalls:
       m_Calls: []
   OnClientDisconnected:
@@ -1262,6 +1262,9 @@ MonoBehaviour:
   OnClientVariableChanged:
     m_PersistentCalls:
       m_Calls: []
+  OnReady:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!4 &1846318900
 Transform:
   m_ObjectHideFlags: 0
@@ -1283,6 +1286,6 @@ SceneRoots:
   m_Roots:
   - {fileID: 519411593}
   - {fileID: 128240249}
-  - {fileID: 99100142}
   - {fileID: 1846318900}
   - {fileID: 690301447}
+  - {fileID: 1345725595}
