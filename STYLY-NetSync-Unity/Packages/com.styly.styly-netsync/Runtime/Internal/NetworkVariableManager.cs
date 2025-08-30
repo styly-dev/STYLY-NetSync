@@ -44,6 +44,47 @@ namespace Styly.NetSync
         // Events (using C# events, NOT SendMessage)
         public event Action<string, string, string> OnGlobalVariableChanged;
         public event Action<int, string, string, string> OnClientVariableChanged;
+        
+        // Flag to track if initial network variables have been received
+        private bool _hasReceivedInitialSync = false;
+        private DateTime _connectionEstablishedTime = DateTime.MinValue; // Track when connection was established
+        // Conservative timeout for initial network variable sync to handle empty rooms
+        private const float INITIAL_SYNC_TIMEOUT = 2.0f;
+        
+        public bool HasReceivedInitialSync => _hasReceivedInitialSync;
+        
+        /// <summary>
+        /// Reset the initial sync flag (called when connection is lost)
+        /// </summary>
+        public void ResetInitialSyncFlag()
+        {
+            _hasReceivedInitialSync = false;
+            _connectionEstablishedTime = DateTime.MinValue;
+        }
+        
+        /// <summary>
+        /// Called when connection is established to start tracking sync timeout
+        /// </summary>
+        public void OnConnectionEstablished()
+        {
+            _connectionEstablishedTime = DateTime.UtcNow;
+        }
+        
+        /// <summary>
+        /// Check if we should consider initial sync complete based on timeout
+        /// This handles cases where server has no variables to send
+        /// </summary>
+        public void CheckInitialSyncTimeout()
+        {
+            if (!_hasReceivedInitialSync && _connectionEstablishedTime != DateTime.MinValue)
+            {
+                if ((DateTime.UtcNow - _connectionEstablishedTime).TotalSeconds >= INITIAL_SYNC_TIMEOUT)
+                {
+                    _hasReceivedInitialSync = true;
+                    Debug.Log($"[NetworkVariableManager] Initial sync timeout after {INITIAL_SYNC_TIMEOUT}s - ready without variables");
+                }
+            }
+        }
 
         public NetworkVariableManager(ConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
         {
@@ -131,6 +172,10 @@ namespace Styly.NetSync
 
         public string GetGlobalVariable(string name, string defaultValue = null)
         {
+            if (!_hasReceivedInitialSync)
+            {
+                throw new InvalidOperationException("Cannot get global variables before OnReady event. Please wait for OnReady to be fired.");
+            }
             return _globalVariables.TryGetValue(name, out var value) ? value : defaultValue;
         }
 
@@ -225,6 +270,10 @@ namespace Styly.NetSync
 
         public string GetClientVariable(int clientNo, string name, string defaultValue = null)
         {
+            if (!_hasReceivedInitialSync)
+            {
+                throw new InvalidOperationException("Cannot get client variables before OnReady event. Please wait for OnReady to be fired.");
+            }
             if (_clientVariables.TryGetValue(clientNo, out var clientVars))
             {
                 return clientVars.TryGetValue(name, out var value) ? value : defaultValue;
@@ -256,6 +305,13 @@ namespace Styly.NetSync
         // Message handling (called by MessageProcessor)
         public void HandleGlobalVariableSync(Dictionary<string, object> data)
         {
+            // Mark that we've received initial sync
+            // Note: If sync messages arrive exactly at timeout, this takes precedence over timeout mechanism
+            if (!_hasReceivedInitialSync)
+            {
+                _hasReceivedInitialSync = true;
+            }
+            
             if (data.TryGetValue("variables", out var variablesObj))
             {
                 object[] variables = ConvertToObjectArray(variablesObj);
@@ -291,6 +347,13 @@ namespace Styly.NetSync
 
         public void HandleClientVariableSync(Dictionary<string, object> data)
         {
+            // Mark that we've received initial sync
+            // Note: If sync messages arrive exactly at timeout, this takes precedence over timeout mechanism
+            if (!_hasReceivedInitialSync)
+            {
+                _hasReceivedInitialSync = true;
+            }
+            
             if (data.TryGetValue("clientVariables", out var clientVarsObj))
             {
                 Dictionary<string, object> clientVariables = ConvertToDictionary(clientVarsObj);

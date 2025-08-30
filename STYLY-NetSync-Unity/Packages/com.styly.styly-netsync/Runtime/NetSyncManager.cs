@@ -191,7 +191,8 @@ namespace Styly.NetSync
         internal MessageProcessor MessageProcessor => _messageProcessor;
         public bool HasServerConnection => _connectionManager?.IsConnected == true && !_connectionManager.IsConnectionError;
         public bool HasHandshake => _clientNo > 0;
-        public bool IsReady => HasServerConnection && HasHandshake;
+        public bool HasNetworkVariablesSync => _networkVariableManager?.HasReceivedInitialSync == true;
+        public bool IsReady => HasServerConnection && HasHandshake && HasNetworkVariablesSync;
 
         public GameObject GetLocalAvatarPrefab() => _localAvatarPrefab;
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
@@ -284,6 +285,15 @@ namespace Styly.NetSync
             // Process Network Variables debounced updates
             _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
 
+            // Check for initial sync timeout (important for rooms with no variables)
+            bool wasReady = HasNetworkVariablesSync;
+            _networkVariableManager?.CheckInitialSyncTimeout();
+            if (!wasReady && HasNetworkVariablesSync)
+            {
+                // Initial sync timeout triggered ready state
+                _shouldCheckReady = true;
+            }
+
             // Flush pending RPCs
             _rpcManager?.FlushPendingIfReady(_roomId);
             
@@ -325,6 +335,7 @@ namespace Styly.NetSync
             // Initialize managers
             _messageProcessor = new MessageProcessor(_logNetworkTraffic);
             _messageProcessor.SetLocalDeviceId(_deviceId);
+            _messageProcessor.SetNetSyncManager(this);
             _messageProcessor.OnLocalClientNoAssigned += OnLocalClientNoAssigned;
             _connectionManager = new ConnectionManager(this, _messageProcessor, _enableDebugLogs, _logNetworkTraffic);
             _avatarManager = new AvatarManager(_enableDebugLogs);
@@ -359,6 +370,9 @@ namespace Styly.NetSync
         {
             DebugLog("Connection established successfully");
             _shouldCheckReady = true;
+            
+            // Notify network variable manager about connection
+            _networkVariableManager?.OnConnectionEstablished();
             
             // Initialize battery level immediately on connection
             _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
@@ -421,12 +435,20 @@ namespace Styly.NetSync
             if (IsReady && !_hasInvokedReady)
             {
                 _hasInvokedReady = true;
-                DebugLog("NetSyncManager is now Ready (connected and handshaken)");
+                DebugLog("NetSyncManager is now Ready (connected, handshaken, and network variables synced)");
                 OnReady?.Invoke();
 
                 // Don't flush immediately - let Update() handle it on next frame
                 // This avoids potential socket state issues
             }
+        }
+        
+        /// <summary>
+        /// Triggers a ready state check. Called internally when network variables are first received.
+        /// </summary>
+        internal void TriggerReadyCheck()
+        {
+            _shouldCheckReady = true;
         }
 
         private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
@@ -570,6 +592,7 @@ namespace Styly.NetSync
             _clientNo = 0; // Reset client number
             _hasInvokedReady = false; // Reset ready state
             _shouldCheckReady = false; // Reset check flag
+            _networkVariableManager?.ResetInitialSyncFlag(); // Reset network variable sync state
             StopNetworking();
         }
 
