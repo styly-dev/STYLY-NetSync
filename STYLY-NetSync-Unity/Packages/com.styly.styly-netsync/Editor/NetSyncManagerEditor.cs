@@ -1,85 +1,34 @@
-using System.Collections.Generic;
-using UnityEngine;
 using UnityEditor;
+using UnityEngine;
 
 namespace Styly.NetSync.Editor
 {
     [CustomEditor(typeof(NetSyncManager))]
+    [CanEditMultipleObjects]
     public class NetSyncManagerEditor : UnityEditor.Editor
     {
-        private NetSyncManager _netSyncManager;
-        private bool _showGlobalVariables = true;
-        
-        private void OnEnable()
-        {
-            _netSyncManager = (NetSyncManager)target;
-        }
-        
         public override void OnInspectorGUI()
         {
-            // Draw default inspector
-            DrawDefaultInspector();
-            
-            // Only show network variables during play mode
-            if (!Application.isPlaying)
+            serializedObject.Update();
+
+            var iterator = serializedObject.GetIterator();
+            bool enterChildren = true;
+
+            while (iterator.NextVisible(enterChildren))
             {
-                return;
-            }
-            
-            EditorGUILayout.Space();
-            
-            // Global Network Variables section
-            _showGlobalVariables = EditorGUILayout.BeginFoldoutHeaderGroup(_showGlobalVariables, "Global Network Variables");
-            if (_showGlobalVariables)
-            {
-                EditorGUI.indentLevel++;
-                
-                var globalVars = _netSyncManager.GetAllGlobalVariables();
-                
-                if (globalVars == null || globalVars.Count == 0)
+                enterChildren = false;
+
+                bool isTargetField = iterator.name == "_serverAddress" || iterator.name == "_roomId";
+                bool disable = EditorApplication.isPlaying && isTargetField;
+
+                using (new EditorGUI.DisabledScope(disable))
                 {
-                    EditorGUILayout.HelpBox("No global variables set", MessageType.Info);
+                    EditorGUILayout.PropertyField(iterator, true);
                 }
-                else
-                {
-                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-                    
-                    foreach (var kvp in globalVars)
-                    {
-                        EditorGUILayout.BeginHorizontal();
-                        
-                        // Key
-                        EditorGUILayout.LabelField(kvp.Key, GUILayout.Width(150));
-                        
-                        // Value
-                        if (kvp.Value.Length > 50)
-                        {
-                            EditorGUILayout.EndHorizontal();
-                            EditorGUI.indentLevel++;
-                            EditorGUILayout.TextArea(kvp.Value, EditorStyles.wordWrappedLabel);
-                            EditorGUI.indentLevel--;
-                        }
-                        else
-                        {
-                            EditorGUILayout.LabelField(kvp.Value, EditorStyles.wordWrappedLabel);
-                            EditorGUILayout.EndHorizontal();
-                        }
-                        
-                        EditorGUILayout.Space(2);
-                    }
-                    
-                    EditorGUILayout.EndVertical();
-                }
-                
-                EditorGUI.indentLevel--;
             }
-            EditorGUILayout.EndFoldoutHeaderGroup();
-            
-            // Force repaint to show real-time updates
-            if (Application.isPlaying && Event.current.type == EventType.Layout)
-            {
-                Repaint();
-            }
+
+            serializedObject.ApplyModifiedProperties();
         }
     }
 }
+
