@@ -177,6 +177,7 @@ namespace Styly.NetSync
             _clientNo = 0;
             _hasInvokedReady = false;
             _shouldCheckReady = false;
+            _shouldSendHandshake = false;
 
             // Update room ID
             _roomId = newRoomId;
@@ -220,6 +221,7 @@ namespace Styly.NetSync
         private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
         private bool _hasInvokedReady = false;
         private bool _shouldCheckReady = false;
+        private bool _shouldSendHandshake = false;
         // Battery monitoring fields
         private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
         private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
@@ -320,6 +322,13 @@ namespace Styly.NetSync
             {
                 _shouldCheckReady = false;
                 CheckAndFireReady();
+            }
+
+            // Handle handshake sending on main thread (for room switching)
+            if (_shouldSendHandshake)
+            {
+                _shouldSendHandshake = false;
+                HandleRoomSwitchHandshake();
             }
 
             HandleDiscovery();
@@ -424,38 +433,54 @@ namespace Styly.NetSync
             // Notify network variable manager about connection
             _networkVariableManager?.OnConnectionEstablished();
             
-            // If we're switching rooms, send handshake and end switching
+            // If we're switching rooms, defer handshake to main thread
             if (_roomSwitching)
             {
-                // Send handshake to new room to trigger client number assignment
-                if (_isStealthMode)
-                {
-                    _transformSyncManager?.SendStealthHandshake(_roomId);
-                    DebugLog("Sent stealth handshake to new room");
-                }
-                else
-                {
-                    var localAvatar = _avatarManager?.LocalAvatar;
-                    if (localAvatar != null)
-                    {
-                        _transformSyncManager?.SendLocalTransform(localAvatar, _roomId);
-                        DebugLog("Sent transform handshake to new room");
-                    }
-                    else
-                    {
-                        // Fallback to stealth handshake if no local avatar
-                        _transformSyncManager?.SendStealthHandshake(_roomId);
-                        DebugLog("Sent stealth handshake to new room (no local avatar)");
-                    }
-                }
-                
-                // End room switching
-                _roomSwitching = false;
-                DebugLog("Room switching completed");
+                _shouldSendHandshake = true;
+                DebugLog("Connection established during room switch - handshake deferred to main thread");
             }
             
             // Initialize battery level immediately on connection
             _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
+        }
+
+        /// <summary>
+        /// Handles handshake sending for room switching on the main thread.
+        /// This method is called from Update() to avoid Unity threading issues.
+        /// </summary>
+        private void HandleRoomSwitchHandshake()
+        {
+            if (!_roomSwitching)
+            {
+                DebugLog("HandleRoomSwitchHandshake called but not in room switching mode");
+                return;
+            }
+
+            // Send handshake to new room to trigger client number assignment
+            if (_isStealthMode)
+            {
+                _transformSyncManager?.SendStealthHandshake(_roomId);
+                DebugLog("Sent stealth handshake to new room");
+            }
+            else
+            {
+                var localAvatar = _avatarManager?.LocalAvatar;
+                if (localAvatar != null)
+                {
+                    _transformSyncManager?.SendLocalTransform(localAvatar, _roomId);
+                    DebugLog("Sent transform handshake to new room");
+                }
+                else
+                {
+                    // Fallback to stealth handshake if no local avatar
+                    _transformSyncManager?.SendStealthHandshake(_roomId);
+                    DebugLog("Sent stealth handshake to new room (no local avatar)");
+                }
+            }
+            
+            // End room switching
+            _roomSwitching = false;
+            DebugLog("Room switching completed");
         }
 
         private void OnRemoteAvatarDisconnected(int clientNo)
@@ -672,6 +697,7 @@ namespace Styly.NetSync
             _clientNo = 0; // Reset client number
             _hasInvokedReady = false; // Reset ready state
             _shouldCheckReady = false; // Reset check flag
+            _shouldSendHandshake = false; // Reset handshake flag
             _networkVariableManager?.ResetInitialSyncFlag(); // Reset network variable sync state
             StopNetworking();
         }
