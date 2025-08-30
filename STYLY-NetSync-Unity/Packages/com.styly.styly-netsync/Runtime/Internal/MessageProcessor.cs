@@ -19,6 +19,7 @@ namespace Styly.NetSync
         private readonly Dictionary<int, ClientTransformData> _pendingClients = new(); // Clients waiting for ID mapping
         private string _localDeviceId;
         private int _localClientNo = 0;
+        private NetSyncManager _netSyncManager; // Reference to NetSyncManager for triggering ready checks
 
         public int MessagesReceived => _messagesReceived;
         public event System.Action<int> OnLocalClientNoAssigned;
@@ -37,6 +38,11 @@ namespace Styly.NetSync
         {
             _localClientNo = clientNo;
             // Local client number set
+        }
+        
+        public void SetNetSyncManager(NetSyncManager netSyncManager)
+        {
+            _netSyncManager = netSyncManager;
         }
 
         public void ProcessIncomingMessage(byte[] payload)
@@ -345,7 +351,14 @@ namespace Styly.NetSync
 
             try
             {
+                bool wasFirstSync = !networkVariableManager.HasReceivedInitialSync;
                 networkVariableManager.HandleGlobalVariableSync(variableData);
+
+                // If this was the first sync, notify NetSyncManager to check ready state
+                if (wasFirstSync && networkVariableManager.HasReceivedInitialSync)
+                {
+                    _netSyncManager?.TriggerReadyCheck();
+                }
 
                 // Processed global variable sync
             }
@@ -373,7 +386,14 @@ namespace Styly.NetSync
             {
                 // Processing client variable sync data
 
+                bool wasFirstSync = !networkVariableManager.HasReceivedInitialSync;
                 networkVariableManager.HandleClientVariableSync(variableData);
+
+                // If this was the first sync, notify NetSyncManager to check ready state
+                if (wasFirstSync && networkVariableManager.HasReceivedInitialSync)
+                {
+                    _netSyncManager?.TriggerReadyCheck();
+                }
 
                 // Processed client variable sync
             }

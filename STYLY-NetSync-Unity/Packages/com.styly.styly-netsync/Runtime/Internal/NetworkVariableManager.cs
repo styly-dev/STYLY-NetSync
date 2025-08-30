@@ -44,6 +44,18 @@ namespace Styly.NetSync
         // Events (using C# events, NOT SendMessage)
         public event Action<string, string, string> OnGlobalVariableChanged;
         public event Action<int, string, string, string> OnClientVariableChanged;
+        
+        // Flag to track if initial network variables have been received
+        private bool _hasReceivedInitialSync = false;
+        public bool HasReceivedInitialSync => _hasReceivedInitialSync;
+        
+        /// <summary>
+        /// Reset the initial sync flag (called when connection is lost)
+        /// </summary>
+        public void ResetInitialSyncFlag()
+        {
+            _hasReceivedInitialSync = false;
+        }
 
         public NetworkVariableManager(ConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
         {
@@ -131,6 +143,10 @@ namespace Styly.NetSync
 
         public string GetGlobalVariable(string name, string defaultValue = null)
         {
+            if (!_hasReceivedInitialSync)
+            {
+                throw new InvalidOperationException("Cannot get global variables before OnReady event. Please wait for OnReady to be fired.");
+            }
             return _globalVariables.TryGetValue(name, out var value) ? value : defaultValue;
         }
 
@@ -225,6 +241,10 @@ namespace Styly.NetSync
 
         public string GetClientVariable(int clientNo, string name, string defaultValue = null)
         {
+            if (!_hasReceivedInitialSync)
+            {
+                throw new InvalidOperationException("Cannot get client variables before OnReady event. Please wait for OnReady to be fired.");
+            }
             if (_clientVariables.TryGetValue(clientNo, out var clientVars))
             {
                 return clientVars.TryGetValue(name, out var value) ? value : defaultValue;
@@ -256,6 +276,12 @@ namespace Styly.NetSync
         // Message handling (called by MessageProcessor)
         public void HandleGlobalVariableSync(Dictionary<string, object> data)
         {
+            // Mark that we've received initial sync
+            if (!_hasReceivedInitialSync)
+            {
+                _hasReceivedInitialSync = true;
+            }
+            
             if (data.TryGetValue("variables", out var variablesObj))
             {
                 object[] variables = ConvertToObjectArray(variablesObj);
@@ -291,6 +317,12 @@ namespace Styly.NetSync
 
         public void HandleClientVariableSync(Dictionary<string, object> data)
         {
+            // Mark that we've received initial sync
+            if (!_hasReceivedInitialSync)
+            {
+                _hasReceivedInitialSync = true;
+            }
+            
             if (data.TryGetValue("clientVariables", out var clientVarsObj))
             {
                 Dictionary<string, object> clientVariables = ConvertToDictionary(clientVarsObj);
