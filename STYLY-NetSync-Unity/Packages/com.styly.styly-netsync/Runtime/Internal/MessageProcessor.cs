@@ -402,5 +402,18 @@ namespace Styly.NetSync
                 Debug.LogError($"[MessageProcessor] Failed to process client variable sync: {ex.Message}");
             }
         }
+
+        /// <summary>
+        /// Clears all room-scoped state for room switching.
+        /// Called before reconnecting to a new room to prevent state leaks.
+        /// </summary>
+        internal void ClearRoomScopedState()
+        {
+            _clientNoToDeviceId.Clear();
+            _deviceIdToClientNo.Clear();
+            _clientNoToIsStealthMode.Clear();
+            _pendingClients.Clear();
+            SetLocalClientNo(0);   // reset local mapping
+        }
     }
 }

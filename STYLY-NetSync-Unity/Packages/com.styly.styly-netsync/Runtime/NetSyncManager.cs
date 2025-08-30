@@ -149,6 +149,51 @@ namespace Styly.NetSync
             return _messageProcessor != null ? _messageProcessor.IsClientStealthMode(clientNo) : false;
         }
 
+        /// <summary>
+        /// Set the room ID at runtime and reconnect to the new room.
+        /// This performs a hard reconnection, clearing all room-scoped state and 
+        /// re-establishing connection with the new room subscription.
+        /// </summary>
+        /// <param name="newRoomId">The new room ID to connect to</param>
+        public void SetRoomId(string newRoomId)
+        {
+            // Validate input
+            if (string.IsNullOrEmpty(newRoomId) || newRoomId == _roomId)
+            {
+                return; // No-op for same room or invalid input
+            }
+
+            // Prevent reentrancy
+            if (_roomSwitching)
+            {
+                DebugLog($"Room switch already in progress, ignoring request to switch to: {newRoomId}");
+                return;
+            }
+
+            DebugLog($"Switching from room '{_roomId}' to '{newRoomId}'");
+
+            // Start room switching
+            _roomSwitching = true;
+            _isReady = false;
+            _clientNo = 0;
+            _hasInvokedReady = false;
+            _shouldCheckReady = false;
+
+            // Update room ID
+            _roomId = newRoomId;
+
+            // Clear room-scoped state to prevent leaks across rooms
+            _messageProcessor?.ClearRoomScopedState();
+            _networkVariableManager?.ResetInitialSyncFlag();
+            _avatarManager?.CleanupRemoteAvatars();
+
+            // Hard reconnect with new room
+            _connectionManager?.Disconnect();
+            
+            // Start networking will establish new connection with updated _roomId
+            StartNetworking();
+        }
+
         #endregion ------------------------------------------------------------------------
 
         #region === Runtime Fields ===
@@ -166,6 +211,7 @@ namespace Styly.NetSync
         // State
         private bool _isDiscovering;
         private bool _isStealthMode;
+        private bool _roomSwitching; // Flag to prevent operations during room switching
         private string _discoveredServer;
         private int _discoveredDealerPort;
         private int _discoveredSubPort;
@@ -280,10 +326,18 @@ namespace Styly.NetSync
             HandleDiscovery();
             HandleReconnection();
             ProcessMessages();
-            SendTransformUpdates();
 
-            // Process Network Variables debounced updates
-            _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
+            // Skip transform/NV operations during room switching
+            if (!_roomSwitching)
+            {
+                SendTransformUpdates();
+
+                // Process Network Variables debounced updates
+                _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
+
+                // Flush pending RPCs
+                _rpcManager?.FlushPendingIfReady(_roomId);
+            }
 
             // Check for initial sync timeout (important for rooms with no variables)
             bool wasReady = HasNetworkVariablesSync;
@@ -293,9 +347,6 @@ namespace Styly.NetSync
                 // Initial sync timeout triggered ready state
                 _shouldCheckReady = true;
             }
-
-            // Flush pending RPCs
-            _rpcManager?.FlushPendingIfReady(_roomId);
             
             // Update battery level periodically (must be in main thread)
             UpdateBatteryLevel();
@@ -373,6 +424,36 @@ namespace Styly.NetSync
             
             // Notify network variable manager about connection
             _networkVariableManager?.OnConnectionEstablished();
+            
+            // If we're switching rooms, send handshake and end switching
+            if (_roomSwitching)
+            {
+                // Send handshake to new room to trigger client number assignment
+                if (_isStealthMode)
+                {
+                    _transformSyncManager?.SendStealthHandshake(_roomId);
+                    DebugLog("Sent stealth handshake to new room");
+                }
+                else
+                {
+                    var localAvatar = _avatarManager?.LocalAvatar;
+                    if (localAvatar != null)
+                    {
+                        _transformSyncManager?.SendLocalTransform(localAvatar, _roomId);
+                        DebugLog("Sent transform handshake to new room");
+                    }
+                    else
+                    {
+                        // Fallback to stealth handshake if no local avatar
+                        _transformSyncManager?.SendStealthHandshake(_roomId);
+                        DebugLog("Sent stealth handshake to new room (no local avatar)");
+                    }
+                }
+                
+                // End room switching
+                _roomSwitching = false;
+                DebugLog("Room switching completed");
+            }
             
             // Initialize battery level immediately on connection
             _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
