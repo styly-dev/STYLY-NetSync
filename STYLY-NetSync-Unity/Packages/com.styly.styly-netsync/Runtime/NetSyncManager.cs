@@ -174,7 +174,6 @@ namespace Styly.NetSync
 
             // Start room switching
             _roomSwitching = true;
-            _isReady = false;
             _clientNo = 0;
             _hasInvokedReady = false;
             _shouldCheckReady = false;
