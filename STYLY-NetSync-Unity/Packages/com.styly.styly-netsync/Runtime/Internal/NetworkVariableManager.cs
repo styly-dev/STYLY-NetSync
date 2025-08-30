@@ -47,6 +47,9 @@ namespace Styly.NetSync
         
         // Flag to track if initial network variables have been received
         private bool _hasReceivedInitialSync = false;
+        private float _connectionEstablishedTime = 0f; // Track when connection was established
+        private const float INITIAL_SYNC_TIMEOUT = 2.0f; // Wait 2 seconds for initial sync
+        
         public bool HasReceivedInitialSync => _hasReceivedInitialSync;
         
         /// <summary>
@@ -55,6 +58,31 @@ namespace Styly.NetSync
         public void ResetInitialSyncFlag()
         {
             _hasReceivedInitialSync = false;
+            _connectionEstablishedTime = 0f;
+        }
+        
+        /// <summary>
+        /// Called when connection is established to start tracking sync timeout
+        /// </summary>
+        public void OnConnectionEstablished()
+        {
+            _connectionEstablishedTime = Time.time;
+        }
+        
+        /// <summary>
+        /// Check if we should consider initial sync complete based on timeout
+        /// This handles cases where server has no variables to send
+        /// </summary>
+        public void CheckInitialSyncTimeout()
+        {
+            if (!_hasReceivedInitialSync && _connectionEstablishedTime > 0f)
+            {
+                if (Time.time - _connectionEstablishedTime >= INITIAL_SYNC_TIMEOUT)
+                {
+                    _hasReceivedInitialSync = true;
+                    Debug.Log("[NetworkVariableManager] Initial sync timeout reached - assuming no variables to sync");
+                }
+            }
         }
 
         public NetworkVariableManager(ConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)

@@ -285,6 +285,15 @@ namespace Styly.NetSync
             // Process Network Variables debounced updates
             _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
 
+            // Check for initial sync timeout (important for rooms with no variables)
+            bool wasReady = HasNetworkVariablesSync;
+            _networkVariableManager?.CheckInitialSyncTimeout();
+            if (!wasReady && HasNetworkVariablesSync)
+            {
+                // Initial sync timeout triggered ready state
+                _shouldCheckReady = true;
+            }
+
             // Flush pending RPCs
             _rpcManager?.FlushPendingIfReady(_roomId);
             
@@ -361,6 +370,9 @@ namespace Styly.NetSync
         {
             DebugLog("Connection established successfully");
             _shouldCheckReady = true;
+            
+            // Notify network variable manager about connection
+            _networkVariableManager?.OnConnectionEstablished();
             
             // Initialize battery level immediately on connection
             _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
