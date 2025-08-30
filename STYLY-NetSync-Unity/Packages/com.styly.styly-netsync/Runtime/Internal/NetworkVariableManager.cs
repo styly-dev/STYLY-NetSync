@@ -47,7 +47,7 @@ namespace Styly.NetSync
         
         // Flag to track if initial network variables have been received
         private bool _hasReceivedInitialSync = false;
-        private float _connectionEstablishedTime = 0f; // Track when connection was established
+        private DateTime _connectionEstablishedTime = DateTime.MinValue; // Track when connection was established
         // Conservative timeout for initial network variable sync to handle empty rooms
         private const float INITIAL_SYNC_TIMEOUT = 2.0f;
         
@@ -59,7 +59,7 @@ namespace Styly.NetSync
         public void ResetInitialSyncFlag()
         {
             _hasReceivedInitialSync = false;
-            _connectionEstablishedTime = 0f;
+            _connectionEstablishedTime = DateTime.MinValue;
         }
         
         /// <summary>
@@ -67,7 +67,7 @@ namespace Styly.NetSync
         /// </summary>
         public void OnConnectionEstablished()
         {
-            _connectionEstablishedTime = Time.time;
+            _connectionEstablishedTime = DateTime.UtcNow;
         }
         
         /// <summary>
@@ -76,9 +76,9 @@ namespace Styly.NetSync
         /// </summary>
         public void CheckInitialSyncTimeout()
         {
-            if (!_hasReceivedInitialSync && _connectionEstablishedTime > 0f)
+            if (!_hasReceivedInitialSync && _connectionEstablishedTime != DateTime.MinValue)
             {
-                if (Time.time - _connectionEstablishedTime >= INITIAL_SYNC_TIMEOUT)
+                if ((DateTime.UtcNow - _connectionEstablishedTime).TotalSeconds >= INITIAL_SYNC_TIMEOUT)
                 {
                     _hasReceivedInitialSync = true;
                     Debug.Log($"[NetworkVariableManager] Initial sync timeout after {INITIAL_SYNC_TIMEOUT}s - ready without variables");
