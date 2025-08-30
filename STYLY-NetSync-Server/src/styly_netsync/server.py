@@ -14,6 +14,7 @@ import argparse
 import base64
 import json
 import logging
+import os
 import socket
 import threading
 import time
@@ -25,12 +26,45 @@ from typing import Any
 import zmq
 from . import binary_serializer
 
-# Log configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%H:%M:%S",
+# Log configuration (with optional ANSI colors for console)
+
+class ColorFormatter(logging.Formatter):
+    """Simple ANSI colorizing formatter.
+
+    - INFO: default
+    - WARNING: yellow
+    - ERROR: bright red
+    - CRITICAL: white on red background
+    """
+
+    RESET = "\x1b[0m"
+    COLORS = {
+        "WARNING": "\x1b[33m",     # yellow
+        "ERROR": "\x1b[91m\x1b[1m",  # bright red + bold
+        "CRITICAL": "\x1b[97m\x1b[41m\x1b[1m",  # white on red bg + bold
+    }
+
+    def __init__(self, fmt: str, datefmt: str | None = None, enable_color: bool = True):
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        self.enable_color = enable_color
+
+    def format(self, record: logging.LogRecord) -> str:
+        base = super().format(record)
+        if not self.enable_color:
+            return base
+        color = self.COLORS.get(record.levelname)
+        if not color:
+            return base
+        return f"{color}{base}{self.RESET}"
+
+
+# Use colors only when outputting to a TTY and NO_COLOR is not set
+_use_color = sys.stderr.isatty() and os.getenv("NO_COLOR") is None
+_handler = logging.StreamHandler()
+_handler.setFormatter(
+    ColorFormatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S", enable_color=_use_color)
 )
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
