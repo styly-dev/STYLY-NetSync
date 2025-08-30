@@ -41,15 +41,16 @@ namespace Styly.NetSync
             }
             else
             {
-                // If XR Origin exists, instantiate the local avatar prefab as a child of the XR Origin
+                localGO = Object.Instantiate(localAvatarPrefab);
+
+                // If XR Origin exists, use it as the parent using a ParentConstraint
                 var xrOrigin = Object.FindFirstObjectByType<Unity.XR.CoreUtils.XROrigin>();
                 if (xrOrigin != null)
                 {
-                    localGO = Object.Instantiate(localAvatarPrefab, xrOrigin.transform);
-                }
-                else
-                {
-                    localGO = Object.Instantiate(localAvatarPrefab);
+                    var parentConstraint = localGO.AddComponent<UnityEngine.Animations.ParentConstraint>();
+                    var source = new UnityEngine.Animations.ConstraintSource { sourceTransform = xrOrigin.transform, weight = 1 };
+                    parentConstraint.AddSource(source);
+                    parentConstraint.constraintActive = true;
                 }
             }
 
