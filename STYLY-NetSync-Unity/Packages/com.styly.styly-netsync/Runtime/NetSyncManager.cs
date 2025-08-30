@@ -217,6 +217,8 @@ namespace Styly.NetSync
         private int _discoveredSubPort;
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
+        private const float DiscoveryRetryDelay = 5f; // Retry discovery every 5 seconds after failure
+        private float _nextDiscoveryAttemptAt = 0f;
         private float _reconnectAt;
         private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
         private bool _hasInvokedReady = false;
@@ -599,6 +601,8 @@ namespace Styly.NetSync
             _connectionManager.StartDiscovery(_discoveryManager, _roomId);
             _isDiscovering = true;
             _discoveryStartTime = Time.time;
+            // Clear any scheduled retry since we're attempting now
+            _nextDiscoveryAttemptAt = 0f;
         }
 
         private void StopDiscovery()
@@ -612,13 +616,12 @@ namespace Styly.NetSync
         #region === Update Logic ===
         private void HandleDiscovery()
         {
-            // Handle discovery timeout
+            // Handle discovery timeout: stop current attempt and schedule retry in 5 seconds
             if (_isDiscovering && Time.time - _discoveryStartTime > _discoveryTimeout)
             {
-                DebugLog("Discovery timeout - falling back to localhost");
+                DebugLog($"Discovery timeout - retrying in {DiscoveryRetryDelay} seconds");
                 StopDiscovery();
-                _serverAddress = "localhost";
-                StartNetworking();
+                _nextDiscoveryAttemptAt = Time.time + DiscoveryRetryDelay;
             }
 
             // Process discovered server
@@ -628,6 +631,13 @@ namespace Styly.NetSync
                 StopDiscovery();
                 _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort);
                 _discoveredServer = null;
+            }
+
+            // If not currently discovering and discovery is enabled with no fixed server, retry when due
+            if (!_isDiscovering && string.IsNullOrEmpty(_serverAddress) && _enableDiscovery &&
+                _nextDiscoveryAttemptAt > 0f && Time.time >= _nextDiscoveryAttemptAt)
+            {
+                StartDiscovery();
             }
         }
 
