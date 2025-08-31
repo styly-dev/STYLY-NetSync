@@ -82,37 +82,39 @@ jobs:
                 owner,
                 repo,
                 issue_number: prNumber,
-                body: `🚫 **ERROR: Manual PR to main branch is not allowed**
-
-This repository enforces that all merges to the main branch must be done through the automated GitHub Actions workflow.
-
-## Why is this blocked?
-
-1. **Version Consistency**: The automated workflow ensures version numbers are synchronized between Unity and Python projects
-2. **Clean Git History**: Fast-forward merges maintain a linear history
-3. **Release Management**: Automatic creation of release drafts with proper tagging
-
-## How to properly merge to main:
-
-### Use the automated workflow:
-
-1. Go to [Set Version and Create Release Draft](https://github.com/${owner}/${repo}/actions/workflows/release-workflow.yml)
-2. Click **"Run workflow"**
-3. Select the \`develop\` branch
-4. Enter the version number (e.g., 1.0.0 or 1.0.0-beta.1)
-
-The workflow will automatically:
-- ✅ Update version in Unity package.json
-- ✅ Update version in Python pyproject.toml
-- ✅ Commit changes to develop branch
-- ✅ Fast-forward merge develop into main
-- ✅ Create a GitHub release draft
-
-## Next steps:
-
-**Please close this PR** and use the automated workflow instead.
-
-If you have special circumstances that require manual merging, please discuss with the repository maintainers.`
+                body: [
+                  '🚫 **ERROR: Manual PR to main branch is not allowed**',
+                  '',
+                  'This repository enforces that all merges to the main branch must be done through the automated GitHub Actions workflow.',
+                  '',
+                  '## Why is this blocked?',
+                  '',
+                  '1. **Version Consistency**: The automated workflow ensures version numbers are synchronized between Unity and Python projects',
+                  '2. **Clean Git History**: Fast-forward merges maintain a linear history',
+                  '3. **Release Management**: Automatic creation of release drafts with proper tagging',
+                  '',
+                  '## How to properly merge to main:',
+                  '',
+                  '### Use the automated workflow:',
+                  '',
+                  `1. Go to [Set Version and Create Release Draft](https://github.com/${owner}/${repo}/actions/workflows/release-workflow.yml)`,
+                  '2. Click **"Run workflow"**',
+                  '3. Select the `develop` branch',
+                  '4. Enter the version number (e.g., 1.0.0 or 1.0.0-beta.1)',
+                  '',
+                  'The workflow will automatically:',
+                  '- ✅ Update version in Unity package.json',
+                  '- ✅ Update version in Python pyproject.toml',
+                  '- ✅ Commit changes to develop branch',
+                  '- ✅ Fast-forward merge develop into main',
+                  '- ✅ Create a GitHub release draft',
+                  '',
+                  '## Next steps:',
+                  '',
+                  '**Please close this PR** and use the automated workflow instead.',
+                  '',
+                  'If you have special circumstances that require manual merging, please discuss with the repository maintainers.'
+                ].join('\n')
               });
             }
             
