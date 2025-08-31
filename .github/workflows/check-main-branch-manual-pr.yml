@@ -97,7 +97,7 @@ jobs:
                   '',
                   '### Use the automated workflow:',
                   '',
-                  '1. Go to [Set Version and Create Release Draft](https://github.com/' + owner + '/' + repo + '/actions/workflows/release-workflow.yml)',
+                  `1. Go to [Set Version and Create Release Draft](https://github.com/${owner}/${repo}/actions/workflows/release-workflow.yml)`,
                   '2. Click **"Run workflow"**',
                   '3. Select the `develop` branch',
                   '4. Enter the version number (e.g., 1.0.0 or 1.0.0-beta.1)',
