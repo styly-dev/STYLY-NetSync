@@ -37,7 +37,7 @@ jobs:
           echo "## How to merge to main:"
           echo ""
           echo "1. Go to the GitHub Actions page:"
-          echo "   https://github.com/${{ github.repository }}/actions/workflows/set-version-and-make-release-draft.yml"
+          echo "   https://github.com/${{ github.repository }}/actions/workflows/release-workflow.yml"
           echo ""
           echo "2. Click 'Run workflow'"
           echo ""
@@ -96,7 +96,7 @@ This repository enforces that all merges to the main branch must be done through
 
 ### Use the automated workflow:
 
-1. Go to [Set Version and Create Release Draft](https://github.com/${owner}/${repo}/actions/workflows/set-version-and-make-release-draft.yml)
+1. Go to [Set Version and Create Release Draft](https://github.com/${owner}/${repo}/actions/workflows/release-workflow.yml)
 2. Click **"Run workflow"**
 3. Select the \`develop\` branch
 4. Enter the version number (e.g., 1.0.0 or 1.0.0-beta.1)
