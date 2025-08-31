@@ -136,16 +136,16 @@ jobs:
 
       - name: Merge develop into main
         run: |
-          # Fetch main branch
-          git fetch origin main
+          # Fetch all remote branches to ensure latest refs
+          git fetch origin
           
           # Checkout main branch
           git checkout main
           
-          # Merge develop into main (create merge commit if needed)
-          git merge --no-ff develop -m "Merge develop into main for release v${{ github.event.inputs.version }}"
+          # Fast-forward merge origin/develop into main
+          git merge --ff-only origin/develop
           
-          echo "✅ Successfully merged develop into main"
+          echo "✅ Successfully fast-forward merged origin/develop into main"
 
       - name: Push main branch
         run: |
