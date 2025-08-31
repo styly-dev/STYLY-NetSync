@@ -27,9 +27,6 @@ cd benchmark
 
 # uvで依存関係をインストール（自動で仮想環境作成）
 uv sync
-
-# または初回ユーザーは requirements.txt から直接インストール  
-uv pip install -r requirements.txt .
 ```
 
 ### 2. STYLY NetSyncサーバーを起動
@@ -300,9 +297,6 @@ cd benchmark
 
 # Install dependencies with uv (automatically creates virtual environment)
 uv sync
-
-# Or for first-time users, install directly from requirements.txt
-uv pip install -r requirements.txt .
 ```
 
 ### 2. Start STYLY NetSync Server
