@@ -52,6 +52,7 @@
       "url": "https://package.openupm.com",
       "scopes": [
         "com.styly.styly-xr-rig",
+        "com.styly.shader-collection.urp",
         "org.nuget.asyncio",
         "org.nuget.nacl.net",
         "org.nuget.netmq",
