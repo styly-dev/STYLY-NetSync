@@ -69,14 +69,6 @@ namespace Styly.NetSync
             }
         }
 
-        public void Rpc(string roomId, string functionName, string[] args)
-        {
-            if (_rpcManager != null)
-            {
-                _rpcManager.Send(roomId, functionName, args);
-            }
-        }
-
         /// <summary>
         /// Configure the RPC rate limit. Set rpcLimit to 0 or less to disable rate limiting.
         /// </summary>
