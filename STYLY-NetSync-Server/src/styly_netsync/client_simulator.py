@@ -488,12 +488,23 @@ class NetworkTransport:
                     self.sub_socket.setsockopt(zmq.SUBSCRIBE, self.room_id.encode("utf-8"))
                     self.logger.debug(f"Connected SUB to {sub_endpoint} topic '{self.room_id}'")
                 except Exception as se:
-                    # SUB is optional; log and continue
+                    # SUB is optional; ensure any partially created socket is closed
+                    try:
+                        if self.sub_socket is not None:
+                            self.sub_socket.close()
+                    except Exception:
+                        pass
+                    finally:
+                        self.sub_socket = None
                     self.logger.warning(f"Failed to setup SUB socket: {se}")
 
             return True
         except Exception as e:
-            self.logger.error(f"Failed to connect: {e}")
+            # Ensure any partially created sockets are closed to avoid FD leaks
+            try:
+                self.disconnect()
+            finally:
+                self.logger.error(f"Failed to connect: {e}")
             return False
     
     def send_transform(self, room_id: str, transform_data: Dict[str, Any]) -> bool:
@@ -623,6 +634,14 @@ class SharedSubscriber:
             self.logger.debug(f"Shared SUB connected to {endpoint} topic '{self.room_id}'")
             return True
         except Exception as e:
+            # Ensure any partially created socket is closed
+            try:
+                if self.socket is not None:
+                    self.socket.close()
+            except Exception:
+                pass
+            finally:
+                self.socket = None
             self.logger.error(f"Failed to start SharedSubscriber: {e}")
             return False
 
@@ -953,7 +972,9 @@ class ResourceManager:
 
             # Aim for either hard limit or a sane default, whichever is smaller
             desired = max(min_required, ResourceManager.DEFAULT_FD_LIMIT)
-            if new_soft < soft_limit:
+            new_soft = min(desired, hard_limit)
+            if new_soft <= soft_limit:
+                # Cannot raise beyond current soft (hard limit may be <= soft)
                 return False, (
                     "Cannot raise FD limit beyond hard limit. "
                     f"soft={soft_limit}, hard={hard_limit}, required={min_required}"
@@ -964,6 +985,21 @@ class ResourceManager:
 
         except Exception as e:
             return False, f"Failed to raise FD limit: {e}"
+    
+    @staticmethod
+    def compute_max_clients_for_soft_limit(soft_limit: int) -> int:
+        """Compute a conservative maximum client count for a given soft FD limit.
+
+        Uses the same headroom heuristic as checks (80%) and assumes ~2 FDs/client.
+        """
+        try:
+            budget = int(soft_limit * 0.8) - ResourceManager.FD_BASE_OVERHEAD
+            if budget <= 0:
+                return 0
+            return max(0, budget // 2)
+        except Exception:
+            # If anything goes wrong, be conservative
+            return 0
     
     @staticmethod
     def setup_signal_handlers(handler):
@@ -1030,7 +1066,22 @@ class ClientSimulator:
                 self.logger.warning(msg_raise)
         else:
             self.logger.info(msg_before)
-        
+
+        # Determine safe maximum clients based on current soft limit
+        try:
+            soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+            safe_max_clients = ResourceManager.compute_max_clients_for_soft_limit(soft_limit)
+            if self.num_clients > safe_max_clients and safe_max_clients >= 0:
+                self.logger.warning(
+                    "Reducing client count to %d based on FD limit (soft=%d, hard=%d)",
+                    safe_max_clients, soft_limit, hard_limit,
+                )
+                self.num_clients = max(0, safe_max_clients)
+                # Keep thread pool cap in sync
+                self.thread_pool.max_clients = self.num_clients
+        except Exception as e:
+            self.logger.debug(f"Failed to compute safe max clients: {e}")
+
         self.logger.info(f"Starting simulation with {self.num_clients} clients")
         self.logger.info(f"Server: {self.server_addr}:{self.dealer_port}")
         self.logger.info(f"Room: {self.room_id}")
@@ -1044,6 +1095,8 @@ class ClientSimulator:
         self.shared_subscriber = SharedSubscriber(self.context, self.server_addr, self.sub_port, self.room_id)
         if not self.shared_subscriber.start():
             self.logger.warning("SharedSubscriber failed to start; falling back to per-client SUBs")
+            # Ensure clients don't assume a working shared subscriber
+            self.shared_subscriber = None
 
         # Create and start clients
         successful_clients = 0
