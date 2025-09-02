@@ -70,7 +70,7 @@ STYLY_SERVER_ADDRESS=192.168.1.100 STYLY_ROOM_ID=load_test uv run locust -f locu
 | `STYLY_SUB_PORT` | SUBソケットポート |
 | `STYLY_ROOM_ID` | テスト用ルームID |
 | `STYLY_TRANSFORM_RATE` | Transform更新レート（Hz） |
-| `STYLY_RPC_INTERVAL` | RPC送信間隔（秒） |
+| `STYLY_RPC_PER_TRANSFORMS` | Transform N回あたりRPC 1回 |
 | `STYLY_MOVEMENT_RADIUS` | シミュレーション用移動半径 |
 | `STYLY_MOVEMENT_SPEED` | 移動速度倍率 |
 | `STYLY_DETAILED_LOGGING` | 詳細ログを有効化 |
@@ -82,7 +82,7 @@ STYLY_SERVER_ADDRESS=192.168.1.100 STYLY_ROOM_ID=load_test uv run locust -f locu
 ```bash
 # 高頻度テストと詳細ログ
 export STYLY_TRANSFORM_RATE=100.0
-export STYLY_RPC_INTERVAL=5.0
+export STYLY_RPC_PER_TRANSFORMS=6
 export STYLY_DETAILED_LOGGING=true
 
 uv run locust -f locustfile.py --host=tcp://localhost:5555
@@ -340,7 +340,7 @@ Configure the benchmark using environment variables:
 | `STYLY_SUB_PORT` | SUB socket port |
 | `STYLY_ROOM_ID` | Room ID for testing |
 | `STYLY_TRANSFORM_RATE` | Transform update rate (Hz) |
-| `STYLY_RPC_INTERVAL` | RPC send interval (seconds) |
+| `STYLY_RPC_PER_TRANSFORMS` | Send RPC every N transforms |
 | `STYLY_MOVEMENT_RADIUS` | Movement radius for simulation |
 | `STYLY_MOVEMENT_SPEED` | Movement speed multiplier |
 | `STYLY_DETAILED_LOGGING` | Enable detailed logging |
@@ -352,7 +352,7 @@ Configure the benchmark using environment variables:
 ```bash
 # High-frequency test with detailed logging
 export STYLY_TRANSFORM_RATE=100.0
-export STYLY_RPC_INTERVAL=5.0
+export STYLY_RPC_PER_TRANSFORMS=6
 export STYLY_DETAILED_LOGGING=true
 
 uv run locust -f locustfile.py --host=tcp://localhost:5555

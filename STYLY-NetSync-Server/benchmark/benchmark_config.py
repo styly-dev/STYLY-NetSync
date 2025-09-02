@@ -19,7 +19,7 @@ class BenchmarkConfig:
     
     # Test parameters
     transform_update_rate: float = 30.0  # Hz
-    rpc_send_interval: float = 10.0  # seconds
+    rpc_per_transform_sends: int = 10  # Send RPC every N transform sends (30Hz / 10 = 3Hz)
     
     # Movement simulation
     movement_radius: float = 5.0
@@ -46,7 +46,7 @@ class BenchmarkConfig:
             sub_port=int(os.getenv("STYLY_SUB_PORT", "5556")),
             room_id=os.getenv("STYLY_ROOM_ID", "benchmark_room"),
             transform_update_rate=float(os.getenv("STYLY_TRANSFORM_RATE", "30.0")),
-            rpc_send_interval=float(os.getenv("STYLY_RPC_INTERVAL", "10.0")),
+            rpc_per_transform_sends=int(os.getenv("STYLY_RPC_PER_TRANSFORMS", "10")),
             movement_radius=float(os.getenv("STYLY_MOVEMENT_RADIUS", "5.0")),
             movement_speed=float(os.getenv("STYLY_MOVEMENT_SPEED", "1.0")),
             latency_measurement_enabled=os.getenv("STYLY_MEASURE_LATENCY", "true").lower() == "true",

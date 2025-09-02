@@ -13,7 +13,6 @@ import time
 import uuid
 import threading
 from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime
 
 #import zmq (zmq.green: green thread version so that it is compatible with Locust)
 import zmq.green as zmq
@@ -71,7 +70,6 @@ class STYLYNetSyncClient:
         
         # Timing for periodic updates
         self.last_transform_update = 0.0
-        self.last_rpc_update = 0.0
         
         # Message tracking for latency measurement
         self.sent_message_ids: Dict[str, Tuple[float, str]] = {}
@@ -426,15 +424,6 @@ class STYLYNetSyncClient:
                 }
             }
     
-    def perform_periodic_updates(self):
-        """Perform periodic RPC updates."""
-        current_time = time.time()
-        
-        # RPC updates
-        if (current_time - self.last_rpc_update) >= config.rpc_send_interval:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            self.send_rpc("BenchmarkRPC", ["benchmark", timestamp, self.user_id])
-            self.last_rpc_update = current_time
     
     def __del__(self):
         """Cleanup when the client is destroyed."""
