@@ -902,27 +902,68 @@ class ClientThreadPool:
 class ResourceManager:
     """Manages system resources and limits."""
     
+    # File descriptor overhead for ZMQ context, internal signaling, logs, timers, pollers, etc.
+    FD_BASE_OVERHEAD = 64
+    
+    # Default recommended file descriptor limit for most systems
+    DEFAULT_FD_LIMIT = 4096
+
+    @staticmethod
+    def estimate_fd_need(num_clients: int) -> int:
+        """Estimate file descriptors needed for given clients.
+
+        Notes:
+        - Each client uses a DEALER socket (~1-2 FDs depending on platform/libzmq)
+        - We use a shared SUB socket for broadcasts (+1 FD)
+        - ZMQ context and internal signaling use a few FDs as well
+        - Leave generous headroom for logs, timers, pollers, etc.
+        """
+        # Assume roughly 2 FDs per client for safety, then add overhead
+        return num_clients * 2 + ResourceManager.FD_BASE_OVERHEAD
+
     @staticmethod
     def check_file_descriptor_limit(required_fds: int) -> Tuple[bool, str]:
         """Check if system can handle the required number of file descriptors."""
         try:
             soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-            
-            # Add buffer for system files
-            estimated_fds = required_fds + 50
-            
-            if estimated_fds > soft_limit * 0.8:  # Warn at 80% of limit
+
+            if required_fds > int(soft_limit * 0.8):  # Warn at 80% of limit
                 message = (
-                    f"WARNING: {required_fds} clients may exceed system limits.\n"
-                    f"Estimated FDs needed: {estimated_fds}, Soft limit: {soft_limit}\n"
-                    f"To increase: ulimit -n 4096"
+                    "WARNING: Simulation may exceed open file limits.\n"
+                    f"Estimated FDs needed: {required_fds}, Soft limit: {soft_limit}, Hard limit: {hard_limit}\n"
+                    "Consider increasing with: ulimit -n 4096 (shell)"
                 )
                 return False, message
-            
+
             return True, f"System FD limits OK (soft={soft_limit}, hard={hard_limit})"
-            
+
         except Exception as e:
             return True, f"Could not check system limits: {e}"
+
+    @staticmethod
+    def try_raise_fd_limit(min_required: int) -> Tuple[bool, str]:
+        """Attempt to raise the soft RLIMIT_NOFILE to accommodate simulation.
+
+        Returns (success, message). If unsuccessful, returns reason in message.
+        """
+        try:
+            soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+            if soft_limit >= min_required:
+                return True, f"FD limit sufficient (soft={soft_limit}, hard={hard_limit})"
+
+            # Aim for either hard limit or a sane default, whichever is smaller
+            desired = max(min_required, ResourceManager.DEFAULT_FD_LIMIT)
+            if new_soft < soft_limit:
+                return False, (
+                    "Cannot raise FD limit beyond hard limit. "
+                    f"soft={soft_limit}, hard={hard_limit}, required={min_required}"
+                )
+
+            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard_limit))
+            return True, f"Raised soft FD limit: {soft_limit} -> {new_soft} (hard={hard_limit})"
+
+        except Exception as e:
+            return False, f"Failed to raise FD limit: {e}"
     
     @staticmethod
     def setup_signal_handlers(handler):
@@ -945,12 +986,16 @@ class ClientSimulator:
         sub_port: int,  # Kept for future use
         room_id: str,
         num_clients: int,
+        spawn_batch_size: int | None = None,
+        spawn_batch_interval: float | None = None,
     ):
         self.server_addr = server_addr
         self.dealer_port = dealer_port
         self.sub_port = sub_port  # Future use
         self.room_id = room_id
         self.num_clients = num_clients
+        self.spawn_batch_size = spawn_batch_size if spawn_batch_size is not None else 0
+        self.spawn_batch_interval = spawn_batch_interval if spawn_batch_interval is not None else 0.0
         
         self.context = zmq.Context()
         self.thread_pool = ClientThreadPool(num_clients)
@@ -970,16 +1015,30 @@ class ClientSimulator:
         """Start the simulation."""
         self.running = True
         
-        # Check system resources
-        can_proceed, message = ResourceManager.check_file_descriptor_limit(self.num_clients)
-        if not can_proceed:
-            self.logger.warning(message)
+        # Estimate FD usage and try to ensure limits
+        estimated_fds = ResourceManager.estimate_fd_need(self.num_clients)
+        ok_before, msg_before = ResourceManager.check_file_descriptor_limit(estimated_fds)
+        if not ok_before:
+            self.logger.warning(msg_before)
+            ok_raise, msg_raise = ResourceManager.try_raise_fd_limit(estimated_fds)
+            if ok_raise:
+                self.logger.info(msg_raise)
+                # Re-check to inform final status
+                _, msg_after = ResourceManager.check_file_descriptor_limit(estimated_fds)
+                self.logger.info(msg_after)
+            else:
+                self.logger.warning(msg_raise)
         else:
-            self.logger.info(message)
+            self.logger.info(msg_before)
         
         self.logger.info(f"Starting simulation with {self.num_clients} clients")
         self.logger.info(f"Server: {self.server_addr}:{self.dealer_port}")
         self.logger.info(f"Room: {self.room_id}")
+        if self.spawn_batch_size > 0 and self.spawn_batch_interval > 0:
+            self.logger.info(
+                f"Spawning clients in batches of {self.spawn_batch_size} "
+                f"with {self.spawn_batch_interval:.3f}s interval"
+            )
         
         # Start shared subscriber for ID mappings (single SUB for all clients)
         self.shared_subscriber = SharedSubscriber(self.context, self.server_addr, self.sub_port, self.room_id)
@@ -1032,6 +1091,15 @@ class ClientSimulator:
                         f"Started {successful_clients}/{self.num_clients} clients"
                     )
                     break
+
+            # Optional throttle to avoid connection stampede
+            if (
+                self.spawn_batch_size > 0
+                and self.spawn_batch_interval > 0
+                and (i + 1) % self.spawn_batch_size == 0
+                and (i + 1) < self.num_clients
+            ):
+                time.sleep(self.spawn_batch_interval)
         
         self.logger.info(
             f"Started {successful_clients} clients, "
@@ -1132,6 +1200,18 @@ Examples:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging level (default: INFO)"
     )
+    parser.add_argument(
+        "--spawn-batch-size",
+        type=int,
+        default=0,
+        help="Spawn clients in batches of N (0 disables)"
+    )
+    parser.add_argument(
+        "--spawn-batch-interval",
+        type=float,
+        default=0.0,
+        help="Delay in seconds between batches (requires --spawn-batch-size > 0)"
+    )
     
     args = parser.parse_args()
     
@@ -1155,6 +1235,8 @@ Examples:
         sub_port=args.sub_port,
         room_id=args.room,
         num_clients=args.clients,
+        spawn_batch_size=args.spawn_batch_size,
+        spawn_batch_interval=args.spawn_batch_interval,
     )
     
     try:
