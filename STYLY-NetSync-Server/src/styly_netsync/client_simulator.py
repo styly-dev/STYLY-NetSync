@@ -953,8 +953,7 @@ class ResourceManager:
 
             # Aim for either hard limit or a sane default, whichever is smaller
             desired = max(min_required, ResourceManager.DEFAULT_FD_LIMIT)
-            new_soft = min(int(hard_limit), int(desired))
-            if new_soft <= soft_limit:
+            if new_soft < soft_limit:
                 return False, (
                     "Cannot raise FD limit beyond hard limit. "
                     f"soft={soft_limit}, hard={hard_limit}, required={min_required}"
