@@ -972,13 +972,19 @@ class ResourceManager:
 
             # Aim for either hard limit or a sane default, whichever is smaller
             desired = max(min_required, ResourceManager.DEFAULT_FD_LIMIT)
-            new_soft = min(desired, hard_limit)
-            if new_soft <= soft_limit:
-                # Cannot raise beyond current soft (hard limit may be <= soft)
+
+            # If we cannot raise because hard <= soft, report and exit
+            if hard_limit <= soft_limit:
                 return False, (
-                    "Cannot raise FD limit beyond hard limit. "
+                    "Cannot raise FD limit: hard limit <= soft limit. "
                     f"soft={soft_limit}, hard={hard_limit}, required={min_required}"
                 )
+
+            new_soft = min(desired, hard_limit)
+
+            # If the attainable target is not greater than current soft, nothing to change
+            if new_soft <= soft_limit:
+                return True, f"FD limit sufficient (soft={soft_limit}, hard={hard_limit})"
 
             resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard_limit))
             return True, f"Raised soft FD limit: {soft_limit} -> {new_soft} (hard={hard_limit})"
@@ -1071,12 +1077,12 @@ class ClientSimulator:
         try:
             soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
             safe_max_clients = ResourceManager.compute_max_clients_for_soft_limit(soft_limit)
-            if self.num_clients > safe_max_clients and safe_max_clients >= 0:
+            if self.num_clients > safe_max_clients:
                 self.logger.warning(
                     "Reducing client count to %d based on FD limit (soft=%d, hard=%d)",
                     safe_max_clients, soft_limit, hard_limit,
                 )
-                self.num_clients = max(0, safe_max_clients)
+                self.num_clients = safe_max_clients
                 # Keep thread pool cap in sync
                 self.thread_pool.max_clients = self.num_clients
         except Exception as e:
