@@ -503,8 +503,9 @@ class NetworkTransport:
             # Ensure any partially created sockets are closed to avoid FD leaks
             try:
                 self.disconnect()
-            finally:
-                self.logger.error(f"Failed to connect: {e}")
+            except Exception:
+                pass
+            self.logger.error(f"Failed to connect: {e}")
             return False
     
     def send_transform(self, room_id: str, transform_data: Dict[str, Any]) -> bool:
@@ -658,6 +659,9 @@ class SharedSubscriber:
             except Exception:
                 pass
             self.socket = None
+
+    def is_running(self) -> bool:
+        return self._running
 
     def get_client_no(self, device_id: str) -> int:
         with self._lock:
@@ -973,13 +977,6 @@ class ResourceManager:
             # Aim for either hard limit or a sane default, whichever is smaller
             desired = max(min_required, ResourceManager.DEFAULT_FD_LIMIT)
 
-            # If we cannot raise because hard <= soft, report and exit
-            if hard_limit <= soft_limit:
-                return False, (
-                    "Cannot raise FD limit: hard limit <= soft limit. "
-                    f"soft={soft_limit}, hard={hard_limit}, required={min_required}"
-                )
-
             new_soft = min(desired, hard_limit)
 
             # If the attainable target is not greater than current soft, nothing to change
@@ -1101,8 +1098,6 @@ class ClientSimulator:
         self.shared_subscriber = SharedSubscriber(self.context, self.server_addr, self.sub_port, self.room_id)
         if not self.shared_subscriber.start():
             self.logger.warning("SharedSubscriber failed to start; falling back to per-client SUBs")
-            # Ensure clients don't assume a working shared subscriber
-            self.shared_subscriber = None
 
         # Create and start clients
         successful_clients = 0
@@ -1120,18 +1115,19 @@ class ClientSimulator:
                 )
             )
             
-            # Create transport
+            # Create transport (enable per-client SUB only if shared subscriber isn't running)
+            shared_sub = self.shared_subscriber if (self.shared_subscriber and self.shared_subscriber.is_running()) else None
             transport = NetworkTransport(
                 self.context,
                 self.server_addr,
                 self.dealer_port,
                 self.sub_port,
                 self.room_id,
-                enable_sub=(self.shared_subscriber is None),  # disable per-client SUB if shared is running
+                enable_sub=(shared_sub is None),  # disable per-client SUB if shared is running
             )
             
             # Create client
-            client = SimulatedClient(config, transport, self.room_id, shared_subscriber=self.shared_subscriber)
+            client = SimulatedClient(config, transport, self.room_id, shared_subscriber=shared_sub)
             
             # Add to thread pool
             if self.thread_pool.add_client(client):
