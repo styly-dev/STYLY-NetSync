@@ -20,7 +20,7 @@ Environment Variables:
     STYLY_SUB_PORT: SUB port (default: 5556)
     STYLY_ROOM_ID: Room ID for testing (default: benchmark_room)
     STYLY_TRANSFORM_RATE: Transform update rate in Hz (default: 50.0)
-    STYLY_RPC_INTERVAL: RPC send interval in seconds (default: 10.0)
+    STYLY_RPC_PER_TRANSFORMS: Send RPC every N transforms (default: 10)
 """
 
 import logging
@@ -48,8 +48,6 @@ def on_locust_init(environment, **kwargs):
     logger.info("=== STYLY NetSync Benchmark Starting ===")
     logger.info(f"Server: {config.server_address}:{config.dealer_port}")
     logger.info(f"Room: {config.room_id}")
-    logger.info(f"Transform rate: {config.transform_update_rate} Hz")
-    logger.info(f"RPC interval: {config.rpc_send_interval}s")
     logger.info("=" * 50)
 
 @events.test_stop.add_listener
@@ -110,9 +108,6 @@ class STYLYNetSyncUser(User):
     - Receives and processes server responses
     """
     
-    # Locust configuration
-    wait_time = lambda self: random.uniform(config.min_wait_time / 1000.0, config.max_wait_time / 1000.0)
-    
     def __init__(self, environment):
         super().__init__(environment)
         
@@ -129,7 +124,42 @@ class STYLYNetSyncUser(User):
         self.last_transform_time = 0
         self.transform_interval = 1.0 / config.transform_update_rate  # Convert Hz to seconds
         
+        # RPC sending counter (send RPC every N transform sends)
+        self.transform_send_count = 0
+        
+        # Cache for wait_time function
+        self._cached_wait_func = None
+        self._cached_config_values = None
+        
         logger.info(f"STYLYNetSyncUser created: {self.user_id}")
+        logger.info(f"Transform rate: {config.transform_update_rate}")
+        logger.info(f"RPC: 1 per {config.rpc_per_transform_sends} transforms (~{config.transform_update_rate/config.rpc_per_transform_sends:.1f} Hz)")
+    
+    def wait_time(self):
+        """Dynamic wait_time method that uses constant_pacing with current config."""
+        # Calculate overall pacing to achieve target transform rate
+        # Task weights: transform=100, rpc=100, log=1 (total=201)
+        total_task_weight = 100 + 100 + 1  # 201
+        transform_weight = 100
+        weight_ratio = total_task_weight / transform_weight  # 2.01
+        
+        # Get current config values
+        current_transform_rate = config.transform_update_rate
+        current_rpc_per_transforms = config.rpc_per_transform_sends
+        
+        # Check if we need to recalculate constant_pacing function
+        current_config_values = (current_transform_rate, current_rpc_per_transforms)
+        
+        if (self._cached_wait_func is None or 
+            self._cached_config_values != current_config_values):
+            
+            # Recalculate constant_pacing with current values
+            overall_rate = current_transform_rate * weight_ratio
+            self._cached_wait_func = constant_pacing(1.0 / overall_rate)
+            self._cached_config_values = current_config_values
+        
+        # Call the cached constant_pacing function and return its result
+        return self._cached_wait_func(self)
     
     def _parse_host_option(self, host_string: str):
         """Parse Locust --host option and update config."""
@@ -234,9 +264,7 @@ class STYLYNetSyncUser(User):
         finally:
             self.client = None
     
-    wait_time = constant_pacing(1.0 / config.transform_update_rate)
-
-    @task(100)  # High weight for frequent transform updates
+    @task(100)  # Only transform task now
     def send_transform_update(self):
         """Send transform update to server."""
         if not self.connected or not self.client:
@@ -279,18 +307,29 @@ class STYLYNetSyncUser(User):
                 context={}
             )
     
-    @task(5)  # Lower weight for RPC calls
+    @task(100)  # Same weight as transform
     def send_rpc_message(self):
-        """Send RPC message."""
+        """Send RPC message every N calls (controlled by counter)."""
         if not self.connected or not self.client:
             return
+        
+        # Count up and check if we should send RPC
+        self.transform_send_count += 1
+        
+        if self.transform_send_count < config.rpc_per_transform_sends:
+            return  # Don't send RPC this time
+        
+        # Reset counter and send RPC
+        self.transform_send_count = 0
         
         start_time = time.time()
         
         try:
-            # Single RPC type as per server implementation
+            # Unified RPC sending logic with timestamp and user info
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%H:%M:%S")
             function_name = "benchmark_rpc_function"
-            args = [f"arg_{i}" for i in range(random.randint(1, 3))]
+            args = ["benchmark", timestamp, self.user_id, f"arg_{random.randint(1, 3)}"]
             
             success = self.client.send_rpc(function_name, args)
             logger.debug(f"send_rpc success:{success}")
@@ -327,18 +366,7 @@ class STYLYNetSyncUser(User):
                 context={}
             )
     
-    @task(2)  # Low weight for periodic updates
-    def perform_periodic_updates(self):
-        """Perform periodic RPC updates."""
-        if not self.connected or not self.client:
-            return
-        
-        try:
-            self.client.perform_periodic_updates()
-        except Exception as e:
-            logger.error(f"Error in periodic updates for {self.user_id}: {e}")
-    
-    @task(1)  # Very low weight for status logging
+    @task(1)  # Low weight for status logging
     def log_status(self):
         """Periodically log user status and metrics."""
         current_time = time.time()
@@ -372,12 +400,38 @@ def _(parser):
                        help="Enable detailed STYLY logging")
     parser.add_argument("--styly-export-metrics", type=str,
                        help="Export metrics to specified file")
-
+    
+    # Rate設定をLocust Web UIの設定画面に表示
+    parser.add_argument("--styly-transform-rate", type=float,
+                       default=config.transform_update_rate,
+                       help=f"Transform update rate in Hz (default: {config.transform_update_rate})")
+    parser.add_argument("--styly-rpc-per-transforms", type=int, 
+                       default=config.rpc_per_transform_sends,
+                       help=f"Send RPC every N transforms (default: {config.rpc_per_transform_sends})")
 
 @events.init.add_listener
 def _(environment, **kwargs):
     """Handle custom command line arguments."""
-    if environment.parsed_options and environment.parsed_options.styly_detailed_logging:
-        config.detailed_logging = True
-        logger.setLevel(logging.DEBUG)
-        logger.info("Detailed logging enabled")
+    if environment.parsed_options:
+        if environment.parsed_options.styly_detailed_logging:
+            config.detailed_logging = True
+            logger.setLevel(logging.DEBUG)
+            logger.info("Detailed logging enabled")
+
+@events.test_start.add_listener
+def _(environment, **kwargs):
+    """Handle custom command line arguments."""
+    if environment.parsed_options:
+        logger.info(f"OPTION: parsed_options.styly_transform_rate: {environment.parsed_options.styly_transform_rate}")
+        logger.info(f"OPTION: parsed_options.styly_rpc_per_transforms: {environment.parsed_options.styly_rpc_per_transforms}")
+        
+        # Handle values set via WebUI
+        if hasattr(environment.parsed_options, 'styly_transform_rate'):
+            if environment.parsed_options.styly_transform_rate != config.transform_update_rate:
+                config.transform_update_rate = environment.parsed_options.styly_transform_rate
+                logger.info(f"Transform rate updated to: {config.transform_update_rate} Hz")
+        
+        if hasattr(environment.parsed_options, 'styly_rpc_per_transforms'):
+            if environment.parsed_options.styly_rpc_per_transforms != config.rpc_per_transform_sends:
+                config.rpc_per_transform_sends = environment.parsed_options.styly_rpc_per_transforms
+                logger.info(f"RPC per transforms updated to: {config.rpc_per_transform_sends}")
