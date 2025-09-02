@@ -901,6 +901,12 @@ class ClientThreadPool:
 
 class ResourceManager:
     """Manages system resources and limits."""
+    
+    # File descriptor overhead for ZMQ context, internal signaling, logs, timers, pollers, etc.
+    FD_BASE_OVERHEAD = 64
+    
+    # Default recommended file descriptor limit for most systems
+    DEFAULT_FD_LIMIT = 4096
 
     @staticmethod
     def estimate_fd_need(num_clients: int) -> int:
@@ -912,9 +918,8 @@ class ResourceManager:
         - ZMQ context and internal signaling use a few FDs as well
         - Leave generous headroom for logs, timers, pollers, etc.
         """
-        base_overhead = 64
         # Assume roughly 2 FDs per client for safety, then add overhead
-        return num_clients * 2 + base_overhead
+        return num_clients * 2 + ResourceManager.FD_BASE_OVERHEAD
 
     @staticmethod
     def check_file_descriptor_limit(required_fds: int) -> Tuple[bool, str]:
@@ -946,8 +951,8 @@ class ResourceManager:
             if soft_limit >= min_required:
                 return True, f"FD limit sufficient (soft={soft_limit}, hard={hard_limit})"
 
-            # Aim for either hard limit or a sane default (4096), whichever is smaller
-            desired = max(min_required, 4096)
+            # Aim for either hard limit or a sane default, whichever is smaller
+            desired = max(min_required, ResourceManager.DEFAULT_FD_LIMIT)
             new_soft = min(int(hard_limit), int(desired))
             if new_soft <= soft_limit:
                 return False, (
@@ -990,8 +995,8 @@ class ClientSimulator:
         self.sub_port = sub_port  # Future use
         self.room_id = room_id
         self.num_clients = num_clients
-        self.spawn_batch_size = spawn_batch_size or 0
-        self.spawn_batch_interval = spawn_batch_interval or 0.0
+        self.spawn_batch_size = spawn_batch_size if spawn_batch_size is not None else 0
+        self.spawn_batch_interval = spawn_batch_interval if spawn_batch_interval is not None else 0.0
         
         self.context = zmq.Context()
         self.thread_pool = ClientThreadPool(num_clients)
