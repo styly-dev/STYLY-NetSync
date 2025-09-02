@@ -980,8 +980,12 @@ class ResourceManager:
             if new_soft < min_required:
                 return False, f"Cannot raise FD limit to meet requirement {min_required} (max possible={new_soft}, hard={hard_limit})"
 
-            resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard_limit))
-            return True, f"Raised soft FD limit: {soft_limit} -> {new_soft} (hard={hard_limit})"
+            # Only raise the soft limit, never lower it
+            if new_soft > soft_limit:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard_limit))
+                return True, f"Raised soft FD limit: {soft_limit} -> {new_soft} (hard={hard_limit})"
+            else:
+                return True, f"FD limit sufficient (soft={soft_limit}, hard={hard_limit})"
 
         except Exception as e:
             return False, f"Failed to raise FD limit: {e}"
