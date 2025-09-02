@@ -1,4 +1,4 @@
-name: 'Set ver and Create Release Draft'
+name: '_Release workflow'
 
 on:
   workflow_dispatch:
