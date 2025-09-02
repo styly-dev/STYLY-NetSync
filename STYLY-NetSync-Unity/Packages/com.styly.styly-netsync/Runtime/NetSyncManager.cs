@@ -61,8 +61,10 @@ namespace Styly.NetSync
         }
 
         // Public RPC methods for external access
-        public void Rpc(string functionName, string[] args)
+        public void Rpc(string functionName, string[] args = null)
         {
+            if (args == null) { args = Array.Empty<string>(); }
+
             if (_rpcManager != null)
             {
                 _rpcManager.Send(_roomId, functionName, args);
@@ -181,7 +183,7 @@ namespace Styly.NetSync
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
-            
+
             // Start networking will establish new connection with updated _roomId
             StartNetworking();
         }
@@ -349,7 +351,7 @@ namespace Styly.NetSync
                 // Initial sync timeout triggered ready state
                 _shouldCheckReady = true;
             }
-            
+
             // Update battery level periodically (must be in main thread)
             UpdateBatteryLevel();
 
@@ -423,17 +425,17 @@ namespace Styly.NetSync
         {
             DebugLog("Connection established successfully");
             _shouldCheckReady = true;
-            
+
             // Notify network variable manager about connection
             _networkVariableManager?.OnConnectionEstablished();
-            
+
             // If we're switching rooms, defer handshake to main thread
             if (_roomSwitching)
             {
                 _shouldSendHandshake = true;
                 DebugLog("Connection established during room switch - handshake deferred to main thread");
             }
-            
+
             // Initialize battery level immediately on connection
             _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
         }
@@ -471,7 +473,7 @@ namespace Styly.NetSync
                     DebugLog("Sent stealth handshake to new room (no local avatar)");
                 }
             }
-            
+
             // End room switching
             _roomSwitching = false;
             DebugLog("Room switching completed");
@@ -541,7 +543,7 @@ namespace Styly.NetSync
                 // This avoids potential socket state issues
             }
         }
-        
+
         /// <summary>
         /// Triggers a ready state check. Called internally when network variables are first received.
         /// </summary>
@@ -718,11 +720,11 @@ namespace Styly.NetSync
             if (currentTime - _lastBatteryUpdate >= _batteryUpdateInterval)
             {
                 _lastBatteryUpdate = currentTime;
-                
+
                 // Get battery level from Unity SystemInfo
                 float batteryLevel = SystemInfo.batteryLevel;
                 string batteryLevelString;
-                
+
                 // Handle case where battery level is unavailable (-1)
                 if (batteryLevel < 0)
                 {
@@ -733,10 +735,10 @@ namespace Styly.NetSync
                     // Convert to string with 2 decimal places
                     batteryLevelString = batteryLevel.ToString("F2");
                 }
-                
+
                 // Set as client network variable so other clients can see this device's battery level
                 SetClientVariable("BatteryLevel", batteryLevelString);
-                
+
                 if (_enableDebugLogs)
                 {
                     DebugLog($"Battery level updated: {batteryLevelString}");
