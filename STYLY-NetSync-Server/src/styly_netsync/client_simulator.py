@@ -690,7 +690,7 @@ class SharedSubscriber:
                     if msg_type != MSG_DEVICE_ID_MAPPING:
                         continue
                     _, data, _ = deserialize(payload)
-                    if not data:
+                    if data is None:
                         continue
                     mappings = data.get("mappings", [])
                     if mappings:
