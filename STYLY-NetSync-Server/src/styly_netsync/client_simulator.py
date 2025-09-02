@@ -581,7 +581,7 @@ class NetworkTransport:
             if msg_type == MSG_DEVICE_ID_MAPPING:
                 try:
                     _, data, _ = deserialize(payload)
-                    if data:
+                    if data is not None:
                         return msg_type, data
                 except Exception:
                     # ignore malformed
