@@ -239,9 +239,9 @@ namespace Styly.NetSync
                     if (!alive.Contains(clientNo))
                     {
                         avatarManager.RemoveClient(clientNo);
-                        if (avatarManager.OnClientDisconnected != null)
+                        if (avatarManager.OnAvatarDisconnected != null)
                         {
-                            avatarManager.OnClientDisconnected.Invoke(clientNo);
+                            avatarManager.OnAvatarDisconnected.Invoke(clientNo);
                         }
                     }
                 }

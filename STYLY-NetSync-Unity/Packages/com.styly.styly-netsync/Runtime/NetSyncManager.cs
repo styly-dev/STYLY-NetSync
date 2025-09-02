@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.Serialization;
 
 namespace Styly.NetSync
 {
@@ -40,7 +41,7 @@ namespace Styly.NetSync
 
         [Header("Events")]
         public UnityEvent<int> OnAvatarConnected;
-        public UnityEvent<int> OnClientDisconnected;
+        [FormerlySerializedAs("OnClientDisconnected")] public UnityEvent<int> OnAvatarDisconnected;
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
@@ -402,7 +403,7 @@ namespace Styly.NetSync
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
-            _avatarManager.OnClientDisconnected.AddListener(OnRemoteAvatarDisconnected);
+            _avatarManager.OnAvatarDisconnected.AddListener(OnRemoteAvatarDisconnected);
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
 
             // Setup network variable events
@@ -481,9 +482,9 @@ namespace Styly.NetSync
 
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
-            if (OnClientDisconnected != null)
+            if (OnAvatarDisconnected != null)
             {
-                OnClientDisconnected.Invoke(clientNo);
+                OnAvatarDisconnected.Invoke(clientNo);
             }
         }
 

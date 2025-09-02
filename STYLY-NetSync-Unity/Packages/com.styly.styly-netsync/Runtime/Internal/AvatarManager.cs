@@ -15,7 +15,7 @@ namespace Styly.NetSync
         private bool _enableDebugLogs;
 
         public UnityEvent<int> OnAvatarConnected { get; } = new();
-        public UnityEvent<int> OnClientDisconnected { get; } = new();
+        public UnityEvent<int> OnAvatarDisconnected { get; } = new();
 
         public NetSyncAvatar LocalAvatar => _localAvatar;
         public IReadOnlyDictionary<int, GameObject> ConnectedPeers => _connectedPeers;
