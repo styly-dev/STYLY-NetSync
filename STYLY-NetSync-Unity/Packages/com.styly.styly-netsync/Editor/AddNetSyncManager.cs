@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace Styly.NetSync.Editor
 {
-    public class AddNetSyncManager : MonoBehaviour
+    public static class AddNetSyncManager
     {
         // Path to the prefab within the package
         private static readonly string prefabPath = "Packages/com.styly.styly-netsync/Runtime/Prefab/NetSyncManager.prefab";
