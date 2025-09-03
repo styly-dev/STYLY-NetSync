@@ -205,7 +205,7 @@ class NetSyncServer:
         # NV monitoring window (1s sliding window for logging only)
         self.nv_monitor_window: dict[str, list] = {}  # room_id -> [timestamps]
         self.nv_monitor_window_size = 1.0  # 1 second window
-        self.nv_monitor_threshold = 100  # Log warning if > 100 NV req/s
+        self.nv_monitor_threshold = 200  # Log warning if > 200 NV req/s
 
         # Network Variables limits
         self.MAX_GLOBAL_VARS = 20
