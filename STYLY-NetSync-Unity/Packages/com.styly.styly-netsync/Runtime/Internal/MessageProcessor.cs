@@ -58,18 +58,19 @@ namespace Styly.NetSync
 
                 switch (msgType)
                 {
-                    case BinarySerializer.MSG_ROOM_TRANSFORM when data is RoomTransformData:
-                        var json = JsonConvert.SerializeObject(data);
-                        _messageQueue.Enqueue(new NetworkMessage { type = "room_transform", data = json });
+                    case BinarySerializer.MSG_ROOM_TRANSFORM when data is RoomTransformData room:
+                        // Avoid JSON round-trip: enqueue the object directly for main-thread processing
+                        _messageQueue.Enqueue(new NetworkMessage { type = "room_transform", dataObj = room });
                         _messagesReceived++;
                         break;
 
                     case BinarySerializer.MSG_RPC when data is RPCMessage rpc:
+                        // Avoid JSON round-trip: parse args once and pass object via dataObj
                         var args = JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson);
                         _messageQueue.Enqueue(new NetworkMessage
                         {
                             type = "rpc",
-                            data = JsonConvert.SerializeObject(new { senderClientNo = rpc.senderClientNo, rpc.functionName, args })
+                            dataObj = new RpcMessageData { senderClientNo = rpc.senderClientNo, functionName = rpc.functionName, args = args }
                         });
                         _messagesReceived++;
                         break;
@@ -126,11 +127,26 @@ namespace Styly.NetSync
                 switch (msg.type)
                 {
                     case "room_transform":
-                        ProcessRoomTransform(msg.data, avatarManager, localDeviceId, netSyncManager);
+                        // Object-only path (protocol unchanged); no JSON fallback.
+                        if (msg.dataObj is RoomTransformData roomObj)
+                        {
+                            ProcessRoomTransform(roomObj, avatarManager, localDeviceId, netSyncManager);
+                        }
+                        else
+                        {
+                            Debug.LogError("[MessageProcessor] room_transform without dataObj (unexpected)");
+                        }
                         break;
 
                     case "rpc":
-                        ProcessRPCMessage(msg.data, rpcManager);
+                        if (msg.dataObj is RpcMessageData rpcObj)
+                        {
+                            rpcManager.EnqueueRPC(rpcObj.senderClientNo, rpcObj.functionName, rpcObj.args);
+                        }
+                        else
+                        {
+                            Debug.LogError("[MessageProcessor] rpc without dataObj (unexpected)");
+                        }
                         break;
 
                     case "global_var_sync":
@@ -196,19 +212,19 @@ namespace Styly.NetSync
             }
         }
 
-        private void ProcessRoomTransform(string json, AvatarManager avatarManager, string localDeviceId, NetSyncManager netSyncManager = null)
+        /// <summary>
+        /// Preferred entrypoint: process already-deserialized room data without JSON round-trip.
+        /// </summary>
+        private void ProcessRoomTransform(RoomTransformData room, AvatarManager avatarManager, string localDeviceId, NetSyncManager netSyncManager = null)
         {
-            if (string.IsNullOrEmpty(json))
+            if (room == null)
             {
-                Debug.LogError("RoomTransform: empty JSON");
+                Debug.LogError("RoomTransform: null object");
                 return;
             }
 
             try
             {
-                var room = JsonConvert.DeserializeObject<RoomTransformData>(json);
-                if (room == null) { return; }
-
                 var alive = new HashSet<int>();
                 foreach (var c in room.clients)
                 {
@@ -227,7 +243,6 @@ namespace Styly.NetSync
                     {
                         // Store in pending queue for processing in ProcessMessageQueue
                         _pendingClients[c.clientNo] = c;
-
                         // Client added to pending queue
                     }
                 }
@@ -249,22 +264,6 @@ namespace Styly.NetSync
             catch (Exception ex)
             {
                 Debug.LogError($"RoomTransform error: {ex.Message}");
-            }
-        }
-
-        private void ProcessRPCMessage(string json, RPCManager rpcManager)
-        {
-            try
-            {
-                var rpcData = JsonConvert.DeserializeObject<RpcMessageData>(json);
-                if (rpcData != null)
-                {
-                    rpcManager.EnqueueRPC(rpcData.senderClientNo, rpcData.functionName, rpcData.args);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"RPC parse error: {ex.Message}");
             }
         }
 
