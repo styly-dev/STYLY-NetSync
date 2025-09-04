@@ -13,12 +13,9 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private string _deviceId;
         [SerializeField, ReadOnly] private int _clientNo;
 
-        [Header("Transform Sync Settings")]
-        [SerializeField, ReadOnly] private Transform _physicalTransform; // Object to sync Physical position (local coordinate system). _head will be used for physical transform of local avatar
-
-        [Header("Physical Transform Data (Runtime)")]
-        [SerializeField, ReadOnly] private Vector3 _physicalPosition;
-        [SerializeField, ReadOnly] private Vector3 _physicalRotation;
+        [Header("Physical Transform Data")]
+        [ReadOnly] public Vector3 PhysicalPosition;
+        [ReadOnly] public Vector3 PhysicalRotation;
 
         [Header("Body Parts")]
         public Transform _head;
@@ -43,11 +40,7 @@ namespace Styly.NetSync
 
         void Start()
         {
-            if (IsLocalAvatar)
-            {
-                // Use head as the physical transform for local avatar
-                _physicalTransform = _head;
-            }
+
         }
 
         void OnEnable()
@@ -81,7 +74,7 @@ namespace Styly.NetSync
                 _clientNo = 0;
             }
 
-            _smoother.Initialize(_physicalTransform, _head, _rightHand, _leftHand, _virtualTransforms);
+            _smoother.Initialize(_head, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
         // Initialization method for remote avatars with known client number
@@ -92,7 +85,7 @@ namespace Styly.NetSync
             IsLocalAvatar = false;
             _netSyncManager = manager;
 
-            _smoother.Initialize(_physicalTransform, _head, _rightHand, _leftHand, _virtualTransforms);
+            _smoother.Initialize(_head, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
         void Update()
@@ -108,12 +101,12 @@ namespace Styly.NetSync
                 _smoother.Update(Time.deltaTime);
             }
 
-            // Update physical transform display values for inspector
 #if UNITY_EDITOR
-            if (_physicalTransform != null)
+            // Update physical transform display values for inspector
+            if (!IsLocalAvatar)
             {
-                _physicalPosition = _physicalTransform.localPosition;
-                _physicalRotation = _physicalTransform.localEulerAngles;
+                PhysicalPosition = _head.localPosition;
+                PhysicalRotation = _head.localEulerAngles;
             }
 #endif
         }
@@ -125,7 +118,7 @@ namespace Styly.NetSync
             {
                 deviceId = _deviceId,
                 clientNo = _clientNo,
-                physical = GetPhysicalTransform(),
+                physical = GetWorldTransform(_head),
                 head = GetWorldTransform(_head),
                 rightHand = GetWorldTransform(_rightHand),
                 leftHand = GetWorldTransform(_leftHand),
@@ -149,21 +142,11 @@ namespace Styly.NetSync
 
             _smoother.SetTarget(data);
 
-            _physicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
-            _physicalRotation = data.physical != null ? data.physical.GetRotation() : Vector3.zero;
+            PhysicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
+            PhysicalRotation = data.physical != null ? data.physical.GetRotation() : Vector3.zero;
 
             // Update client number for remote avatars
             _clientNo = data.clientNo;
-        }
-
-        // Get physical transform data (local space, full 6DOF)
-        internal TransformData GetPhysicalTransform()
-        {
-            if (_physicalTransform == null) return new TransformData();
-            return new TransformData(
-                _physicalTransform.localPosition,
-                _physicalTransform.localEulerAngles
-            );
         }
 
         // Get world transform data (world space, full 6DOF)
