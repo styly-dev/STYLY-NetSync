@@ -51,10 +51,7 @@ namespace Styly.NetSync
         #endregion ------------------------------------------------------------------------
 
         #region === Human Presence ===
-        /// <summary>
-        /// Spawn Human Presence for a remote client when its avatar is connected.
-        /// Attaches a per-instance follower to handle smoothing (mirrors avatar smoother design).
-        /// </summary>
+        /// <summary>Spawn Human Presence for a remote client when its avatar is connected.</summary>
         private void HandleAvatarConnectedForPresence(int clientNo)
         {
             // Preconditions:
@@ -75,21 +72,14 @@ namespace Styly.NetSync
                 }
             }
 
-            // Instantiate Presence as a child of the remote avatar anchor
+            // Instantiate Presence as a child of the anchor (zero offset)
             var presence = Instantiate(_humanPresencePrefab);
             presence.name = _humanPresencePrefab.name + " (" + clientNo + ")";
 
             if (remoteGo != null) { presence.transform.SetParent(remoteGo.transform); }
-
-            // Attach smoother component for per-instance smoothing
-            if (remoteGo != null)
-            {
-                if (remoteGo.TryGetComponent<NetSyncAvatar>(out var net))
-                {
-                    if (!presence.TryGetComponent<NetSyncSmoother>(out var smoother)) { smoother = presence.AddComponent<NetSyncSmoother>(); }
-                    smoother.InitializeForPresence(net, this);
-                }
-            }
+            // presence.transform.SetParent(anchor, false); // keep local = zero
+            // presence.transform.localPosition = Vector3.zero;
+            // presence.transform.localRotation = Quaternion.identity; // world yaw will be applied each frame
 
             _humanPresences[clientNo] = presence;
         }
@@ -105,13 +95,32 @@ namespace Styly.NetSync
             }
         }
 
-        /// <summary>
-        /// Deprecated: Presence smoothing is handled by NetSyncSmoother on each instance.
-        /// Kept as a no-op for compatibility where the manager previously drove Presence updates.
-        /// </summary>
+        /// <summary>Per-frame yaw-only correction. Keep world rotation (0, yaw, 0), follow anchor position.</summary>
         private void UpdateHumanPresences()
         {
-            // Intentionally empty.
+            if (_humanPresences.Count == 0) { return; }
+            if (_avatarManager == null) { return; }
+
+            var peers = _avatarManager.ConnectedPeers;
+            if (peers == null || peers.Count == 0) { return; }
+
+            // Iterate all presence instances
+            foreach (var kv in _humanPresences)
+            {
+                int clientNo = kv.Key;
+                GameObject presence = kv.Value;
+                if (presence == null) { continue; }
+
+                if (!peers.ContainsKey(clientNo)) { continue; }
+                var remoteGo = peers[clientNo];
+                if (remoteGo == null) { continue; }
+
+                var net = remoteGo.GetComponent<NetSyncAvatar>();
+                if (net == null) { continue; }
+
+                presence.transform.position = net.PhysicalPosition;
+                presence.transform.rotation = Quaternion.Euler(net.PhysicalRotation);
+            }
         }
 
         /// <summary>Destroy all Human Presences (room switch / disable / connection error).</summary>

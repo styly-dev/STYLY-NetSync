@@ -31,8 +31,8 @@ namespace Styly.NetSync
         // Reference to NetSyncManager
         private NetSyncManager _netSyncManager;
 
-        // Smoothing component for remote avatars
-        private NetSyncSmoother _smootherComponent;
+        // Smoothing helper for remote avatars
+        private readonly NetSyncAvatarSmoother _smoother = new NetSyncAvatarSmoother();
 
         // Events
         [Header("Network Variable Events")]
@@ -73,6 +73,8 @@ namespace Styly.NetSync
                 // For local avatar, client number will be updated via NetSyncManager
                 _clientNo = 0;
             }
+
+            _smoother.Initialize(_head, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
         // Initialization method for remote avatars with known client number
@@ -83,13 +85,7 @@ namespace Styly.NetSync
             IsLocalAvatar = false;
             _netSyncManager = manager;
 
-            // Attach smoother component for remote avatars only
-            _smootherComponent = gameObject.GetComponent<NetSyncSmoother>();
-            if (_smootherComponent == null)
-            {
-                _smootherComponent = gameObject.AddComponent<NetSyncSmoother>();
-            }
-            _smootherComponent.InitializeForAvatar(_head, _head, _rightHand, _leftHand, _virtualTransforms, _netSyncManager);
+            _smoother.Initialize(_head, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
         void Update()
@@ -98,6 +94,11 @@ namespace Styly.NetSync
             {
                 // For local avatar, update client number display
                 _clientNo = _netSyncManager.ClientNo;
+            }
+
+            if (!IsLocalAvatar)
+            {
+                _smoother.Update(Time.deltaTime);
             }
         }
 
@@ -130,10 +131,7 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar) { return; }
 
-            if (_smootherComponent != null)
-            {
-                _smootherComponent.SetTarget(data);
-            }
+            _smoother.SetTarget(data);
 
             PhysicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
             PhysicalRotation = data.physical != null ? data.physical.GetRotation() : Vector3.zero;
