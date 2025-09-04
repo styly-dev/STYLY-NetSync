@@ -66,9 +66,13 @@ namespace Styly.NetSync
             if (_avatarManager != null)
             {
                 var peers = _avatarManager.ConnectedPeers;
-                if (peers != null && peers.ContainsKey(clientNo))
+                if (peers != null)
                 {
-                    remoteGo = peers[clientNo];
+                    GameObject tmp;
+                    if (peers.TryGetValue(clientNo, out tmp))
+                    {
+                        remoteGo = tmp;
+                    }
                 }
             }
 
@@ -77,11 +81,17 @@ namespace Styly.NetSync
             presence.name = _humanPresencePrefab.name + " (" + clientNo + ")";
 
             if (remoteGo != null) { presence.transform.SetParent(remoteGo.transform); }
-            // presence.transform.SetParent(anchor, false); // keep local = zero
-            // presence.transform.localPosition = Vector3.zero;
-            // presence.transform.localRotation = Quaternion.identity; // world yaw will be applied each frame
-
             _humanPresences[clientNo] = presence;
+
+            // Cache NetSyncAvatar component for this client to avoid per-frame GetComponent in UpdateHumanPresences
+            if (remoteGo != null)
+            {
+                var net = remoteGo.GetComponent<NetSyncAvatar>();
+                if (net != null)
+                {
+                    _remoteAvatarCache[clientNo] = net;
+                }
+            }
         }
 
         /// <summary>Destroy Human Presence when remote avatar disconnects or is cleaned up.</summary>
@@ -92,6 +102,12 @@ namespace Styly.NetSync
                 var go = _humanPresences[clientNo];
                 if (go != null) { Destroy(go); }
                 _humanPresences.Remove(clientNo);
+            }
+
+            // Remove cached component for this client
+            if (_remoteAvatarCache.ContainsKey(clientNo))
+            {
+                _remoteAvatarCache.Remove(clientNo);
             }
         }
 
@@ -111,12 +127,33 @@ namespace Styly.NetSync
                 GameObject presence = kv.Value;
                 if (presence == null) { continue; }
 
-                if (!peers.ContainsKey(clientNo)) { continue; }
-                var remoteGo = peers[clientNo];
+                if (!peers.TryGetValue(clientNo, out var remoteGo)) { continue; }
                 if (remoteGo == null) { continue; }
 
-                var net = remoteGo.GetComponent<NetSyncAvatar>();
-                if (net == null) { continue; }
+                // Use cached NetSyncAvatar if available; otherwise cache it once
+                if (_remoteAvatarCache.TryGetValue(clientNo, out NetSyncAvatar net))
+                {
+                    if (net == null)
+                    {
+                        // Cached as null (shouldn't happen normally). Attempt a one-time refresh.
+                        net = remoteGo.GetComponent<NetSyncAvatar>();
+                        if (net != null) { _remoteAvatarCache[clientNo] = net; }
+                        else { continue; }
+                    }
+                }
+                else
+                {
+                    // Not cached yet – fetch once and cache
+                    net = remoteGo.GetComponent<NetSyncAvatar>();
+                    if (net != null)
+                    {
+                        _remoteAvatarCache[clientNo] = net;
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
 
                 presence.transform.position = net.PhysicalPosition;
                 presence.transform.rotation = Quaternion.Euler(net.PhysicalRotation);
@@ -133,6 +170,7 @@ namespace Styly.NetSync
                 if (tmp[i] != null) { Destroy(tmp[i]); }
             }
             _humanPresences.Clear();
+            _remoteAvatarCache.Clear();
         }
         #endregion
 
@@ -293,6 +331,8 @@ namespace Styly.NetSync
         private NetworkVariableManager _networkVariableManager;
         // Human Presence instances by clientNo
         private readonly Dictionary<int, GameObject> _humanPresences = new Dictionary<int, GameObject>();
+        // Cache of remote avatar component per client (to avoid per-frame GetComponent)
+        private readonly Dictionary<int, NetSyncAvatar> _remoteAvatarCache = new Dictionary<int, NetSyncAvatar>();
 
         // State
         private bool _isDiscovering;
