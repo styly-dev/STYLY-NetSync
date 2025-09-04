@@ -29,6 +29,11 @@ namespace Styly.NetSync
             _logNetworkTraffic = logNetworkTraffic;
         }
 
+        // Ring buffer cap for room transform updates.
+        // Keep the queue lean by proactively dropping older room updates
+        // so only the latest state matters. Adjust if needed.
+        private const int MaxRoomUpdatesQueued = 2; // Keep at most the latest 2 room updates pending
+
         public void SetLocalDeviceId(string deviceId)
         {
             _localDeviceId = deviceId;
@@ -59,6 +64,16 @@ namespace Styly.NetSync
                 switch (msgType)
                 {
                     case BinarySerializer.MSG_ROOM_TRANSFORM when data is RoomTransformData:
+                        // Drop backlog aggressively for room updates to keep only most recent state.
+                        // Note: This simple policy trims the head of the shared queue and may remove
+                        // non-room messages if the backlog is large. This is intentional to prevent
+                        // unbounded growth and prioritize latest room state under load.
+                        // If finer control is required later, introduce type-aware trimming.
+                        while (_messageQueue.Count >= MaxRoomUpdatesQueued)
+                        {
+                            _messageQueue.TryDequeue(out _);
+                        }
+
                         var json = JsonConvert.SerializeObject(data);
                         _messageQueue.Enqueue(new NetworkMessage { type = "room_transform", data = json });
                         _messagesReceived++;
