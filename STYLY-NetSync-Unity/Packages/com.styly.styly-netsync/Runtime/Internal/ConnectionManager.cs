@@ -18,7 +18,6 @@ namespace Styly.NetSync
         private bool _enableDebugLogs;
         private bool _logNetworkTraffic;
         private bool _connectionError;
-        private float _reconnectDelay = 10f;
         private ServerDiscoveryManager _discoveryManager;
         private string _currentRoomId;
 
