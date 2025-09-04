@@ -30,6 +30,8 @@ namespace Styly.NetSync
         [Header("Avatar Settings")]
         [SerializeField] private GameObject _localAvatarPrefab;
         [SerializeField] private GameObject _remoteAvatarPrefab;
+        [SerializeField, Tooltip("Human Presence to visualize real-world positions of remote users")]
+        private GameObject _humanPresencePrefab;
 
         // [Header("Transform Sync Settings"), Range(1, 120)]
         private float _sendRate = 10f;
@@ -47,6 +49,92 @@ namespace Styly.NetSync
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
         public UnityEvent OnReady;
         #endregion ------------------------------------------------------------------------
+
+        #region === Human Presence ===
+        /// <summary>Spawn Human Presence for a remote client when its avatar is connected.</summary>
+        private void HandleAvatarConnectedForPresence(int clientNo)
+        {
+            // Preconditions:
+            if (_humanPresencePrefab == null) { return; }                          // no prefab set
+            if (clientNo <= 0) { return; }                                         // invalid id
+            if (clientNo == _clientNo) { return; }                                  // local (don't show self)
+            if (IsClientStealthMode(clientNo)) { return; }                          // stealth -> do not display
+            if (_humanPresences.ContainsKey(clientNo)) { return; }                  // already spawned
+
+            // Find remote avatar GameObject
+            GameObject remoteGo = null;
+            if (_avatarManager != null)
+            {
+                var peers = _avatarManager.ConnectedPeers;
+                if (peers != null && peers.ContainsKey(clientNo))
+                {
+                    remoteGo = peers[clientNo];
+                }
+            }
+
+            // Instantiate Presence as a child of the anchor (zero offset)
+            var presence = Instantiate(_humanPresencePrefab);
+            presence.name = _humanPresencePrefab.name + " (" + clientNo + ")";
+
+            if (remoteGo != null) { presence.transform.SetParent(remoteGo.transform); }
+            // presence.transform.SetParent(anchor, false); // keep local = zero
+            // presence.transform.localPosition = Vector3.zero;
+            // presence.transform.localRotation = Quaternion.identity; // world yaw will be applied each frame
+
+            _humanPresences[clientNo] = presence;
+        }
+
+        /// <summary>Destroy Human Presence when remote avatar disconnects or is cleaned up.</summary>
+        private void HandleAvatarDisconnectedForPresence(int clientNo)
+        {
+            if (_humanPresences.ContainsKey(clientNo))
+            {
+                var go = _humanPresences[clientNo];
+                if (go != null) { Destroy(go); }
+                _humanPresences.Remove(clientNo);
+            }
+        }
+
+        /// <summary>Per-frame yaw-only correction. Keep world rotation (0, yaw, 0), follow anchor position.</summary>
+        private void UpdateHumanPresences()
+        {
+            if (_humanPresences.Count == 0) { return; }
+            if (_avatarManager == null) { return; }
+
+            var peers = _avatarManager.ConnectedPeers;
+            if (peers == null || peers.Count == 0) { return; }
+
+            // Iterate all presence instances
+            foreach (var kv in _humanPresences)
+            {
+                int clientNo = kv.Key;
+                GameObject presence = kv.Value;
+                if (presence == null) { continue; }
+
+                if (!peers.ContainsKey(clientNo)) { continue; }
+                var remoteGo = peers[clientNo];
+                if (remoteGo == null) { continue; }
+
+                var net = remoteGo.GetComponent<NetSyncAvatar>();
+                if (net == null) { continue; }
+
+                presence.transform.position = net.PhysicalPosition;
+                presence.transform.rotation = Quaternion.Euler(net.PhysicalRotation);
+            }
+        }
+
+        /// <summary>Destroy all Human Presences (room switch / disable / connection error).</summary>
+        private void CleanupAllHumanPresences()
+        {
+            if (_humanPresences.Count == 0) { return; }
+            var tmp = new List<GameObject>(_humanPresences.Values);
+            for (int i = 0; i < tmp.Count; i++)
+            {
+                if (tmp[i] != null) { Destroy(tmp[i]); }
+            }
+            _humanPresences.Clear();
+        }
+        #endregion
 
         #region === Singleton & Public API ===
         private static NetSyncManager _instance;
@@ -181,6 +269,7 @@ namespace Styly.NetSync
             _messageProcessor?.ClearRoomScopedState();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
+            CleanupAllHumanPresences();
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
@@ -202,6 +291,8 @@ namespace Styly.NetSync
         private MessageProcessor _messageProcessor;
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
+        // Human Presence instances by clientNo
+        private readonly Dictionary<int, GameObject> _humanPresences = new Dictionary<int, GameObject>();
 
         // State
         private bool _isDiscovering;
@@ -240,6 +331,7 @@ namespace Styly.NetSync
 
         public GameObject GetLocalAvatarPrefab() => _localAvatarPrefab;
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
+        public GameObject GetHumanPresencePrefab() => _humanPresencePrefab;
         #endregion ------------------------------------------------------------------------
 
         #region === Unity Callbacks ===
@@ -277,6 +369,7 @@ namespace Styly.NetSync
         {
             StopNetworking();
             _avatarManager.CleanupRemoteAvatars();
+            CleanupAllHumanPresences();
             _instance = null;
         }
 
@@ -356,6 +449,9 @@ namespace Styly.NetSync
             // Update battery level periodically (must be in main thread)
             UpdateBatteryLevel();
 
+            // Update Human Presence
+            UpdateHumanPresences();
+
             LogStatistics();
         }
         #endregion ------------------------------------------------------------------------
@@ -405,6 +501,10 @@ namespace Styly.NetSync
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
             _avatarManager.OnAvatarDisconnected.AddListener(OnRemoteAvatarDisconnected);
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
+
+            // Human Presence: spawn/cleanup on avatar connect/disconnect
+            OnAvatarConnected.AddListener(HandleAvatarConnectedForPresence);
+            OnAvatarDisconnected.AddListener(HandleAvatarDisconnectedForPresence);
 
             // Setup network variable events
             if (_networkVariableManager != null)
@@ -705,6 +805,7 @@ namespace Styly.NetSync
             _shouldSendHandshake = false; // Reset handshake flag
             _networkVariableManager?.ResetInitialSyncFlag(); // Reset network variable sync state
             StopNetworking();
+            CleanupAllHumanPresences();
         }
 
         private void DebugLog(string msg)
