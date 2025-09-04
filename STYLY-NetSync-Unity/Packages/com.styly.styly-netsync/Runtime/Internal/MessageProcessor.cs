@@ -431,6 +431,10 @@ namespace Styly.NetSync
             _clientNoToIsStealthMode.Clear();
             _pendingClients.Clear();
             SetLocalClientNo(0);   // reset local mapping
+
+            // Also clear message queues to avoid cross-room leakage.
+            while (_roomTransformQueue.TryDequeue(out _)) { }
+            while (_messageQueue.TryDequeue(out _)) { }
         }
     }
 }
