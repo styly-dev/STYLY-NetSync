@@ -23,6 +23,7 @@ namespace Styly.NetSync
         private readonly Dictionary<string, int> _deviceIdToClientNo = new();
         private readonly Dictionary<int, bool> _clientNoToIsStealthMode = new();
         private readonly Dictionary<int, ClientTransformData> _pendingClients = new(); // Clients waiting for ID mapping
+        private readonly HashSet<int> _knownConnectedClients = new HashSet<int>(); // Clients we announced via OnAvatarConnected
         private string _localDeviceId;
         private int _localClientNo = 0;
         private NetSyncManager _netSyncManager; // Reference to NetSyncManager for triggering ready checks
@@ -198,7 +199,7 @@ namespace Styly.NetSync
                         // Update device ID
                         pendingClient.deviceId = deviceId;
 
-                        // Spawn the avatar
+                        // Spawn the avatar and announce connection
                         if (!avatarManager.ConnectedPeers.ContainsKey(clientNo))
                         {
                             // Spawning pending client
@@ -210,10 +211,16 @@ namespace Styly.NetSync
                                 if (remoteAvatarPrefab != null)
                                 {
                                     avatarManager.SpawnRemoteAvatar(clientNo, deviceId, remoteAvatarPrefab, netSyncManager);
+                                }
+
+                                // Announce connection regardless of avatar prefab
+                                if (!_knownConnectedClients.Contains(clientNo))
+                                {
                                     if (netSyncManager.OnAvatarConnected != null)
                                     {
                                         netSyncManager.OnAvatarConnected.Invoke(clientNo);
                                     }
+                                    _knownConnectedClients.Add(clientNo);
                                 }
                             }
                             else
@@ -263,13 +270,26 @@ namespace Styly.NetSync
                         _pendingClients[c.clientNo] = c;
                         // Client added to pending queue
                     }
+
+                    // Update Human Presence transform based on PhysicalPosition/PhysicalRotation
+                    if (netSyncManager != null && c.physical != null)
+                    {
+                        var pos = c.physical.GetPosition();
+                        var rot = c.physical.GetRotation();
+                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, pos, rot);
+                    }
                 }
 
-                // Check for disconnected clients (including stealth clients)
-                var currentClients = avatarManager.GetAliveClients(this, includeStealthClients: true);
-                foreach (var clientNo in currentClients)
+                // Check for disconnected clients (including ones without avatars)
+                var toDisconnect = new List<int>();
+                foreach (var known in _knownConnectedClients)
                 {
-                    if (!alive.Contains(clientNo))
+                    if (!alive.Contains(known)) { toDisconnect.Add(known); }
+                }
+                foreach (var clientNo in toDisconnect)
+                {
+                    bool hadAvatar = avatarManager.ConnectedPeers.ContainsKey(clientNo);
+                    if (hadAvatar)
                     {
                         avatarManager.RemoveClient(clientNo);
                         if (avatarManager.OnAvatarDisconnected != null)
@@ -277,6 +297,14 @@ namespace Styly.NetSync
                             avatarManager.OnAvatarDisconnected.Invoke(clientNo);
                         }
                     }
+                    else
+                    {
+                        if (netSyncManager != null && netSyncManager.OnAvatarDisconnected != null)
+                        {
+                            netSyncManager.OnAvatarDisconnected.Invoke(clientNo);
+                        }
+                    }
+                    _knownConnectedClients.Remove(clientNo);
                 }
             }
             catch (Exception ex)
@@ -430,6 +458,7 @@ namespace Styly.NetSync
             _deviceIdToClientNo.Clear();
             _clientNoToIsStealthMode.Clear();
             _pendingClients.Clear();
+            _knownConnectedClients.Clear();
             SetLocalClientNo(0);   // reset local mapping
 
             // Also clear message queues to avoid cross-room leakage.

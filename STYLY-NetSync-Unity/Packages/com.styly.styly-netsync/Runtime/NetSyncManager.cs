@@ -29,6 +29,7 @@ namespace Styly.NetSync
         [Header("Avatar Settings")]
         [SerializeField] private GameObject _localAvatarPrefab;
         [SerializeField] private GameObject _remoteAvatarPrefab;
+        [SerializeField, Tooltip("Prefab shown at each remote user's physical position")] private GameObject _humanPresencePrefab;
 
         // [Header("Transform Sync Settings"), Range(1, 120)]
         private float _sendRate = 10f;
@@ -180,6 +181,7 @@ namespace Styly.NetSync
             _messageProcessor?.ClearRoomScopedState();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
+            if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
@@ -201,6 +203,7 @@ namespace Styly.NetSync
         private MessageProcessor _messageProcessor;
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
+        private HumanPresenceManager _humanPresenceManager;
 
         // State
         private bool _isDiscovering;
@@ -239,6 +242,7 @@ namespace Styly.NetSync
 
         public GameObject GetLocalAvatarPrefab() => _localAvatarPrefab;
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
+        public GameObject GetHumanPresencePrefab() => _humanPresencePrefab;
         #endregion ------------------------------------------------------------------------
 
         #region === Unity Callbacks ===
@@ -276,6 +280,7 @@ namespace Styly.NetSync
         {
             StopNetworking();
             _avatarManager.CleanupRemoteAvatars();
+            if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
             _instance = null;
         }
 
@@ -398,12 +403,19 @@ namespace Styly.NetSync
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
+            _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
 
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
             _avatarManager.OnAvatarDisconnected.AddListener(OnRemoteAvatarDisconnected);
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
+
+            // Human Presence lifecycle follows avatar connect/disconnect events
+            if (OnAvatarConnected == null) { OnAvatarConnected = new UnityEngine.Events.UnityEvent<int>(); }
+            if (OnAvatarDisconnected == null) { OnAvatarDisconnected = new UnityEngine.Events.UnityEvent<int>(); }
+            OnAvatarConnected.AddListener(_humanPresenceManager.HandleAvatarConnected);
+            OnAvatarDisconnected.AddListener(_humanPresenceManager.HandleAvatarDisconnected);
 
             // Setup network variable events
             if (_networkVariableManager != null)
@@ -704,6 +716,7 @@ namespace Styly.NetSync
             _shouldSendHandshake = false; // Reset handshake flag
             _networkVariableManager?.ResetInitialSyncFlag(); // Reset network variable sync state
             StopNetworking();
+            if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
         }
 
         private void DebugLog(string msg)
@@ -746,5 +759,20 @@ namespace Styly.NetSync
             }
         }
         #endregion ------------------------------------------------------------------------
+
+        /// <summary>
+        /// Update a remote client's Human Presence transform using physical coordinates.
+        /// Called from MessageProcessor on the main thread.
+        /// </summary>
+        /// <param name="clientNo">Remote client number</param>
+        /// <param name="position">World position (physical)</param>
+        /// <param name="eulerRotation">World rotation in Euler angles (physical)</param>
+        internal void UpdateHumanPresenceTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
+        {
+            if (_humanPresenceManager != null)
+            {
+                _humanPresenceManager.UpdateTransform(clientNo, position, eulerRotation);
+            }
+        }
     }
 }
