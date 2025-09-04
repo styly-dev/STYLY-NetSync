@@ -11,6 +11,9 @@ namespace Styly.NetSync
     internal class MessageProcessor
     {
         private readonly ConcurrentQueue<NetworkMessage> _messageQueue = new();
+        // Bounded, latest-wins buffer for room transform updates
+        private const int MAX_ROOM_UPDATE_QUEUE_SIZE = 2; // Keep only the latest few updates
+        private readonly ConcurrentQueue<string> _roomTransformQueue = new ConcurrentQueue<string>();
         private readonly bool _logNetworkTraffic;
         private int _messagesReceived;
         private readonly Dictionary<int, string> _clientNoToDeviceId = new();
@@ -60,7 +63,12 @@ namespace Styly.NetSync
                 {
                     case BinarySerializer.MSG_ROOM_TRANSFORM when data is RoomTransformData:
                         var json = JsonConvert.SerializeObject(data);
-                        _messageQueue.Enqueue(new NetworkMessage { type = "room_transform", data = json });
+                        // Drop older room updates aggressively to prevent backlog growth
+                        while (_roomTransformQueue.Count >= MAX_ROOM_UPDATE_QUEUE_SIZE)
+                        {
+                            _roomTransformQueue.TryDequeue(out _);
+                        }
+                        _roomTransformQueue.Enqueue(json);
                         _messagesReceived++;
                         break;
 
@@ -121,6 +129,15 @@ namespace Styly.NetSync
 
         public void ProcessMessageQueue(AvatarManager avatarManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
         {
+            // Drain coalesced room updates first (bounded by MAX_ROOM_UPDATES)
+            // Room state only cares about the most recent snapshots.
+            int drainedRoom = 0;
+            while (drainedRoom < MAX_ROOM_UPDATE_QUEUE_SIZE && _roomTransformQueue.TryDequeue(out var roomJson))
+            {
+                ProcessRoomTransform(roomJson, avatarManager, localDeviceId, netSyncManager);
+                drainedRoom++;
+            }
+
             while (_messageQueue.TryDequeue(out var msg))
             {
                 switch (msg.type)
@@ -414,6 +431,9 @@ namespace Styly.NetSync
             _clientNoToIsStealthMode.Clear();
             _pendingClients.Clear();
             SetLocalClientNo(0);   // reset local mapping
+
+            // Clear any buffered room updates
+            while (_roomTransformQueue.TryDequeue(out _)) { }
         }
     }
 }
