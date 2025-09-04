@@ -897,6 +897,34 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
+      propertyPath: OnRPCReceived.m_PersistentCalls.m_Calls.Array.size
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
+      propertyPath: OnRPCReceived.m_PersistentCalls.m_Calls.Array.data[0].m_Mode
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
+      propertyPath: OnRPCReceived.m_PersistentCalls.m_Calls.Array.data[0].m_Target
+      value: 
+      objectReference: {fileID: 721335870}
+    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
+      propertyPath: OnRPCReceived.m_PersistentCalls.m_Calls.Array.data[0].m_CallState
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
+      propertyPath: OnRPCReceived.m_PersistentCalls.m_Calls.Array.data[0].m_MethodName
+      value: HandleRPC
+      objectReference: {fileID: 0}
+    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
+      propertyPath: OnRPCReceived.m_PersistentCalls.m_Calls.Array.data[0].m_TargetAssemblyTypeName
+      value: ReceiveRPC_to_ChangeColor, Assembly-CSharp
+      objectReference: {fileID: 0}
+    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
+      propertyPath: OnRPCReceived.m_PersistentCalls.m_Calls.Array.data[0].m_Arguments.m_ObjectArgumentAssemblyTypeName
+      value: UnityEngine.Object, UnityEngine
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
