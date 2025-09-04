@@ -129,13 +129,11 @@ namespace Styly.NetSync
 
         public void ProcessMessageQueue(AvatarManager avatarManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
         {
-            // Drain coalesced room updates first (bounded by MAX_ROOM_UPDATE_QUEUE_SIZE)
-            // Room state only cares about the most recent snapshots.
-            int drainedRoom = 0;
-            while (drainedRoom < MAX_ROOM_UPDATE_QUEUE_SIZE && _roomTransformQueue.TryDequeue(out var roomJson))
+            // Drain all coalesced room updates first. Capacity is enforced on enqueue;
+            // here we process everything currently buffered to avoid stale snapshots.
+            while (_roomTransformQueue.TryDequeue(out var roomJson))
             {
                 ProcessRoomTransform(roomJson, avatarManager, localDeviceId, netSyncManager);
-                drainedRoom++;
             }
 
             while (_messageQueue.TryDequeue(out var msg))
