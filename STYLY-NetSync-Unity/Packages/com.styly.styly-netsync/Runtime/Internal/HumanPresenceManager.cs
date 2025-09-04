@@ -6,7 +6,7 @@ namespace Styly.NetSync
 {
     /// <summary>
     /// Spawns and updates a simple visual presence per remote client at their physical pose.
-    /// - Spawns at hierarchy root
+    /// - Spawns under the corresponding Remote Avatar when available; otherwise at the hierarchy root
     /// - Hidden for local client
     /// - No smoothing; updates directly from received data
     /// - Ignores stealth clients (non-supported / not displayed)
@@ -46,11 +46,16 @@ namespace Styly.NetSync
                 return;
             }
 
-            // Instantiate at hierarchy root
+            // Instantiate presence
             GameObject go = Object.Instantiate(prefab);
             if (go != null)
             {
                 go.name = $"HumanPresence ({clientNo})";
+                // Parent under remote avatar if available (preserve world space)
+                var avatarManager = _netSyncManager != null ? _netSyncManager.AvatarManager : null;
+                if (avatarManager?.ConnectedPeers != null
+                    && avatarManager.ConnectedPeers.TryGetValue(clientNo, out var avatarGo)
+                    && avatarGo != null) { go.transform.SetParent(avatarGo.transform, true); }
                 _presenceByClient[clientNo] = go;
                 // Create and configure smoother for this instance (world space)
                 var smoother = new NetSyncTransformSmoother(0.1f);
