@@ -14,6 +14,7 @@ namespace Styly.NetSync
     internal class HumanPresenceManager
     {
         private readonly Dictionary<int, GameObject> _presenceByClient = new Dictionary<int, GameObject>();
+        private readonly Dictionary<int, NetSyncTransformSmoother> _smootherByClient = new Dictionary<int, NetSyncTransformSmoother>();
         private readonly NetSyncManager _netSyncManager;
         private readonly bool _enableDebugLogs;
 
@@ -51,6 +52,10 @@ namespace Styly.NetSync
             {
                 go.name = $"HumanPresence ({clientNo})";
                 _presenceByClient[clientNo] = go;
+                // Create and configure smoother for this instance (world space)
+                var smoother = new NetSyncTransformSmoother(0.1f);
+                smoother.InitializeForSingle(go.transform, NetSyncTransformSmoother.SpaceMode.World);
+                _smootherByClient[clientNo] = smoother;
                 DebugLog($"Spawned Human Presence for client {clientNo}");
             }
         }
@@ -69,6 +74,11 @@ namespace Styly.NetSync
                 _presenceByClient.Remove(clientNo);
                 DebugLog($"Destroyed Human Presence for client {clientNo}");
             }
+
+            if (_smootherByClient.ContainsKey(clientNo))
+            {
+                _smootherByClient.Remove(clientNo);
+            }
         }
 
         /// <summary>
@@ -76,12 +86,13 @@ namespace Styly.NetSync
         /// </summary>
         public void UpdateTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
         {
-            if (_presenceByClient.TryGetValue(clientNo, out var go))
+            // Update smoother target; smoothing is applied in Tick()
+            NetSyncTransformSmoother smoother;
+            if (_smootherByClient.TryGetValue(clientNo, out smoother))
             {
-                if (go != null)
+                if (smoother != null)
                 {
-                    go.transform.position = position;
-                    go.transform.eulerAngles = eulerRotation;
+                    smoother.SetSingleTarget(position, eulerRotation);
                 }
             }
         }
@@ -101,7 +112,24 @@ namespace Styly.NetSync
                 }
             }
             _presenceByClient.Clear();
+            _smootherByClient.Clear();
             DebugLog("Cleared all Human Presence instances");
+        }
+
+        /// <summary>
+        /// Per-frame update called from NetSyncManager.Update() to progress interpolation.
+        /// </summary>
+        public void Tick(float deltaTime)
+        {
+            if (_smootherByClient.Count == 0) { return; }
+            foreach (var kv in _smootherByClient)
+            {
+                var smoother = kv.Value;
+                if (smoother != null)
+                {
+                    smoother.Update(deltaTime);
+                }
+            }
         }
 
         private void DebugLog(string msg)
@@ -113,4 +141,3 @@ namespace Styly.NetSync
         }
     }
 }
-

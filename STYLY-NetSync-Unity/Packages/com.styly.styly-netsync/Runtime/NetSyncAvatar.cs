@@ -31,8 +31,8 @@ namespace Styly.NetSync
         // Reference to NetSyncManager
         private NetSyncManager _netSyncManager;
 
-        // Smoothing helper for remote avatars
-        private readonly NetSyncAvatarSmoother _smoother = new NetSyncAvatarSmoother();
+        // Smoothing helper for remote avatars (shared with Human Presence)
+        private readonly NetSyncTransformSmoother _smoother = new NetSyncTransformSmoother(0.1f);
 
         // Events
         [Header("Network Variable Events")]
@@ -74,7 +74,7 @@ namespace Styly.NetSync
                 _clientNo = 0;
             }
 
-            _smoother.Initialize(_head, _head, _rightHand, _leftHand, _virtualTransforms);
+            _smoother.InitializeForAvatar(_head, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
         // Initialization method for remote avatars with known client number
@@ -85,7 +85,7 @@ namespace Styly.NetSync
             IsLocalAvatar = false;
             _netSyncManager = manager;
 
-            _smoother.Initialize(_head, _head, _rightHand, _leftHand, _virtualTransforms);
+            _smoother.InitializeForAvatar(_head, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
         void Update()
@@ -140,7 +140,7 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar) { return; }
 
-            _smoother.SetTarget(data);
+            _smoother.SetTargets(data);
 
             PhysicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
             PhysicalRotation = data.physical != null ? data.physical.GetRotation() : Vector3.zero;

@@ -361,6 +361,12 @@ namespace Styly.NetSync
             UpdateBatteryLevel();
 
             LogStatistics();
+
+            // Progress Human Presence smoothing on main thread
+            if (_humanPresenceManager != null)
+            {
+                _humanPresenceManager.Tick(Time.deltaTime);
+            }
         }
         #endregion ------------------------------------------------------------------------
 
