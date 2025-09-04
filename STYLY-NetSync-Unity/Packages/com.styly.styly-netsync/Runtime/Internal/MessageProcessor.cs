@@ -10,7 +10,13 @@ namespace Styly.NetSync
 {
     internal class MessageProcessor
     {
+        // General-purpose message queue (RPC, variable sync, etc.)
         private readonly ConcurrentQueue<NetworkMessage> _messageQueue = new();
+
+        // Ring buffer for room transform updates: keep only the latest few frames.
+        // Rationale: room state is overwrite-only; older frames are not useful.
+        private readonly ConcurrentQueue<RoomTransformData> _roomTransformQueue = new();
+        private const int MaxRoomTransformUpdatesQueueSize = 2; // Keep only the most recent N updates
         private readonly bool _logNetworkTraffic;
         private int _messagesReceived;
         private readonly Dictionary<int, string> _clientNoToDeviceId = new();
@@ -59,8 +65,13 @@ namespace Styly.NetSync
                 switch (msgType)
                 {
                     case BinarySerializer.MSG_ROOM_TRANSFORM when data is RoomTransformData room:
-                        // Avoid JSON round-trip: enqueue the object directly for main-thread processing
-                        _messageQueue.Enqueue(new NetworkMessage { type = "room_transform", dataObj = room });
+                        // Drop-old strategy: keep only the latest few room updates.
+                        // NOTE: We use a dedicated queue so we never discard non-room messages.
+                        while (_roomTransformQueue.Count >= MaxRoomTransformUpdatesQueueSize)
+                        {
+                            _roomTransformQueue.TryDequeue(out _); // Drop the oldest room update
+                        }
+                        _roomTransformQueue.Enqueue(room);
                         _messagesReceived++;
                         break;
 
@@ -122,6 +133,13 @@ namespace Styly.NetSync
 
         public void ProcessMessageQueue(AvatarManager avatarManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
         {
+            // First, flush room transforms (bounded by MaxRoomTransformUpdatesQueueSize)
+            // Purpose: ensure latest room state is applied promptly without starving other messages.
+            while (_roomTransformQueue.TryDequeue(out var room))
+            {
+                ProcessRoomTransform(room, avatarManager, localDeviceId, netSyncManager);
+            }
+
             while (_messageQueue.TryDequeue(out var msg))
             {
                 switch (msg.type)
