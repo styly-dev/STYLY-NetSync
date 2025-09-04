@@ -58,7 +58,7 @@ namespace Styly.NetSync
                     && avatarGo != null) { go.transform.SetParent(avatarGo.transform, true); }
                 _presenceByClient[clientNo] = go;
                 // Create and configure smoother for this instance (world space)
-                var smoother = new NetSyncTransformSmoother(0.1f);
+                var smoother = new NetSyncTransformSmoother();
                 smoother.InitializeForSingle(go.transform, NetSyncTransformSmoother.SpaceMode.World);
                 _smootherByClient[clientNo] = smoother;
                 DebugLog($"Spawned Human Presence for client {clientNo}");
@@ -92,8 +92,7 @@ namespace Styly.NetSync
         public void UpdateTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
         {
             // Update smoother target; smoothing is applied in Tick()
-            NetSyncTransformSmoother smoother;
-            if (_smootherByClient.TryGetValue(clientNo, out smoother))
+            if (_smootherByClient.TryGetValue(clientNo, out var smoother))
             {
                 if (smoother != null)
                 {

@@ -259,6 +259,10 @@ namespace Styly.NetSync
             _deviceId = GenerateDeviceId();
             _instance = this;
 
+            // Ensure UnityEvents are always initialized during Unity lifecycle setup
+            OnAvatarConnected ??= new UnityEngine.Events.UnityEvent<int>();
+            OnAvatarDisconnected ??= new UnityEngine.Events.UnityEvent<int>();
+
             // Detect stealth mode based on local avatar prefab
             _isStealthMode = (_localAvatarPrefab == null);
 
@@ -418,8 +422,6 @@ namespace Styly.NetSync
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
 
             // Human Presence lifecycle follows avatar connect/disconnect events
-            if (OnAvatarConnected == null) { OnAvatarConnected = new UnityEngine.Events.UnityEvent<int>(); }
-            if (OnAvatarDisconnected == null) { OnAvatarDisconnected = new UnityEngine.Events.UnityEvent<int>(); }
             OnAvatarConnected.AddListener(_humanPresenceManager.HandleAvatarConnected);
             OnAvatarDisconnected.AddListener(_humanPresenceManager.HandleAvatarDisconnected);
 

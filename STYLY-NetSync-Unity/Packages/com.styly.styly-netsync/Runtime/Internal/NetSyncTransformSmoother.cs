@@ -14,6 +14,7 @@ namespace Styly.NetSync
     /// </summary>
     internal class NetSyncTransformSmoother
     {
+        private const float DefaultPacketInterval = 0.1f;
         public enum SpaceMode { World, Local }
 
         private class Entry
@@ -49,9 +50,9 @@ namespace Styly.NetSync
 
         private bool _initialized;
 
-        public NetSyncTransformSmoother(float packetIntervalSeconds = 0.1f)
+        public NetSyncTransformSmoother(float packetIntervalSeconds = DefaultPacketInterval)
         {
-            _packetInterval = packetIntervalSeconds <= 0f ? 0.1f : packetIntervalSeconds;
+            _packetInterval = packetIntervalSeconds <= 0f ? DefaultPacketInterval : packetIntervalSeconds;
             _initialized = false;
         }
 
@@ -244,7 +245,7 @@ namespace Styly.NetSync
         /// </summary>
         public void Update(float deltaTime)
         {
-            float t = deltaTime <= 0f ? 0f : Mathf.Clamp01(deltaTime / _packetInterval);
+            float t = GetInterpolationFactor(deltaTime);
 
             // Avatar mode entries
             if (_physical != null && _physical.Transform != null && _physical.HasTarget)
@@ -298,6 +299,15 @@ namespace Styly.NetSync
                 }
             }
         }
+
+        /// <summary>
+        /// Computes interpolation factor from delta time and configured packet interval.
+        /// Returns 0 when delta time is non-positive.
+        /// </summary>
+        private float GetInterpolationFactor(float deltaTime)
+        {
+            if (deltaTime <= 0f) { return 0f; }
+            return Mathf.Clamp01(deltaTime / _packetInterval);
+        }
     }
 }
-

@@ -272,11 +272,16 @@ namespace Styly.NetSync
                     }
 
                     // Update Human Presence transform based on PhysicalPosition/PhysicalRotation
-                    if (netSyncManager != null && c.physical != null)
+                    // Separate data retrieval from conditional checks for clarity.
+                    var phys = c.physical;
+                    if (phys != null)
                     {
-                        var pos = c.physical.GetPosition();
-                        var rot = c.physical.GetRotation();
-                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, pos, rot);
+                        var pos = phys.GetPosition();
+                        var rot = phys.GetRotation();
+                        if (netSyncManager != null)
+                        {
+                            netSyncManager.UpdateHumanPresenceTransform(c.clientNo, pos, rot);
+                        }
                     }
                 }
 
@@ -402,7 +407,11 @@ namespace Styly.NetSync
                 // If this was the first sync, notify NetSyncManager to check ready state
                 if (wasFirstSync && networkVariableManager.HasReceivedInitialSync)
                 {
-                    _netSyncManager?.TriggerReadyCheck();
+                    // Avoid null-propagation on UnityEngine.Object (NetSyncManager is a MonoBehaviour)
+                    if (_netSyncManager != null)
+                    {
+                        _netSyncManager.TriggerReadyCheck();
+                    }
                 }
 
                 // Processed global variable sync
@@ -437,7 +446,11 @@ namespace Styly.NetSync
                 // If this was the first sync, notify NetSyncManager to check ready state
                 if (wasFirstSync && networkVariableManager.HasReceivedInitialSync)
                 {
-                    _netSyncManager?.TriggerReadyCheck();
+                    // Avoid null-propagation on UnityEngine.Object (NetSyncManager is a MonoBehaviour)
+                    if (_netSyncManager != null)
+                    {
+                        _netSyncManager.TriggerReadyCheck();
+                    }
                 }
 
                 // Processed client variable sync
