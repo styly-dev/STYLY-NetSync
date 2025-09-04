@@ -24,7 +24,6 @@ namespace Styly.NetSync
 
         // [Header("Discovery Settings")]
         private bool _enableDiscovery = true;
-        private int _beaconPort = 9999;
         private float _discoveryTimeout = 5f;
 
         [Header("Avatar Settings")]
