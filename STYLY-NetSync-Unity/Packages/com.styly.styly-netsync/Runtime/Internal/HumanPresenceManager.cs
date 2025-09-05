@@ -52,7 +52,7 @@ namespace Styly.NetSync
             {
                 go.name = $"HumanPresence ({clientNo})";
                 // Parent under remote avatar if available (preserve world space)
-                var avatarManager = _netSyncManager != null ? _netSyncManager.AvatarManager : null;
+                var avatarManager = _netSyncManager.AvatarManager;
                 if (avatarManager?.ConnectedPeers != null
                     && avatarManager.ConnectedPeers.TryGetValue(clientNo, out var avatarGo)
                     && avatarGo != null) { go.transform.SetParent(avatarGo.transform, true); }
