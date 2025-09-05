@@ -74,7 +74,9 @@ namespace Styly.NetSync
                 _clientNo = 0;
             }
 
-            _smoother.InitializeForAvatar(_head, _head, _rightHand, _leftHand, _virtualTransforms);
+            // Do not drive the same Transform in both local (physical) and world (head) spaces.
+            // Passing null for physical avoids conflicting updates on _head.
+            _smoother.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
         // Initialization method for remote avatars with known client number
@@ -85,7 +87,8 @@ namespace Styly.NetSync
             IsLocalAvatar = false;
             _netSyncManager = manager;
 
-            _smoother.InitializeForAvatar(_head, _head, _rightHand, _leftHand, _virtualTransforms);
+            // For remote avatars, avoid double-driving _head (physical/local vs head/world).
+            _smoother.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
         }
 
         void Update()
@@ -101,14 +104,13 @@ namespace Styly.NetSync
                 _smoother.Update(Time.deltaTime);
             }
 
-#if UNITY_EDITOR
-            // Update physical transform display values for inspector
-            if (!IsLocalAvatar)
+            // Reflect physical transform (local pose) only for the local avatar.
+            // Remote avatars keep the last received physical values from SetTransformData.
+            if (IsLocalAvatar && _head != null)
             {
                 PhysicalPosition = _head.localPosition;
                 PhysicalRotation = _head.localEulerAngles;
             }
-#endif
         }
 
         // Get current transform data for sending
@@ -118,7 +120,9 @@ namespace Styly.NetSync
             {
                 deviceId = _deviceId,
                 clientNo = _clientNo,
-                physical = GetWorldTransform(_head),
+                // physical must be in the local coordinate space of Head
+                // (position/rotation relative to the Head's parent)
+                physical = GetLocalTransform(_head),
                 head = GetWorldTransform(_head),
                 rightHand = GetWorldTransform(_rightHand),
                 leftHand = GetWorldTransform(_leftHand),
@@ -156,6 +160,17 @@ namespace Styly.NetSync
             return new TransformData(
                 transform.position,
                 transform.eulerAngles
+            );
+        }
+
+        // Get local transform data (local space relative to parent, full 6DOF)
+        // Note: Do not use null propagation on UnityEngine.Object.
+        internal TransformData GetLocalTransform(Transform transform)
+        {
+            if (transform == null) return new TransformData();
+            return new TransformData(
+                transform.localPosition,
+                transform.localEulerAngles
             );
         }
 

@@ -271,13 +271,14 @@ namespace Styly.NetSync
                         // Client added to pending queue
                     }
 
-                    // Update Human Presence transform based on PhysicalPosition/PhysicalRotation
-                    // Separate data retrieval from conditional checks for clarity.
-                    var phys = c.physical;
-                    if (phys != null)
+                    // Update Human Presence transform using the head's world pose.
+                    // physical is now defined as the local pose (relative to Head's parent),
+                    // so we should not use it for world-space Human Presence visualization.
+                    var head = c.head;
+                    if (head != null)
                     {
-                        var pos = phys.GetPosition();
-                        var rot = phys.GetRotation();
+                        var pos = head.GetPosition();
+                        var rot = head.GetRotation();
                         if (netSyncManager != null)
                         {
                             netSyncManager.UpdateHumanPresenceTransform(c.clientNo, pos, rot);
