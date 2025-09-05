@@ -777,9 +777,13 @@ namespace Styly.NetSync
         /// <param name="eulerRotation">World rotation in Euler angles (physical)</param>
         internal void UpdateHumanPresenceTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
         {
+            // Apply only yaw (Y axis) to align with the floor orientation.
+            // Pitch (X) and Roll (Z) are ignored for Human Presence visuals.
+            // Note: This method is called from the main Unity thread via MessageProcessor.
             if (_humanPresenceManager != null)
             {
-                _humanPresenceManager.UpdateTransform(clientNo, position, eulerRotation);
+                var yawOnlyEuler = new Vector3(0f, eulerRotation.y, 0f);
+                _humanPresenceManager.UpdateTransform(clientNo, position, yawOnlyEuler);
             }
         }
     }
