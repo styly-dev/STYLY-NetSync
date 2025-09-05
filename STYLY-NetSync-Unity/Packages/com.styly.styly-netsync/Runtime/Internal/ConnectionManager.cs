@@ -1,6 +1,8 @@
 // ConnectionManager.cs - Handles network connection management
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using NetMQ;
@@ -115,11 +117,21 @@ namespace Styly.NetSync
                     OnConnectionEstablished.Invoke();
                 }
 
+                var roomBytes = Encoding.UTF8.GetBytes(roomId);
+                NetMQMessage msg = null;
+
                 while (!_shouldStop)
                 {
-                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
-                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
-                    if (topic != roomId) { continue; }
+                    if (!sub.TryReceiveMultipartMessage(TimeSpan.FromMilliseconds(10), ref msg, 2)) { continue; }
+
+                    if (!msg[0].Buffer.SequenceEqual(roomBytes))
+                    {
+                        msg.Clear();
+                        continue;
+                    }
+
+                    var payload = msg[1].ToByteArray();
+                    msg.Clear();
 
                     try
                     {
