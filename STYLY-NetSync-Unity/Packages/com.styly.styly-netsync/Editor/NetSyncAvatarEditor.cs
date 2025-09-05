@@ -8,6 +8,7 @@ namespace Styly.NetSync.Editor
     {
         private NetSyncAvatar _netSyncAvatar;
         private bool _showClientVariables = true;
+        private double _lastRepaint;
         
         private void OnEnable()
         {
@@ -84,7 +85,11 @@ namespace Styly.NetSync.Editor
             // Force repaint to show real-time updates
             if (Application.isPlaying && Event.current.type == EventType.Layout)
             {
-                Repaint();
+                if (EditorApplication.timeSinceStartup - _lastRepaint > 0.2)
+                {
+                    Repaint();
+                    _lastRepaint = EditorApplication.timeSinceStartup;
+                }
             }
         }
     }
