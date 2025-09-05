@@ -769,22 +769,55 @@ namespace Styly.NetSync
         #endregion ------------------------------------------------------------------------
 
         /// <summary>
-        /// Update a remote client's Human Presence transform using physical coordinates.
-        /// Called from MessageProcessor on the main thread.
+        /// Update a remote client's Human Presence transform from the client's "physical" pose.
+        /// The incoming position/rotation are LOCAL to the remote head's parent.
+        /// We convert them to WORLD space using the remote avatar hierarchy and apply yaw-only.
+        /// This method runs on the main Unity thread (invoked from MessageProcessor).
         /// </summary>
         /// <param name="clientNo">Remote client number</param>
-        /// <param name="position">World position (physical)</param>
-        /// <param name="eulerRotation">World rotation in Euler angles (physical)</param>
+        /// <param name="position">Local position (physical, relative to remote head's parent)</param>
+        /// <param name="eulerRotation">Local rotation euler (physical); only Y (yaw) is used</param>
         internal void UpdateHumanPresenceTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
         {
-            // Apply only yaw (Y axis) to align with the floor orientation.
-            // Pitch (X) and Roll (Z) are ignored for Human Presence visuals.
-            // Note: This method is called from the main Unity thread via MessageProcessor.
-            if (_humanPresenceManager != null)
+            if (_humanPresenceManager == null) { return; }
+
+            // Find the remote avatar and its head parent to resolve local->world.
+            Transform parent = null;
+            if (_avatarManager != null)
             {
-                var yawOnlyEuler = new Vector3(0f, eulerRotation.y, 0f);
-                _humanPresenceManager.UpdateTransform(clientNo, position, yawOnlyEuler);
+                var peers = _avatarManager.ConnectedPeers;
+                if (peers != null && peers.TryGetValue(clientNo, out var go) && go)
+                {
+                    var net = go.GetComponent<NetSyncAvatar>();
+                    if (net != null && net._head != null)
+                    {
+                        parent = net._head.parent;
+                    }
+                    else
+                    {
+                        parent = go.transform; // Fallback to avatar root if head/parent is unavailable
+                    }
+                }
             }
+
+            // Convert local physical to world using parent transform when available.
+            Vector3 worldPos = position;
+            Vector3 worldYawEuler;
+            if (parent != null)
+            {
+                worldPos = parent.TransformPoint(position);
+                // Yaw-only in local space, then compose with parent's rotation to get world yaw
+                var localYaw = Quaternion.Euler(0f, eulerRotation.y, 0f);
+                var worldYaw = parent.rotation * localYaw;
+                worldYawEuler = worldYaw.eulerAngles;
+            }
+            else
+            {
+                // As a safety fallback (e.g., avatar not spawned yet), treat given values as world
+                worldYawEuler = new Vector3(0f, eulerRotation.y, 0f);
+            }
+
+            _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYawEuler);
         }
     }
 }

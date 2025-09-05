@@ -271,18 +271,15 @@ namespace Styly.NetSync
                         // Client added to pending queue
                     }
 
-                    // Update Human Presence transform using the head's world pose.
-                    // physical is now defined as the local pose (relative to Head's parent),
-                    // so we should not use it for world-space Human Presence visualization.
-                    var head = c.head;
-                    if (head != null)
+                    // Update Human Presence from the "physical" (local) pose relative to the Head's parent.
+                    // We pass local coordinates here; NetSyncManager converts them to world space using the
+                    // remote avatar's hierarchy and applies yaw-only for the visual indicator.
+                    var physical = c.physical;
+                    if (physical != null && netSyncManager != null)
                     {
-                        var pos = head.GetPosition();
-                        var rot = head.GetRotation();
-                        if (netSyncManager != null)
-                        {
-                            netSyncManager.UpdateHumanPresenceTransform(c.clientNo, pos, rot);
-                        }
+                        var localPos = physical.GetPosition();
+                        var localRot = physical.GetRotation();
+                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, localPos, localRot);
                     }
                 }
 
