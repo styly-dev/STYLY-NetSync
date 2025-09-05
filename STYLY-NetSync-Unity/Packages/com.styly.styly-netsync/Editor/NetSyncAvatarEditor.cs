@@ -8,6 +8,8 @@ namespace Styly.NetSync.Editor
     {
         private NetSyncAvatar _netSyncAvatar;
         private bool _showClientVariables = true;
+        // Timestamp of the last inspector repaint. Used to throttle repaint calls in play mode.
+        private double _lastRepaint;
         
         private void OnEnable()
         {
@@ -81,10 +83,16 @@ namespace Styly.NetSync.Editor
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
             
-            // Force repaint to show real-time updates
+            // Throttle inspector repaint during Play mode to reduce CPU usage.
+            // Repaint only once every ~0.2 seconds on Layout events.
             if (Application.isPlaying && Event.current.type == EventType.Layout)
             {
-                Repaint();
+                double now = EditorApplication.timeSinceStartup;
+                if (now - _lastRepaint > 0.2d)
+                {
+                    Repaint();
+                    _lastRepaint = now;
+                }
             }
         }
     }
