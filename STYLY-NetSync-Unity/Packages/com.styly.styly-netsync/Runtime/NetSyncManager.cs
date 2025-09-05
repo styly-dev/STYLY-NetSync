@@ -783,18 +783,9 @@ namespace Styly.NetSync
             Transform parent = null;
             if (_avatarManager != null)
             {
-                var peers = _avatarManager.ConnectedPeers;
-                if (peers != null && peers.TryGetValue(clientNo, out var go) && go)
+                if (_avatarManager.TryGetNetSyncAvatar(clientNo, out var net) && net != null)
                 {
-                    var net = go.GetComponent<NetSyncAvatar>();
-                    if (net != null && net._head != null)
-                    {
-                        parent = net._head.parent;
-                    }
-                    else
-                    {
-                        parent = go.transform; // Fallback to avatar root if head/parent is unavailable
-                    }
+                    parent = net._head != null ? net._head.parent : net.transform;
                 }
             }
 

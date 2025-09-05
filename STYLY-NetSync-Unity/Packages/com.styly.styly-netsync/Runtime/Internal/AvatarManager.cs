@@ -11,6 +11,7 @@ namespace Styly.NetSync
     internal class AvatarManager
     {
         private readonly Dictionary<int, GameObject> _connectedPeers = new();
+        private readonly Dictionary<int, NetSyncAvatar> _peerAvatars = new();
         private NetSyncAvatar _localAvatar;
         private bool _enableDebugLogs;
 
@@ -89,6 +90,7 @@ namespace Styly.NetSync
             net.InitializeRemote(clientNo, netSyncManager);
             net.UpdateDeviceId(deviceId);
             _connectedPeers[clientNo] = go;
+            _peerAvatars[clientNo] = net;
 
             // Set the GameObject name to include the client ID instead of "(Clone)"
             // Get the original prefab name without "(Clone)" suffix
@@ -105,6 +107,7 @@ namespace Styly.NetSync
                 Object.Destroy(go);
                 DebugLog($"Remote avatar removed: clientNo={clientNo}");
             }
+            _peerAvatars.Remove(clientNo);
         }
 
         public void CleanupRemoteAvatars()
@@ -112,15 +115,21 @@ namespace Styly.NetSync
             foreach (var go in _connectedPeers.Values) { if (go) { Object.Destroy(go); } }
 
             _connectedPeers.Clear();
+            _peerAvatars.Clear();
             DebugLog("All remote avatars cleaned up");
         }
 
         public void UpdateRemoteAvatar(int clientNo, ClientTransformData transformData)
         {
-            if (_connectedPeers.TryGetValue(clientNo, out var go))
+            if (_peerAvatars.TryGetValue(clientNo, out var net) && net != null)
             {
-                go.GetComponent<NetSyncAvatar>().SetTransformData(transformData);
+                net.SetTransformData(transformData);
             }
+        }
+
+        internal bool TryGetNetSyncAvatar(int clientNo, out NetSyncAvatar avatar)
+        {
+            return _peerAvatars.TryGetValue(clientNo, out avatar) && avatar != null;
         }
 
         public HashSet<int> GetAliveClients(MessageProcessor messageProcessor = null, bool includeStealthClients = false)
