@@ -1,5 +1,8 @@
 // RPCManager.cs - Handles RPC (Remote Procedure Call) system
 using System;
+using System.Buffers;
+using System.IO;
+using System.Text;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using NetMQ;
@@ -15,6 +18,15 @@ namespace Styly.NetSync
         private readonly string _deviceId;
         private readonly NetSyncManager _netSyncManager;
         private readonly ConcurrentQueue<(int senderClientNo, string fn, string[] args)> _rpcQueue = new();
+
+        // Reusable serialization resources to reduce GC
+        private readonly ArrayPool<byte> _bufferPool = ArrayPool<byte>.Shared;
+        private byte[] _buffer;
+        private int _bufferCapacity;
+        private MemoryStream _memoryStream;
+        private BinaryWriter _writer;
+        private NetMQMessage _reusableMessage;
+        private const int INITIAL_BUFFER_CAPACITY = 512;
 
         public UnityEvent<int, string, string[]> OnRPCReceived { get; } = new();
 
@@ -102,15 +114,27 @@ namespace Styly.NetSync
                 argumentsJson = JsonConvert.SerializeObject(args),
                 senderClientNo = _netSyncManager.ClientNo
             };
-            var binary = BinarySerializer.SerializeRPCMessage(rpcMsg);
+            // Estimate and ensure capacity
+            var required = EstimateRpcSize(rpcMsg);
+            EnsureBufferCapacity(required);
 
-            var msg = new NetMQMessage();
-            msg.Append(roomId);
-            msg.Append(binary);
+            // Serialize into pooled stream
+            _memoryStream.Position = 0;
+            BinarySerializer.SerializeRPCMessageInto(_writer, rpcMsg);
+            _writer.Flush();
+
+            var length = (int)_memoryStream.Position;
+
+            // Build and send message reusing NetMQMessage instance
+            _reusableMessage.Clear();
+            _reusableMessage.Append(roomId);
+            var payload = new byte[length];
+            Buffer.BlockCopy(_buffer, 0, payload, 0, length);
+            _reusableMessage.Append(payload);
 
             try
             {
-                return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                return _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
             }
             catch (Exception ex)
             {
@@ -124,6 +148,11 @@ namespace Styly.NetSync
             _connectionManager = connectionManager;
             _deviceId = deviceId;
             _netSyncManager = netSyncManager;
+            _bufferCapacity = INITIAL_BUFFER_CAPACITY;
+            _buffer = _bufferPool.Rent(_bufferCapacity);
+            _memoryStream = new MemoryStream(_buffer, 0, _buffer.Length, true, true);
+            _writer = new BinaryWriter(_memoryStream);
+            _reusableMessage = new NetMQMessage();
         }
 
         public void Send(string roomId, string functionName, string[] args)
@@ -192,6 +221,30 @@ namespace Styly.NetSync
         public void EnqueueRPC(int senderClientNo, string functionName, string[] args)
         {
             _rpcQueue.Enqueue((senderClientNo, functionName, args));
+        }
+
+        private void EnsureBufferCapacity(int required)
+        {
+            if (required <= _bufferCapacity) return;
+            var newCapacity = _bufferCapacity * 2;
+            if (newCapacity < required) newCapacity = required;
+
+            var newBuffer = _bufferPool.Rent(newCapacity);
+            _writer?.Dispose();
+            _memoryStream?.Dispose();
+            _bufferPool.Return(_buffer);
+            _buffer = newBuffer;
+            _bufferCapacity = newCapacity;
+            _memoryStream = new MemoryStream(_buffer, 0, _buffer.Length, true, true);
+            _writer = new BinaryWriter(_memoryStream);
+        }
+
+        private static int EstimateRpcSize(RPCMessage msg)
+        {
+            var nameLen = msg != null && msg.functionName != null ? Encoding.UTF8.GetByteCount(msg.functionName) : 0;
+            if (nameLen > 255) nameLen = 255; // capped by serializer
+            var argsLen = msg != null && msg.argumentsJson != null ? Encoding.UTF8.GetByteCount(msg.argumentsJson) : 0;
+            return 1 + 2 + 1 + nameLen + 2 + argsLen;
         }
     }
 }

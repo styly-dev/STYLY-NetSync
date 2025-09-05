@@ -282,26 +282,37 @@ namespace Styly.NetSync
         #endregion
 
         /// <summary>
-        /// Serialize an RPC message
+        /// Serialize an RPC message into a new array (legacy API). Prefer the Into version.
         /// </summary>
         public static byte[] SerializeRPCMessage(RPCMessage msg)
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
+            SerializeRPCMessageInto(writer, msg);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize an RPC message into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeRPCMessageInto(BinaryWriter writer, RPCMessage msg)
+        {
             // Message type
             writer.Write(MSG_RPC);
             // Sender client number (2 bytes)
             writer.Write((ushort)msg.senderClientNo);
             // Function name (length-prefixed byte)
             var nameBytes = System.Text.Encoding.UTF8.GetBytes(msg.functionName);
-            if (nameBytes.Length > 255) { throw new ArgumentException("Function name is too long. Maximum length is 255 bytes."); }
+            if (nameBytes.Length > 255)
+            {
+                throw new ArgumentException("Function name is too long. Maximum length is 255 bytes.");
+            }
             writer.Write((byte)nameBytes.Length);
             writer.Write(nameBytes);
             // Arguments JSON
-            var argsBytes = System.Text.Encoding.UTF8.GetBytes(msg.argumentsJson);
+            var argsBytes = System.Text.Encoding.UTF8.GetBytes(msg.argumentsJson ?? string.Empty);
             writer.Write((ushort)argsBytes.Length);
             writer.Write(argsBytes);
-            return ms.ToArray();
         }
 
 
@@ -312,7 +323,15 @@ namespace Styly.NetSync
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
+            SerializeGlobalVarSetInto(writer, data);
+            return ms.ToArray();
+        }
 
+        /// <summary>
+        /// Serialize global variable set into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeGlobalVarSetInto(BinaryWriter writer, Dictionary<string, object> data)
+        {
             // Message type
             writer.Write(MSG_GLOBAL_VAR_SET);
 
@@ -337,8 +356,6 @@ namespace Styly.NetSync
             // Timestamp (8 bytes double)
             var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
             writer.Write(timestamp);
-
-            return ms.ToArray();
         }
 
         /// <summary>
@@ -348,7 +365,15 @@ namespace Styly.NetSync
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
+            SerializeClientVarSetInto(writer, data);
+            return ms.ToArray();
+        }
 
+        /// <summary>
+        /// Serialize client variable set into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeClientVarSetInto(BinaryWriter writer, Dictionary<string, object> data)
+        {
             // Message type
             writer.Write(MSG_CLIENT_VAR_SET);
 
@@ -377,8 +402,6 @@ namespace Styly.NetSync
             // Timestamp (8 bytes double)
             var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
             writer.Write(timestamp);
-
-            return ms.ToArray();
         }
 
         /// <summary>
