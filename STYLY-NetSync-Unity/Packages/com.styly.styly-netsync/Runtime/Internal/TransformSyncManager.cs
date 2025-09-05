@@ -2,6 +2,7 @@
 using System;
 using NetMQ;
 using UnityEngine;
+using System.IO;
 
 namespace Styly.NetSync
 {
@@ -12,6 +13,10 @@ namespace Styly.NetSync
         private int _messagesSent;
         private float _lastSendTime;
 
+        private readonly MemoryStream _sendStream = new MemoryStream(1024);
+        private readonly BinaryWriter _writer;
+        private readonly NetMQMessage _reusableMsg = new NetMQMessage();
+
         public float SendRate { get; set; } = 10f;
         public int MessagesSent => _messagesSent;
 
@@ -20,6 +25,7 @@ namespace Styly.NetSync
             _connectionManager = connectionManager;
             _deviceId = deviceId;
             SendRate = sendRate;
+            _writer = new BinaryWriter(_sendStream, System.Text.Encoding.UTF8, true);
         }
 
         public bool SendLocalTransform(NetSyncAvatar localAvatar, string roomId)
@@ -30,13 +36,18 @@ namespace Styly.NetSync
             try
             {
                 var tx = localAvatar.GetTransformData();
-                var binaryData = BinarySerializer.SerializeClientTransform(tx);
 
-                var msg = new NetMQMessage();
-                msg.Append(roomId);
-                msg.Append(binaryData);
+                _sendStream.Position = 0;
+                _sendStream.SetLength(0);
+                BinarySerializer.SerializeClientTransformInto(_writer, tx);
+                _writer.Flush();
 
-                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                _reusableMsg.Clear();
+                _reusableMsg.Append(roomId);
+                var buf = _sendStream.GetBuffer();
+                _reusableMsg.Append(buf, 0, (int)_sendStream.Length);
+
+                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMsg);
                 if (ok) _messagesSent++;
                 return ok;
             }
@@ -54,13 +65,17 @@ namespace Styly.NetSync
 
             try
             {
-                var binaryData = BinarySerializer.SerializeStealthHandshake(_deviceId);
+                _sendStream.Position = 0;
+                _sendStream.SetLength(0);
+                BinarySerializer.SerializeStealthHandshakeInto(_writer, _deviceId);
+                _writer.Flush();
 
-                var msg = new NetMQMessage();
-                msg.Append(roomId);
-                msg.Append(binaryData);
+                _reusableMsg.Clear();
+                _reusableMsg.Append(roomId);
+                var buf = _sendStream.GetBuffer();
+                _reusableMsg.Append(buf, 0, (int)_sendStream.Length);
 
-                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMsg);
                 if (ok) _messagesSent++;
                 return ok;
             }

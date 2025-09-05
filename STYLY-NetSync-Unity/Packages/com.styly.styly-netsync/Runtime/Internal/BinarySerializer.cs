@@ -44,46 +44,47 @@ namespace Styly.NetSync
             using (var ms = new MemoryStream())
             using (var writer = new BinaryWriter(ms))
             {
-                // Message type
-                writer.Write(MSG_CLIENT_TRANSFORM);
-
-                // Device ID (as UTF8 bytes with length prefix)
-                var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data.deviceId ?? "");
-                writer.Write((byte)deviceIdBytes.Length);
-                writer.Write(deviceIdBytes);
-
-                // Note: Client number is not sent by client, only assigned by server
-
-                // Physical transform (now full 6 floats)
-                WriteTransformData(writer, data.physical);
-
-                // Head transform
-                WriteTransformData(writer, data.head);
-
-                // Right hand transform
-                WriteTransformData(writer, data.rightHand);
-
-                // Left hand transform
-                WriteTransformData(writer, data.leftHand);
-
-                // Virtual transforms count
-                var virtualCount = data.virtuals != null ? data.virtuals.Count : 0;
-                if (virtualCount > MAX_VIRTUAL_TRANSFORMS)
-                {
-                    virtualCount = MAX_VIRTUAL_TRANSFORMS;
-                }
-                writer.Write((byte)virtualCount);
-
-                // Virtual transforms (always full 6DOF)
-                if (data.virtuals != null && virtualCount > 0)
-                {
-                    for (int i = 0; i < virtualCount; i++)
-                    {
-                        WriteTransformData(writer, data.virtuals[i]);
-                    }
-                }
-
+                SerializeClientTransformInto(writer, data);
+                writer.Flush();
                 return ms.ToArray();
+            }
+        }
+
+        public static void SerializeClientTransformInto(BinaryWriter writer, ClientTransformData data)
+        {
+            // Message type
+            writer.Write(MSG_CLIENT_TRANSFORM);
+
+            // Device ID (as UTF8 bytes with length prefix)
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data.deviceId ?? "");
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+
+            // Note: Client number is not sent by client, only assigned by server
+
+            // Physical transform (now full 6 floats)
+            WriteTransformData(writer, data.physical);
+
+            // Head transform
+            WriteTransformData(writer, data.head);
+
+            // Right hand transform
+            WriteTransformData(writer, data.rightHand);
+
+            // Left hand transform
+            WriteTransformData(writer, data.leftHand);
+
+            // Virtual transforms count
+            var virtualCount = data.virtuals != null ? Math.Min(data.virtuals.Count, MAX_VIRTUAL_TRANSFORMS) : 0;
+            writer.Write((byte)virtualCount);
+
+            // Virtual transforms (always full 6DOF)
+            if (data.virtuals != null && virtualCount > 0)
+            {
+                for (int i = 0; i < virtualCount; i++)
+                {
+                    WriteTransformData(writer, data.virtuals[i]);
+                }
             }
         }
 
@@ -92,43 +93,48 @@ namespace Styly.NetSync
             using (var ms = new MemoryStream())
             using (var writer = new BinaryWriter(ms))
             {
-                // Message type
-                writer.Write(MSG_CLIENT_TRANSFORM);
-
-                // Device ID (as UTF8 bytes with length prefix)
-                var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
-                writer.Write((byte)deviceIdBytes.Length);
-                writer.Write(deviceIdBytes);
-
-                // Physical transform with NaN values (now 6 floats for consistency)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
-
-                // Head transform (NaN values)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
-
-                // Right hand transform (NaN values)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
-
-                // Left hand transform (NaN values)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
-
-                // No virtual transforms for stealth handshake
-                writer.Write((byte)0);
-
+                SerializeStealthHandshakeInto(writer, deviceId);
+                writer.Flush();
                 return ms.ToArray();
             }
+        }
+
+        public static void SerializeStealthHandshakeInto(BinaryWriter writer, string deviceId)
+        {
+            // Message type
+            writer.Write(MSG_CLIENT_TRANSFORM);
+
+            // Device ID (as UTF8 bytes with length prefix)
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+
+            // Physical transform with NaN values (now 6 floats for consistency)
+            for (int i = 0; i < 6; i++)
+            {
+                writer.Write(float.NaN);
+            }
+
+            // Head transform (NaN values)
+            for (int i = 0; i < 6; i++)
+            {
+                writer.Write(float.NaN);
+            }
+
+            // Right hand transform (NaN values)
+            for (int i = 0; i < 6; i++)
+            {
+                writer.Write(float.NaN);
+            }
+
+            // Left hand transform (NaN values)
+            for (int i = 0; i < 6; i++)
+            {
+                writer.Write(float.NaN);
+            }
+
+            // No virtual transforms for stealth handshake
+            writer.Write((byte)0);
         }
 
         #region === Deserialization ===
