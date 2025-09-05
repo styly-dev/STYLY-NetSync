@@ -24,6 +24,8 @@ namespace Styly.NetSync
         private readonly Dictionary<int, bool> _clientNoToIsStealthMode = new();
         private readonly Dictionary<int, ClientTransformData> _pendingClients = new(); // Clients waiting for ID mapping
         private readonly HashSet<int> _knownConnectedClients = new HashSet<int>(); // Clients we announced via OnAvatarConnected
+        private readonly HashSet<int> _scratchAlive = new HashSet<int>();
+        private readonly List<int> _scratchToDisconnect = new List<int>(32);
         private string _localDeviceId;
         private int _localClientNo = 0;
         private NetSyncManager _netSyncManager; // Reference to NetSyncManager for triggering ready checks
@@ -250,62 +252,38 @@ namespace Styly.NetSync
 
             try
             {
-                var alive = new HashSet<int>();
+                var alive = _scratchAlive; alive.Clear();
+
                 foreach (var c in room.clients)
                 {
-                    // Skip local avatar by client number
-                    if (c.clientNo == _localClientNo) { continue; }
-
+                    if (c.clientNo == _localClientNo) continue;
                     alive.Add(c.clientNo);
 
-                    // Check if avatar already exists and just needs update
                     if (avatarManager.ConnectedPeers.ContainsKey(c.clientNo))
-                    {
-                        // Update existing avatar
                         avatarManager.UpdateRemoteAvatar(c.clientNo, c);
-                    }
                     else
-                    {
-                        // Store in pending queue for processing in ProcessMessageQueue
                         _pendingClients[c.clientNo] = c;
-                        // Client added to pending queue
-                    }
 
-                    // Update Human Presence from the "physical" (local) pose relative to the Head's parent.
-                    // We pass local coordinates here; NetSyncManager converts them to world space using the
-                    // remote avatar's hierarchy and applies yaw-only for the visual indicator.
                     var physical = c.physical;
                     if (physical != null && netSyncManager != null)
-                    {
-                        var localPos = physical.GetPosition();
-                        var localRot = physical.GetRotation();
-                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, localPos, localRot);
-                    }
+                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, physical.GetPosition(), physical.GetRotation());
                 }
 
-                // Check for disconnected clients (including ones without avatars)
-                var toDisconnect = new List<int>();
+                var toDisconnect = _scratchToDisconnect; toDisconnect.Clear();
                 foreach (var known in _knownConnectedClients)
-                {
-                    if (!alive.Contains(known)) { toDisconnect.Add(known); }
-                }
+                    if (!alive.Contains(known)) toDisconnect.Add(known);
+
                 foreach (var clientNo in toDisconnect)
                 {
                     bool hadAvatar = avatarManager.ConnectedPeers.ContainsKey(clientNo);
                     if (hadAvatar)
                     {
                         avatarManager.RemoveClient(clientNo);
-                        if (avatarManager.OnAvatarDisconnected != null)
-                        {
-                            avatarManager.OnAvatarDisconnected.Invoke(clientNo);
-                        }
+                        netSyncManager?.OnAvatarDisconnected?.Invoke(clientNo);
                     }
                     else
                     {
-                        if (netSyncManager != null && netSyncManager.OnAvatarDisconnected != null)
-                        {
-                            netSyncManager.OnAvatarDisconnected.Invoke(clientNo);
-                        }
+                        netSyncManager?.OnAvatarDisconnected?.Invoke(clientNo);
                     }
                     _knownConnectedClients.Remove(clientNo);
                 }
