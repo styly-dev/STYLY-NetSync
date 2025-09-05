@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
-using UnityEngine.Serialization;
 
 namespace Styly.NetSync
 {
@@ -29,6 +28,7 @@ namespace Styly.NetSync
         [Header("Avatar Settings")]
         [SerializeField] private GameObject _localAvatarPrefab;
         [SerializeField] private GameObject _remoteAvatarPrefab;
+        [SerializeField, Tooltip("Prefab shown at each remote user's physical position")] private GameObject _humanPresencePrefab;
 
         // [Header("Transform Sync Settings"), Range(1, 120)]
         private float _sendRate = 10f;
@@ -39,8 +39,9 @@ namespace Styly.NetSync
         private bool _logNetworkTraffic = false;
 
         [Header("Events")]
-        public UnityEvent<int> OnAvatarConnected;
-        [FormerlySerializedAs("OnClientDisconnected")] public UnityEvent<int> OnAvatarDisconnected;
+        // Initialize UnityEvents at declaration to ensure they are always non-null
+        public UnityEvent<int> OnAvatarConnected = new UnityEvent<int>();
+        public UnityEvent<int> OnAvatarDisconnected = new UnityEvent<int>();
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
@@ -180,6 +181,7 @@ namespace Styly.NetSync
             _messageProcessor?.ClearRoomScopedState();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
+            if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
@@ -201,6 +203,7 @@ namespace Styly.NetSync
         private MessageProcessor _messageProcessor;
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
+        private HumanPresenceManager _humanPresenceManager;
 
         // State
         private bool _isDiscovering;
@@ -239,6 +242,7 @@ namespace Styly.NetSync
 
         public GameObject GetLocalAvatarPrefab() => _localAvatarPrefab;
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
+        public GameObject GetHumanPresencePrefab() => _humanPresencePrefab;
         #endregion ------------------------------------------------------------------------
 
         #region === Unity Callbacks ===
@@ -254,6 +258,8 @@ namespace Styly.NetSync
             // Generate device ID - use Android device ID if available, otherwise generate GUID
             _deviceId = GenerateDeviceId();
             _instance = this;
+
+            // UnityEvents are initialized at declaration time (no runtime initialization needed)
 
             // Detect stealth mode based on local avatar prefab
             _isStealthMode = (_localAvatarPrefab == null);
@@ -276,6 +282,7 @@ namespace Styly.NetSync
         {
             StopNetworking();
             _avatarManager.CleanupRemoteAvatars();
+            if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
             _instance = null;
         }
 
@@ -356,6 +363,12 @@ namespace Styly.NetSync
             UpdateBatteryLevel();
 
             LogStatistics();
+
+            // Progress Human Presence smoothing on main thread
+            if (_humanPresenceManager != null)
+            {
+                _humanPresenceManager.Tick(Time.deltaTime);
+            }
         }
         #endregion ------------------------------------------------------------------------
 
@@ -398,12 +411,17 @@ namespace Styly.NetSync
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
+            _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
 
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
             _avatarManager.OnAvatarDisconnected.AddListener(OnRemoteAvatarDisconnected);
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
+
+            // Human Presence lifecycle follows avatar connect/disconnect events
+            OnAvatarConnected.AddListener(_humanPresenceManager.HandleAvatarConnected);
+            OnAvatarDisconnected.AddListener(_humanPresenceManager.HandleAvatarDisconnected);
 
             // Setup network variable events
             if (_networkVariableManager != null)
@@ -704,6 +722,7 @@ namespace Styly.NetSync
             _shouldSendHandshake = false; // Reset handshake flag
             _networkVariableManager?.ResetInitialSyncFlag(); // Reset network variable sync state
             StopNetworking();
+            if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
         }
 
         private void DebugLog(string msg)
@@ -746,5 +765,57 @@ namespace Styly.NetSync
             }
         }
         #endregion ------------------------------------------------------------------------
+
+        /// <summary>
+        /// Update a remote client's Human Presence transform from the client's "physical" pose.
+        /// The incoming position/rotation are LOCAL to the remote head's parent.
+        /// We convert them to WORLD space using the remote avatar hierarchy and apply yaw-only.
+        /// This method runs on the main Unity thread (invoked from MessageProcessor).
+        /// </summary>
+        /// <param name="clientNo">Remote client number</param>
+        /// <param name="position">Local position (physical, relative to remote head's parent)</param>
+        /// <param name="eulerRotation">Local rotation euler (physical); only Y (yaw) is used</param>
+        internal void UpdateHumanPresenceTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
+        {
+            if (_humanPresenceManager == null) { return; }
+
+            // Find the remote avatar and its head parent to resolve local->world.
+            Transform parent = null;
+            if (_avatarManager != null)
+            {
+                var peers = _avatarManager.ConnectedPeers;
+                if (peers != null && peers.TryGetValue(clientNo, out var go) && go)
+                {
+                    var net = go.GetComponent<NetSyncAvatar>();
+                    if (net != null && net._head != null)
+                    {
+                        parent = net._head.parent;
+                    }
+                    else
+                    {
+                        parent = go.transform; // Fallback to avatar root if head/parent is unavailable
+                    }
+                }
+            }
+
+            // Convert local physical to world using parent transform when available.
+            Vector3 worldPos = position;
+            Vector3 worldYawEuler;
+            if (parent != null)
+            {
+                worldPos = parent.TransformPoint(position);
+                // Yaw-only in local space, then compose with parent's rotation to get world yaw
+                var localYaw = Quaternion.Euler(0f, eulerRotation.y, 0f);
+                var worldYaw = parent.rotation * localYaw;
+                worldYawEuler = worldYaw.eulerAngles;
+            }
+            else
+            {
+                // As a safety fallback (e.g., avatar not spawned yet), treat given values as world
+                worldYawEuler = new Vector3(0f, eulerRotation.y, 0f);
+            }
+
+            _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYawEuler);
+        }
     }
 }
