@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
-using UnityEngine.Serialization;
 
 namespace Styly.NetSync
 {
@@ -40,8 +39,9 @@ namespace Styly.NetSync
         private bool _logNetworkTraffic = false;
 
         [Header("Events")]
-        public UnityEvent<int> OnAvatarConnected;
-        [FormerlySerializedAs("OnClientDisconnected")] public UnityEvent<int> OnAvatarDisconnected;
+        // Initialize UnityEvents at declaration to ensure they are always non-null
+        public UnityEvent<int> OnAvatarConnected = new UnityEvent<int>();
+        public UnityEvent<int> OnAvatarDisconnected = new UnityEvent<int>();
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
@@ -259,9 +259,7 @@ namespace Styly.NetSync
             _deviceId = GenerateDeviceId();
             _instance = this;
 
-            // Ensure UnityEvents are always initialized during Unity lifecycle setup
-            OnAvatarConnected ??= new UnityEngine.Events.UnityEvent<int>();
-            OnAvatarDisconnected ??= new UnityEngine.Events.UnityEvent<int>();
+            // UnityEvents are initialized at declaration time (no runtime initialization needed)
 
             // Detect stealth mode based on local avatar prefab
             _isStealthMode = (_localAvatarPrefab == null);
