@@ -38,6 +38,45 @@ namespace Styly.NetSync
         [Header("Network Variable Events")]
         public UnityEvent<string, string, string> OnClientVariableChanged;
 
+        // --- Cached objects for zero-allocation transform packaging on send ---
+        // These are reused every frame to avoid GC pressure from frequent network sends.
+        private ClientTransformData _tx;
+        private TransformData _txPhysical;
+        private TransformData _txHead;
+        private TransformData _txRight;
+        private TransformData _txLeft;
+        private readonly List<TransformData> _txVirtuals = new List<TransformData>(8);
+
+        // Helper to ensure cached containers exist and are sized for current virtual transforms.
+        private void EnsureTxBuffersAllocated()
+        {
+            if (_tx == null) _tx = new ClientTransformData();
+            if (_txPhysical == null) _txPhysical = new TransformData();
+            if (_txHead == null) _txHead = new TransformData();
+            if (_txRight == null) _txRight = new TransformData();
+            if (_txLeft == null) _txLeft = new TransformData();
+
+            var vtLen = _virtualTransforms != null ? _virtualTransforms.Length : 0;
+
+            // Grow list to match current number of virtual transforms.
+            while (_txVirtuals.Count < vtLen)
+            {
+                _txVirtuals.Add(new TransformData());
+            }
+            // Shrink only if it became smaller; this is rare and prevents stale items from being serialized.
+            if (_txVirtuals.Count > vtLen)
+            {
+                _txVirtuals.RemoveRange(vtLen, _txVirtuals.Count - vtLen);
+            }
+        }
+
+        // Copy values into a cached TransformData without allocating.
+        private static void Fill(TransformData td, Vector3 pos, Vector3 rot)
+        {
+            td.posX = pos.x; td.posY = pos.y; td.posZ = pos.z;
+            td.rotX = rot.x; td.rotY = rot.y; td.rotZ = rot.z;
+        }
+
         void Start()
         {
 
@@ -77,6 +116,9 @@ namespace Styly.NetSync
             // Do not drive the same Transform in both local (physical) and world (head) spaces.
             // Passing null for physical avoids conflicting updates on _head.
             _smoother.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
+
+            // Prepare reusable send buffers (after transforms are known).
+            EnsureTxBuffersAllocated();
         }
 
         // Initialization method for remote avatars with known client number
@@ -89,6 +131,9 @@ namespace Styly.NetSync
 
             // For remote avatars, avoid double-driving _head (physical/local vs head/world).
             _smoother.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
+
+            // Prepare reusable send buffers (after transforms are known).
+            EnsureTxBuffersAllocated();
         }
 
         void Update()
@@ -116,18 +161,53 @@ namespace Styly.NetSync
         // Get current transform data for sending
         internal ClientTransformData GetTransformData()
         {
-            return new ClientTransformData
+            // Ensure buffers exist and sized (handles rare runtime changes to _virtualTransforms).
+            EnsureTxBuffersAllocated();
+
+            _tx.deviceId = _deviceId;
+            _tx.clientNo = _clientNo;
+
+            // Physical: local space relative to head's parent.
+            Fill(
+                _txPhysical,
+                _head != null ? _head.localPosition : Vector3.zero,
+                _head != null ? _head.localEulerAngles : Vector3.zero);
+            _tx.physical = _txPhysical;
+
+            // World space transforms.
+            Fill(_txHead,
+                 _head != null ? _head.position : Vector3.zero,
+                 _head != null ? _head.eulerAngles : Vector3.zero);
+            _tx.head = _txHead;
+
+            Fill(_txRight,
+                 _rightHand != null ? _rightHand.position : Vector3.zero,
+                 _rightHand != null ? _rightHand.eulerAngles : Vector3.zero);
+            _tx.rightHand = _txRight;
+
+            Fill(_txLeft,
+                 _leftHand != null ? _leftHand.position : Vector3.zero,
+                 _leftHand != null ? _leftHand.eulerAngles : Vector3.zero);
+            _tx.leftHand = _txLeft;
+
+            // Virtuals: reuse pre-allocated TransformData instances.
+            if (_virtualTransforms != null && _txVirtuals.Count == _virtualTransforms.Length)
             {
-                deviceId = _deviceId,
-                clientNo = _clientNo,
-                // physical must be in the local coordinate space of Head
-                // (position/rotation relative to the Head's parent)
-                physical = GetLocalTransform(_head),
-                head = GetWorldTransform(_head),
-                rightHand = GetWorldTransform(_rightHand),
-                leftHand = GetWorldTransform(_leftHand),
-                virtuals = GetWorldTransformList(_virtualTransforms)
-            };
+                for (int i = 0; i < _virtualTransforms.Length; i++)
+                {
+                    var t = _virtualTransforms[i];
+                    var td = _txVirtuals[i];
+                    Fill(
+                        td,
+                        t != null ? t.position : Vector3.zero,
+                        t != null ? t.eulerAngles : Vector3.zero);
+                }
+            }
+            // If _virtualTransforms is null, make sure list is empty to avoid serializing stale entries.
+            // EnsureTxBuffersAllocated already handled resizing, so just assign.
+            _tx.virtuals = _txVirtuals;
+
+            return _tx;
         }
 
         // Update device ID when mapping is received

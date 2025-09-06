@@ -1,7 +1,10 @@
 // NetworkVariableManager.cs - Handles Network Variables system
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.IO;
+using System.Text;
 using NetMQ;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
@@ -13,6 +16,11 @@ namespace Styly.NetSync
         private readonly ConnectionManager _connectionManager;
         private readonly string _deviceId;
         private readonly NetSyncManager _netSyncManager;
+
+        // Reusable serialization resources to reduce allocations per send
+        private readonly ReusableBufferWriter _buf;
+        private NetMQMessage _reusableMessage;
+        private const int INITIAL_BUFFER_CAPACITY = 1024;
 
         // Network Variables storage
         private readonly Dictionary<string, string> _globalVariables = new();
@@ -91,6 +99,8 @@ namespace Styly.NetSync
             _connectionManager = connectionManager;
             _deviceId = deviceId;
             _netSyncManager = netSyncManager;
+            _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
+            _reusableMessage = new NetMQMessage();
         }
 
         // Global Variables API
@@ -151,12 +161,26 @@ namespace Styly.NetSync
 
             try
             {
-                var binaryData = BinarySerializer.SerializeGlobalVarSet(data);
-                var msg = new NetMQMessage();
-                msg.Append(roomId);
-                msg.Append(binaryData);
+                if (_connectionManager.DealerSocket == null)
+                {
+                    return false;
+                }
 
-                bool sent = _connectionManager.DealerSocket != null ? _connectionManager.DealerSocket.TrySendMultipartMessage(msg) : false;
+                var required = EstimateGlobalVarSetSize(name, value);
+                _buf.EnsureCapacity(required);
+
+                _buf.Stream.Position = 0;
+                BinarySerializer.SerializeGlobalVarSetInto(_buf.Writer, data);
+                _buf.Writer.Flush();
+                var length = (int)_buf.Stream.Position;
+
+                _reusableMessage.Clear();
+                _reusableMessage.Append(roomId);
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                _reusableMessage.Append(payload);
+
+                bool sent = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
                 if (sent)
                 {
                     _lastSentGlobal[name] = value; // Update last sent cache
@@ -248,12 +272,21 @@ namespace Styly.NetSync
                     return false;
                 }
 
-                var binaryData = BinarySerializer.SerializeClientVarSet(data);
-                var msg = new NetMQMessage();
-                msg.Append(roomId);
-                msg.Append(binaryData);
+                var required = EstimateClientVarSetSize(name, value);
+                _buf.EnsureCapacity(required);
 
-                bool sent = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                _buf.Stream.Position = 0;
+                BinarySerializer.SerializeClientVarSetInto(_buf.Writer, data);
+                _buf.Writer.Flush();
+                var length = (int)_buf.Stream.Position;
+
+                _reusableMessage.Clear();
+                _reusableMessage.Append(roomId);
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                _reusableMessage.Append(payload);
+
+                bool sent = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
                 if (sent)
                 {
                     var key = (targetClientNo, name);
@@ -448,6 +481,30 @@ namespace Styly.NetSync
         {
             FlushPendingGlobal(nowSeconds, roomId);
             FlushPendingClient(nowSeconds, roomId);
+        }
+
+        // Buffer growth handled by ReusableBufferWriter
+
+        private static int EstimateGlobalVarSetSize(string name, string value)
+        {
+            // 1 (type) + 2 (sender) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
+            int nameLen  = ClampedUtf8Length(name, 64);
+            int valueLen = ClampedUtf8Length(value, 1024);
+            return 1 + 2 + 1 + nameLen + 2 + valueLen + 8;
+        }
+
+        private static int EstimateClientVarSetSize(string name, string value)
+        {
+            // 1 (type) + 2 (sender) + 2 (target) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
+            int nameLen  = ClampedUtf8Length(name, 64);
+            int valueLen = ClampedUtf8Length(value, 1024);
+            return 1 + 2 + 2 + 1 + nameLen + 2 + valueLen + 8;
+        }
+
+        private static int ClampedUtf8Length(string s, int max)
+        {
+            var len = s != null ? Encoding.UTF8.GetByteCount(s) : 0;
+            return Math.Min(len, max);
         }
 
         private void FlushPendingGlobal(double nowSeconds, string roomId)

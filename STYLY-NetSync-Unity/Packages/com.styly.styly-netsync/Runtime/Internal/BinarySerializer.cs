@@ -39,96 +39,102 @@ namespace Styly.NetSync
             writer.Write(data.rotZ);
         }
 
+        /// <summary>
+        /// Serialize client transform into a new byte array (legacy API).
+        /// Prefer SerializeClientTransformInto to reuse an existing stream/writer.
+        /// </summary>
         public static byte[] SerializeClientTransform(ClientTransformData data)
         {
             using (var ms = new MemoryStream())
             using (var writer = new BinaryWriter(ms))
             {
-                // Message type
-                writer.Write(MSG_CLIENT_TRANSFORM);
-
-                // Device ID (as UTF8 bytes with length prefix)
-                var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data.deviceId ?? "");
-                writer.Write((byte)deviceIdBytes.Length);
-                writer.Write(deviceIdBytes);
-
-                // Note: Client number is not sent by client, only assigned by server
-
-                // Physical transform (now full 6 floats)
-                WriteTransformData(writer, data.physical);
-
-                // Head transform
-                WriteTransformData(writer, data.head);
-
-                // Right hand transform
-                WriteTransformData(writer, data.rightHand);
-
-                // Left hand transform
-                WriteTransformData(writer, data.leftHand);
-
-                // Virtual transforms count
-                var virtualCount = data.virtuals != null ? data.virtuals.Count : 0;
-                if (virtualCount > MAX_VIRTUAL_TRANSFORMS)
-                {
-                    virtualCount = MAX_VIRTUAL_TRANSFORMS;
-                }
-                writer.Write((byte)virtualCount);
-
-                // Virtual transforms (always full 6DOF)
-                if (data.virtuals != null && virtualCount > 0)
-                {
-                    for (int i = 0; i < virtualCount; i++)
-                    {
-                        WriteTransformData(writer, data.virtuals[i]);
-                    }
-                }
-
+                SerializeClientTransformInto(writer, data);
                 return ms.ToArray();
             }
         }
 
+        /// <summary>
+        /// Serialize client transform into an existing BinaryWriter.
+        /// The writer's underlying stream position advances to the end of the payload.
+        /// </summary>
+        public static void SerializeClientTransformInto(BinaryWriter writer, ClientTransformData data)
+        {
+            // Message type
+            writer.Write(MSG_CLIENT_TRANSFORM);
+
+            // Device ID (as UTF8 bytes with length prefix)
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data.deviceId ?? "");
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+
+            // Note: Client number is not sent by client, only assigned by server
+
+            // Physical transform (now full 6 floats)
+            WriteTransformData(writer, data.physical);
+
+            // Head transform
+            WriteTransformData(writer, data.head);
+
+            // Right hand transform
+            WriteTransformData(writer, data.rightHand);
+
+            // Left hand transform
+            WriteTransformData(writer, data.leftHand);
+
+            // Virtual transforms count
+            var virtualCount = data.virtuals != null ? data.virtuals.Count : 0;
+            if (virtualCount > MAX_VIRTUAL_TRANSFORMS)
+            {
+                virtualCount = MAX_VIRTUAL_TRANSFORMS;
+            }
+            writer.Write((byte)virtualCount);
+
+            // Virtual transforms (always full 6DOF)
+            if (data.virtuals != null && virtualCount > 0)
+            {
+                for (int i = 0; i < virtualCount; i++)
+                {
+                    WriteTransformData(writer, data.virtuals[i]);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Serialize a stealth handshake into a new byte array (legacy API).
+        /// Prefer SerializeStealthHandshakeInto to reuse an existing stream/writer.
+        /// </summary>
         public static byte[] SerializeStealthHandshake(string deviceId)
         {
             using (var ms = new MemoryStream())
             using (var writer = new BinaryWriter(ms))
             {
-                // Message type
-                writer.Write(MSG_CLIENT_TRANSFORM);
-
-                // Device ID (as UTF8 bytes with length prefix)
-                var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
-                writer.Write((byte)deviceIdBytes.Length);
-                writer.Write(deviceIdBytes);
-
-                // Physical transform with NaN values (now 6 floats for consistency)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
-
-                // Head transform (NaN values)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
-
-                // Right hand transform (NaN values)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
-
-                // Left hand transform (NaN values)
-                for (int i = 0; i < 6; i++)
-                {
-                    writer.Write(float.NaN);
-                }
-
-                // No virtual transforms for stealth handshake
-                writer.Write((byte)0);
-
+                SerializeStealthHandshakeInto(writer, deviceId);
                 return ms.ToArray();
             }
+        }
+
+        /// <summary>
+        /// Serialize a stealth handshake into an existing BinaryWriter.
+        /// The writer's underlying stream position advances to the end of the payload.
+        /// </summary>
+        public static void SerializeStealthHandshakeInto(BinaryWriter writer, string deviceId)
+        {
+            // Message type
+            writer.Write(MSG_CLIENT_TRANSFORM);
+
+            // Device ID (as UTF8 bytes with length prefix)
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+
+            // Physical, Head, Right, Left — write 4 * 6 NaN floats in a single loop
+            for (int i = 0; i < 24; i++)
+            {
+                writer.Write(float.NaN);
+            }
+
+            // No virtual transforms for stealth handshake
+            writer.Write((byte)0);
         }
 
         #region === Deserialization ===
@@ -258,26 +264,37 @@ namespace Styly.NetSync
         #endregion
 
         /// <summary>
-        /// Serialize an RPC message
+        /// Serialize an RPC message into a new array (legacy API). Prefer the Into version.
         /// </summary>
         public static byte[] SerializeRPCMessage(RPCMessage msg)
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
+            SerializeRPCMessageInto(writer, msg);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize an RPC message into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeRPCMessageInto(BinaryWriter writer, RPCMessage msg)
+        {
             // Message type
             writer.Write(MSG_RPC);
             // Sender client number (2 bytes)
             writer.Write((ushort)msg.senderClientNo);
             // Function name (length-prefixed byte)
             var nameBytes = System.Text.Encoding.UTF8.GetBytes(msg.functionName);
-            if (nameBytes.Length > 255) { throw new ArgumentException("Function name is too long. Maximum length is 255 bytes."); }
+            if (nameBytes.Length > 255)
+            {
+                throw new ArgumentException("Function name is too long. Maximum length is 255 bytes.");
+            }
             writer.Write((byte)nameBytes.Length);
             writer.Write(nameBytes);
             // Arguments JSON
-            var argsBytes = System.Text.Encoding.UTF8.GetBytes(msg.argumentsJson);
+            var argsBytes = System.Text.Encoding.UTF8.GetBytes(msg.argumentsJson ?? string.Empty);
             writer.Write((ushort)argsBytes.Length);
             writer.Write(argsBytes);
-            return ms.ToArray();
         }
 
 
@@ -288,7 +305,15 @@ namespace Styly.NetSync
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
+            SerializeGlobalVarSetInto(writer, data);
+            return ms.ToArray();
+        }
 
+        /// <summary>
+        /// Serialize global variable set into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeGlobalVarSetInto(BinaryWriter writer, Dictionary<string, object> data)
+        {
             // Message type
             writer.Write(MSG_GLOBAL_VAR_SET);
 
@@ -313,8 +338,6 @@ namespace Styly.NetSync
             // Timestamp (8 bytes double)
             var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
             writer.Write(timestamp);
-
-            return ms.ToArray();
         }
 
         /// <summary>
@@ -324,7 +347,15 @@ namespace Styly.NetSync
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
+            SerializeClientVarSetInto(writer, data);
+            return ms.ToArray();
+        }
 
+        /// <summary>
+        /// Serialize client variable set into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeClientVarSetInto(BinaryWriter writer, Dictionary<string, object> data)
+        {
             // Message type
             writer.Write(MSG_CLIENT_VAR_SET);
 
@@ -353,8 +384,6 @@ namespace Styly.NetSync
             // Timestamp (8 bytes double)
             var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
             writer.Write(timestamp);
-
-            return ms.ToArray();
         }
 
         /// <summary>

@@ -28,6 +28,11 @@ namespace Styly.NetSync
         private int _localClientNo = 0;
         private NetSyncManager _netSyncManager; // Reference to NetSyncManager for triggering ready checks
 
+        // Scratch collections reused per-room update to avoid frequent allocations (GC pressure)
+        // NOTE: These are used only on the main thread inside ProcessRoomTransform.
+        private readonly HashSet<int> _scratchAlive = new HashSet<int>();
+        private readonly List<int> _scratchToDisconnect = new List<int>(32);
+
         public int MessagesReceived => _messagesReceived;
         public event System.Action<int> OnLocalClientNoAssigned;
 
@@ -250,7 +255,9 @@ namespace Styly.NetSync
 
             try
             {
-                var alive = new HashSet<int>();
+                // Reuse scratch set for alive client tracking
+                var alive = _scratchAlive;
+                alive.Clear();
                 foreach (var c in room.clients)
                 {
                     // Skip local avatar by client number
@@ -284,7 +291,8 @@ namespace Styly.NetSync
                 }
 
                 // Check for disconnected clients (including ones without avatars)
-                var toDisconnect = new List<int>();
+                var toDisconnect = _scratchToDisconnect;
+                toDisconnect.Clear();
                 foreach (var known in _knownConnectedClients)
                 {
                     if (!alive.Contains(known)) { toDisconnect.Add(known); }
