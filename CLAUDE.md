@@ -75,8 +75,8 @@ kill <PID>                         # Kill process using port
 ## Unity C# Coding Rules (CRITICAL)
 
 - **Never use null propagation (`?.` / `??`) with UnityEngine.Object types**
-  - L `return transform?.position;`
-  -  `return transform != null ? transform.position : Vector3.zero;`
+  - ❌ `return transform?.position;`
+  - ✅ `return transform != null ? transform.position : Vector3.zero;`
 - All Unity API calls must be on main thread - no background thread access
 - Use explicit null checks instead of null propagation operators
 - Follow namespace conventions: `Styly.NetSync` (public) / `Styly.NetSync.Internal` (internal)
