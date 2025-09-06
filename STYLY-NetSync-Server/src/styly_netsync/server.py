@@ -1,6 +1,8 @@
 # server.py
 import sys
 
+# ruff: noqa: E402, I001
+
 # Python version check - must be at the very beginning
 MIN_PY = (3, 11)
 if sys.version_info < MIN_PY:
@@ -28,6 +30,7 @@ from . import binary_serializer
 
 # Log configuration (with optional ANSI colors for console)
 
+
 class ColorFormatter(logging.Formatter):
     """Simple ANSI colorizing formatter.
 
@@ -39,7 +42,7 @@ class ColorFormatter(logging.Formatter):
 
     RESET = "\x1b[0m"
     COLORS = {
-        "WARNING": "\x1b[33m",     # yellow
+        "WARNING": "\x1b[33m",  # yellow
         "ERROR": "\x1b[91m\x1b[1m",  # bright red + bold
         "CRITICAL": "\x1b[97m\x1b[41m\x1b[1m",  # white on red bg + bold
     }
@@ -62,10 +65,15 @@ class ColorFormatter(logging.Formatter):
 _use_color = sys.stderr.isatty() and os.getenv("NO_COLOR") is None
 _handler = logging.StreamHandler()
 _handler.setFormatter(
-    ColorFormatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S", enable_color=_use_color)
+    ColorFormatter(
+        "%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%H:%M:%S",
+        enable_color=_use_color,
+    )
 )
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger(__name__)
+
 
 @lru_cache(maxsize=1)
 def get_version() -> str:
@@ -126,6 +134,7 @@ class NetSyncServer:
         enable_beacon=True,
         beacon_port=9999,
         server_name="STYLY-LBE-Server",
+        nv_flush_policy: str = "drain",
     ):
         self.dealer_port = dealer_port
         self.pub_port = pub_port
@@ -191,6 +200,9 @@ class NetSyncServer:
         self.pending_client_nv: dict[str, dict[tuple, tuple]] = (
             {}
         )  # room_id -> {(target_client_no, var_name): (sender_client_no, value, timestamp)}
+
+        # NV flush behaviour
+        self.nv_flush_policy = nv_flush_policy  # "drain" or "rate_limited"
 
         # NV fairness and rate control
         self.nv_flush_interval = 0.05  # 50ms flush cadence
@@ -485,7 +497,7 @@ class NetSyncServer:
                 if self.router:
                     self.router.close()
                 self.context.term()
-                raise SystemExit(1)
+                raise SystemExit(1) from None
             else:
                 logger.error(f"ZMQ Error: {e}")
                 raise
@@ -971,183 +983,180 @@ class NetSyncServer:
         self._broadcast_global_var_sync(room_id)
         self._broadcast_client_var_sync(room_id)
 
-    def _flush_network_variable_updates(self, current_time: float):
-        """Flush pending NV updates with fairness and rate limiting"""
+    def _flush_nv_drain(self, room_id: str) -> None:
+        """Drain all pending NV updates for a room in one go."""
+        start = time.perf_counter()
+
         with self._rooms_lock:
-            rooms_to_process = list(self.rooms.keys())
+            pending_globals = self.pending_global_nv.get(room_id, {})
+            pending_clients = self.pending_client_nv.get(room_id, {})
+            globals_to_apply = list(pending_globals.items())
+            clients_to_apply = list(pending_clients.items())
+            self.pending_global_nv[room_id] = {}
+            self.pending_client_nv[room_id] = {}
 
-        for room_id in rooms_to_process:
+        applied_globals: list[str] = []
+        for var_name, (sender, value, ts) in globals_to_apply:
+            if self._apply_global_var_set(room_id, sender, var_name, value, ts):
+                applied_globals.append(var_name)
+
+        applied_clients: dict[int, list[dict[str, Any]]] = {}
+        for (target_client_no, var_name), (sender, value, ts) in clients_to_apply:
+            if self._apply_client_var_set(
+                room_id, sender, target_client_no, var_name, value, ts
+            ):
+                applied_clients.setdefault(target_client_no, []).append(
+                    {
+                        "name": var_name,
+                        "value": value,
+                        "timestamp": ts,
+                        "lastWriterClientNo": sender,
+                    }
+                )
+
+        topic = room_id.encode("utf-8")
+        if applied_globals:
+            vars_payload = []
             with self._rooms_lock:
-                # Skip if less than 50ms since last flush
-                last_flush = self.room_last_nv_flush.get(room_id, 0)
-                if current_time - last_flush < self.nv_flush_interval:
+                for name in applied_globals:
+                    d = self.global_variables[room_id][name]
+                    vars_payload.append(
+                        {
+                            "name": name,
+                            "value": d["value"],
+                            "timestamp": d["timestamp"],
+                            "lastWriterClientNo": d["lastWriterClientNo"],
+                        }
+                    )
+            msg = binary_serializer.serialize_global_var_sync(
+                {"variables": vars_payload}
+            )
+            self._enqueue_pub(topic, msg)
+
+        if applied_clients:
+            client_vars = {str(cno): lst for cno, lst in applied_clients.items()}
+            msg = binary_serializer.serialize_client_var_sync(
+                {"clientVariables": client_vars}
+            )
+            self._enqueue_pub(topic, msg)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        logger.info(f"NV flush took {elapsed_ms:.2f} ms (room={room_id})")
+
+    def _flush_nv_rate_limited(self, room_id: str) -> None:
+        """Flush NV updates using existing rate-limited fairness logic."""
+        now = time.monotonic()
+        with self._rooms_lock:
+            last_flush = self.room_last_nv_flush.get(room_id, 0.0)
+            pending_global = self.pending_global_nv.get(room_id, {})
+            pending_client = self.pending_client_nv.get(room_id, {})
+            if now - last_flush < self.nv_flush_interval:
+                return
+            if not pending_global and not pending_client:
+                return
+
+            interval = now - last_flush if last_flush > 0 else self.nv_flush_interval
+
+            room_allowance = self.room_nv_allowance.get(room_id, 0.0)
+            room_allowance = min(1.0, room_allowance + self.nv_per_room_cap * interval)
+            self.room_nv_allowance[room_id] = room_allowance
+
+            client_updates: dict[int, list[tuple[bool, Any, tuple]]] = {}
+            for var_name, (sender_no, value, ts) in pending_global.items():
+                client_updates.setdefault(sender_no, []).append(
+                    (True, var_name, (sender_no, value, ts))
+                )
+            for (target_no, var_name), (sender_no, value, ts) in pending_client.items():
+                client_updates.setdefault(sender_no, []).append(
+                    (False, (target_no, var_name), (sender_no, value, ts))
+                )
+
+            client_allowances = self.room_client_nv_allowance.get(room_id, {})
+            for client_no in client_updates.keys():
+                client_allowances[client_no] = min(
+                    1.0,
+                    client_allowances.get(client_no, 0.0)
+                    + self.nv_per_client_rate * interval,
+                )
+            self.room_client_nv_allowance[room_id] = client_allowances
+
+        global_dirty = False
+        client_dirty = False
+        processed_global: list[str] = []
+        processed_client: list[tuple[int, str]] = []
+
+        client_list = list(client_updates.keys())
+        max_safety_iterations = 1000
+        iteration_count = 0
+
+        while client_list and iteration_count < max_safety_iterations:
+            progress_made = False
+            clients_to_process = len(client_list)
+
+            for _ in range(clients_to_process):
+                if not client_list:
+                    break
+                iteration_count += 1
+                client_no = client_list.pop(0)
+
+                if client_no not in client_updates or not client_updates[client_no]:
                     continue
 
-                # Get pending updates
-                pending_global = self.pending_global_nv.get(room_id, {})
-                pending_client = self.pending_client_nv.get(room_id, {})
-
-                if not pending_global and not pending_client:
+                if client_allowances.get(client_no, 0.0) < 1.0:
+                    client_list.append(client_no)
                     continue
 
-                # Update flush time
-                interval = (
-                    current_time - last_flush
-                    if last_flush > 0
-                    else self.nv_flush_interval
-                )
-                self.room_last_nv_flush[room_id] = current_time
+                if room_allowance < 1.0:
+                    client_list.insert(0, client_no)
+                    break
 
-                # Update room-level allowance (no burst - cap at 1.0)
-                room_allowance = self.room_nv_allowance.get(room_id, 0.0)
-                room_allowance = min(
-                    1.0, room_allowance + self.nv_per_room_cap * interval
-                )
-                self.room_nv_allowance[room_id] = room_allowance
+                is_global, key, data = client_updates[client_no].pop(0)
+                if is_global:
+                    var_name = key
+                    sender_no, value, ts = data
+                    if self._apply_global_var_set(
+                        room_id, sender_no, var_name, value, ts
+                    ):
+                        global_dirty = True
+                        processed_global.append(var_name)
+                        client_allowances[client_no] -= 1.0
+                        room_allowance -= 1.0
+                        progress_made = True
+                else:
+                    target_no, var_name = key
+                    sender_no, value, ts = data
+                    if self._apply_client_var_set(
+                        room_id, sender_no, target_no, var_name, value, ts
+                    ):
+                        client_dirty = True
+                        processed_client.append((target_no, var_name))
+                        client_allowances[client_no] -= 1.0
+                        room_allowance -= 1.0
+                        progress_made = True
 
-                # Track which clients have pending updates to ensure fairness
-                client_updates = {}  # client_no -> [(is_global, key, data)]
+                if client_updates[client_no]:
+                    client_list.append(client_no)
 
-                # Organize by sender client
-                for var_name, (sender_no, value, timestamp) in pending_global.items():
-                    if sender_no not in client_updates:
-                        client_updates[sender_no] = []
-                    client_updates[sender_no].append(
-                        (True, var_name, (sender_no, value, timestamp))
-                    )
+            if not progress_made or room_allowance < 1.0:
+                break
 
-                for (target_no, var_name), (
-                    sender_no,
-                    value,
-                    timestamp,
-                ) in pending_client.items():
-                    if sender_no not in client_updates:
-                        client_updates[sender_no] = []
-                    client_updates[sender_no].append(
-                        (False, (target_no, var_name), (sender_no, value, timestamp))
-                    )
+        if iteration_count >= max_safety_iterations:
+            logger.warning(
+                f"Network variable processing hit safety limit for room {room_id}"
+            )
 
-                # Update per-client allowances
-                client_allowances = self.room_client_nv_allowance.get(room_id, {})
-                for client_no in client_updates.keys():
-                    if client_no not in client_allowances:
-                        client_allowances[client_no] = 0.0
-                    # Update allowance (no burst - cap at 1.0)
-                    client_allowances[client_no] = min(
-                        1.0,
-                        client_allowances[client_no]
-                        + self.nv_per_client_rate * interval,
-                    )
-                self.room_client_nv_allowance[room_id] = client_allowances
+        with self._rooms_lock:
+            self.room_client_nv_allowance[room_id] = client_allowances
+            self.room_nv_allowance[room_id] = room_allowance
+            for var_name in processed_global:
+                del self.pending_global_nv[room_id][var_name]
+            for key in processed_client:
+                del self.pending_client_nv[room_id][key]
 
-                # Round-robin across clients for fairness
-                global_dirty = False
-                client_dirty = False
-                processed_global = []
-                processed_client = []
-
-                # Process in round-robin fashion with dynamic processing
-                client_list = list(client_updates.keys())
-                max_safety_iterations = 1000  # Safety limit to prevent infinite loops
-                iteration_count = 0
-
-                # Dynamically process all available updates within rate limits
-                while client_list and iteration_count < max_safety_iterations:
-                    progress_made = False
-                    clients_to_process = len(client_list)
-
-                    for _ in range(clients_to_process):
-                        if not client_list:
-                            break
-
-                        iteration_count += 1
-
-                        # Round-robin: take first client, move to back
-                        client_no = client_list.pop(0)
-
-                        if (
-                            client_no not in client_updates
-                            or not client_updates[client_no]
-                        ):
-                            continue  # No more updates for this client
-
-                        # Check client allowance
-                        if client_allowances.get(client_no, 0) < 1.0:
-                            client_list.append(
-                                client_no
-                            )  # Try again later in next round
-                            continue
-
-                        # Check room allowance
-                        if room_allowance < 1.0:
-                            # Room cap reached - put client back and stop processing
-                            client_list.insert(0, client_no)
-                            break
-
-                        # Process one update from this client
-                        is_global, key, data = client_updates[client_no].pop(0)
-
-                        if is_global:
-                            # Apply global variable
-                            var_name = key
-                            sender_no, value, timestamp = data
-                            if self._apply_global_var_set(
-                                room_id, sender_no, var_name, value, timestamp
-                            ):
-                                global_dirty = True
-                                processed_global.append(var_name)
-                                # Consume allowances
-                                client_allowances[client_no] -= 1.0
-                                room_allowance -= 1.0
-                                progress_made = True
-                        else:
-                            # Apply client variable
-                            target_no, var_name = key
-                            sender_no, value, timestamp = data
-                            if self._apply_client_var_set(
-                                room_id,
-                                sender_no,
-                                target_no,
-                                var_name,
-                                value,
-                                timestamp,
-                            ):
-                                client_dirty = True
-                                processed_client.append(key)
-                                # Consume allowances
-                                client_allowances[client_no] -= 1.0
-                                room_allowance -= 1.0
-                                progress_made = True
-
-                        # Put client back in rotation if they have more updates
-                        if client_updates[client_no]:
-                            client_list.append(client_no)
-
-                    # Exit if no progress was made (all clients are rate-limited or no updates)
-                    if not progress_made or room_allowance < 1.0:
-                        break
-
-                # Log warning if we hit the safety limit
-                if iteration_count >= max_safety_iterations:
-                    logger.warning(
-                        f"Network variable processing hit safety limit for room {room_id}"
-                    )
-
-                # Update remaining allowances
-                self.room_client_nv_allowance[room_id] = client_allowances
-                self.room_nv_allowance[room_id] = room_allowance
-
-                # Remove processed items from pending
-                for var_name in processed_global:
-                    del self.pending_global_nv[room_id][var_name]
-                for key in processed_client:
-                    del self.pending_client_nv[room_id][key]
-
-            # Broadcast changes (outside lock)
-            if global_dirty:
-                self._broadcast_global_var_sync(room_id)
-            if client_dirty:
-                self._broadcast_client_var_sync(room_id)
+        if global_dirty:
+            self._broadcast_global_var_sync(room_id)
+        if client_dirty:
+            self._broadcast_client_var_sync(room_id)
 
     def _broadcast_id_mappings(self, room_id: str):
         """Broadcast all device ID mappings for a room (including stealth clients with flag)"""
@@ -1191,8 +1200,19 @@ class NetSyncServer:
                 # Check for broadcasts at higher frequency but only broadcast when needed
                 if current_time - last_broadcast_check >= self.BROADCAST_CHECK_INTERVAL:
                     self._adaptive_broadcast_all_rooms(current_time)
-                    # Also flush Network Variables updates
-                    self._flush_network_variable_updates(current_time)
+
+                    # Flush Network Variables after other categories
+                    with self._rooms_lock:
+                        rooms = list(self.rooms.keys())
+                    for room_id in rooms:
+                        last_flush = self.room_last_nv_flush.get(room_id, 0.0)
+                        if current_time - last_flush >= self.nv_flush_interval:
+                            if self.nv_flush_policy == "drain":
+                                self._flush_nv_drain(room_id)
+                            else:
+                                self._flush_nv_rate_limited(room_id)
+                            self.room_last_nv_flush[room_id] = current_time
+
                     last_broadcast_check = current_time
 
                 # Cleanup at regular intervals
@@ -1470,6 +1490,12 @@ def main():
         "--no-beacon", action="store_true", help="Disable beacon discovery"
     )
     parser.add_argument(
+        "--nv-flush-policy",
+        choices=["drain", "rate_limited"],
+        default="drain",
+        help="Network variable flush policy (default: drain)",
+    )
+    parser.add_argument(
         "-V",
         "--version",
         action="version",
@@ -1492,6 +1518,7 @@ def main():
         logger.info(f"  Server name: {args.name}")
     else:
         logger.info("  Discovery: Disabled")
+    logger.info(f"  NV flush policy: {args.nv_flush_policy}")
     logger.info("=" * 80)
 
     server = NetSyncServer(
@@ -1500,6 +1527,7 @@ def main():
         enable_beacon=not args.no_beacon,
         beacon_port=args.beacon_port,
         server_name=args.name,
+        nv_flush_policy=args.nv_flush_policy,
     )
 
     try:
