@@ -19,7 +19,6 @@ namespace Styly.NetSync
 
         // Reusable pooled buffer + stream + writer
         private readonly ReusableBufferWriter _buf;
-        private NetMQMessage _reusableMessage;
 
         // Keep in sync with BinarySerializer's internal maximum
         private const int MAX_VIRTUAL_TRANSFORMS = 50;
@@ -35,9 +34,8 @@ namespace Styly.NetSync
             _deviceId = deviceId;
             SendRate = sendRate;
 
-            // Allocate and prepare reusable serialization resources
+            // Allocate reusable pooled buffer for serialization
             _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
-            _reusableMessage = new NetMQMessage();
         }
 
         public bool SendLocalTransform(NetSyncAvatar localAvatar, string roomId)
@@ -61,18 +59,25 @@ namespace Styly.NetSync
 
                 var length = (int)_buf.Stream.Position;
 
-                // Reuse NetMQMessage and append frames
-                _reusableMessage.Clear();
-                _reusableMessage.Append(roomId);
-                // Copy the exact payload length into a fresh array owned by NetMQ.
-                // This avoids sharing our pooled buffer with the socket internals.
-                var payload = new byte[length];
-                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                _reusableMessage.Append(payload);
+                // Build a fresh message per send to ensure proper frame lifetime.
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    // Copy the exact payload length into a fresh array owned by NetMQ (avoid sharing pooled buffer).
+                    var payload = new byte[length];
+                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                    msg.Append(payload);
 
-                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
-                if (ok) _messagesSent++;
-                return ok;
+                    var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                    if (ok) _messagesSent++;
+                    return ok;
+                }
+                finally
+                {
+                    // NetMQMessage is not IDisposable; clear to release frames promptly.
+                    msg.Clear();
+                }
             }
             catch (Exception ex)
             {
@@ -98,15 +103,22 @@ namespace Styly.NetSync
 
                 var length = (int)_buf.Stream.Position;
 
-                _reusableMessage.Clear();
-                _reusableMessage.Append(roomId);
-                var payload = new byte[length];
-                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                _reusableMessage.Append(payload);
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    var payload = new byte[length];
+                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                    msg.Append(payload);
 
-                var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
-                if (ok) _messagesSent++;
-                return ok;
+                    var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                    if (ok) _messagesSent++;
+                    return ok;
+                }
+                finally
+                {
+                    msg.Clear();
+                }
             }
             catch (Exception ex)
             {
@@ -161,6 +173,14 @@ namespace Styly.NetSync
             if (deviceIdBytes > 255) deviceIdBytes = 255; // Length prefix is 1 byte
             // 1 (type) + 1 (deviceIdLen) + deviceId + 4 * 6 floats + 1 (virtual count 0)
             return 1 + 1 + deviceIdBytes + (4 * 6 * sizeof(float)) + 1;
+        }
+
+        /// <summary>
+        /// Dispose pooled buffer resources.
+        /// </summary>
+        public void Dispose()
+        {
+            _buf.Dispose();
         }
     }
 }
