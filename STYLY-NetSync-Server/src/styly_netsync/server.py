@@ -1041,7 +1041,10 @@ class NetSyncServer:
             self._enqueue_pub(topic, msg)
 
         elapsed_ms = (time.perf_counter() - start) * 1000.0
-        logger.info(f"NV flush took {elapsed_ms:.2f} ms (room={room_id})")
+        if elapsed_ms > 10.0:
+            logger.info(f"NV flush took {elapsed_ms:.2f} ms (room={room_id})")
+        else:
+            logger.debug(f"NV flush took {elapsed_ms:.2f} ms (room={room_id})")
 
     def _flush_nv_rate_limited(self, room_id: str) -> None:
         """Flush NV updates using existing rate-limited fairness logic."""
