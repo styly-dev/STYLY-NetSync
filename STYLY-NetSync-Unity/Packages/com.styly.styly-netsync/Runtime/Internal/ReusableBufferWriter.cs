@@ -43,7 +43,10 @@ namespace Styly.NetSync
             var newCap = Math.Max(_capacity * 2, required);
             var newBuf = _pool.Rent(newCap);
 
-            // Dispose current writer/stream and return previous buffer to the pool.
+            // Dispose in this specific order:
+            // 1) Writer first, because it wraps the Stream and may flush buffered data on Dispose.
+            // 2) Stream second, after the Writer has completed its work.
+            // Disposing the Stream first could lead to ObjectDisposedException in the Writer or skipped flushes.
             Writer?.Dispose();
             Stream?.Dispose();
             if (_buffer != null)
@@ -64,6 +67,7 @@ namespace Styly.NetSync
 
         public void Dispose()
         {
+            // Important: Writer before Stream for the same reason noted above (Writer depends on Stream).
             try { Writer?.Dispose(); } catch { }
             try { Stream?.Dispose(); } catch { }
             if (_buffer != null)
@@ -74,4 +78,3 @@ namespace Styly.NetSync
         }
     }
 }
-
