@@ -21,7 +21,6 @@ namespace Styly.NetSync
 
         // Reusable serialization resources to reduce GC
         private readonly ReusableBufferWriter _buf;
-        private NetMQMessage _reusableMessage;
         private const int INITIAL_BUFFER_CAPACITY = 512;
 
         public UnityEvent<int, string, string[]> OnRPCReceived { get; } = new();
@@ -121,16 +120,22 @@ namespace Styly.NetSync
 
             var length = (int)_buf.Stream.Position;
 
-            // Build and send message reusing NetMQMessage instance
-            _reusableMessage.Clear();
-            _reusableMessage.Append(roomId);
-            var payload = new byte[length];
-            Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-            _reusableMessage.Append(payload);
-
             try
             {
-                return _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    var payload = new byte[length];
+                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                    msg.Append(payload);
+                    return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                }
+                finally
+                {
+                    // Clear frames explicitly since NetMQMessage isn't IDisposable.
+                    msg.Clear();
+                }
             }
             catch (Exception ex)
             {
@@ -145,7 +150,6 @@ namespace Styly.NetSync
             _deviceId = deviceId;
             _netSyncManager = netSyncManager;
             _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
-            _reusableMessage = new NetMQMessage();
         }
 
         public void Send(string roomId, string functionName, string[] args)
@@ -224,6 +228,17 @@ namespace Styly.NetSync
             if (nameLen > 255) nameLen = 255; // capped by serializer
             var argsLen = msg != null && msg.argumentsJson != null ? Encoding.UTF8.GetByteCount(msg.argumentsJson) : 0;
             return 1 + 2 + 1 + nameLen + 2 + argsLen;
+        }
+
+        /// <summary>
+        /// Dispose pooled buffer resources to return memory to ArrayPool.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_buf != null)
+            {
+                _buf.Dispose();
+            }
         }
     }
 }

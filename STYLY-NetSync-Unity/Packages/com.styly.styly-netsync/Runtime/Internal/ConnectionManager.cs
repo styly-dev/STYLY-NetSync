@@ -118,18 +118,13 @@ namespace Styly.NetSync
                     OnConnectionEstablished.Invoke();
                 }
 
-                // Pre-encode the room/topic once to avoid per-message string allocations.
-                // We will compare the incoming topic as byte[] against this cache.
-                var roomIdBytes = Encoding.UTF8.GetBytes(roomId);
-
                 while (!_shouldStop)
                 {
-                    // Receive two frames: [topic][payload]. Avoid string materialization for topic.
-                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var topicBytes)) { continue; }
+                    // Receive two frames: [topic][payload]. Use string topic and direct comparison.
+                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
                     if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
 
-                    // Compare topic as byte[] (avoid allocations from string conversion)
-                    if (!BytesEqual(topicBytes, roomIdBytes)) { continue; }
+                    if (topic != roomId) { continue; }
 
                     try
                     {
@@ -155,20 +150,6 @@ namespace Styly.NetSync
             }
         }
 
-        // Constant-time length check followed by linear byte comparison.
-        // Avoids LINQ's SequenceEqual to minimize overhead and dependencies.
-        private static bool BytesEqual(byte[] a, byte[] b)
-        {
-            if (a == null || b == null) return false;
-            if (ReferenceEquals(a, b)) return true;
-            if (a.Length != b.Length) return false;
-            for (int i = 0; i < a.Length; i++)
-            {
-                if (a[i] != b[i]) return false;
-            }
-            return true;
-        }
-
         private static void WaitThreadExit(Thread t, int ms)
         {
 #if UNITY_WEBGL
@@ -190,9 +171,7 @@ namespace Styly.NetSync
 #if UNITY_WEBGL
             return;
 #endif
-            // macOS: Cleanup tends to hang
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) { return; }
-
+            // Always attempt cleanup on all platforms to ensure background threads exit.
             const int timeoutMs = 500;
             try
             {
@@ -202,7 +181,7 @@ namespace Styly.NetSync
                 if (!task.Wait(timeoutMs))
                 {
                     cts.Cancel();
-                    Debug.LogWarning("[NetMQ] Cleanup timeout – skipped");
+                    Debug.LogWarning("[NetMQ] Cleanup timeout – forced skip");
                 }
             }
             catch (Exception ex)

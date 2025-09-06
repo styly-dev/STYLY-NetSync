@@ -19,7 +19,6 @@ namespace Styly.NetSync
 
         // Reusable serialization resources to reduce allocations per send
         private readonly ReusableBufferWriter _buf;
-        private NetMQMessage _reusableMessage;
         private const int INITIAL_BUFFER_CAPACITY = 1024;
 
         // Network Variables storage
@@ -100,7 +99,6 @@ namespace Styly.NetSync
             _deviceId = deviceId;
             _netSyncManager = netSyncManager;
             _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
-            _reusableMessage = new NetMQMessage();
         }
 
         // Global Variables API
@@ -174,13 +172,20 @@ namespace Styly.NetSync
                 _buf.Writer.Flush();
                 var length = (int)_buf.Stream.Position;
 
-                _reusableMessage.Clear();
-                _reusableMessage.Append(roomId);
-                var payload = new byte[length];
-                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                _reusableMessage.Append(payload);
-
-                bool sent = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
+                bool sent;
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    var payload = new byte[length];
+                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                    msg.Append(payload);
+                    sent = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                }
+                finally
+                {
+                    msg.Clear();
+                }
                 if (sent)
                 {
                     _lastSentGlobal[name] = value; // Update last sent cache
@@ -280,13 +285,20 @@ namespace Styly.NetSync
                 _buf.Writer.Flush();
                 var length = (int)_buf.Stream.Position;
 
-                _reusableMessage.Clear();
-                _reusableMessage.Append(roomId);
-                var payload = new byte[length];
-                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                _reusableMessage.Append(payload);
-
-                bool sent = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
+                bool sent;
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    var payload = new byte[length];
+                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                    msg.Append(payload);
+                    sent = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                }
+                finally
+                {
+                    msg.Clear();
+                }
                 if (sent)
                 {
                     var key = (targetClientNo, name);
@@ -572,6 +584,17 @@ namespace Styly.NetSync
                     _nextAllowedClient[key] = nowSeconds + DEBOUNCE_INTERVAL;
                 }
                 // If send fails, keep entries to retry on subsequent ticks.
+            }
+        }
+
+        /// <summary>
+        /// Dispose pooled buffer resources used for serialization.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_buf != null)
+            {
+                _buf.Dispose();
             }
         }
     }

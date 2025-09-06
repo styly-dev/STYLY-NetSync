@@ -283,10 +283,23 @@ namespace Styly.NetSync
             StopNetworking();
             _avatarManager.CleanupRemoteAvatars();
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
+
+            // Dispose pooled serialization resources to return buffers to ArrayPool
+            if (_rpcManager != null) { _rpcManager.Dispose(); _rpcManager = null; }
+            if (_transformSyncManager != null) { _transformSyncManager.Dispose(); _transformSyncManager = null; }
+            if (_networkVariableManager != null) { _networkVariableManager.Dispose(); _networkVariableManager = null; }
+
             _instance = null;
         }
 
-        private void OnApplicationQuit() => StopNetworking();
+        private void OnApplicationQuit()
+        {
+            StopNetworking();
+            // Be explicit on quit as well in case OnDisable order varies
+            if (_rpcManager != null) { _rpcManager.Dispose(); _rpcManager = null; }
+            if (_transformSyncManager != null) { _transformSyncManager.Dispose(); _transformSyncManager = null; }
+            if (_networkVariableManager != null) { _networkVariableManager.Dispose(); _networkVariableManager = null; }
+        }
 
         private void OnApplicationPause(bool paused)
         {
