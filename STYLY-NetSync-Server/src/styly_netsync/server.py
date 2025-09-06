@@ -497,7 +497,7 @@ class NetSyncServer:
                 if self.router:
                     self.router.close()
                 self.context.term()
-                raise SystemExit(1) from None
+                raise SystemExit(1) from e
             else:
                 logger.error(f"ZMQ Error: {e}")
                 raise
