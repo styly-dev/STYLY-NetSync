@@ -235,10 +235,7 @@ namespace Styly.NetSync
         /// </summary>
         public void Dispose()
         {
-            if (_buf != null)
-            {
-                _buf.Dispose();
-            }
+            _buf.Dispose();
         }
     }
 }
