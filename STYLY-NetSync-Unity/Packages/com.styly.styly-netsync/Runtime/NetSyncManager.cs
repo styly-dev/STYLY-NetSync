@@ -285,9 +285,7 @@ namespace Styly.NetSync
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
 
             // Dispose pooled serialization resources to return buffers to ArrayPool
-            if (_rpcManager != null) { _rpcManager.Dispose(); _rpcManager = null; }
-            if (_transformSyncManager != null) { _transformSyncManager.Dispose(); _transformSyncManager = null; }
-            if (_networkVariableManager != null) { _networkVariableManager.Dispose(); _networkVariableManager = null; }
+            DisposeManagers();
 
             _instance = null;
         }
@@ -296,9 +294,7 @@ namespace Styly.NetSync
         {
             StopNetworking();
             // Be explicit on quit as well in case OnDisable order varies
-            if (_rpcManager != null) { _rpcManager.Dispose(); _rpcManager = null; }
-            if (_transformSyncManager != null) { _transformSyncManager.Dispose(); _transformSyncManager = null; }
-            if (_networkVariableManager != null) { _networkVariableManager.Dispose(); _networkVariableManager = null; }
+            DisposeManagers();
         }
 
         private void OnApplicationPause(bool paused)
@@ -512,38 +508,26 @@ namespace Styly.NetSync
 
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
-            if (OnAvatarDisconnected != null)
-            {
-                OnAvatarDisconnected.Invoke(clientNo);
-            }
+            OnAvatarDisconnected?.Invoke(clientNo);
         }
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
         {
             string argsStr = args != null && args.Length > 0 ? string.Join(", ", args) : "none";
             Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
-            if (OnRPCReceived != null)
-            {
-                OnRPCReceived.Invoke(senderClientNo, functionName, args);
-            }
+            OnRPCReceived?.Invoke(senderClientNo, functionName, args);
         }
 
         private void OnGlobalVariableChangedHandler(string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Global Variable Changed - Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
-            if (OnGlobalVariableChanged != null)
-            {
-                OnGlobalVariableChanged.Invoke(name, oldValue, newValue);
-            }
+            OnGlobalVariableChanged?.Invoke(name, oldValue, newValue);
         }
 
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
-            if (OnClientVariableChanged != null)
-            {
-                OnClientVariableChanged.Invoke(clientNo, name, oldValue, newValue);
-            }
+            OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
         }
 
         private void OnLocalClientNoAssigned(int clientNo)
@@ -735,12 +719,27 @@ namespace Styly.NetSync
             _shouldSendHandshake = false; // Reset handshake flag
             _networkVariableManager?.ResetInitialSyncFlag(); // Reset network variable sync state
             StopNetworking();
-            if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
+            _humanPresenceManager?.CleanupAll();
         }
 
         private void DebugLog(string msg)
         {
             if (_enableDebugLogs) { Debug.Log($"[NetSyncManager] {msg}"); }
+        }
+
+        /// <summary>
+        /// Disposes disposable manager instances and clears references.
+        /// Must be called on the Unity main thread.
+        /// </summary>
+        private void DisposeManagers()
+        {
+            // Note: These are not UnityEngine.Object, but we still guard with explicit null checks.
+            _rpcManager?.Dispose();
+            _rpcManager = null;
+            _transformSyncManager?.Dispose();
+            _transformSyncManager = null;
+            _networkVariableManager?.Dispose();
+            _networkVariableManager = null;
         }
 
         /// <summary>

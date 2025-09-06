@@ -176,18 +176,18 @@ namespace Styly.NetSync
 
             // World space transforms.
             Fill(_txHead,
-                 _head != null ? _head.position : Vector3.zero,
-                 _head != null ? _head.eulerAngles : Vector3.zero);
+                _head != null ? _head.position : Vector3.zero,
+                _head != null ? _head.eulerAngles : Vector3.zero);
             _tx.head = _txHead;
 
             Fill(_txRight,
-                 _rightHand != null ? _rightHand.position : Vector3.zero,
-                 _rightHand != null ? _rightHand.eulerAngles : Vector3.zero);
+                _rightHand != null ? _rightHand.position : Vector3.zero,
+                _rightHand != null ? _rightHand.eulerAngles : Vector3.zero);
             _tx.rightHand = _txRight;
 
             Fill(_txLeft,
-                 _leftHand != null ? _leftHand.position : Vector3.zero,
-                 _leftHand != null ? _leftHand.eulerAngles : Vector3.zero);
+                _leftHand != null ? _leftHand.position : Vector3.zero,
+                _leftHand != null ? _leftHand.eulerAngles : Vector3.zero);
             _tx.leftHand = _txLeft;
 
             // Virtuals: reuse pre-allocated TransformData instances.
