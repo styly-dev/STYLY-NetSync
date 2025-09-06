@@ -17,12 +17,8 @@ namespace Styly.NetSync
         private int _messagesSent;
         private float _lastSendTime;
 
-        // Pooled serialization resources
-        private readonly ArrayPool<byte> _bufferPool = ArrayPool<byte>.Shared;
-        private byte[] _buffer;
-        private int _bufferCapacity;
-        private MemoryStream _memoryStream;
-        private BinaryWriter _writer;
+        // Reusable pooled buffer + stream + writer
+        private readonly ReusableBufferWriter _buf;
         private NetMQMessage _reusableMessage;
 
         // Keep in sync with BinarySerializer's internal maximum
@@ -40,11 +36,7 @@ namespace Styly.NetSync
             SendRate = sendRate;
 
             // Allocate and prepare reusable serialization resources
-            _bufferCapacity = INITIAL_BUFFER_CAPACITY;
-            _buffer = _bufferPool.Rent(_bufferCapacity);
-            // MemoryStream over pooled buffer; publiclyVisible allows fast access via GetBuffer/TryGetBuffer
-            _memoryStream = new MemoryStream(_buffer, 0, _buffer.Length, true, true);
-            _writer = new BinaryWriter(_memoryStream);
+            _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
             _reusableMessage = new NetMQMessage();
         }
 
@@ -59,15 +51,15 @@ namespace Styly.NetSync
 
                 // Ensure buffer is large enough for the upcoming payload
                 var required = EstimateClientTransformSize(tx);
-                EnsureBufferCapacity(required);
+                _buf.EnsureCapacity(required);
 
                 // Reset writer/stream for reuse
-                _memoryStream.Position = 0;
+                _buf.Stream.Position = 0;
                 // Write directly into the pooled stream
-                BinarySerializer.SerializeClientTransformInto(_writer, tx);
-                _writer.Flush();
+                BinarySerializer.SerializeClientTransformInto(_buf.Writer, tx);
+                _buf.Writer.Flush();
 
-                var length = (int)_memoryStream.Position;
+                var length = (int)_buf.Stream.Position;
 
                 // Reuse NetMQMessage and append frames
                 _reusableMessage.Clear();
@@ -75,7 +67,7 @@ namespace Styly.NetSync
                 // Copy the exact payload length into a fresh array owned by NetMQ.
                 // This avoids sharing our pooled buffer with the socket internals.
                 var payload = new byte[length];
-                Buffer.BlockCopy(_buffer, 0, payload, 0, length);
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
                 _reusableMessage.Append(payload);
 
                 var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
@@ -98,18 +90,18 @@ namespace Styly.NetSync
             {
                 // Estimate size for handshake and ensure capacity
                 var required = EstimateStealthHandshakeSize(_deviceId);
-                EnsureBufferCapacity(required);
+                _buf.EnsureCapacity(required);
 
-                _memoryStream.Position = 0;
-                BinarySerializer.SerializeStealthHandshakeInto(_writer, _deviceId);
-                _writer.Flush();
+                _buf.Stream.Position = 0;
+                BinarySerializer.SerializeStealthHandshakeInto(_buf.Writer, _deviceId);
+                _buf.Writer.Flush();
 
-                var length = (int)_memoryStream.Position;
+                var length = (int)_buf.Stream.Position;
 
                 _reusableMessage.Clear();
                 _reusableMessage.Append(roomId);
                 var payload = new byte[length];
-                Buffer.BlockCopy(_buffer, 0, payload, 0, length);
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
                 _reusableMessage.Append(payload);
 
                 var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
@@ -138,35 +130,7 @@ namespace Styly.NetSync
             _lastSendTime = currentTime;
         }
 
-        /// <summary>
-        /// Ensure the pooled buffer has at least the requested capacity.
-        /// Resizes by renting a larger buffer and rebuilding the stream/writer if needed.
-        /// </summary>
-        private void EnsureBufferCapacity(int required)
-        {
-            if (required <= _bufferCapacity)
-            {
-                return;
-            }
-
-            // Rent a larger buffer (double strategy)
-            var newCapacity = _bufferCapacity * 2;
-            if (newCapacity < required) newCapacity = required;
-
-            var newBuffer = _bufferPool.Rent(newCapacity);
-
-            // Dispose old stream/writer and replace with new ones over the new buffer
-            // Note: We do not copy old contents because we always reset before writing
-            _writer?.Dispose();
-            _memoryStream?.Dispose();
-
-            _bufferPool.Return(_buffer);
-            _buffer = newBuffer;
-            _bufferCapacity = newCapacity;
-
-            _memoryStream = new MemoryStream(_buffer, 0, _buffer.Length, true, true);
-            _writer = new BinaryWriter(_memoryStream);
-        }
+        // Buffer growth handled by ReusableBufferWriter
 
         /// <summary>
         /// Estimate byte size for client transform payload to pre-size buffers.

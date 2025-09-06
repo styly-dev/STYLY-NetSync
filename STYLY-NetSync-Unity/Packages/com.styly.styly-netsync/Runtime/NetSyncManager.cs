@@ -781,20 +781,11 @@ namespace Styly.NetSync
 
             // Find the remote avatar and its head parent to resolve local->world.
             Transform parent = null;
-            if (_avatarManager != null)
+            if (_avatarManager != null &&
+                _avatarManager.TryGetNetSyncAvatar(clientNo, out var net))
             {
-                if (_avatarManager.TryGetNetSyncAvatar(clientNo, out var net) && net != null)
-                {
-                    if (net._head != null)
-                    {
-                        parent = net._head.parent;
-                    }
-                    else
-                    {
-                        // Fallback to avatar root if head/parent is unavailable
-                        parent = net.transform;
-                    }
-                }
+                // If head exists, use its parent as the local space; otherwise fallback to avatar root.
+                parent = (net._head != null) ? net._head.parent : net.transform;
             }
 
             // Convert local physical to world using parent transform when available.

@@ -127,26 +127,8 @@ namespace Styly.NetSync
             writer.Write((byte)deviceIdBytes.Length);
             writer.Write(deviceIdBytes);
 
-            // Physical transform with NaN values (now 6 floats for consistency)
-            for (int i = 0; i < 6; i++)
-            {
-                writer.Write(float.NaN);
-            }
-
-            // Head transform (NaN values)
-            for (int i = 0; i < 6; i++)
-            {
-                writer.Write(float.NaN);
-            }
-
-            // Right hand transform (NaN values)
-            for (int i = 0; i < 6; i++)
-            {
-                writer.Write(float.NaN);
-            }
-
-            // Left hand transform (NaN values)
-            for (int i = 0; i < 6; i++)
+            // Physical, Head, Right, Left — write 4 * 6 NaN floats in a single loop
+            for (int i = 0; i < 24; i++)
             {
                 writer.Write(float.NaN);
             }

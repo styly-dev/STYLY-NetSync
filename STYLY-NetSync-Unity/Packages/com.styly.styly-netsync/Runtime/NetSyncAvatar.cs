@@ -168,24 +168,26 @@ namespace Styly.NetSync
             _tx.clientNo = _clientNo;
 
             // Physical: local space relative to head's parent.
-            if (_head != null)
-            {
-                Fill(_txPhysical, _head.localPosition, _head.localEulerAngles);
-            }
-            else
-            {
-                Fill(_txPhysical, Vector3.zero, Vector3.zero);
-            }
+            Fill(
+                _txPhysical,
+                _head != null ? _head.localPosition : Vector3.zero,
+                _head != null ? _head.localEulerAngles : Vector3.zero);
             _tx.physical = _txPhysical;
 
             // World space transforms.
-            if (_head != null) Fill(_txHead, _head.position, _head.eulerAngles); else Fill(_txHead, Vector3.zero, Vector3.zero);
+            Fill(_txHead,
+                 _head != null ? _head.position : Vector3.zero,
+                 _head != null ? _head.eulerAngles : Vector3.zero);
             _tx.head = _txHead;
 
-            if (_rightHand != null) Fill(_txRight, _rightHand.position, _rightHand.eulerAngles); else Fill(_txRight, Vector3.zero, Vector3.zero);
+            Fill(_txRight,
+                 _rightHand != null ? _rightHand.position : Vector3.zero,
+                 _rightHand != null ? _rightHand.eulerAngles : Vector3.zero);
             _tx.rightHand = _txRight;
 
-            if (_leftHand != null) Fill(_txLeft, _leftHand.position, _leftHand.eulerAngles); else Fill(_txLeft, Vector3.zero, Vector3.zero);
+            Fill(_txLeft,
+                 _leftHand != null ? _leftHand.position : Vector3.zero,
+                 _leftHand != null ? _leftHand.eulerAngles : Vector3.zero);
             _tx.leftHand = _txLeft;
 
             // Virtuals: reuse pre-allocated TransformData instances.
@@ -195,14 +197,10 @@ namespace Styly.NetSync
                 {
                     var t = _virtualTransforms[i];
                     var td = _txVirtuals[i];
-                    if (t != null)
-                    {
-                        Fill(td, t.position, t.eulerAngles);
-                    }
-                    else
-                    {
-                        Fill(td, Vector3.zero, Vector3.zero);
-                    }
+                    Fill(
+                        td,
+                        t != null ? t.position : Vector3.zero,
+                        t != null ? t.eulerAngles : Vector3.zero);
                 }
             }
             // If _virtualTransforms is null, make sure list is empty to avoid serializing stale entries.

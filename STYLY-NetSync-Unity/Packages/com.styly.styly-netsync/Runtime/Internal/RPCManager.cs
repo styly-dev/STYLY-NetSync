@@ -20,11 +20,7 @@ namespace Styly.NetSync
         private readonly ConcurrentQueue<(int senderClientNo, string fn, string[] args)> _rpcQueue = new();
 
         // Reusable serialization resources to reduce GC
-        private readonly ArrayPool<byte> _bufferPool = ArrayPool<byte>.Shared;
-        private byte[] _buffer;
-        private int _bufferCapacity;
-        private MemoryStream _memoryStream;
-        private BinaryWriter _writer;
+        private readonly ReusableBufferWriter _buf;
         private NetMQMessage _reusableMessage;
         private const int INITIAL_BUFFER_CAPACITY = 512;
 
@@ -116,20 +112,20 @@ namespace Styly.NetSync
             };
             // Estimate and ensure capacity
             var required = EstimateRpcSize(rpcMsg);
-            EnsureBufferCapacity(required);
+            _buf.EnsureCapacity(required);
 
             // Serialize into pooled stream
-            _memoryStream.Position = 0;
-            BinarySerializer.SerializeRPCMessageInto(_writer, rpcMsg);
-            _writer.Flush();
+            _buf.Stream.Position = 0;
+            BinarySerializer.SerializeRPCMessageInto(_buf.Writer, rpcMsg);
+            _buf.Writer.Flush();
 
-            var length = (int)_memoryStream.Position;
+            var length = (int)_buf.Stream.Position;
 
             // Build and send message reusing NetMQMessage instance
             _reusableMessage.Clear();
             _reusableMessage.Append(roomId);
             var payload = new byte[length];
-            Buffer.BlockCopy(_buffer, 0, payload, 0, length);
+            Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
             _reusableMessage.Append(payload);
 
             try
@@ -148,10 +144,7 @@ namespace Styly.NetSync
             _connectionManager = connectionManager;
             _deviceId = deviceId;
             _netSyncManager = netSyncManager;
-            _bufferCapacity = INITIAL_BUFFER_CAPACITY;
-            _buffer = _bufferPool.Rent(_bufferCapacity);
-            _memoryStream = new MemoryStream(_buffer, 0, _buffer.Length, true, true);
-            _writer = new BinaryWriter(_memoryStream);
+            _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
             _reusableMessage = new NetMQMessage();
         }
 
@@ -223,21 +216,7 @@ namespace Styly.NetSync
             _rpcQueue.Enqueue((senderClientNo, functionName, args));
         }
 
-        private void EnsureBufferCapacity(int required)
-        {
-            if (required <= _bufferCapacity) return;
-            var newCapacity = _bufferCapacity * 2;
-            if (newCapacity < required) newCapacity = required;
-
-            var newBuffer = _bufferPool.Rent(newCapacity);
-            _writer?.Dispose();
-            _memoryStream?.Dispose();
-            _bufferPool.Return(_buffer);
-            _buffer = newBuffer;
-            _bufferCapacity = newCapacity;
-            _memoryStream = new MemoryStream(_buffer, 0, _buffer.Length, true, true);
-            _writer = new BinaryWriter(_memoryStream);
-        }
+        // Buffer growth handled by ReusableBufferWriter
 
         private static int EstimateRpcSize(RPCMessage msg)
         {

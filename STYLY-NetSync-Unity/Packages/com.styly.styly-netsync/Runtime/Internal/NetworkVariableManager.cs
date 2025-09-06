@@ -18,11 +18,7 @@ namespace Styly.NetSync
         private readonly NetSyncManager _netSyncManager;
 
         // Reusable serialization resources to reduce allocations per send
-        private readonly ArrayPool<byte> _bufferPool = ArrayPool<byte>.Shared;
-        private byte[] _buffer;
-        private int _bufferCapacity;
-        private MemoryStream _memoryStream;
-        private BinaryWriter _writer;
+        private readonly ReusableBufferWriter _buf;
         private NetMQMessage _reusableMessage;
         private const int INITIAL_BUFFER_CAPACITY = 1024;
 
@@ -103,10 +99,7 @@ namespace Styly.NetSync
             _connectionManager = connectionManager;
             _deviceId = deviceId;
             _netSyncManager = netSyncManager;
-            _bufferCapacity = INITIAL_BUFFER_CAPACITY;
-            _buffer = _bufferPool.Rent(_bufferCapacity);
-            _memoryStream = new MemoryStream(_buffer, 0, _buffer.Length, true, true);
-            _writer = new BinaryWriter(_memoryStream);
+            _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
             _reusableMessage = new NetMQMessage();
         }
 
@@ -174,17 +167,17 @@ namespace Styly.NetSync
                 }
 
                 var required = EstimateGlobalVarSetSize(name, value);
-                EnsureBufferCapacity(required);
+                _buf.EnsureCapacity(required);
 
-                _memoryStream.Position = 0;
-                BinarySerializer.SerializeGlobalVarSetInto(_writer, data);
-                _writer.Flush();
-                var length = (int)_memoryStream.Position;
+                _buf.Stream.Position = 0;
+                BinarySerializer.SerializeGlobalVarSetInto(_buf.Writer, data);
+                _buf.Writer.Flush();
+                var length = (int)_buf.Stream.Position;
 
                 _reusableMessage.Clear();
                 _reusableMessage.Append(roomId);
                 var payload = new byte[length];
-                Buffer.BlockCopy(_buffer, 0, payload, 0, length);
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
                 _reusableMessage.Append(payload);
 
                 bool sent = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
@@ -280,17 +273,17 @@ namespace Styly.NetSync
                 }
 
                 var required = EstimateClientVarSetSize(name, value);
-                EnsureBufferCapacity(required);
+                _buf.EnsureCapacity(required);
 
-                _memoryStream.Position = 0;
-                BinarySerializer.SerializeClientVarSetInto(_writer, data);
-                _writer.Flush();
-                var length = (int)_memoryStream.Position;
+                _buf.Stream.Position = 0;
+                BinarySerializer.SerializeClientVarSetInto(_buf.Writer, data);
+                _buf.Writer.Flush();
+                var length = (int)_buf.Stream.Position;
 
                 _reusableMessage.Clear();
                 _reusableMessage.Append(roomId);
                 var payload = new byte[length];
-                Buffer.BlockCopy(_buffer, 0, payload, 0, length);
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
                 _reusableMessage.Append(payload);
 
                 bool sent = _connectionManager.DealerSocket.TrySendMultipartMessage(_reusableMessage);
@@ -490,40 +483,28 @@ namespace Styly.NetSync
             FlushPendingClient(nowSeconds, roomId);
         }
 
-        // === Buffer management helpers ===
-        private void EnsureBufferCapacity(int required)
-        {
-            if (required <= _bufferCapacity) return;
-            var newCapacity = _bufferCapacity * 2;
-            if (newCapacity < required) newCapacity = required;
-            var newBuffer = _bufferPool.Rent(newCapacity);
-            _writer?.Dispose();
-            _memoryStream?.Dispose();
-            _bufferPool.Return(_buffer);
-            _buffer = newBuffer;
-            _bufferCapacity = newCapacity;
-            _memoryStream = new MemoryStream(_buffer, 0, _buffer.Length, true, true);
-            _writer = new BinaryWriter(_memoryStream);
-        }
+        // Buffer growth handled by ReusableBufferWriter
 
         private static int EstimateGlobalVarSetSize(string name, string value)
         {
             // 1 (type) + 2 (sender) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
-            var nameLen = name != null ? Encoding.UTF8.GetByteCount(name) : 0;
-            if (nameLen > 64) nameLen = 64; // capped by serializer
-            var valueLen = value != null ? Encoding.UTF8.GetByteCount(value) : 0;
-            if (valueLen > 1024) valueLen = 1024; // capped by serializer
+            int nameLen  = ClampedUtf8Length(name, 64);
+            int valueLen = ClampedUtf8Length(value, 1024);
             return 1 + 2 + 1 + nameLen + 2 + valueLen + 8;
         }
 
         private static int EstimateClientVarSetSize(string name, string value)
         {
             // 1 (type) + 2 (sender) + 2 (target) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
-            var nameLen = name != null ? Encoding.UTF8.GetByteCount(name) : 0;
-            if (nameLen > 64) nameLen = 64;
-            var valueLen = value != null ? Encoding.UTF8.GetByteCount(value) : 0;
-            if (valueLen > 1024) valueLen = 1024;
+            int nameLen  = ClampedUtf8Length(name, 64);
+            int valueLen = ClampedUtf8Length(value, 1024);
             return 1 + 2 + 2 + 1 + nameLen + 2 + valueLen + 8;
+        }
+
+        private static int ClampedUtf8Length(string s, int max)
+        {
+            var len = s != null ? Encoding.UTF8.GetByteCount(s) : 0;
+            return Math.Min(len, max);
         }
 
         private void FlushPendingGlobal(double nowSeconds, string roomId)
