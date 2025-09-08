@@ -22,7 +22,7 @@ import random
 # The 'resource' module is POSIX-only (Linux/macOS). On Windows it is unavailable.
 # We make it optional and skip FD-limit checks when it's not present.
 try:
-    import resource  # type: ignore
+    import resource
 except Exception:
     resource = None  # type: ignore[assignment]
 
@@ -983,7 +983,7 @@ class ResourceManager:
 
     @staticmethod
     def _has_resource() -> bool:
-        return resource is not None  # type: ignore[truthy-bool]
+        return resource is not None
 
     @staticmethod
     def estimate_fd_need(num_clients: int) -> int:
@@ -1162,7 +1162,7 @@ class ClientSimulator:
         # Determine safe maximum clients based on current soft limit (POSIX only)
         if ResourceManager._has_resource():
             try:
-                soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)  # type: ignore[arg-type]
+                soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
                 safe_max_clients = ResourceManager.compute_max_clients_for_soft_limit(
                     soft_limit
                 )
