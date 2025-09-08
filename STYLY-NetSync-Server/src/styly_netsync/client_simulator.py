@@ -18,7 +18,14 @@ import argparse
 import logging
 import math
 import random
-import resource
+
+# The 'resource' module is POSIX-only (Linux/macOS). On Windows it is unavailable.
+# We make it optional and skip FD-limit checks when it's not present.
+try:
+    import resource  # type: ignore
+except Exception:
+    resource = None  # type: ignore[assignment]
+
 import signal
 import sys
 import threading
@@ -43,8 +50,10 @@ from styly_netsync.binary_serializer import (
 # Data Structures and Enums
 # ============================================================================
 
+
 class MovementPattern(Enum):
     """Available movement patterns for simulated clients."""
+
     CIRCLE = "circle"
     FIGURE8 = "figure8"
     RANDOM_WALK = "random_walk"
@@ -55,6 +64,7 @@ class MovementPattern(Enum):
 @dataclass
 class Vector3:
     """3D vector for position and rotation."""
+
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -63,17 +73,18 @@ class Vector3:
         """Convert to dictionary format expected by serializer."""
         return {"posX": self.x, "posY": self.y, "posZ": self.z}
 
-    def distance_to(self, other: 'Vector3') -> float:
+    def distance_to(self, other: "Vector3") -> float:
         """Calculate distance to another vector."""
         dx = self.x - other.x
         dy = self.y - other.y
         dz = self.z - other.z
-        return math.sqrt(dx*dx + dy*dy + dz*dz)
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
 @dataclass
 class Transform:
     """6DOF transform with position and rotation."""
+
     position: Vector3 = field(default_factory=Vector3)
     rotation: Vector3 = field(default_factory=Vector3)
     is_local_space: bool = False
@@ -94,6 +105,7 @@ class Transform:
 @dataclass
 class SimulationConfig:
     """Configuration for client simulation."""
+
     device_id: str
     movement_pattern: MovementPattern
     start_position: Vector3
@@ -110,6 +122,7 @@ class SimulationConfig:
 # Movement Strategy Pattern
 # ============================================================================
 
+
 class MovementStrategy(ABC):
     """Abstract base class for movement strategies."""
 
@@ -117,14 +130,10 @@ class MovementStrategy(ABC):
         self.config = config
         self.start_time = time.monotonic()
         self.current_position = Vector3(
-            config.start_position.x,
-            config.start_position.y,
-            config.start_position.z
+            config.start_position.x, config.start_position.y, config.start_position.z
         )
         self.previous_position = Vector3(
-            config.start_position.x,
-            config.start_position.y,
-            config.start_position.z
+            config.start_position.x, config.start_position.y, config.start_position.z
         )
 
     @abstractmethod
@@ -149,9 +158,11 @@ class CircleMovement(MovementStrategy):
     def update_position(self, elapsed_time: float, delta_time: float) -> Vector3:
         angle = elapsed_time * self.config.move_speed
         return Vector3(
-            self.config.start_position.x + math.cos(angle) * self.config.movement_radius,
+            self.config.start_position.x
+            + math.cos(angle) * self.config.movement_radius,
             self.config.start_position.y,
-            self.config.start_position.z + math.sin(angle) * self.config.movement_radius,
+            self.config.start_position.z
+            + math.sin(angle) * self.config.movement_radius,
         )
 
 
@@ -163,7 +174,8 @@ class Figure8Movement(MovementStrategy):
         return Vector3(
             self.config.start_position.x + math.sin(t) * self.config.movement_radius,
             self.config.start_position.y,
-            self.config.start_position.z + math.sin(2 * t) * self.config.movement_radius * 0.5,
+            self.config.start_position.z
+            + math.sin(2 * t) * self.config.movement_radius * 0.5,
         )
 
 
@@ -176,9 +188,7 @@ class RandomWalkMovement(MovementStrategy):
         self.walk_range = 5.0
         self.timer = 0.0
         self.target = Vector3(
-            config.start_position.x,
-            config.start_position.y,
-            config.start_position.z
+            config.start_position.x, config.start_position.y, config.start_position.z
         )
 
     def update_position(self, elapsed_time: float, delta_time: float) -> Vector3:
@@ -202,7 +212,7 @@ class RandomWalkMovement(MovementStrategy):
             self.target.z - self.current_position.z,
         )
 
-        length = math.sqrt(direction.x ** 2 + direction.z ** 2)
+        length = math.sqrt(direction.x**2 + direction.z**2)
         if length > 0:
             direction.x /= length
             direction.z /= length
@@ -236,7 +246,8 @@ class SpiralMovement(MovementStrategy):
         )
         return Vector3(
             self.config.start_position.x + math.cos(angle) * radius,
-            self.config.start_position.y + math.sin(elapsed_time * self.config.move_speed * 0.3) * 0.5,
+            self.config.start_position.y
+            + math.sin(elapsed_time * self.config.move_speed * 0.3) * 0.5,
             self.config.start_position.z + math.sin(angle) * radius,
         )
 
@@ -244,6 +255,7 @@ class SpiralMovement(MovementStrategy):
 # ============================================================================
 # Movement Strategy Factory
 # ============================================================================
+
 
 class MovementStrategyFactory:
     """Factory for creating movement strategies."""
@@ -257,7 +269,9 @@ class MovementStrategyFactory:
     }
 
     @classmethod
-    def create(cls, pattern: MovementPattern, config: SimulationConfig) -> MovementStrategy:
+    def create(
+        cls, pattern: MovementPattern, config: SimulationConfig
+    ) -> MovementStrategy:
         """Create a movement strategy for the given pattern."""
         strategy_class = cls._strategies.get(pattern)
         if not strategy_class:
@@ -269,6 +283,7 @@ class MovementStrategyFactory:
 # Transform Builder
 # ============================================================================
 
+
 class TransformBuilder:
     """Builds transform data for network transmission."""
 
@@ -279,8 +294,7 @@ class TransformBuilder:
 
         # Virtual object parameters
         self.virtual_phases = [
-            i / config.virtual_count * 2 * math.pi
-            for i in range(config.virtual_count)
+            i / config.virtual_count * 2 * math.pi for i in range(config.virtual_count)
         ]
         self.virtual_speeds = [
             config.virtual_orbit_speed * random.uniform(0.5, 1.5)
@@ -296,7 +310,7 @@ class TransformBuilder:
         position: Vector3,
         elapsed_time: float,
         delta_time: float,
-        rotation_y: float
+        rotation_y: float,
     ) -> dict[str, Any]:
         """Build complete transform data for serialization."""
 
@@ -354,7 +368,9 @@ class TransformBuilder:
             "virtuals": virtuals,
         }
 
-    def _smooth_rotation(self, current: float, target: float, delta_time: float) -> float:
+    def _smooth_rotation(
+        self, current: float, target: float, delta_time: float
+    ) -> float:
         """Smoothly interpolate rotation to avoid sudden snaps."""
         max_change = self.rotation_speed * delta_time
 
@@ -374,10 +390,7 @@ class TransformBuilder:
             return current + max_change if diff > 0 else current - max_change
 
     def _calculate_hand_position(
-        self,
-        base_position: Vector3,
-        elapsed_time: float,
-        is_right: bool
+        self, base_position: Vector3, elapsed_time: float, is_right: bool
     ) -> Vector3:
         """Calculate hand position with swing motion."""
         lateral_offset = 0.3 if is_right else -0.3
@@ -391,11 +404,13 @@ class TransformBuilder:
         )
         swing_y = (
             math.cos(elapsed_time * self.config.hand_swing_speed * 0.7 + phase_offset)
-            * self.config.hand_swing_amplitude * 0.5
+            * self.config.hand_swing_amplitude
+            * 0.5
         )
         swing_z = (
             math.sin(elapsed_time * self.config.hand_swing_speed * 1.3 + phase_offset)
-            * self.config.hand_swing_amplitude * 0.3
+            * self.config.hand_swing_amplitude
+            * 0.3
         )
 
         return Vector3(
@@ -405,9 +420,7 @@ class TransformBuilder:
         )
 
     def _calculate_virtual_positions(
-        self,
-        base_position: Vector3,
-        elapsed_time: float
+        self, base_position: Vector3, elapsed_time: float
     ) -> list[dict[str, Any]]:
         """Calculate positions for virtual objects orbiting the avatar."""
         virtuals = []
@@ -422,15 +435,17 @@ class TransformBuilder:
             orbit_y = math.sin(phase * 2) * 0.5
             orbit_z = math.sin(phase) * radius * 0.7
 
-            virtuals.append({
-                "posX": avatar_center.x + orbit_x,
-                "posY": avatar_center.y + orbit_y,
-                "posZ": avatar_center.z + orbit_z,
-                "rotX": 0,
-                "rotY": phase,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            })
+            virtuals.append(
+                {
+                    "posX": avatar_center.x + orbit_x,
+                    "posY": avatar_center.y + orbit_y,
+                    "posZ": avatar_center.z + orbit_z,
+                    "rotX": 0,
+                    "rotY": phase,
+                    "rotZ": 0,
+                    "isLocalSpace": False,
+                }
+            )
 
         return virtuals
 
@@ -438,6 +453,7 @@ class TransformBuilder:
 # ============================================================================
 # Transport Layer
 # ============================================================================
+
 
 class NetworkTransport:
     """Handles ZeroMQ network communication (DEALER for send, optional SUB for recv)."""
@@ -482,8 +498,12 @@ class NetworkTransport:
                     sub_endpoint = f"{self.server_addr}:{self.sub_port}"
                     self.sub_socket.connect(sub_endpoint)
                     # Subscribe to room topic
-                    self.sub_socket.setsockopt(zmq.SUBSCRIBE, self.room_id.encode("utf-8"))
-                    self.logger.debug(f"Connected SUB to {sub_endpoint} topic '{self.room_id}'")
+                    self.sub_socket.setsockopt(
+                        zmq.SUBSCRIBE, self.room_id.encode("utf-8")
+                    )
+                    self.logger.debug(
+                        f"Connected SUB to {sub_endpoint} topic '{self.room_id}'"
+                    )
                 except Exception as se:
                     # SUB is optional; ensure any partially created socket is closed
                     try:
@@ -512,16 +532,20 @@ class NetworkTransport:
 
         try:
             binary_data = serialize_client_transform(transform_data)
-            self.socket.send_multipart([
-                room_id.encode("utf-8"),
-                binary_data,
-            ])
+            self.socket.send_multipart(
+                [
+                    room_id.encode("utf-8"),
+                    binary_data,
+                ]
+            )
             return True
         except Exception as e:
             self.logger.error(f"Failed to send transform: {e}")
             return False
 
-    def send_client_variable(self, room_id: str, sender_client_no: int, var_name: str, value: str) -> bool:
+    def send_client_variable(
+        self, room_id: str, sender_client_no: int, var_name: str, value: str
+    ) -> bool:
         """Send client variable data to server."""
         if not self.socket:
             return False
@@ -535,10 +559,12 @@ class NetworkTransport:
                 "timestamp": time.time(),
             }
             binary_data = serialize_client_var_set(var_data)
-            self.socket.send_multipart([
-                room_id.encode("utf-8"),
-                binary_data,
-            ])
+            self.socket.send_multipart(
+                [
+                    room_id.encode("utf-8"),
+                    binary_data,
+                ]
+            )
             return True
         except Exception as e:
             self.logger.error(f"Failed to send client variable: {e}")
@@ -603,10 +629,13 @@ class NetworkTransport:
 # Shared Subscriber (Single SUB socket for all clients)
 # ============================================================================
 
+
 class SharedSubscriber:
     """Single SUB socket that receives broadcasts and shares mappings."""
 
-    def __init__(self, context: zmq.Context, server_addr: str, sub_port: int, room_id: str):
+    def __init__(
+        self, context: zmq.Context, server_addr: str, sub_port: int, room_id: str
+    ):
         self.context = context
         self.server_addr = server_addr
         self.sub_port = sub_port
@@ -627,9 +656,13 @@ class SharedSubscriber:
             self.socket.connect(endpoint)
             self.socket.setsockopt(zmq.SUBSCRIBE, self.room_id.encode("utf-8"))
             self._running = True
-            self._thread = threading.Thread(target=self._loop, name="SharedSubscriber", daemon=True)
+            self._thread = threading.Thread(
+                target=self._loop, name="SharedSubscriber", daemon=True
+            )
             self._thread.start()
-            self.logger.debug(f"Shared SUB connected to {endpoint} topic '{self.room_id}'")
+            self.logger.debug(
+                f"Shared SUB connected to {endpoint} topic '{self.room_id}'"
+            )
             return True
         except Exception as e:
             # Ensure any partially created socket is closed
@@ -713,14 +746,15 @@ class SharedSubscriber:
 # Simulated Client
 # ============================================================================
 
+
 class SimulatedClient:
     """Represents a single simulated client."""
 
     # Battery simulation constants
-    BATTERY_INITIAL_MIN = 50.0        # %
-    BATTERY_INITIAL_MAX = 100.0       # %
+    BATTERY_INITIAL_MIN = 50.0  # %
+    BATTERY_INITIAL_MAX = 100.0  # %
     BATTERY_DRAIN_RATE = 10.0 / 60.0  # %-points lost per second (10%/min)
-    BATTERY_UPDATE_INTERVAL = 60.0     # Send battery updates every 60 seconds
+    BATTERY_UPDATE_INTERVAL = 60.0  # Send battery updates every 60 seconds
 
     def __init__(
         self,
@@ -742,7 +776,9 @@ class SimulatedClient:
         self.running = False
 
         # Battery simulation state
-        self.battery_level = random.uniform(self.BATTERY_INITIAL_MIN, self.BATTERY_INITIAL_MAX)
+        self.battery_level = random.uniform(
+            self.BATTERY_INITIAL_MIN, self.BATTERY_INITIAL_MAX
+        )
         self.last_battery_update = self.start_time
         # Force initial battery send as soon as client number is known
         self.last_battery_send = self.start_time - self.BATTERY_UPDATE_INTERVAL
@@ -773,7 +809,9 @@ class SimulatedClient:
 
                     # Update movement
                     self.movement.previous_position = self.movement.current_position
-                    new_position = self.movement.update_position(elapsed_time, delta_time)
+                    new_position = self.movement.update_position(
+                        elapsed_time, delta_time
+                    )
                     self.movement.current_position = new_position
 
                     # Calculate rotation
@@ -811,21 +849,32 @@ class SimulatedClient:
         finally:
             self.running = False
             self.transport.disconnect()
-            self.logger.info(f"Client stopped with final battery level: {self.battery_level:.1f}%")
+            self.logger.info(
+                f"Client stopped with final battery level: {self.battery_level:.1f}%"
+            )
 
     def _update_battery(self, current_time: float):
         """Update battery level and send updates when needed."""
         # Update battery drain
         elapsed_since_battery_update = current_time - self.last_battery_update
         if elapsed_since_battery_update > 0:
-            self.battery_level = max(0.0, self.battery_level - (elapsed_since_battery_update * self.BATTERY_DRAIN_RATE))
+            self.battery_level = max(
+                0.0,
+                self.battery_level
+                - (elapsed_since_battery_update * self.BATTERY_DRAIN_RATE),
+            )
             self.last_battery_update = current_time
 
         # Send battery update periodically
         elapsed_since_send = current_time - self.last_battery_send
-        if elapsed_since_send >= self.BATTERY_UPDATE_INTERVAL and self.client_number > 0:
+        if (
+            elapsed_since_send >= self.BATTERY_UPDATE_INTERVAL
+            and self.client_number > 0
+        ):
             battery_value = f"{self.battery_level:.1f}"
-            if self.transport.send_client_variable(self.room_id, self.client_number, "BatteryLevel", battery_value):
+            if self.transport.send_client_variable(
+                self.room_id, self.client_number, "BatteryLevel", battery_value
+            ):
                 self.logger.debug(f"Sent battery level: {battery_value}%")
             else:
                 self.logger.warning("Failed to send battery level update")
@@ -838,7 +887,9 @@ class SimulatedClient:
             assigned = self.shared_subscriber.get_client_no(self.config.device_id)
             if assigned and assigned != self.client_number:
                 self.client_number = assigned
-                self.logger.info(f"Assigned client number by server: {self.client_number}")
+                self.logger.info(
+                    f"Assigned client number by server: {self.client_number}"
+                )
             return
 
         # Fallback: use own transport SUB if available
@@ -854,7 +905,9 @@ class SimulatedClient:
                         assigned = int(m.get("clientNo", 0))
                         if assigned and assigned != self.client_number:
                             self.client_number = assigned
-                            self.logger.info(f"Assigned client number by server: {self.client_number}")
+                            self.logger.info(
+                                f"Assigned client number by server: {self.client_number}"
+                            )
                         break
         except Exception as e:
             self.logger.debug(f"Failed to process broadcast: {e}")
@@ -863,6 +916,7 @@ class SimulatedClient:
 # ============================================================================
 # Thread Pool Manager
 # ============================================================================
+
 
 class ClientThreadPool:
     """Manages a pool of client simulation threads."""
@@ -881,9 +935,7 @@ class ClientThreadPool:
             return False
 
         thread = threading.Thread(
-            target=client.run,
-            args=(self.stop_event,),
-            daemon=True
+            target=client.run, args=(self.stop_event,), daemon=True
         )
 
         try:
@@ -919,6 +971,7 @@ class ClientThreadPool:
 # Resource Manager
 # ============================================================================
 
+
 class ResourceManager:
     """Manages system resources and limits."""
 
@@ -927,6 +980,10 @@ class ResourceManager:
 
     # Default recommended file descriptor limit for most systems
     DEFAULT_FD_LIMIT = 4096
+
+    @staticmethod
+    def _has_resource() -> bool:
+        return resource is not None  # type: ignore[truthy-bool]
 
     @staticmethod
     def estimate_fd_need(num_clients: int) -> int:
@@ -944,6 +1001,12 @@ class ResourceManager:
     @staticmethod
     def check_file_descriptor_limit(required_fds: int) -> tuple[bool, str]:
         """Check if system can handle the required number of file descriptors."""
+        if not ResourceManager._has_resource():
+            return (
+                True,
+                "Skipping FD limit check: 'resource' module not available on this platform.",
+            )
+
         try:
             soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
 
@@ -966,10 +1029,19 @@ class ResourceManager:
 
         Returns (success, message). If unsuccessful, returns reason in message.
         """
+        if not ResourceManager._has_resource():
+            return (
+                False,
+                "Cannot raise FD limit: 'resource' module not available on this platform.",
+            )
+
         try:
             soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
             if soft_limit >= min_required:
-                return True, f"FD limit sufficient (soft={soft_limit}, hard={hard_limit})"
+                return (
+                    True,
+                    f"FD limit sufficient (soft={soft_limit}, hard={hard_limit})",
+                )
 
             # Aim for either hard limit or a sane default, whichever is smaller
             desired = max(min_required, ResourceManager.DEFAULT_FD_LIMIT)
@@ -978,14 +1050,23 @@ class ResourceManager:
 
             # If the new soft limit still doesn't meet minimum requirements, we can't help
             if new_soft < min_required:
-                return False, f"Cannot raise FD limit to meet requirement {min_required} (max possible={new_soft}, hard={hard_limit})"
+                return (
+                    False,
+                    f"Cannot raise FD limit to meet requirement {min_required} (max possible={new_soft}, hard={hard_limit})",
+                )
 
             # Only raise the soft limit, never lower it
             if new_soft > soft_limit:
                 resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard_limit))
-                return True, f"Raised soft FD limit: {soft_limit} -> {new_soft} (hard={hard_limit})"
+                return (
+                    True,
+                    f"Raised soft FD limit: {soft_limit} -> {new_soft} (hard={hard_limit})",
+                )
             else:
-                return True, f"FD limit sufficient (soft={soft_limit}, hard={hard_limit})"
+                return (
+                    True,
+                    f"FD limit sufficient (soft={soft_limit}, hard={hard_limit})",
+                )
 
         except Exception as e:
             return False, f"Failed to raise FD limit: {e}"
@@ -1016,6 +1097,7 @@ class ResourceManager:
 # Main Simulator Orchestrator
 # ============================================================================
 
+
 class ClientSimulator:
     """Main orchestrator for client simulation."""
 
@@ -1035,7 +1117,9 @@ class ClientSimulator:
         self.room_id = room_id
         self.num_clients = num_clients
         self.spawn_batch_size = spawn_batch_size if spawn_batch_size is not None else 0
-        self.spawn_batch_interval = spawn_batch_interval if spawn_batch_interval is not None else 0.0
+        self.spawn_batch_interval = (
+            spawn_batch_interval if spawn_batch_interval is not None else 0.0
+        )
 
         self.context = zmq.Context()
         self.thread_pool = ClientThreadPool(num_clients)
@@ -1057,34 +1141,47 @@ class ClientSimulator:
 
         # Estimate FD usage and try to ensure limits
         estimated_fds = ResourceManager.estimate_fd_need(self.num_clients)
-        ok_before, msg_before = ResourceManager.check_file_descriptor_limit(estimated_fds)
+        ok_before, msg_before = ResourceManager.check_file_descriptor_limit(
+            estimated_fds
+        )
         if not ok_before:
             self.logger.warning(msg_before)
             ok_raise, msg_raise = ResourceManager.try_raise_fd_limit(estimated_fds)
             if ok_raise:
                 self.logger.info(msg_raise)
                 # Re-check to inform final status
-                _, msg_after = ResourceManager.check_file_descriptor_limit(estimated_fds)
+                _, msg_after = ResourceManager.check_file_descriptor_limit(
+                    estimated_fds
+                )
                 self.logger.info(msg_after)
             else:
                 self.logger.warning(msg_raise)
         else:
             self.logger.info(msg_before)
 
-        # Determine safe maximum clients based on current soft limit
-        try:
-            soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-            safe_max_clients = ResourceManager.compute_max_clients_for_soft_limit(soft_limit)
-            if self.num_clients > safe_max_clients:
-                self.logger.warning(
-                    "Reducing client count to %d based on FD limit (soft=%d, hard=%d)",
-                    safe_max_clients, soft_limit, hard_limit,
+        # Determine safe maximum clients based on current soft limit (POSIX only)
+        if ResourceManager._has_resource():
+            try:
+                soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)  # type: ignore[arg-type]
+                safe_max_clients = ResourceManager.compute_max_clients_for_soft_limit(
+                    soft_limit
                 )
-                self.num_clients = safe_max_clients
-                # Keep thread pool cap in sync
-                self.thread_pool.max_clients = self.num_clients
-        except Exception as e:
-            self.logger.debug(f"Failed to compute safe max clients: {e}")
+                if self.num_clients > safe_max_clients:
+                    self.logger.warning(
+                        "Reducing client count to %d based on FD limit (soft=%d, hard=%d)",
+                        safe_max_clients,
+                        soft_limit,
+                        hard_limit,
+                    )
+                    self.num_clients = safe_max_clients
+                    # Keep thread pool cap in sync
+                    self.thread_pool.max_clients = self.num_clients
+            except Exception as e:
+                self.logger.warning("FD limit check failed: %s", e)
+        else:
+            self.logger.info(
+                "Skipping FD-based client capping: 'resource' module not available on this platform."
+            )
 
         self.logger.info(f"Starting simulation with {self.num_clients} clients")
         self.logger.info(f"Server: {self.server_addr}:{self.dealer_port}")
@@ -1096,9 +1193,13 @@ class ClientSimulator:
             )
 
         # Start shared subscriber for ID mappings (single SUB for all clients)
-        self.shared_subscriber = SharedSubscriber(self.context, self.server_addr, self.sub_port, self.room_id)
+        self.shared_subscriber = SharedSubscriber(
+            self.context, self.server_addr, self.sub_port, self.room_id
+        )
         if not self.shared_subscriber.start():
-            self.logger.warning("SharedSubscriber failed to start; falling back to per-client SUBs")
+            self.logger.warning(
+                "SharedSubscriber failed to start; falling back to per-client SUBs"
+            )
 
         # Create and start clients
         successful_clients = 0
@@ -1110,25 +1211,31 @@ class ClientSimulator:
                 device_id=str(uuid.uuid4()),
                 movement_pattern=random.choice(list(MovementPattern)),
                 start_position=Vector3(
-                    random.uniform(-10, 10),
-                    0,
-                    random.uniform(-10, 10)
-                )
+                    random.uniform(-10, 10), 0, random.uniform(-10, 10)
+                ),
             )
 
             # Create transport (enable per-client SUB only if shared subscriber isn't running)
-            shared_sub = self.shared_subscriber if (self.shared_subscriber and self.shared_subscriber.is_running()) else None
+            shared_sub = (
+                self.shared_subscriber
+                if (self.shared_subscriber and self.shared_subscriber.is_running())
+                else None
+            )
             transport = NetworkTransport(
                 self.context,
                 self.server_addr,
                 self.dealer_port,
                 self.sub_port,
                 self.room_id,
-                enable_sub=(shared_sub is None),  # disable per-client SUB if shared is running
+                enable_sub=(
+                    shared_sub is None
+                ),  # disable per-client SUB if shared is running
             )
 
             # Create client
-            client = SimulatedClient(config, transport, self.room_id, shared_subscriber=shared_sub)
+            client = SimulatedClient(
+                config, transport, self.room_id, shared_subscriber=shared_sub
+            )
 
             # Add to thread pool
             if self.thread_pool.add_client(client):
@@ -1158,8 +1265,7 @@ class ClientSimulator:
                 time.sleep(self.spawn_batch_interval)
 
         self.logger.info(
-            f"Started {successful_clients} clients, "
-            f"{failed_clients} failed"
+            f"Started {successful_clients} clients, " f"{failed_clients} failed"
         )
 
         # Run until interrupted
@@ -1206,6 +1312,7 @@ class ClientSimulator:
 # CLI Entry Point
 # ============================================================================
 
+
 def main():
     """Main entry point for the client simulator."""
     parser = argparse.ArgumentParser(
@@ -1216,57 +1323,57 @@ Examples:
   %(prog)s --clients 100
   %(prog)s --clients 500 --server tcp://192.168.1.100 --room test_room
   %(prog)s --clients 50 --log-level DEBUG
-        """
+        """,
     )
 
     parser.add_argument(
         "--clients",
         type=int,
         default=100,
-        help="Number of clients to simulate (default: 100)"
+        help="Number of clients to simulate (default: 100)",
     )
     parser.add_argument(
         "--server",
         type=str,
         default="tcp://localhost",
-        help="Server address (default: tcp://localhost)"
+        help="Server address (default: tcp://localhost)",
     )
     parser.add_argument(
         "--dealer-port",
         type=int,
         default=5555,
-        help="Server DEALER port (default: 5555)"
+        help="Server DEALER port (default: 5555)",
     )
     parser.add_argument(
         "--sub-port",
         type=int,
         default=5556,
-        help="Server PUB port (default: 5556, reserved for future use)"
+        help="Server PUB port (default: 5556, reserved for future use)",
     )
     parser.add_argument(
         "--room",
         type=str,
         default="default_room",
-        help="Room ID to join (default: default_room)"
+        help="Room ID to join (default: default_room)",
     )
     parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging level (default: INFO)"
+        help="Logging level (default: INFO)",
     )
     parser.add_argument(
         "--spawn-batch-size",
         type=int,
         default=0,
-        help="Spawn clients in batches of N (0 disables)"
+        help="Spawn clients in batches of N (0 disables)",
     )
     parser.add_argument(
         "--spawn-batch-interval",
         type=float,
         default=0.0,
-        help="Delay in seconds between batches (requires --spawn-batch-size > 0)"
+        help="Delay in seconds between batches (requires --spawn-batch-size > 0)",
     )
 
     args = parser.parse_args()
@@ -1275,7 +1382,7 @@ Examples:
     logging.basicConfig(
         level=getattr(logging, args.log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Print banner
