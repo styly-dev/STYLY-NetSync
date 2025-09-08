@@ -58,7 +58,7 @@ namespace Styly.NetSync
         /// <returns></returns>
         public string GetVersion()
         {
-            return Util.GetVersion();
+            return Information.GetVersion();
         }
 
         // Public RPC methods for external access
