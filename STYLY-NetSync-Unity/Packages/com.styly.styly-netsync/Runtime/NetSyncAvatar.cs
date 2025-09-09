@@ -22,6 +22,10 @@ namespace Styly.NetSync
         public Transform _rightHand;
         public Transform _leftHand;
         public Transform[] _virtualTransforms; // Object array to sync Virtual position (world coordinate system)
+        /// <summary>
+        /// Physical coordinate offset to align with head world position at initialization
+        /// </summary>
+        private Vector3 _physicalOffset;
 
         // Properties
         public string DeviceId => _deviceId;
@@ -119,6 +123,17 @@ namespace Styly.NetSync
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
+
+            // Calculate physical offset to align with head world position at initialization
+            // This ensures Physical and Head start at the same coordinates regardless of XR-Rig placement
+            if (_head != null && _head.parent != null)
+            {
+                _physicalOffset = _head.parent.position;
+            }
+            else
+            {
+                _physicalOffset = Vector3.zero;
+            }
         }
 
         // Initialization method for remote avatars with known client number
@@ -167,10 +182,11 @@ namespace Styly.NetSync
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
 
-            // Physical: local space relative to head's parent.
+            // Physical: local space relative to head's parent, with offset to align with head world position.
+            Vector3 physicalPosition = _head != null ? _head.localPosition + _physicalOffset : _physicalOffset;
             Fill(
                 _txPhysical,
-                _head != null ? _head.localPosition : Vector3.zero,
+                physicalPosition,
                 _head != null ? _head.localEulerAngles : Vector3.zero);
             _tx.physical = _txPhysical;
 
