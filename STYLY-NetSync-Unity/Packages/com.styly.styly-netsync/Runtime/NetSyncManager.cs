@@ -145,6 +145,20 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Gets a list (int[]) of all currently connected client numbers.
+        /// </summary>
+        /// <param name="includeStealthClients">If true, includes clients in stealth mode (no visible avatar). Default is false.</param>
+        /// <returns>An int[] containing the client numbers of all connected clients</returns>
+        public int[] GetAliveClients(bool includeStealthClients = false)
+        {
+            var set = _avatarManager?.GetAliveClients(_messageProcessor, includeStealthClients);
+            if (set == null || set.Count == 0) return Array.Empty<int>();
+            var arr = new int[set.Count];
+            set.CopyTo(arr);
+            return arr;
+        }
+
+        /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and 
         /// re-establishing connection with the new room subscription.
