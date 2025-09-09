@@ -145,13 +145,17 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Gets a set of all currently connected client numbers.
+        /// Gets a list (int[]) of all currently connected client numbers.
         /// </summary>
         /// <param name="includeStealthClients">If true, includes clients in stealth mode (no visible avatar). Default is false.</param>
-        /// <returns>A HashSet containing the client numbers of all connected clients</returns>
-        public HashSet<int> GetAliveClients(bool includeStealthClients = false)
+        /// <returns>An int[] containing the client numbers of all connected clients</returns>
+        public int[] GetAliveClients(bool includeStealthClients = false)
         {
-            return _avatarManager != null ? _avatarManager.GetAliveClients(_messageProcessor, includeStealthClients) : new HashSet<int>();
+            var set = _avatarManager?.GetAliveClients(_messageProcessor, includeStealthClients);
+            if (set == null || set.Count == 0) return Array.Empty<int>();
+            var arr = new int[set.Count];
+            set.CopyTo(arr);
+            return arr;
         }
 
         /// <summary>
