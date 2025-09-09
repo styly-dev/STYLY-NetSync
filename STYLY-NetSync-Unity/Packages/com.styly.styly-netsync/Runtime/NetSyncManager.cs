@@ -145,6 +145,19 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Gets a list of currently connected client IDs.
+        /// </summary>
+        /// <returns>A list of client IDs for all currently connected clients (excluding the local client)</returns>
+        public List<int> GetConnectedClientIds()
+        {
+            if (_avatarManager != null && _avatarManager.ConnectedPeers != null)
+            {
+                return new List<int>(_avatarManager.ConnectedPeers.Keys);
+            }
+            return new List<int>();
+        }
+
+        /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and 
         /// re-establishing connection with the new room subscription.
