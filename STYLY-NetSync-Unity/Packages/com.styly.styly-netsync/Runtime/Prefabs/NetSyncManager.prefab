@@ -50,7 +50,7 @@ MonoBehaviour:
   _roomId: default_room
   _localAvatarPrefab: {fileID: 5433920805635859656, guid: 533c4bfc8e64a634c991381ba7791b99, type: 3}
   _remoteAvatarPrefab: {fileID: 4943129801574805003, guid: ab3b1ca71deaa734dabad80f2cbbe3f6, type: 3}
-  _humanPresencePrefab: {fileID: 7829082399993422632, guid: 2a21c8d0e16454ba0b9d5cb7040b6b7d, type: 3}
+  _humanPresencePrefab: {fileID: 0}
   OnAvatarConnected:
     m_PersistentCalls:
       m_Calls: []
