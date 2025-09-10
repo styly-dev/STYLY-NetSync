@@ -843,7 +843,7 @@ namespace Styly.NetSync
                 worldYawEuler = worldYaw.eulerAngles;
 
                 // Apply XROrigin offset and physical offset to get true world position/rotation
-                // Todo: This can be more smoothly if the offset is applied after smoothing
+                // Todo: This can be done more smoothly if the offset is applied after smoothing
                 var xrOriginPos = _XrOriginTransform != null ? _XrOriginTransform.position : Vector3.zero;
                 var xrOriginEuler = _XrOriginTransform != null ? _XrOriginTransform.eulerAngles : Vector3.zero;
                 worldPos = worldPos + xrOriginPos - _physicalOffsetPosition;
