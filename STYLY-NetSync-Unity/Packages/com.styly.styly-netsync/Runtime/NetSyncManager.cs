@@ -48,6 +48,10 @@ namespace Styly.NetSync
         public UnityEvent OnReady;
         #endregion ------------------------------------------------------------------------
 
+        internal Transform _XrOriginTransform;
+        internal Vector3 _physicalOffsetPosition;
+        internal Vector3 _physicalOffsetRotation;
+
         #region === Singleton & Public API ===
         private static NetSyncManager _instance;
         public static NetSyncManager Instance => _instance;
@@ -283,6 +287,17 @@ namespace Styly.NetSync
             if (_isStealthMode)
             {
                 DebugLog("Stealth mode enabled (no local avatar prefab)");
+            }
+        }
+
+        void Start()
+        {
+            var xrOrigin = FindFirstObjectByType<XROrigin>();
+            if (xrOrigin != null)
+            {
+                _XrOriginTransform = xrOrigin.transform;
+                _physicalOffsetPosition = xrOrigin.transform.position;
+                _physicalOffsetRotation = xrOrigin.transform.eulerAngles;
             }
         }
 
@@ -819,11 +834,20 @@ namespace Styly.NetSync
             Vector3 worldYawEuler;
             if (parent != null)
             {
+                // Full local->world for position
                 worldPos = parent.TransformPoint(position);
+                
                 // Yaw-only in local space, then compose with parent's rotation to get world yaw
                 var localYaw = Quaternion.Euler(0f, eulerRotation.y, 0f);
                 var worldYaw = parent.rotation * localYaw;
                 worldYawEuler = worldYaw.eulerAngles;
+
+                // Apply XROrigin offset and physical offset to get true world position/rotation
+                // Todo: This can be done more smoothly if the offset is applied after smoothing
+                var xrOriginPos = _XrOriginTransform != null ? _XrOriginTransform.position : Vector3.zero;
+                var xrOriginEuler = _XrOriginTransform != null ? _XrOriginTransform.eulerAngles : Vector3.zero;
+                worldPos = worldPos + xrOriginPos - _physicalOffsetPosition;
+                worldYawEuler = worldYawEuler + xrOriginEuler - _physicalOffsetRotation;
             }
             else
             {

@@ -153,8 +153,8 @@ namespace Styly.NetSync
             // Remote avatars keep the last received physical values from SetTransformData.
             if (IsLocalAvatar && _head != null)
             {
-                PhysicalPosition = _head.localPosition;
-                PhysicalRotation = _head.localEulerAngles;
+                PhysicalPosition = _head.localPosition + _netSyncManager._physicalOffsetPosition;
+                PhysicalRotation = _head.localEulerAngles + _netSyncManager._physicalOffsetRotation;
             }
         }
 
@@ -167,11 +167,10 @@ namespace Styly.NetSync
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
 
-            // Physical: local space relative to head's parent.
             Fill(
-                _txPhysical,
-                _head != null ? _head.localPosition : Vector3.zero,
-                _head != null ? _head.localEulerAngles : Vector3.zero);
+                    _txPhysical,
+                    PhysicalPosition,
+                    PhysicalRotation);
             _tx.physical = _txPhysical;
 
             // World space transforms.
