@@ -296,8 +296,8 @@ namespace Styly.NetSync
             if (xrOrigin != null)
             {
                 _XrOriginTransform = xrOrigin.transform;
-                _physicalOffsetPosition = xrOrigin != null ? xrOrigin.transform.position : Vector3.zero;
-                _physicalOffsetRotation = xrOrigin != null ? xrOrigin.transform.eulerAngles : Vector3.zero;
+                _physicalOffsetPosition = xrOrigin.transform.position;
+                _physicalOffsetRotation = xrOrigin.transform.eulerAngles;
             }
         }
 
