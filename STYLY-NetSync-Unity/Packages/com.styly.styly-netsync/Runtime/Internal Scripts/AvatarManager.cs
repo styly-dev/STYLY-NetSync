@@ -141,24 +141,38 @@ namespace Styly.NetSync
             return avatar != null;
         }
 
-        public HashSet<int> GetAliveClients(MessageProcessor messageProcessor = null, bool includeStealthClients = false)
+        public HashSet<int> GetAliveClients(MessageProcessor messageProcessor = null, bool includeStealthClients = false, int localClientNo = 0)
         {
+            HashSet<int> result;
+            
             // If explicitly including stealth clients or no processor available to check
             if (includeStealthClients || messageProcessor == null)
             {
                 // Return all clients
-                return new HashSet<int>(_connectedPeers.Keys);
+                result = new HashSet<int>(_connectedPeers.Keys);
             }
-
-            // Filter out stealth mode clients (default behavior)
-            var result = new HashSet<int>();
-            foreach (var clientNo in _connectedPeers.Keys)
+            else
             {
-                if (!messageProcessor.IsClientStealthMode(clientNo))
+                // Filter out stealth mode clients (default behavior)
+                result = new HashSet<int>();
+                foreach (var clientNo in _connectedPeers.Keys)
                 {
-                    result.Add(clientNo);
+                    if (!messageProcessor.IsClientStealthMode(clientNo))
+                    {
+                        result.Add(clientNo);
+                    }
                 }
             }
+            
+            // Add local client if valid and meets stealth mode criteria
+            if (localClientNo > 0)
+            {
+                if (includeStealthClients || messageProcessor == null || !messageProcessor.IsClientStealthMode(localClientNo))
+                {
+                    result.Add(localClientNo);
+                }
+            }
+            
             return result;
         }
 
