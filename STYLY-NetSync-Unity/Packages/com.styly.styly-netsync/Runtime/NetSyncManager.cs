@@ -155,7 +155,7 @@ namespace Styly.NetSync
         /// <returns>An int[] containing the client numbers of all connected clients</returns>
         public int[] GetAliveClients(bool includeStealthClients = false)
         {
-            var set = _avatarManager?.GetAliveClients(_messageProcessor, includeStealthClients);
+            var set = _avatarManager?.GetAliveClients(_messageProcessor, includeStealthClients, _clientNo);
             if (set == null || set.Count == 0) return Array.Empty<int>();
             var arr = new int[set.Count];
             set.CopyTo(arr);
