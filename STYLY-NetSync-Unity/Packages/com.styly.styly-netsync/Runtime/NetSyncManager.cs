@@ -7,6 +7,73 @@ using UnityEngine.Events;
 
 namespace Styly.NetSync
 {
+    /// <summary>
+    /// A UnityEvent wrapper that fires immediately upon adding a listener if the ready condition is already met.
+    /// This improves UX by eliminating the need to check IsReady before adding listeners.
+    /// </summary>
+    [System.Serializable]
+    public class ImmediateReadyEvent
+    {
+        private UnityEvent _unityEvent = new UnityEvent();
+        private Func<bool> _isReadyFunc;
+
+        /// <summary>
+        /// Initialize with a function that determines if the ready condition is met
+        /// </summary>
+        public void Initialize(Func<bool> isReadyFunc)
+        {
+            _isReadyFunc = isReadyFunc;
+        }
+
+        /// <summary>
+        /// Add a listener. If ready condition is already met, the listener is invoked immediately.
+        /// </summary>
+        public void AddListener(UnityAction call)
+        {
+            if (call == null) return;
+
+            _unityEvent.AddListener(call);
+
+            // If ready condition is already met, invoke the listener immediately
+            if (_isReadyFunc != null && _isReadyFunc())
+            {
+                call.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Remove a listener
+        /// </summary>
+        public void RemoveListener(UnityAction call)
+        {
+            _unityEvent.RemoveListener(call);
+        }
+
+        /// <summary>
+        /// Remove all listeners
+        /// </summary>
+        public void RemoveAllListeners()
+        {
+            _unityEvent.RemoveAllListeners();
+        }
+
+        /// <summary>
+        /// Invoke all listeners
+        /// </summary>
+        public void Invoke()
+        {
+            _unityEvent.Invoke();
+        }
+
+        /// <summary>
+        /// Get the persistent event count (for Unity Inspector)
+        /// </summary>
+        public int GetPersistentEventCount()
+        {
+            return _unityEvent.GetPersistentEventCount();
+        }
+    }
+
     [DefaultExecutionOrder(-1000)]
     public class NetSyncManager : MonoBehaviour
     {
@@ -45,7 +112,7 @@ namespace Styly.NetSync
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
-        public UnityEvent OnReady;
+        public ImmediateReadyEvent OnReady = new ImmediateReadyEvent();
         #endregion ------------------------------------------------------------------------
 
         internal Transform _XrOriginTransform;
@@ -277,7 +344,8 @@ namespace Styly.NetSync
             _deviceId = GenerateDeviceId();
             _instance = this;
 
-            // UnityEvents are initialized at declaration time (no runtime initialization needed)
+            // Initialize OnReady event with IsReady condition
+            OnReady.Initialize(() => IsReady);
 
             // Detect stealth mode based on local avatar prefab
             _isStealthMode = (_localAvatarPrefab == null);
@@ -581,7 +649,7 @@ namespace Styly.NetSync
             {
                 _hasInvokedReady = true;
                 DebugLog("NetSyncManager is now Ready (connected, handshaken, and network variables synced)");
-                OnReady?.Invoke();
+                OnReady.Invoke();
 
                 // Don't flush immediately - let Update() handle it on next frame
                 // This avoids potential socket state issues
