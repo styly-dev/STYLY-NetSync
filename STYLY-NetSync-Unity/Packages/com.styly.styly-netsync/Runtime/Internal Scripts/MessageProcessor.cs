@@ -396,6 +396,18 @@ namespace Styly.NetSync
             return _clientNoToDeviceId.TryGetValue(clientNo, out var deviceId) ? deviceId : null;
         }
 
+        /// <summary>
+        /// Returns a snapshot of all known client numbers based on the latest device ID mapping.
+        /// This includes both visible and stealth clients. The returned array is a copy to avoid
+        /// enumerating the live dictionary while it may be updated by the networking thread.
+        /// </summary>
+        internal int[] GetKnownClientNosSnapshot()
+        {
+            // Using Linq ToArray() produces a stable snapshot.
+            // Note: Do not expose the live Keys collection to callers.
+            return _clientNoToDeviceId.Keys.ToArray();
+        }
+
         public bool IsClientStealthMode(int clientNo)
         {
             return _clientNoToIsStealthMode.TryGetValue(clientNo, out var isStealthMode) && isStealthMode;
