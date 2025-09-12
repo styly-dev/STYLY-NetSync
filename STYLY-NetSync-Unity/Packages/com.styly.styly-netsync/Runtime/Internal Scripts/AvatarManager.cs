@@ -143,27 +143,56 @@ namespace Styly.NetSync
 
         public HashSet<int> GetAliveClients(MessageProcessor messageProcessor = null, bool includeStealthClients = false, int localClientNo = 0)
         {
-            HashSet<int> result;
-            
-            // If explicitly including stealth clients or no processor available to check
-            if (includeStealthClients || messageProcessor == null)
+            var result = new HashSet<int>();
+
+            if (includeStealthClients)
             {
-                // Return all clients
-                result = new HashSet<int>(_connectedPeers.Keys);
+                // When including stealth clients, prefer the authoritative mapping from MessageProcessor
+                if (messageProcessor != null)
+                {
+                    var known = messageProcessor.GetKnownClientNosSnapshot();
+                    if (known != null)
+                    {
+                        for (int i = 0; i < known.Length; i++)
+                        {
+                            var clientNo = known[i];
+                            if (clientNo > 0)
+                            {
+                                result.Add(clientNo);
+                            }
+                        }
+                    }
+                }
+
+                // Also include any peers we have spawned avatars for (defensive union)
+                foreach (var clientNo in _connectedPeers.Keys)
+                {
+                    result.Add(clientNo);
+                }
             }
             else
             {
-                // Filter out stealth mode clients (default behavior)
-                result = new HashSet<int>();
-                foreach (var clientNo in _connectedPeers.Keys)
+                // Default behavior: exclude stealth clients
+                if (messageProcessor == null)
                 {
-                    if (!messageProcessor.IsClientStealthMode(clientNo))
+                    // Without a processor we cannot distinguish stealth; return visible avatars only
+                    foreach (var clientNo in _connectedPeers.Keys)
                     {
                         result.Add(clientNo);
                     }
                 }
+                else
+                {
+                    foreach (var clientNo in _connectedPeers.Keys)
+                    {
+                        if (!messageProcessor.IsClientStealthMode(clientNo))
+                        {
+                            result.Add(clientNo);
+                        }
+                    }
+                }
             }
-            
+
             // Add local client if valid and meets stealth mode criteria
             if (localClientNo > 0)
             {
@@ -172,7 +201,7 @@ namespace Styly.NetSync
                     result.Add(localClientNo);
                 }
             }
-            
+
             return result;
         }
 
