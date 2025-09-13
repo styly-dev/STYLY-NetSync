@@ -6,7 +6,7 @@ namespace Styly.NetSync.Editor
     public static class AddNetSyncManager
     {
         // Path to the prefab within the package
-        private static readonly string prefabPath = "Packages/com.styly.styly-netsync/Runtime/Prefab/NetSyncManager.prefab";
+        private static readonly string prefabPath = "Packages/com.styly.styly-netsync/Runtime/Prefabs/NetSyncManager.prefab";
 
         // Add a menu item in the hierarchy context menu
         [MenuItem("GameObject/STYLY NetSync/NetSyncManager", false, 10)]
