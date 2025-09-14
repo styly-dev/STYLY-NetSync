@@ -1,4 +1,7 @@
 
+# STYLY NetSync Server
+
+**Package**: `styly-netsync-server@0.5.7`
 
 ## Prepare develop environment
 

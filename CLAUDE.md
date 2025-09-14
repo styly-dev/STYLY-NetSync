@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 STYLY-NetSync is a Unity multiplayer framework for Location-Based Entertainment (LBE) VR/AR experiences. The repository contains two main components:
 
-- **STYLY-NetSync-Server/**: Python server using ZeroMQ for networking
-- **STYLY-NetSync-Unity/**: Unity package with client implementation
+- **STYLY-NetSync-Server/**: Python server using ZeroMQ for networking (`styly-netsync-server@0.5.7`)
+- **STYLY-NetSync-Unity/**: Unity package with client implementation (`com.styly.styly-netsync@0.5.7`)
 
 ## Development Commands
 
@@ -41,7 +41,7 @@ kill <PID>                         # Kill process using port
 ### Unity Client (STYLY-NetSync-Unity/)
 
 - Build and test using Unity Editor (Unity 6000.0.48f1+)
-- Main package: `Packages/com.styly.styly-netsync/`
+- Main package: `Packages/com.styly.styly-netsync/` (`com.styly.styly-netsync@0.5.7`)
 - Test scenes: `Assets/Samples_Dev/Demo-01/` and `Assets/Samples_Dev/Debug/`
 
 ## Architecture Overview
