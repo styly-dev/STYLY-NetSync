@@ -105,15 +105,53 @@ jobs:
           echo "Updated version line:"
           grep "^version = " "$PYPROJECT_FILE"
 
+      - name: Update version in .md files
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+
+          echo "📝 Updating version numbers in .md files..."
+
+          # Find all .md files in the repository
+          MD_FILES=$(find . -name "*.md" -type f)
+
+          UPDATED_COUNT=0
+          for file in $MD_FILES; do
+            # Skip if file doesn't exist (defensive check)
+            [ ! -f "$file" ] && continue
+
+            # Update styly-netsync-server@X.X.X pattern
+            if grep -q "styly-netsync-server@[0-9]\+\.[0-9]\+\.[0-9]\+" "$file"; then
+              sed -i "s/styly-netsync-server@[0-9]\+\.[0-9]\+\.[0-9]\+/styly-netsync-server@$VERSION/g" "$file"
+              echo "  ✅ Updated styly-netsync-server version in $file"
+              UPDATED_COUNT=$((UPDATED_COUNT + 1))
+            fi
+
+            # Update com.styly.styly-netsync@X.X.X pattern
+            if grep -q "com\.styly\.styly-netsync@[0-9]\+\.[0-9]\+\.[0-9]\+" "$file"; then
+              sed -i "s/com\.styly\.styly-netsync@[0-9]\+\.[0-9]\+\.[0-9]\+/com.styly.styly-netsync@$VERSION/g" "$file"
+              echo "  ✅ Updated com.styly.styly-netsync version in $file"
+              UPDATED_COUNT=$((UPDATED_COUNT + 1))
+            fi
+          done
+
+          if [ $UPDATED_COUNT -eq 0 ]; then
+            echo "ℹ️ No version strings found in .md files (this is normal if none exist yet)"
+          else
+            echo "✅ Updated version in $UPDATED_COUNT location(s)"
+          fi
+
       - name: Commit version changes
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          
+
           # Add all version files
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt
           git add STYLY-NetSync-Server/pyproject.toml
-          
+
+          # Add any modified .md files
+          git add "*.md"
+
           # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "⚠️ Warning: No changes to commit. Versions may already be set to $VERSION"
@@ -122,11 +160,12 @@ jobs:
           
           # Commit changes
           git commit -m "chore: bump version to $VERSION
-          
+
           - Updated Unity package version in package.json
           - Updated Unity version.txt file for runtime version retrieval
-          - Updated Python server version in pyproject.toml"
-          
+          - Updated Python server version in pyproject.toml
+          - Updated version references in .md files (if any)"
+
           echo "✅ Committed version changes"
 
       - name: Push to develop branch
