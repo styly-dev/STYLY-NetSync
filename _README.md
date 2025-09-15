@@ -1,3 +1,8 @@
+# 🛑This repository hasn't been officially announced yet🛑
+⚠️⚠️You found this hidden README!!⚠️⚠️  
+🚫🚫Please refrain from posting about it on social media🚫🚫
+
+
 # STYLY NetSync for LBE
 A Unity networking module and server for XR-powered Location Based Entertainment
 
