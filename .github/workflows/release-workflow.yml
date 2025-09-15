@@ -146,7 +146,12 @@ jobs:
 
             AFTER=$(sha256sum "$file" | cut -d' ' -f1)
             if [ "$BEFORE" != "$AFTER" ]; then
-              UPDATED_FILES="$UPDATED_FILES\n$file"
+              # Append without introducing a leading empty line
+              if [ -z "$UPDATED_FILES" ]; then
+                UPDATED_FILES="$file"
+              else
+                UPDATED_FILES="$UPDATED_FILES"$'\n'"$file"
+              fi
             fi
           done
 
@@ -154,7 +159,8 @@ jobs:
             echo "ℹ️ No version strings found in .md files (this is normal if none exist yet)"
             echo "UPDATED_MD_FILES=" >> $GITHUB_ENV
           else
-            UNIQUE_FILES=$(echo -e "$UPDATED_FILES" | sort -u)
+            # Normalize, drop blank lines, and de-duplicate
+            UNIQUE_FILES=$(echo -e "$UPDATED_FILES" | sed '/^[[:space:]]*$/d' | sort -u)
             COUNT=$(echo "$UNIQUE_FILES" | wc -l)
             echo "✅ Updated version in $COUNT file(s)"
             {
@@ -173,9 +179,11 @@ jobs:
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt
           git add STYLY-NetSync-Server/pyproject.toml
 
-          # Add updated .md files if any
+          # Add updated .md files if any (filter blank lines to avoid empty pathspec)
           if [ -n "${UPDATED_MD_FILES}" ]; then
-            echo "${UPDATED_MD_FILES}" | tr '\n' '\0' | xargs -0 -I{} git add "{}"
+            echo "${UPDATED_MD_FILES}" | while IFS= read -r file; do
+              [ -n "$file" ] && git add "$file"
+            done
           fi
 
           # Check if there are changes to commit
