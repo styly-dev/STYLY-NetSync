@@ -105,28 +105,93 @@ jobs:
           echo "Updated version line:"
           grep "^version = " "$PYPROJECT_FILE"
 
+      - name: Update version in .md files
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+
+          echo "📝 Updating version numbers in .md files..."
+
+          # Find all .md files in the repository
+          MD_FILES=$(find . -name "*.md" -type f)
+
+          UPDATED_FILES=""
+          for file in $MD_FILES; do
+            [ ! -f "$file" ] && continue
+
+            BEFORE=$(sha256sum "$file" | cut -d' ' -f1)
+
+            if grep -q "styly-netsync-server@[0-9]\+\.[0-9]\+\.[0-9]\+" "$file"; then
+              if ! grep -q "styly-netsync-server@$VERSION" "$file"; then
+                sed -i "s/styly-netsync-server@[0-9]\+\.[0-9]\+\.[0-9]\+/styly-netsync-server@$VERSION/g" "$file"
+                if grep -q "styly-netsync-server@$VERSION" "$file"; then
+                  echo "  ✅ Updated styly-netsync-server version in $file"
+                else
+                  echo "  ❌ Failed to update styly-netsync-server version in $file"
+                  exit 1
+                fi
+              fi
+            fi
+
+            if grep -q "com\.styly\.styly-netsync@[0-9]\+\.[0-9]\+\.[0-9]\+" "$file"; then
+              if ! grep -q "com\.styly\.styly-netsync@$VERSION" "$file"; then
+                sed -i "s/com\.styly\.styly-netsync@[0-9]\+\.[0-9]\+\.[0-9]\+/com\.styly\.styly-netsync@$VERSION/g" "$file"
+                if grep -q "com\.styly\.styly-netsync@$VERSION" "$file"; then
+                  echo "  ✅ Updated com.styly.styly-netsync version in $file"
+                else
+                  echo "  ❌ Failed to update com.styly.styly-netsync version in $file"
+                  exit 1
+                fi
+              fi
+            fi
+
+            AFTER=$(sha256sum "$file" | cut -d' ' -f1)
+            if [ "$BEFORE" != "$AFTER" ]; then
+              UPDATED_FILES="$UPDATED_FILES\n$file"
+            fi
+          done
+
+          if [ -z "$UPDATED_FILES" ]; then
+            echo "ℹ️ No version strings found in .md files (this is normal if none exist yet)"
+            echo "UPDATED_MD_FILES=" >> $GITHUB_ENV
+          else
+            UNIQUE_FILES=$(echo -e "$UPDATED_FILES" | sort -u)
+            COUNT=$(echo "$UNIQUE_FILES" | wc -l)
+            echo "✅ Updated version in $COUNT file(s)"
+            {
+              echo 'UPDATED_MD_FILES<<EOF'
+              echo "$UNIQUE_FILES"
+              echo EOF
+            } >> $GITHUB_ENV
+          fi
+
       - name: Commit version changes
         run: |
           VERSION="${{ github.event.inputs.version }}"
-          
+
           # Add all version files
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt
           git add STYLY-NetSync-Server/pyproject.toml
-          
+
+          # Add updated .md files if any
+          if [ -n "${UPDATED_MD_FILES}" ]; then
+            echo "${UPDATED_MD_FILES}" | tr '\n' '\0' | xargs -0 -I{} git add "{}"
+          fi
+
           # Check if there are changes to commit
           if git diff --staged --quiet; then
             echo "⚠️ Warning: No changes to commit. Versions may already be set to $VERSION"
             exit 0
           fi
-          
+
           # Commit changes
           git commit -m "chore: bump version to $VERSION
-          
+
           - Updated Unity package version in package.json
           - Updated Unity version.txt file for runtime version retrieval
-          - Updated Python server version in pyproject.toml"
-          
+          - Updated Python server version in pyproject.toml
+          - Updated version references in .md files (if any)"
+
           echo "✅ Committed version changes"
 
       - name: Push to develop branch
@@ -205,6 +270,11 @@ jobs:
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json\`"
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt\`"
               echo "- \`STYLY-NetSync-Server/pyproject.toml\`"
+              if [ -n "${UPDATED_MD_FILES}" ]; then
+                echo "$UPDATED_MD_FILES" | while read -r file; do
+                  [ -n "$file" ] && echo "- \`$file\`"
+                done
+              fi
               echo ""
               echo "### 🚀 Next Steps"
               echo ""
