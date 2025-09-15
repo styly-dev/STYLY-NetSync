@@ -175,7 +175,7 @@ jobs:
 
           # Add updated .md files if any
           if [ -n "${UPDATED_MD_FILES}" ]; then
-            echo "${UPDATED_MD_FILES}" | xargs -I{} git add {}
+            echo "${UPDATED_MD_FILES}" | tr '\n' '\0' | xargs -0 -I{} git add "{}"
           fi
 
           # Check if there are changes to commit
