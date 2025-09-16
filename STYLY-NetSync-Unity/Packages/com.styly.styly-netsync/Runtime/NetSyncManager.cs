@@ -25,6 +25,14 @@ namespace Styly.NetSync
         private bool _enableDiscovery = true;
         private float _discoveryTimeout = 5f;
 
+#if UNITY_ANDROID
+        [Header("Android Lifecycle Settings")]
+        [SerializeField, Tooltip("On Android, use OnApplicationFocus instead of OnApplicationPause for lifecycle management")]
+        private bool _androidUseFocusLifecycle = true;
+#endif
+        [SerializeField, Tooltip("Delay in seconds before retrying discovery after StopNetworking()")]
+        private float _discoveryRetryDelaySeconds = 0.5f;
+
         [Header("Avatar Settings")]
         [SerializeField] private GameObject _localAvatarPrefab;
         [SerializeField] private GameObject _remoteAvatarPrefab;
@@ -233,7 +241,8 @@ namespace Styly.NetSync
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
         private const float DiscoveryRetryDelay = 5f; // Retry discovery every 5 seconds after failure
-        private float _nextDiscoveryAttemptAt = 0f;
+        // Use realtime clock so Time.timeScale doesn't affect retries
+        private float _nextDiscoveryAttemptAtRealtime = -1f;
         private float _reconnectAt;
         private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
         private bool _hasInvokedReady = false;
@@ -257,6 +266,9 @@ namespace Styly.NetSync
         public bool HasHandshake => _clientNo > 0;
         public bool HasNetworkVariablesSync => _networkVariableManager?.HasReceivedInitialSync == true;
         public bool IsReady => HasServerConnection && HasHandshake && HasNetworkVariablesSync;
+
+        // Helper property to determine if we should use discovery
+        private bool UseDiscovery => string.IsNullOrEmpty(_serverAddress) && _enableDiscovery;
 
         public GameObject GetLocalAvatarPrefab() => _localAvatarPrefab;
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
@@ -328,27 +340,54 @@ namespace Styly.NetSync
 
         private void OnApplicationPause(bool paused)
         {
+#if UNITY_ANDROID
+            if (_androidUseFocusLifecycle)
+            {
+                DebugLog($"[Life][Android] OnApplicationPause({paused}) ignored (focus lifecycle in use)");
+                return;
+            }
+#endif
+            // Non-Android or flag disabled: use previous behavior
             if (paused)
             {
-                DebugLog("Application paused - stopping network");
+                DebugLog($"[Life] Application paused - stopping network");
                 StopNetworking();
             }
             else
             {
-                DebugLog("Application resumed - restarting network");
+                DebugLog($"[Life] Application resumed - restarting network");
                 StartNetworking();
             }
         }
 
         private void OnApplicationFocus(bool hasFocus)
         {
+#if UNITY_ANDROID
+            if (_androidUseFocusLifecycle)
+            {
+                DebugLog($"[Life][Android] OnApplicationFocus({hasFocus})");
+                if (!hasFocus)
+                {
+                    StopNetworking();
+                    return;
+                }
+
+                // Foreground: (re)start only if not connected and not discovering
+                if (!_connectionManager.IsConnected && !_isDiscovering)
+                {
+                    StartNetworking();
+                }
+                return;
+            }
+#endif
+            // Non-Android or flag off: retain previous behavior
             if (!hasFocus)
             {
-                DebugLog("Application lost focus");
+                DebugLog("[Life] Application lost focus");
             }
             else
             {
-                DebugLog("Application gained focus");
+                DebugLog("[Life] Application gained focus");
                 if (!_connectionManager.IsConnected && !_isDiscovering)
                 {
                     StartNetworking();
@@ -370,6 +409,18 @@ namespace Styly.NetSync
             {
                 _shouldSendHandshake = false;
                 HandleRoomSwitchHandshake();
+            }
+
+            // Plan C: Process scheduled discovery attempts
+            if (UseDiscovery &&
+                !_connectionManager.IsConnected &&
+                !_isDiscovering &&
+                _nextDiscoveryAttemptAtRealtime > 0f &&
+                Time.realtimeSinceStartup >= _nextDiscoveryAttemptAtRealtime)
+            {
+                DebugLog("[Net][C] Discovery retry window reached → StartNetworking()");
+                _nextDiscoveryAttemptAtRealtime = -1f; // clear before calling to avoid double-fire
+                StartNetworking();
             }
 
             HandleDiscovery();
@@ -615,22 +666,45 @@ namespace Styly.NetSync
         #region === Networking ===
         private void StartNetworking()
         {
-            // If server address is empty and discovery is enabled, start discovery
-            if (string.IsNullOrEmpty(_serverAddress) && _enableDiscovery && !_isDiscovering)
+            if (_connectionManager == null) return;
+            
+            // Idempotent check: avoid starting if already connected or discovering
+            if (_connectionManager.IsConnected || _isDiscovering)
             {
-                StartDiscovery();
+                DebugLog("[Net] StartNetworking() noop: already connected or discovering");
                 return;
             }
 
-            // Add tcp:// prefix
-            string fullAddress = $"tcp://{_serverAddress}";
-            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId);
+            if (UseDiscovery)
+            {
+                DebugLog("[Net] Starting discovery…");
+                StartDiscovery();
+            }
+            else
+            {
+                DebugLog($"[Net] Connecting to {_serverAddress}…");
+                // Add tcp:// prefix
+                string fullAddress = $"tcp://{_serverAddress}";
+                _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId);
+            }
         }
 
         private void StopNetworking()
         {
+            DebugLog("[Net] StopNetworking()");
             _connectionManager.Disconnect();
             StopDiscovery();
+
+            // Plan C: always schedule a retry if discovery is the intended mode
+            if (UseDiscovery)
+            {
+                _nextDiscoveryAttemptAtRealtime = Time.realtimeSinceStartup + _discoveryRetryDelaySeconds;
+                DebugLog($"[Net][C] Scheduled discovery retry at t={_nextDiscoveryAttemptAtRealtime:F2}");
+            }
+            else
+            {
+                _nextDiscoveryAttemptAtRealtime = -1f;
+            }
         }
 
         private void StartDiscovery()
@@ -640,7 +714,7 @@ namespace Styly.NetSync
             _isDiscovering = true;
             _discoveryStartTime = Time.time;
             // Clear any scheduled retry since we're attempting now
-            _nextDiscoveryAttemptAt = 0f;
+            _nextDiscoveryAttemptAtRealtime = -1f;
         }
 
         private void StopDiscovery()
@@ -654,12 +728,11 @@ namespace Styly.NetSync
         #region === Update Logic ===
         private void HandleDiscovery()
         {
-            // Handle discovery timeout: stop current attempt and schedule retry in 5 seconds
+            // Handle discovery timeout: stop networking (which will schedule retry via Plan C)
             if (_isDiscovering && Time.time - _discoveryStartTime > _discoveryTimeout)
             {
-                DebugLog($"Discovery timeout - retrying in {DiscoveryRetryDelay} seconds");
-                StopDiscovery();
-                _nextDiscoveryAttemptAt = Time.time + DiscoveryRetryDelay;
+                DebugLog($"Discovery timeout - will retry via Plan C");
+                StopNetworking(); // This will call StopDiscovery() and schedule retry
             }
 
             // Process discovered server
@@ -669,13 +742,6 @@ namespace Styly.NetSync
                 StopDiscovery();
                 _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort);
                 _discoveredServer = null;
-            }
-
-            // If not currently discovering and discovery is enabled with no fixed server, retry when due
-            if (!_isDiscovering && string.IsNullOrEmpty(_serverAddress) && _enableDiscovery &&
-                _nextDiscoveryAttemptAt > 0f && Time.time >= _nextDiscoveryAttemptAt)
-            {
-                StartDiscovery();
             }
         }
 
