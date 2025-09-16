@@ -14,6 +14,7 @@ namespace Styly.NetSync
         [Header("Network Info")]
         [SerializeField, ReadOnly] private string _deviceId;
         [SerializeField, ReadOnly] private int _clientNo = 0;
+        [SerializeField, ReadOnly] private string _appId;
 
         [Header("Connection Settings")]
         [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
@@ -255,6 +256,7 @@ namespace Styly.NetSync
 
         #region === Public Properties ===
         public string DeviceId => _deviceId;
+        public string AppId => _appId;
         public int ClientNo => _clientNo;
         public string RoomId => _roomId;
         internal ConnectionManager ConnectionManager => _connectionManager;
@@ -287,6 +289,14 @@ namespace Styly.NetSync
 
             // Generate device ID - use Android device ID if available, otherwise generate GUID
             _deviceId = GenerateDeviceId();
+            
+            // Prepare AppID (lowercase Application.identifier)
+            _appId = Application.identifier.ToLowerInvariant();
+            if (string.IsNullOrEmpty(_appId))
+            {
+                Debug.LogError("Application.identifier is empty! This will prevent server connection. Please set Bundle Identifier in Project Settings.");
+                _appId = "com.unknown.app"; // Fallback for development
+            }
             _instance = this;
 
             // UnityEvents are initialized at declaration time (no runtime initialization needed)
@@ -296,6 +306,7 @@ namespace Styly.NetSync
 
             InitializeManagers();
             DebugLog($"Device ID: {_deviceId}");
+            DebugLog($"App ID: {_appId}");
             if (_isStealthMode)
             {
                 DebugLog("Stealth mode enabled (no local avatar prefab)");
@@ -404,11 +415,11 @@ namespace Styly.NetSync
                 CheckAndFireReady();
             }
 
-            // Handle handshake sending on main thread (for room switching)
+            // Handle HELLO handshake sending on main thread
             if (_shouldSendHandshake)
             {
                 _shouldSendHandshake = false;
-                HandleRoomSwitchHandshake();
+                SendHelloHandshake();
             }
 
             // Plan C: Process scheduled discovery attempts
@@ -499,6 +510,7 @@ namespace Styly.NetSync
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
+            _discoveryManager.AppId = _appId;
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
 
@@ -536,12 +548,9 @@ namespace Styly.NetSync
             // Notify network variable manager about connection
             _networkVariableManager?.OnConnectionEstablished();
 
-            // If we're switching rooms, defer handshake to main thread
-            if (_roomSwitching)
-            {
-                _shouldSendHandshake = true;
-                DebugLog("Connection established during room switch - handshake deferred to main thread");
-            }
+            // Send HELLO handshake as first message (required for AppID gate)
+            _shouldSendHandshake = true;
+            DebugLog("Connection established - HELLO handshake will be sent");
 
             // Initialize battery level immediately on connection
             _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
@@ -551,39 +560,51 @@ namespace Styly.NetSync
         /// Handles handshake sending for room switching on the main thread.
         /// This method is called from Update() to avoid Unity threading issues.
         /// </summary>
-        private void HandleRoomSwitchHandshake()
+        private void SendHelloHandshake()
         {
-            if (!_roomSwitching)
+            // Send HELLO message as first message (AppID gate requirement)
+            if (_connectionManager?.IsConnected == true && !string.IsNullOrEmpty(_appId))
             {
-                DebugLog("HandleRoomSwitchHandshake called but not in room switching mode");
-                return;
-            }
-
-            // Send handshake to new room to trigger client number assignment
-            if (_isStealthMode)
-            {
-                _transformSyncManager?.SendStealthHandshake(_roomId);
-                DebugLog("Sent stealth handshake to new room");
+                var helloMessage = BinarySerializer.SerializeHelloMessage(_appId, _deviceId);
+                _connectionManager.DealerSocket?.SendFrame(System.Text.Encoding.UTF8.GetBytes(_roomId), true);
+                _connectionManager.DealerSocket?.SendFrame(helloMessage, false);
+                DebugLog($"Sent HELLO handshake: AppID={_appId}, DeviceID={_deviceId.Substring(0, Math.Min(8, _deviceId.Length))}...");
             }
             else
             {
-                var localAvatar = _avatarManager?.LocalAvatar;
-                if (localAvatar != null)
+                Debug.LogError("Cannot send HELLO handshake: connection not ready or AppID missing");
+                return;
+            }
+            
+            // Continue with original room switch handshake if we're switching rooms
+            if (_roomSwitching)
+            {
+                // Send handshake to new room to trigger client number assignment
+                if (_isStealthMode)
                 {
-                    _transformSyncManager?.SendLocalTransform(localAvatar, _roomId);
-                    DebugLog("Sent transform handshake to new room");
+                    _transformSyncManager?.SendStealthHandshake(_roomId);
+                    DebugLog("Sent stealth handshake to new room");
                 }
                 else
                 {
-                    // Fallback to stealth handshake if no local avatar
-                    _transformSyncManager?.SendStealthHandshake(_roomId);
-                    DebugLog("Sent stealth handshake to new room (no local avatar)");
+                    var localAvatar = _avatarManager?.LocalAvatar;
+                    if (localAvatar != null)
+                    {
+                        _transformSyncManager?.SendLocalTransform(localAvatar, _roomId);
+                        DebugLog("Sent transform handshake to new room");
+                    }
+                    else
+                    {
+                        // Fallback to stealth handshake if no local avatar
+                        _transformSyncManager?.SendStealthHandshake(_roomId);
+                        DebugLog("Sent stealth handshake to new room (no local avatar)");
+                    }
                 }
-            }
 
-            // End room switching
-            _roomSwitching = false;
-            DebugLog("Room switching completed");
+                // End room switching
+                _roomSwitching = false;
+                DebugLog("Room switching completed");
+            }
         }
 
         private void OnRemoteAvatarDisconnected(int clientNo)

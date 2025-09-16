@@ -18,6 +18,7 @@ namespace Styly.NetSync
         public const byte MSG_GLOBAL_VAR_SYNC = 8;  // Sync global variables
         public const byte MSG_CLIENT_VAR_SET = 9;  // Set client variable
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
+        public const byte MSG_HELLO = 11;  // AppID handshake message
 
         // Transform data type identifiers (deprecated - kept for reference)
         // All transforms now use 6 floats for consistency
@@ -518,6 +519,41 @@ namespace Styly.NetSync
 
             data["clientVariables"] = clientVariables;
             return data;
+        }
+
+        /// <summary>
+        /// Serialize HELLO handshake message for AppID gate
+        /// </summary>
+        public static byte[] SerializeHelloMessage(string appId, string deviceId)
+        {
+            using (var ms = new MemoryStream())
+            using (var writer = new BinaryWriter(ms))
+            {
+                // Message type
+                writer.Write(MSG_HELLO);
+
+                // AppID (required, max 128 bytes when encoded as UTF-8)
+                var appIdBytes = System.Text.Encoding.UTF8.GetBytes(appId ?? "");
+                if (appIdBytes.Length > 128)
+                {
+                    Debug.LogWarning($"AppID too long ({appIdBytes.Length} bytes), truncating to 128 bytes");
+                    Array.Resize(ref appIdBytes, 128);
+                }
+                writer.Write((byte)appIdBytes.Length);
+                writer.Write(appIdBytes);
+
+                // DeviceID (optional, max 64 bytes when encoded as UTF-8)
+                var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+                if (deviceIdBytes.Length > 64)
+                {
+                    Debug.LogWarning($"DeviceID too long ({deviceIdBytes.Length} bytes), truncating to 64 bytes");
+                    Array.Resize(ref deviceIdBytes, 64);
+                }
+                writer.Write((byte)deviceIdBytes.Length);
+                writer.Write(deviceIdBytes);
+
+                return ms.ToArray();
+            }
         }
 
         #endregion

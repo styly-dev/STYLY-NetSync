@@ -15,12 +15,18 @@ namespace Styly.NetSync
         private bool _isDiscovering;
         private bool _enableDebugLogs;
         private readonly object _lockObject = new object();
+        private string _appId = "";
 
         public bool EnableDiscovery { get; set; } = true;
         public float DiscoveryTimeout { get; set; } = 5f;
         public int BeaconPort { get; set; } = 9999;
         public bool IsDiscovering => _isDiscovering;
         public float DiscoveryInterval { get; set; } = 0.5f; // Send discovery request every 0.5 seconds
+        public string AppId 
+        { 
+            get => _appId; 
+            set => _appId = value ?? ""; 
+        }
 
         public event Action<string, int, int> OnServerDiscovered;
 
@@ -44,7 +50,9 @@ namespace Styly.NetSync
                 // Start discovery thread that sends requests and waits for responses
                 _discoveryThread = new Thread(() =>
                 {
-                    var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
+                    // New discovery message format: STYLY-NETSYNC|discover|appId=<lowercase-appid>|proto=1
+                    var discoveryMessage = $"STYLY-NETSYNC|discover|appId={_appId}|proto=1";
+                    var discoveryMessageBytes = Encoding.UTF8.GetBytes(discoveryMessage);
                     var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, BeaconPort);
                     var lastRequestTime = DateTime.MinValue;
 
@@ -55,9 +63,9 @@ namespace Styly.NetSync
                             // Send discovery request at specified interval
                             if ((DateTime.Now - lastRequestTime).TotalSeconds >= DiscoveryInterval)
                             {
-                                _discoveryClient.Send(discoveryMessage, discoveryMessage.Length, broadcastEndpoint);
+                                _discoveryClient.Send(discoveryMessageBytes, discoveryMessageBytes.Length, broadcastEndpoint);
                                 lastRequestTime = DateTime.Now;
-                                DebugLog("Sent discovery request");
+                                DebugLog($"Sent discovery request with AppID: {_appId}");
                             }
 
                             // Try to receive response (with timeout)
