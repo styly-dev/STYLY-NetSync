@@ -645,7 +645,7 @@ def _deserialize_client_var_sync(data: bytes, offset: int) -> dict[str, Any]:
 
 def serialize_hello(app_id: str, device_id: str = "") -> bytes:
     """Serialize HELLO message for AppID handshake
-    
+
     Binary format:
     [0]     : MSG_HELLO (0x0B)
     [1]     : appIdLen (uint8, 0..128)
@@ -655,51 +655,51 @@ def serialize_hello(app_id: str, device_id: str = "") -> bytes:
     """
     buffer = bytearray()
     buffer.append(MSG_HELLO)
-    
+
     # AppID (required, max 128 bytes)
     app_id_bytes = app_id.encode("utf-8")
     if len(app_id_bytes) > 128:
         raise ValueError(f"AppID too long: {len(app_id_bytes)} bytes (max 128)")
     buffer.append(len(app_id_bytes))
     buffer.extend(app_id_bytes)
-    
-    # DeviceID (optional, max 64 bytes) 
+
+    # DeviceID (optional, max 64 bytes)
     device_id_bytes = device_id.encode("utf-8") if device_id else b""
     if len(device_id_bytes) > 64:
         raise ValueError(f"DeviceID too long: {len(device_id_bytes)} bytes (max 64)")
     buffer.append(len(device_id_bytes))
     buffer.extend(device_id_bytes)
-    
+
     return bytes(buffer)
 
 
 def _deserialize_hello(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize HELLO message from binary data"""
     result = {}
-    
+
     # AppID length and data
     if offset >= len(data):
         raise ValueError("Incomplete HELLO message: missing appIdLen")
     app_id_len = data[offset]
     offset += 1
-    
+
     if offset + app_id_len > len(data):
         raise ValueError("Incomplete HELLO message: truncated appId")
     app_id = data[offset : offset + app_id_len].decode("utf-8")
     offset += app_id_len
     result["appId"] = app_id
-    
+
     # DeviceID length and data (optional)
     if offset >= len(data):
         result["deviceId"] = ""
         return result
-        
+
     device_id_len = data[offset]
     offset += 1
-    
+
     if offset + device_id_len > len(data):
         raise ValueError("Incomplete HELLO message: truncated deviceId")
     device_id = data[offset : offset + device_id_len].decode("utf-8")
     result["deviceId"] = device_id
-    
+
     return result

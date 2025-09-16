@@ -66,13 +66,20 @@ from styly_netsync.binary_serializer import (
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s: %(message)s',
-    datefmt='%H:%M:%S'
+    format="[%(asctime)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
+
 class TestClient:
-    def __init__(self, dealer_port=5555, sub_port=5556, server_address='localhost', room_id='test_room'):
+    def __init__(
+        self,
+        dealer_port=5555,
+        sub_port=5556,
+        server_address="localhost",
+        room_id="test_room",
+    ):
         self.context = zmq.Context()
         self.dealer_socket = None
         self.sub_socket = None
@@ -102,14 +109,20 @@ class TestClient:
         try:
             # Connect DEALER socket
             self.dealer_socket = self.context.socket(zmq.DEALER)
-            self.dealer_socket.connect(f"tcp://{self.server_address}:{self.dealer_port}")
-            logger.info(f"Connected DEALER socket to tcp://{self.server_address}:{self.dealer_port}")
+            self.dealer_socket.connect(
+                f"tcp://{self.server_address}:{self.dealer_port}"
+            )
+            logger.info(
+                f"Connected DEALER socket to tcp://{self.server_address}:{self.dealer_port}"
+            )
 
             # Connect SUB socket
             self.sub_socket = self.context.socket(zmq.SUB)
             self.sub_socket.connect(f"tcp://{self.server_address}:{self.sub_port}")
             self.sub_socket.setsockopt_string(zmq.SUBSCRIBE, self.room_id)
-            logger.info(f"Connected SUB socket to tcp://{self.server_address}:{self.sub_port}")
+            logger.info(
+                f"Connected SUB socket to tcp://{self.server_address}:{self.sub_port}"
+            )
 
             return True
         except Exception as e:
@@ -139,46 +152,48 @@ class TestClient:
 
         # Build transform data
         transform_data = {
-            'deviceId': self.device_id,
-            'physical': {
-                'posX': self.position_x,
-                'posY': 0,
-                'posZ': self.position_z,
-                'rotX': 0,
-                'rotY': self.rotation_y,
-                'rotZ': 0
+            "deviceId": self.device_id,
+            "physical": {
+                "posX": self.position_x,
+                "posY": 0,
+                "posZ": self.position_z,
+                "rotX": 0,
+                "rotY": self.rotation_y,
+                "rotZ": 0,
             },
-            'head': {
-                'posX': self.position_x,
-                'posY': 1.6,  # Head height
-                'posZ': self.position_z,
-                'rotX': 0,
-                'rotY': self.rotation_y,
-                'rotZ': 0
+            "head": {
+                "posX": self.position_x,
+                "posY": 1.6,  # Head height
+                "posZ": self.position_z,
+                "rotX": 0,
+                "rotY": self.rotation_y,
+                "rotZ": 0,
             },
-            'rightHand': {
-                'posX': self.position_x + 0.3,
-                'posY': 1.2,
-                'posZ': self.position_z,
-                'rotX': 0,
-                'rotY': 0,
-                'rotZ': 0
+            "rightHand": {
+                "posX": self.position_x + 0.3,
+                "posY": 1.2,
+                "posZ": self.position_z,
+                "rotX": 0,
+                "rotY": 0,
+                "rotZ": 0,
             },
-            'leftHand': {
-                'posX': self.position_x - 0.3,
-                'posY': 1.2,
-                'posZ': self.position_z,
-                'rotX': 0,
-                'rotY': 0,
-                'rotZ': 0
+            "leftHand": {
+                "posX": self.position_x - 0.3,
+                "posY": 1.2,
+                "posZ": self.position_z,
+                "rotX": 0,
+                "rotY": 0,
+                "rotZ": 0,
             },
-            'virtuals': []  # No virtual objects for this test
+            "virtuals": [],  # No virtual objects for this test
         }
 
         # Serialize and send
         message = serialize_client_transform(transform_data)
-        self.dealer_socket.send_multipart([self.room_id.encode('utf-8'), message])
-        logger.debug(f"Sent transform: pos({self.position_x:.2f}, {self.position_z:.2f}), rot({self.rotation_y:.2f})")
+        self.dealer_socket.send_multipart([self.room_id.encode("utf-8"), message])
+        logger.debug(
+            f"Sent transform: pos({self.position_x:.2f}, {self.position_z:.2f}), rot({self.rotation_y:.2f})"
+        )
 
     def update_network_variables(self):
         """Update network variables every minute"""
@@ -191,26 +206,26 @@ class TestClient:
 
         # Set global variable
         global_var_data = {
-            'senderClientNo': self.client_no or 0,
-            'variableName': 'TimeGlobal',
-            'variableValue': current_time_str,
-            'timestamp': current_time
+            "senderClientNo": self.client_no or 0,
+            "variableName": "TimeGlobal",
+            "variableValue": current_time_str,
+            "timestamp": current_time,
         }
         message = serialize_global_var_set(global_var_data)
-        self.dealer_socket.send_multipart([self.room_id.encode('utf-8'), message])
+        self.dealer_socket.send_multipart([self.room_id.encode("utf-8"), message])
         logger.info(f"Set global variable TimeGlobal = {current_time_str}")
 
         # Set client variable (for self)
         if self.client_no is not None:
             client_var_data = {
-                'senderClientNo': self.client_no,
-                'targetClientNo': self.client_no,  # Set for self
-                'variableName': 'TimeLocal',
-                'variableValue': current_time_str,
-                'timestamp': current_time
+                "senderClientNo": self.client_no,
+                "targetClientNo": self.client_no,  # Set for self
+                "variableName": "TimeLocal",
+                "variableValue": current_time_str,
+                "timestamp": current_time,
             }
             message = serialize_client_var_set(client_var_data)
-            self.dealer_socket.send_multipart([self.room_id.encode('utf-8'), message])
+            self.dealer_socket.send_multipart([self.room_id.encode("utf-8"), message])
             logger.info(f"Set client variable TimeLocal = {current_time_str}")
 
     def send_rpcs(self):
@@ -227,12 +242,12 @@ class TestClient:
 
         # Send RPC
         rpc_data = {
-            'senderClientNo': self.client_no,
-            'functionName': 'TestRPC',
-            'argumentsJson': json.dumps(['TestRPC', current_time_str])
+            "senderClientNo": self.client_no,
+            "functionName": "TestRPC",
+            "argumentsJson": json.dumps(["TestRPC", current_time_str]),
         }
         message = serialize_rpc_message(rpc_data)
-        self.dealer_socket.send_multipart([self.room_id.encode('utf-8'), message])
+        self.dealer_socket.send_multipart([self.room_id.encode("utf-8"), message])
         logger.info(f"Sent RPC: TestRPC({current_time_str})")
 
     def receive_messages(self):
@@ -247,29 +262,39 @@ class TestClient:
                 if self.sub_socket in socks:
                     message_parts = self.sub_socket.recv_multipart()
                     if len(message_parts) >= 2:
-                        room_id = message_parts[0].decode('utf-8')
+                        room_id = message_parts[0].decode("utf-8")
                         data = message_parts[1]
 
                         msg_type, msg_data, _ = deserialize(data)
 
                         if msg_type == MSG_DEVICE_ID_MAPPING:
                             # Update our client number
-                            for mapping in msg_data['mappings']:
-                                if mapping['deviceId'] == self.device_id:
-                                    self.client_no = mapping['clientNo']
-                                    logger.info(f"Received client number: {self.client_no}")
+                            for mapping in msg_data["mappings"]:
+                                if mapping["deviceId"] == self.device_id:
+                                    self.client_no = mapping["clientNo"]
+                                    logger.info(
+                                        f"Received client number: {self.client_no}"
+                                    )
 
                         elif msg_type == MSG_ROOM_TRANSFORM:
-                            logger.debug(f"Received room transform with {len(msg_data['clients'])} clients")
+                            logger.debug(
+                                f"Received room transform with {len(msg_data['clients'])} clients"
+                            )
 
                         elif msg_type == MSG_GLOBAL_VAR_SYNC:
-                            for var in msg_data['variables']:
-                                logger.info(f"Global variable update: {var['name']} = {var['value']} (by client {var['lastWriterClientNo']})")
+                            for var in msg_data["variables"]:
+                                logger.info(
+                                    f"Global variable update: {var['name']} = {var['value']} (by client {var['lastWriterClientNo']})"
+                                )
 
                         elif msg_type == MSG_CLIENT_VAR_SYNC:
-                            for client_no, variables in msg_data['clientVariables'].items():
+                            for client_no, variables in msg_data[
+                                "clientVariables"
+                            ].items():
                                 for var in variables:
-                                    logger.info(f"Client {client_no} variable update: {var['name']} = {var['value']}")
+                                    logger.info(
+                                        f"Client {client_no} variable update: {var['name']} = {var['value']}"
+                                    )
 
                         # RPC messages would be received here
 
@@ -324,14 +349,19 @@ class TestClient:
         finally:
             self.disconnect()
 
+
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description='STYLY-NetSync Test Client')
-    parser.add_argument('--dealer-port', type=int, default=5555, help='Server DEALER port')
-    parser.add_argument('--sub-port', type=int, default=5556, help='Server PUB port')
-    parser.add_argument('--server', type=str, default='localhost', help='Server address')
-    parser.add_argument('--room', type=str, default='test_room', help='Room ID')
+    parser = argparse.ArgumentParser(description="STYLY-NetSync Test Client")
+    parser.add_argument(
+        "--dealer-port", type=int, default=5555, help="Server DEALER port"
+    )
+    parser.add_argument("--sub-port", type=int, default=5556, help="Server PUB port")
+    parser.add_argument(
+        "--server", type=str, default="localhost", help="Server address"
+    )
+    parser.add_argument("--room", type=str, default="test_room", help="Room ID")
 
     args = parser.parse_args()
 
@@ -339,10 +369,11 @@ def main():
         dealer_port=args.dealer_port,
         sub_port=args.sub_port,
         server_address=args.server,
-        room_id=args.room
+        room_id=args.room,
     )
 
     client.run()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

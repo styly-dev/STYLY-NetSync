@@ -392,9 +392,7 @@ class net_sync_manager:
 
                     event = ("global", name, old_value, value)
                     if self._auto_dispatch:
-                        self.on_global_variable_changed.invoke(
-                            name, old_value, value
-                        )
+                        self.on_global_variable_changed.invoke(name, old_value, value)
                     else:
                         try:
                             self._nv_queue.put_nowait(event)
@@ -456,9 +454,7 @@ class net_sync_manager:
         with self._snapshot_lock:
             return self._latest_room_snapshot
 
-    def get_client_transform_data(
-        self, client_no: int
-    ) -> client_transform_data | None:
+    def get_client_transform_data(self, client_no: int) -> client_transform_data | None:
         """Get latest transform for a specific client."""
         snapshot = self.get_room_transform_data()
         if snapshot and client_no in snapshot.clients:
@@ -608,9 +604,7 @@ class net_sync_manager:
                 event = self._nv_queue.get_nowait()
                 if event[0] == "global":
                     _, name, old_value, new_value = event
-                    self.on_global_variable_changed.invoke(
-                        name, old_value, new_value
-                    )
+                    self.on_global_variable_changed.invoke(name, old_value, new_value)
                 elif event[0] == "client":
                     _, client_no, name, old_value, new_value = event
                     self.on_client_variable_changed.invoke(

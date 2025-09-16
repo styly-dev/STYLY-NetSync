@@ -148,20 +148,20 @@ class NetSyncServer:
         self.beacon_socket = None
         self.beacon_thread = None
         self.beacon_running = False
-        
+
         # AppID filtering
         self.allowed_app_ids = set(allowed_app_ids or [])
         self.appid_filter_enabled = bool(self.allowed_app_ids)
-        
+
         # AppID gate statistics
         self.discovery_allowed = 0
         self.discovery_denied = 0
         self.handshake_allowed = 0
-        self.handshake_denied = 0 
+        self.handshake_denied = 0
         self.app_id_missing = 0
         self.last_stats_log = time.monotonic()
-        
-        # Track which clients have completed HELLO handshake 
+
+        # Track which clients have completed HELLO handshake
         self.client_handshake_complete = set()  # Set of client_identity bytes
 
         # Sockets
@@ -267,9 +267,9 @@ class NetSyncServer:
 
     def _check_appid_permission(self, app_id: str) -> bool:
         """AppID gate decision algorithm
-        
+
         Returns True if AppID should be permitted, False otherwise.
-        
+
         Decision logic:
         - If AppID is missing or empty -> deny
         - If allow-list is empty (filter disabled) -> permit
@@ -279,35 +279,39 @@ class NetSyncServer:
         # Missing or empty AppID -> deny
         if not app_id:
             return False
-            
+
         # Filter disabled (empty allow-list) -> permit
         if not self.appid_filter_enabled:
             return True
-            
+
         # Byte-wise equality check
         return app_id in self.allowed_app_ids
 
-    def _handle_hello_handshake(self, client_identity: bytes, data: dict[str, Any]) -> bool:
+    def _handle_hello_handshake(
+        self, client_identity: bytes, data: dict[str, Any]
+    ) -> bool:
         """Handle HELLO handshake message
-        
+
         Returns True if handshake is allowed, False to close connection.
         """
         app_id = data.get("appId", "")
-        
+
         # Validate AppID length (max 128 bytes when encoded)
         try:
             app_id_bytes = app_id.encode("utf-8")
             if len(app_id_bytes) > 128:
-                logger.debug(f"HELLO denied: AppID too long ({len(app_id_bytes)} bytes)")
+                logger.debug(
+                    f"HELLO denied: AppID too long ({len(app_id_bytes)} bytes)"
+                )
                 return False
         except Exception:
-            logger.debug(f"HELLO denied: Invalid AppID encoding")
+            logger.debug("HELLO denied: Invalid AppID encoding")
             return False
-        
+
         # Apply AppID gate decision algorithm
         if not self._check_appid_permission(app_id):
             return False
-            
+
         # Handshake successful
         return True
 
@@ -638,26 +642,36 @@ class NetSyncServer:
                             msg_type, data, raw_payload = binary_serializer.deserialize(
                                 message_bytes
                             )
-                            
+
                             # Check if this client has completed HELLO handshake
                             if client_identity not in self.client_handshake_complete:
                                 # First message must be HELLO
                                 if msg_type == binary_serializer.MSG_HELLO:
-                                    if self._handle_hello_handshake(client_identity, data):
+                                    if self._handle_hello_handshake(
+                                        client_identity, data
+                                    ):
                                         # Handshake successful, mark as complete
-                                        self.client_handshake_complete.add(client_identity)
+                                        self.client_handshake_complete.add(
+                                            client_identity
+                                        )
                                         self.handshake_allowed += 1
-                                        logger.debug(f"HELLO handshake allowed for AppID '{data.get('appId', '')}' from client {client_identity.hex()}")
+                                        logger.debug(
+                                            f"HELLO handshake allowed for AppID '{data.get('appId', '')}' from client {client_identity.hex()}"
+                                        )
                                     else:
                                         # Handshake failed - close connection
                                         self.handshake_denied += 1
-                                        logger.debug(f"HELLO handshake denied for AppID '{data.get('appId', '')}' from client {client_identity.hex()}")
+                                        logger.debug(
+                                            f"HELLO handshake denied for AppID '{data.get('appId', '')}' from client {client_identity.hex()}"
+                                        )
                                         # Close the connection by not processing further messages
                                         continue
                                 else:
                                     # Non-HELLO first message -> deny and close
                                     self.handshake_denied += 1
-                                    logger.debug(f"Handshake denied (first message not HELLO) from client {client_identity.hex()}")
+                                    logger.debug(
+                                        f"Handshake denied (first message not HELLO) from client {client_identity.hex()}"
+                                    )
                                     continue
                             else:
                                 # Client has completed handshake, process normal messages
@@ -667,8 +681,10 @@ class NetSyncServer:
                                     )
                                 elif msg_type == binary_serializer.MSG_RPC:
                                     # Get sender's client number from client identity
-                                    sender_device_id = self._get_device_id_from_identity(
-                                        client_identity, room_id
+                                    sender_device_id = (
+                                        self._get_device_id_from_identity(
+                                            client_identity, room_id
+                                        )
                                     )
                                     if sender_device_id:
                                         sender_client_no = (
@@ -690,15 +706,21 @@ class NetSyncServer:
                                     self._monitor_nv_sliding_window(room_id)
                                 elif msg_type == binary_serializer.MSG_HELLO:
                                     # Ignore duplicate HELLO messages
-                                    logger.debug(f"Ignoring duplicate HELLO from client {client_identity.hex()}")
+                                    logger.debug(
+                                        f"Ignoring duplicate HELLO from client {client_identity.hex()}"
+                                    )
                                 else:
-                                    logger.warning(f"Unknown binary msg_type: {msg_type}")
+                                    logger.warning(
+                                        f"Unknown binary msg_type: {msg_type}"
+                                    )
                         except Exception:
                             # Fallback to JSON for backward compatibility (also requires HELLO first)
                             if client_identity not in self.client_handshake_complete:
                                 # Old clients without HELLO -> deny
                                 self.app_id_missing += 1
-                                logger.debug(f"Handshake denied (old client without HELLO) from client {client_identity.hex()}")
+                                logger.debug(
+                                    f"Handshake denied (old client without HELLO) from client {client_identity.hex()}"
+                                )
                                 continue
                             try:
                                 message = message_bytes.decode("utf-8")
@@ -1337,7 +1359,7 @@ class NetSyncServer:
                         1 for flag in self.room_dirty_flags.values() if flag
                     )
                     total_device_ids = len(self.device_id_last_seen)
-                    
+
                     # Log AppID gate statistics
                     logger.info(
                         f"Status: {len(self.rooms)} rooms, {normal_clients} normal clients, "
@@ -1545,34 +1567,47 @@ class NetSyncServer:
 
                 # Parse new discovery format: STYLY-NETSYNC|discover|appId=<lowercase-appid>|proto=1
                 parts = request.split("|")
-                
-                if len(parts) == 4 and parts[0] == "STYLY-NETSYNC" and parts[1] == "discover" and parts[3] == "proto=1":
+
+                if (
+                    len(parts) == 4
+                    and parts[0] == "STYLY-NETSYNC"
+                    and parts[1] == "discover"
+                    and parts[3] == "proto=1"
+                ):
                     # Extract AppID from appId=<value> format
                     app_id_part = parts[2]
                     if app_id_part.startswith("appId="):
                         app_id = app_id_part[6:]  # Remove "appId=" prefix
-                        
+
                         # Apply AppID gate decision algorithm
                         if self._check_appid_permission(app_id):
                             # Permit: Send response back to requesting client
                             self.beacon_socket.sendto(response_bytes, client_addr)
                             self.discovery_allowed += 1
-                            logger.debug(f"Discovery allowed for AppID '{app_id}' from {client_addr}")
+                            logger.debug(
+                                f"Discovery allowed for AppID '{app_id}' from {client_addr}"
+                            )
                         else:
                             # Deny: Silent drop (no response)
                             self.discovery_denied += 1
-                            logger.debug(f"Discovery denied for AppID '{app_id}' from {client_addr}")
+                            logger.debug(
+                                f"Discovery denied for AppID '{app_id}' from {client_addr}"
+                            )
                     else:
                         # Missing appId field -> deny (silent drop)
                         self.app_id_missing += 1
-                        logger.debug(f"Discovery denied (missing appId) from {client_addr}")
+                        logger.debug(
+                            f"Discovery denied (missing appId) from {client_addr}"
+                        )
                 elif request == "STYLY-NETSYNC-DISCOVER":
                     # Old format -> deny (silent drop) for backward incompatibility
                     self.app_id_missing += 1
                     logger.debug(f"Discovery denied (old format) from {client_addr}")
                 else:
                     # Invalid format -> ignore
-                    logger.debug(f"Invalid discovery request format from {client_addr}: {request}")
+                    logger.debug(
+                        f"Invalid discovery request format from {client_addr}: {request}"
+                    )
 
             except TimeoutError:
                 # Timeout is expected for graceful shutdown
@@ -1653,13 +1688,17 @@ def main():
     else:
         logger.info("  Discovery: Disabled")
     logger.info(f"  NV flush policy: {args.nv_flush_policy}")
-    
+
     # Log AppID configuration
     if args.allowed_app_ids:
-        logger.info(f"  AppID filter: {len(args.allowed_app_ids)} allowed: {args.allowed_app_ids}")
+        logger.info(
+            f"  AppID filter: {len(args.allowed_app_ids)} allowed: {args.allowed_app_ids}"
+        )
     else:
-        logger.info("  AppID filter: disabled (all AppIDs allowed, but new message formats required)")
-    
+        logger.info(
+            "  AppID filter: disabled (all AppIDs allowed, but new message formats required)"
+        )
+
     logger.info("=" * 80)
 
     server = NetSyncServer(
