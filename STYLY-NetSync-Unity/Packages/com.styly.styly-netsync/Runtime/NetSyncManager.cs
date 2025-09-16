@@ -380,6 +380,11 @@ namespace Styly.NetSync
 #else
         private void OnApplicationPause(bool paused)
         {
+#if UNITY_EDITOR
+            // In Unity Editor, don't stop networking on pause to avoid disconnection when clicking outside
+            DebugLog($"[Editor] OnApplicationPause({paused}) - keeping network active");
+            return;
+#endif
             if (paused)
             {
                 DebugLog("Application paused - stopping network");
@@ -412,6 +417,12 @@ namespace Styly.NetSync
                 }
                 return;
             }
+#endif
+
+#if UNITY_EDITOR
+            // In Unity Editor, don't stop networking on focus loss to avoid disconnection when clicking outside
+            DebugLog($"[Editor] OnApplicationFocus({hasFocus}) - keeping network active");
+            return;
 #endif
 
             // Non-Android or flag off: original behavior
