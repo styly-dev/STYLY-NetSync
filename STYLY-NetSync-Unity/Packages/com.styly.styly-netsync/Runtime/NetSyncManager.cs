@@ -327,17 +327,6 @@ namespace Styly.NetSync
         private void OnEnable()
         {
             _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
-            
-#if UNITY_ANDROID
-            // On Android with focus lifecycle, skip starting network if we don't have focus yet
-            // OnApplicationFocus(true) will handle starting the connection when focus is gained
-            if (_androidUseFocusLifecycle && !Application.isFocused)
-            {
-                DebugLog("[Life][Android] OnEnable() - skipping StartNetworking (no focus yet)");
-                return;
-            }
-#endif
-            
             StartNetworking();
         }
 
@@ -416,27 +405,10 @@ namespace Styly.NetSync
                     return;
                 }
 
-                // Foreground: always attempt to start networking if not connected
-                // During startup, we need to ensure connection is attempted even if discovery was started in OnEnable
-                if (_connectionManager != null && !_connectionManager.IsConnected)
+                // Foreground: (re)start only if not connected and not discovering
+                if (_connectionManager != null && !_connectionManager.IsConnected && !_isDiscovering)
                 {
-                    // During startup grace period, always attempt to start networking
-                    // This handles the case where OnEnable started discovery before focus was gained
-                    if (Time.realtimeSinceStartup - _startupTime < StartupGracePeriod)
-                    {
-                        DebugLog("[Life][Android] OnApplicationFocus(true) during startup - ensuring connection attempt");
-                        // Stop any existing discovery that may have been started before focus
-                        if (_isDiscovering)
-                        {
-                            StopDiscovery();
-                        }
-                        StartNetworking();
-                    }
-                    else if (!_isDiscovering)
-                    {
-                        // After startup, only start if not already discovering
-                        StartNetworking();
-                    }
+                    StartNetworking();
                 }
                 return;
             }
