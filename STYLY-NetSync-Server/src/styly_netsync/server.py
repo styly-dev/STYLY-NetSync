@@ -135,6 +135,7 @@ class NetSyncServer:
         beacon_port=9999,
         server_name="STYLY-LBE-Server",
         nv_flush_policy: str = "drain",
+        allowed_app_ids: list[str] = None,
     ):
         self.dealer_port = dealer_port
         self.pub_port = pub_port
@@ -147,6 +148,21 @@ class NetSyncServer:
         self.beacon_socket = None
         self.beacon_thread = None
         self.beacon_running = False
+        
+        # AppID filtering
+        self.allowed_app_ids = set(allowed_app_ids or [])
+        self.appid_filter_enabled = bool(self.allowed_app_ids)
+        
+        # AppID gate statistics
+        self.discovery_allowed = 0
+        self.discovery_denied = 0
+        self.handshake_allowed = 0
+        self.handshake_denied = 0 
+        self.app_id_missing = 0
+        self.last_stats_log = time.monotonic()
+        
+        # Track which clients have completed HELLO handshake 
+        self.client_handshake_complete = set()  # Set of client_identity bytes
 
         # Sockets
         self.router = None
@@ -248,6 +264,52 @@ class NetSyncServer:
         """Thread-safe increment of statistics"""
         with self._stats_lock:
             setattr(self, stat_name, getattr(self, stat_name) + amount)
+
+    def _check_appid_permission(self, app_id: str) -> bool:
+        """AppID gate decision algorithm
+        
+        Returns True if AppID should be permitted, False otherwise.
+        
+        Decision logic:
+        - If AppID is missing or empty -> deny
+        - If allow-list is empty (filter disabled) -> permit
+        - Else, if AppID equals any configured allow-list entry (byte-wise) -> permit
+        - Otherwise -> deny
+        """
+        # Missing or empty AppID -> deny
+        if not app_id:
+            return False
+            
+        # Filter disabled (empty allow-list) -> permit
+        if not self.appid_filter_enabled:
+            return True
+            
+        # Byte-wise equality check
+        return app_id in self.allowed_app_ids
+
+    def _handle_hello_handshake(self, client_identity: bytes, data: dict[str, Any]) -> bool:
+        """Handle HELLO handshake message
+        
+        Returns True if handshake is allowed, False to close connection.
+        """
+        app_id = data.get("appId", "")
+        
+        # Validate AppID length (max 128 bytes when encoded)
+        try:
+            app_id_bytes = app_id.encode("utf-8")
+            if len(app_id_bytes) > 128:
+                logger.debug(f"HELLO denied: AppID too long ({len(app_id_bytes)} bytes)")
+                return False
+        except Exception:
+            logger.debug(f"HELLO denied: Invalid AppID encoding")
+            return False
+        
+        # Apply AppID gate decision algorithm
+        if not self._check_appid_permission(app_id):
+            return False
+            
+        # Handshake successful
+        return True
 
     def _publisher_loop(self):
         """The only place that owns/uses self.pub and performs ZMQ sends."""
@@ -576,37 +638,68 @@ class NetSyncServer:
                             msg_type, data, raw_payload = binary_serializer.deserialize(
                                 message_bytes
                             )
-                            if msg_type == binary_serializer.MSG_CLIENT_TRANSFORM:
-                                self._handle_client_transform(
-                                    client_identity, room_id, data, raw_payload
-                                )
-                            elif msg_type == binary_serializer.MSG_RPC:
-                                # Get sender's client number from client identity
-                                sender_device_id = self._get_device_id_from_identity(
-                                    client_identity, room_id
-                                )
-                                if sender_device_id:
-                                    sender_client_no = (
-                                        self._get_client_no_for_device_id(
-                                            room_id, sender_device_id
-                                        )
-                                    )
-                                    data["senderClientNo"] = sender_client_no
-                                # Send RPC to room excluding sender
-                                self._send_rpc_to_room(room_id, data)
-                            # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
-                            elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
-                                # Buffer global variable set request (no rate limit drops)
-                                self._buffer_global_var_set(room_id, data)
-                                self._monitor_nv_sliding_window(room_id)
-                            elif msg_type == binary_serializer.MSG_CLIENT_VAR_SET:
-                                # Buffer client variable set request (no rate limit drops)
-                                self._buffer_client_var_set(room_id, data)
-                                self._monitor_nv_sliding_window(room_id)
+                            
+                            # Check if this client has completed HELLO handshake
+                            if client_identity not in self.client_handshake_complete:
+                                # First message must be HELLO
+                                if msg_type == binary_serializer.MSG_HELLO:
+                                    if self._handle_hello_handshake(client_identity, data):
+                                        # Handshake successful, mark as complete
+                                        self.client_handshake_complete.add(client_identity)
+                                        self.handshake_allowed += 1
+                                        logger.debug(f"HELLO handshake allowed for AppID '{data.get('appId', '')}' from client {client_identity.hex()}")
+                                    else:
+                                        # Handshake failed - close connection
+                                        self.handshake_denied += 1
+                                        logger.debug(f"HELLO handshake denied for AppID '{data.get('appId', '')}' from client {client_identity.hex()}")
+                                        # Close the connection by not processing further messages
+                                        continue
+                                else:
+                                    # Non-HELLO first message -> deny and close
+                                    self.handshake_denied += 1
+                                    logger.debug(f"Handshake denied (first message not HELLO) from client {client_identity.hex()}")
+                                    continue
                             else:
-                                logger.warning(f"Unknown binary msg_type: {msg_type}")
+                                # Client has completed handshake, process normal messages
+                                if msg_type == binary_serializer.MSG_CLIENT_TRANSFORM:
+                                    self._handle_client_transform(
+                                        client_identity, room_id, data, raw_payload
+                                    )
+                                elif msg_type == binary_serializer.MSG_RPC:
+                                    # Get sender's client number from client identity
+                                    sender_device_id = self._get_device_id_from_identity(
+                                        client_identity, room_id
+                                    )
+                                    if sender_device_id:
+                                        sender_client_no = (
+                                            self._get_client_no_for_device_id(
+                                                room_id, sender_device_id
+                                            )
+                                        )
+                                        data["senderClientNo"] = sender_client_no
+                                    # Send RPC to room excluding sender
+                                    self._send_rpc_to_room(room_id, data)
+                                # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
+                                elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
+                                    # Buffer global variable set request (no rate limit drops)
+                                    self._buffer_global_var_set(room_id, data)
+                                    self._monitor_nv_sliding_window(room_id)
+                                elif msg_type == binary_serializer.MSG_CLIENT_VAR_SET:
+                                    # Buffer client variable set request (no rate limit drops)
+                                    self._buffer_client_var_set(room_id, data)
+                                    self._monitor_nv_sliding_window(room_id)
+                                elif msg_type == binary_serializer.MSG_HELLO:
+                                    # Ignore duplicate HELLO messages
+                                    logger.debug(f"Ignoring duplicate HELLO from client {client_identity.hex()}")
+                                else:
+                                    logger.warning(f"Unknown binary msg_type: {msg_type}")
                         except Exception:
-                            # Fallback to JSON for backward compatibility
+                            # Fallback to JSON for backward compatibility (also requires HELLO first)
+                            if client_identity not in self.client_handshake_complete:
+                                # Old clients without HELLO -> deny
+                                self.app_id_missing += 1
+                                logger.debug(f"Handshake denied (old client without HELLO) from client {client_identity.hex()}")
+                                continue
                             try:
                                 message = message_bytes.decode("utf-8")
                                 self._process_message(client_identity, room_id, message)
@@ -1244,10 +1337,17 @@ class NetSyncServer:
                         1 for flag in self.room_dirty_flags.values() if flag
                     )
                     total_device_ids = len(self.device_id_last_seen)
+                    
+                    # Log AppID gate statistics
                     logger.info(
                         f"Status: {len(self.rooms)} rooms, {normal_clients} normal clients, "
                         f"{stealth_clients} stealth clients, "
                         f"{dirty_rooms} dirty rooms, {total_device_ids} tracked device IDs"
+                    )
+                    logger.info(
+                        f"AppID Stats: discovery_allowed={self.discovery_allowed}, "
+                        f"discovery_denied={self.discovery_denied}, handshake_allowed={self.handshake_allowed}, "
+                        f"handshake_denied={self.handshake_denied}, app_id_missing={self.app_id_missing}"
                     )
                     last_log = current_time
 
@@ -1430,7 +1530,7 @@ class NetSyncServer:
         logger.info("Stopped discovery service")
 
     def _beacon_loop(self):
-        """Discovery service loop - responds to client discovery requests"""
+        """Discovery service loop - responds to client discovery requests with AppID filtering"""
         # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName
         response = (
             f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}"
@@ -1443,11 +1543,36 @@ class NetSyncServer:
                 data, client_addr = self.beacon_socket.recvfrom(1024)
                 request = data.decode("utf-8")
 
-                # Validate request format
-                if request == "STYLY-NETSYNC-DISCOVER":
-                    # Send response back to requesting client
-                    self.beacon_socket.sendto(response_bytes, client_addr)
-                    logger.debug(f"Responded to discovery request from {client_addr}")
+                # Parse new discovery format: STYLY-NETSYNC|discover|appId=<lowercase-appid>|proto=1
+                parts = request.split("|")
+                
+                if len(parts) == 4 and parts[0] == "STYLY-NETSYNC" and parts[1] == "discover" and parts[3] == "proto=1":
+                    # Extract AppID from appId=<value> format
+                    app_id_part = parts[2]
+                    if app_id_part.startswith("appId="):
+                        app_id = app_id_part[6:]  # Remove "appId=" prefix
+                        
+                        # Apply AppID gate decision algorithm
+                        if self._check_appid_permission(app_id):
+                            # Permit: Send response back to requesting client
+                            self.beacon_socket.sendto(response_bytes, client_addr)
+                            self.discovery_allowed += 1
+                            logger.debug(f"Discovery allowed for AppID '{app_id}' from {client_addr}")
+                        else:
+                            # Deny: Silent drop (no response)
+                            self.discovery_denied += 1
+                            logger.debug(f"Discovery denied for AppID '{app_id}' from {client_addr}")
+                    else:
+                        # Missing appId field -> deny (silent drop)
+                        self.app_id_missing += 1
+                        logger.debug(f"Discovery denied (missing appId) from {client_addr}")
+                elif request == "STYLY-NETSYNC-DISCOVER":
+                    # Old format -> deny (silent drop) for backward incompatibility
+                    self.app_id_missing += 1
+                    logger.debug(f"Discovery denied (old format) from {client_addr}")
+                else:
+                    # Invalid format -> ignore
+                    logger.debug(f"Invalid discovery request format from {client_addr}: {request}")
 
             except TimeoutError:
                 # Timeout is expected for graceful shutdown
@@ -1493,6 +1618,12 @@ def main():
         "--no-beacon", action="store_true", help="Disable beacon discovery"
     )
     parser.add_argument(
+        "--allow-app-id",
+        action="append",
+        dest="allowed_app_ids",
+        help="Allow specific AppID for discovery and handshake (repeatable, should be lowercase). If not specified, all AppIDs are allowed but new message formats are still required.",
+    )
+    parser.add_argument(
         "--nv-flush-policy",
         choices=["drain", "rate_limited"],
         default="drain",
@@ -1522,6 +1653,13 @@ def main():
     else:
         logger.info("  Discovery: Disabled")
     logger.info(f"  NV flush policy: {args.nv_flush_policy}")
+    
+    # Log AppID configuration
+    if args.allowed_app_ids:
+        logger.info(f"  AppID filter: {len(args.allowed_app_ids)} allowed: {args.allowed_app_ids}")
+    else:
+        logger.info("  AppID filter: disabled (all AppIDs allowed, but new message formats required)")
+    
     logger.info("=" * 80)
 
     server = NetSyncServer(
@@ -1531,6 +1669,7 @@ def main():
         beacon_port=args.beacon_port,
         server_name=args.name,
         nv_flush_policy=args.nv_flush_policy,
+        allowed_app_ids=args.allowed_app_ids or [],
     )
 
     try:

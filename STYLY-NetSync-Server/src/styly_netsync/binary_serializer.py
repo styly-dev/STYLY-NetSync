@@ -13,6 +13,7 @@ MSG_GLOBAL_VAR_SET = 7  # Set global variable
 MSG_GLOBAL_VAR_SYNC = 8  # Sync global variables
 MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
+MSG_HELLO = 11  # AppID handshake message
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -384,7 +385,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_CLIENT_VAR_SYNC:
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_HELLO:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -412,6 +413,8 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_set(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_SYNC:
             return message_type, _deserialize_client_var_sync(data, offset), b""
+        elif message_type == MSG_HELLO:
+            return message_type, _deserialize_hello(data, offset), b""
         else:
             # Should not reach here due to validation above
             return message_type, None, b""
@@ -637,4 +640,66 @@ def _deserialize_client_var_sync(data: bytes, offset: int) -> dict[str, Any]:
 
         result["clientVariables"][str(client_no)] = variables
 
+    return result
+
+
+def serialize_hello(app_id: str, device_id: str = "") -> bytes:
+    """Serialize HELLO message for AppID handshake
+    
+    Binary format:
+    [0]     : MSG_HELLO (0x0B)
+    [1]     : appIdLen (uint8, 0..128)
+    [2..]   : appId (appIdLen bytes, lowercase ASCII/UTF-8)
+    [next]  : deviceIdLen (uint8, 0..64)
+    [next..]: deviceId (deviceIdLen bytes)
+    """
+    buffer = bytearray()
+    buffer.append(MSG_HELLO)
+    
+    # AppID (required, max 128 bytes)
+    app_id_bytes = app_id.encode("utf-8")
+    if len(app_id_bytes) > 128:
+        raise ValueError(f"AppID too long: {len(app_id_bytes)} bytes (max 128)")
+    buffer.append(len(app_id_bytes))
+    buffer.extend(app_id_bytes)
+    
+    # DeviceID (optional, max 64 bytes) 
+    device_id_bytes = device_id.encode("utf-8") if device_id else b""
+    if len(device_id_bytes) > 64:
+        raise ValueError(f"DeviceID too long: {len(device_id_bytes)} bytes (max 64)")
+    buffer.append(len(device_id_bytes))
+    buffer.extend(device_id_bytes)
+    
+    return bytes(buffer)
+
+
+def _deserialize_hello(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize HELLO message from binary data"""
+    result = {}
+    
+    # AppID length and data
+    if offset >= len(data):
+        raise ValueError("Incomplete HELLO message: missing appIdLen")
+    app_id_len = data[offset]
+    offset += 1
+    
+    if offset + app_id_len > len(data):
+        raise ValueError("Incomplete HELLO message: truncated appId")
+    app_id = data[offset : offset + app_id_len].decode("utf-8")
+    offset += app_id_len
+    result["appId"] = app_id
+    
+    # DeviceID length and data (optional)
+    if offset >= len(data):
+        result["deviceId"] = ""
+        return result
+        
+    device_id_len = data[offset]
+    offset += 1
+    
+    if offset + device_id_len > len(data):
+        raise ValueError("Incomplete HELLO message: truncated deviceId")
+    device_id = data[offset : offset + device_id_len].decode("utf-8")
+    result["deviceId"] = device_id
+    
     return result
