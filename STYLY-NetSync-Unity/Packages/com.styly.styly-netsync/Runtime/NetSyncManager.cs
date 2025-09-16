@@ -1,6 +1,7 @@
 // NetSyncManager.cs
 using System;
 using System.Collections.Generic;
+using NetMQ;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
