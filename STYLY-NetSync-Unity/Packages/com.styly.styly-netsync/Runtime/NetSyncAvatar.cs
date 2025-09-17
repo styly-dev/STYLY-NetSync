@@ -280,7 +280,7 @@ namespace Styly.NetSync
         /// </summary>
         public bool SetClientVariable(string name, string value)
         {
-            return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(_clientNo, name, value) : false;
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(name, value, _clientNo) : false;
         }
 
         /// <summary>
@@ -288,23 +288,23 @@ namespace Styly.NetSync
         /// </summary>
         public string GetClientVariable(string name, string defaultValue = null)
         {
-            return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(_clientNo, name, defaultValue) : defaultValue;
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(name, _clientNo, defaultValue) : defaultValue;
         }
 
         /// <summary>
         /// Set a client variable for a specific client
         /// </summary>
-        public bool SetClientVariable(int targetClientNo, string name, string value)
+        public bool SetClientVariable(string name, string value, int targetClientNo)
         {
-            return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(targetClientNo, name, value) : false;
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(name, value, targetClientNo) : false;
         }
 
         /// <summary>
         /// Get a client variable for a specific client
         /// </summary>
-        public string GetClientVariable(int clientNo, string name, string defaultValue = null)
+        public string GetClientVariable(string name, int clientNo, string defaultValue = null)
         {
-            return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(clientNo, name, defaultValue) : defaultValue;
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(name, clientNo, defaultValue) : defaultValue;
         }
         #endregion
     }
