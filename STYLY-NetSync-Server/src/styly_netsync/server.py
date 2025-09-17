@@ -102,7 +102,7 @@ def get_version() -> str:
                         return True
             return False
         except im.PackageNotFoundError:
-            return True  # If not found in metadata, likely development mode
+            return False  # If not found in metadata, not development mode
 
     # 1) For development mode, prioritize pyproject.toml
     if is_development_mode():
@@ -114,7 +114,7 @@ def get_version() -> str:
                     v = (data.get("project") or {}).get("version")
                     if v:
                         return v
-                except Exception:
+                except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError):
                     # Continue to next fallback if TOML parsing fails
                     pass
                 break
@@ -139,7 +139,7 @@ def get_version() -> str:
                 v = (data.get("project") or {}).get("version")
                 if v:
                     return v
-            except Exception:
+            except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError):
                 pass
             break
 
