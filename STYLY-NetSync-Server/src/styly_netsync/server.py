@@ -1448,16 +1448,12 @@ class NetSyncServer:
                 # Validate request format: require STYLY-NETSYNC-DISCOVER|<appid>
                 if request.startswith("STYLY-NETSYNC-DISCOVER|"):
                     app_id = request.split("|", 1)[1].strip()
-                    # Enforce lowercase per protocol; ignore non-lowercase appId
-                    if app_id and app_id != app_id.lower():
-                        logger.debug(f"Ignored discovery with non-lowercase appId from {client_addr}")
+                    # Compare as-is (case-sensitive). No transformation.
+                    if self.allowed_app_ids is None or app_id in self.allowed_app_ids:
+                        self.beacon_socket.sendto(response_bytes, client_addr)
+                        logger.debug(f"Responded to discovery request from {client_addr}")
                     else:
-                        # Filter if allow-list present
-                        if self.allowed_app_ids is None or app_id in self.allowed_app_ids:
-                            self.beacon_socket.sendto(response_bytes, client_addr)
-                            logger.debug(f"Responded to discovery request from {client_addr}")
-                        else:
-                            logger.debug(f"Ignored discovery from {client_addr} with appId='{app_id}' (not allowed)")
+                        logger.debug(f"Ignored discovery from {client_addr} with appId='{app_id}' (not allowed)")
                 # else ignore silently (old clients without appId)
 
             except TimeoutError:
@@ -1513,7 +1509,7 @@ def main():
         "--allow-app-id",
         action="append",
         default=None,
-        help="Allowed Application.identifier (lowercase). Repeatable. If absent, filter is disabled.",
+        help="Allowed Application.identifier values. Repeatable. Case-sensitive match. If absent, filter is disabled.",
     )
     parser.add_argument(
         "-V",
@@ -1524,13 +1520,6 @@ def main():
     )
 
     args = parser.parse_args()
-
-    # Validate --allow-app-id values must be lowercase
-    if args.allow_app_id is not None:
-        for v in args.allow_app_id:
-            if v != v.lower():
-                logger.error(f"--allow-app-id values must be lowercase: '{v}'")
-                sys.exit(2)
 
     display_logo()
 

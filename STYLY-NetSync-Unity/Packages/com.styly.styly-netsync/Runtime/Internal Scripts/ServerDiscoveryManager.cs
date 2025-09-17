@@ -42,8 +42,9 @@ namespace Styly.NetSync
                 _discoveryClient.Client.ReceiveTimeout = 500; // 500ms timeout for responses
 
                 // Start discovery thread that sends requests and waits for responses
-                var appId = (Application.identifier ?? string.Empty).ToLowerInvariant();
+                var appId = Application.identifier ?? string.Empty;
                 var discoveryMessage = Encoding.UTF8.GetBytes($"STYLY-NETSYNC-DISCOVER|{appId}");
+                DebugLog($"appId (Application.identifier): '{appId}'");
                 _discoveryThread = new Thread(() =>
                 {
                     var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, BeaconPort);
