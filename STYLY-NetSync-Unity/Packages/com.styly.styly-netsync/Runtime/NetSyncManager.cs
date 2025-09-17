@@ -328,6 +328,9 @@ namespace Styly.NetSync
 
         private void OnApplicationPause(bool paused)
         {
+            // This is a wourkaround to ignore initial pause for ANdroid devices
+            if (Time.time < 1) { return; }
+
             if (paused)
             {
                 DebugLog("Application paused - stopping network");
@@ -836,7 +839,7 @@ namespace Styly.NetSync
             {
                 // Full local->world for position
                 worldPos = parent.TransformPoint(position);
-                
+
                 // Yaw-only in local space, then compose with parent's rotation to get world yaw
                 var localYaw = Quaternion.Euler(0f, eulerRotation.y, 0f);
                 var worldYaw = parent.rotation * localYaw;
