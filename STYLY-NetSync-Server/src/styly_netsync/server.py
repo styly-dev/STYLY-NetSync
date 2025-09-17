@@ -167,7 +167,7 @@ class NetSyncServer:
         pub_port=5556,
         enable_beacon=True,
         beacon_port=9999,
-        server_name="STYLY-LBE-Server",
+        server_name="STYLY-NetSync-Server",
         allowed_app_ids: list[str] | None = None,
         nv_flush_policy: str = "drain",
     ):
