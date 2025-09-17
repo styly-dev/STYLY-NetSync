@@ -75,6 +75,13 @@ logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_DEALER_PORT = 5555
+DEFAULT_PUB_PORT = 5556
+DEFAULT_BEACON_PORT = 9999
+DEFAULT_SERVER_NAME = "STYLY-NetSync-Server"
+DEFAULT_NV_FLUSH_POLICY = "drain"
+
+
 @lru_cache(maxsize=1)
 def get_version() -> str:
     """
@@ -163,13 +170,13 @@ class NetSyncServer:
 
     def __init__(
         self,
-        dealer_port=5555,
-        pub_port=5556,
-        enable_beacon=True,
-        beacon_port=9999,
-        server_name="STYLY-NetSync-Server",
+        dealer_port: int = DEFAULT_DEALER_PORT,
+        pub_port: int = DEFAULT_PUB_PORT,
+        enable_beacon: bool = True,
+        beacon_port: int = DEFAULT_BEACON_PORT,
+        server_name: str = DEFAULT_SERVER_NAME,
         allowed_app_ids: list[str] | None = None,
-        nv_flush_policy: str = "drain",
+        nv_flush_policy: str = DEFAULT_NV_FLUSH_POLICY,
     ):
         self.dealer_port = dealer_port
         self.pub_port = pub_port
@@ -1529,12 +1536,12 @@ def main():
 
     args = parser.parse_args()
 
-    # Set default values directly (previously from argparse)
-    dealer_port = 5555
-    pub_port = 5556
-    beacon_port = 9999
-    server_name = "STYLY-NetSync-Server"
-    nv_flush_policy = "drain"
+    # Set default values from module constants (previously from argparse)
+    dealer_port = DEFAULT_DEALER_PORT
+    pub_port = DEFAULT_PUB_PORT
+    beacon_port = DEFAULT_BEACON_PORT
+    server_name = DEFAULT_SERVER_NAME
+    nv_flush_policy = DEFAULT_NV_FLUSH_POLICY
 
     display_logo()
 
