@@ -79,16 +79,47 @@ logger = logging.getLogger(__name__)
 def get_version() -> str:
     """
     Return the server version.
-    Priority:
-      1) importlib.metadata for 'styly-netsync-server' (when installed)
-      2) parse nearest pyproject.toml (when running from source)
+    Priority (updated for development mode support):
+      1) parse pyproject.toml if in development mode (editable install)
+      2) importlib.metadata for 'styly-netsync-server' (when installed normally)
       3) 'unknown'
     """
     # Python 3.11+ guaranteed, so we can use these imports directly
     import importlib.metadata as im
     import tomllib
 
-    # 1) Try installed package metadata first
+    # Helper function to detect development mode
+    def is_development_mode() -> bool:
+        """Detect if package is installed in development mode (pip install -e .)"""
+        try:
+            dist = im.distribution("styly-netsync-server")
+            # Development installs typically have .egg-link or direct path references
+            if hasattr(dist, 'files') and dist.files:
+                # Check if any file path contains 'site-packages' - normal install
+                # vs direct source paths - development install
+                for file in list(dist.files)[:5]:  # Check first few files
+                    if file and 'site-packages' not in str(file):
+                        return True
+            return False
+        except im.PackageNotFoundError:
+            return False  # If not found in metadata, not development mode
+
+    # 1) For development mode, prioritize pyproject.toml
+    if is_development_mode():
+        for parent in Path(__file__).resolve().parents:
+            toml_path = parent / "pyproject.toml"
+            if toml_path.exists():
+                try:
+                    data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+                    v = (data.get("project") or {}).get("version")
+                    if v:
+                        return v
+                except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError):
+                    # Continue to next fallback if TOML parsing fails
+                    pass
+                break
+
+    # 2) Try installed package metadata
     try:
         return im.version("styly-netsync-server")
     except im.PackageNotFoundError:
@@ -99,14 +130,17 @@ def get_version() -> str:
             except im.PackageNotFoundError:
                 pass
 
-    # 2) Source execution fallback - parse pyproject.toml properly
+    # 3) Final fallback - parse pyproject.toml (for cases where dev mode detection failed)
     for parent in Path(__file__).resolve().parents:
         toml_path = parent / "pyproject.toml"
         if toml_path.exists():
-            data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
-            v = (data.get("project") or {}).get("version")
-            if v:
-                return v
+            try:
+                data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+                v = (data.get("project") or {}).get("version")
+                if v:
+                    return v
+            except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError):
+                pass
             break
 
     return "unknown"
