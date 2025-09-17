@@ -75,6 +75,13 @@ logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger(__name__)
 
 
+DEFAULT_DEALER_PORT = 5555
+DEFAULT_PUB_PORT = 5556
+DEFAULT_BEACON_PORT = 9999
+DEFAULT_SERVER_NAME = "STYLY-NetSync-Server"
+DEFAULT_NV_FLUSH_POLICY = "drain"
+
+
 @lru_cache(maxsize=1)
 def get_version() -> str:
     """
@@ -163,13 +170,13 @@ class NetSyncServer:
 
     def __init__(
         self,
-        dealer_port=5555,
-        pub_port=5556,
-        enable_beacon=True,
-        beacon_port=9999,
-        server_name="STYLY-LBE-Server",
+        dealer_port: int = DEFAULT_DEALER_PORT,
+        pub_port: int = DEFAULT_PUB_PORT,
+        enable_beacon: bool = True,
+        beacon_port: int = DEFAULT_BEACON_PORT,
+        server_name: str = DEFAULT_SERVER_NAME,
         allowed_app_ids: list[str] | None = None,
-        nv_flush_policy: str = "drain",
+        nv_flush_policy: str = DEFAULT_NV_FLUSH_POLICY,
     ):
         self.dealer_port = dealer_port
         self.pub_port = pub_port
@@ -1511,33 +1518,7 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
 def main():
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
-        "--dealer-port",
-        type=int,
-        default=5555,
-        help="Port for DEALER socket (default: 5555)",
-    )
-    parser.add_argument(
-        "--pub-port", type=int, default=5556, help="Port for PUB socket (default: 5556)"
-    )
-    parser.add_argument(
-        "--beacon-port",
-        type=int,
-        default=9999,
-        help="Port for UDP beacon discovery (default: 9999)",
-    )
-    parser.add_argument(
-        "--name",
-        default="STYLY-NetSync-Server",
-        help="Server name for discovery (default: STYLY-NetSync-Server)",
-    )
-    parser.add_argument(
         "--no-beacon", action="store_true", help="Disable beacon discovery"
-    )
-    parser.add_argument(
-        "--nv-flush-policy",
-        choices=["drain", "rate_limited"],
-        default="drain",
-        help="Network variable flush policy (default: drain)",
     )
     parser.add_argument(
         "--allow-app-id",
@@ -1555,17 +1536,24 @@ def main():
 
     args = parser.parse_args()
 
+    # Set default values from module constants (previously from argparse)
+    dealer_port = DEFAULT_DEALER_PORT
+    pub_port = DEFAULT_PUB_PORT
+    beacon_port = DEFAULT_BEACON_PORT
+    server_name = DEFAULT_SERVER_NAME
+    nv_flush_policy = DEFAULT_NV_FLUSH_POLICY
+
     display_logo()
 
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
     logger.info("=" * 80)
     logger.info(f"  Version: {get_version()}")
-    logger.info(f"  DEALER port: {args.dealer_port}")
-    logger.info(f"  PUB port: {args.pub_port}")
+    logger.info(f"  DEALER port: {dealer_port}")
+    logger.info(f"  PUB port: {pub_port}")
     if not args.no_beacon:
-        logger.info(f"  Beacon port: {args.beacon_port}")
-        logger.info(f"  Server name: {args.name}")
+        logger.info(f"  Beacon port: {beacon_port}")
+        logger.info(f"  Server name: {server_name}")
     else:
         logger.info("  Discovery: Disabled")
     # AppID filter info
@@ -1573,17 +1561,17 @@ def main():
         logger.info("  AppID filter: Disabled (accept all AppIDs)")
     else:
         logger.info(f"  Allowed AppIDs: {', '.join(args.allow_app_id)}")
-    logger.info(f"  NV flush policy: {args.nv_flush_policy}")
+    logger.info(f"  NV flush policy: {nv_flush_policy}")
     logger.info("=" * 80)
 
     server = NetSyncServer(
-        dealer_port=args.dealer_port,
-        pub_port=args.pub_port,
+        dealer_port=dealer_port,
+        pub_port=pub_port,
         enable_beacon=not args.no_beacon,
-        beacon_port=args.beacon_port,
-        server_name=args.name,
+        beacon_port=beacon_port,
+        server_name=server_name,
         allowed_app_ids=args.allow_app_id,
-        nv_flush_policy=args.nv_flush_policy,
+        nv_flush_policy=nv_flush_policy,
     )
 
     try:
