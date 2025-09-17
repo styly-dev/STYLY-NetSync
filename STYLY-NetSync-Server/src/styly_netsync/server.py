@@ -1448,16 +1448,16 @@ class NetSyncServer:
                 # Validate request format: require STYLY-NETSYNC-DISCOVER|<appid>
                 if request.startswith("STYLY-NETSYNC-DISCOVER|"):
                     app_id = request.split("|", 1)[1].strip()
-                    # Accept lowercase (including empty) app_id; compare as-is
-                    if app_id == app_id.lower():
+                    # Enforce lowercase per protocol; ignore non-lowercase appId
+                    if app_id and app_id != app_id.lower():
+                        logger.debug(f"Ignored discovery with non-lowercase appId from {client_addr}")
+                    else:
                         # Filter if allow-list present
                         if self.allowed_app_ids is None or app_id in self.allowed_app_ids:
                             self.beacon_socket.sendto(response_bytes, client_addr)
                             logger.debug(f"Responded to discovery request from {client_addr}")
                         else:
                             logger.debug(f"Ignored discovery from {client_addr} with appId='{app_id}' (not allowed)")
-                    else:
-                        logger.debug(f"Ignored discovery with invalid appId format from {client_addr}")
                 # else ignore silently (old clients without appId)
 
             except TimeoutError:
