@@ -134,6 +134,7 @@ class NetSyncServer:
         enable_beacon=True,
         beacon_port=9999,
         server_name="STYLY-LBE-Server",
+        allowed_app_ids: list[str] | None = None,
         nv_flush_policy: str = "drain",
     ):
         self.dealer_port = dealer_port
@@ -144,6 +145,7 @@ class NetSyncServer:
         self.enable_beacon = enable_beacon
         self.beacon_port = beacon_port
         self.server_name = server_name
+        self.allowed_app_ids = allowed_app_ids
         self.beacon_socket = None
         self.beacon_thread = None
         self.beacon_running = False
@@ -1443,11 +1445,16 @@ class NetSyncServer:
                 data, client_addr = self.beacon_socket.recvfrom(1024)
                 request = data.decode("utf-8")
 
-                # Validate request format
-                if request == "STYLY-NETSYNC-DISCOVER":
-                    # Send response back to requesting client
-                    self.beacon_socket.sendto(response_bytes, client_addr)
-                    logger.debug(f"Responded to discovery request from {client_addr}")
+                # Validate request format: require STYLY-NETSYNC-DISCOVER|<appid>
+                if request.startswith("STYLY-NETSYNC-DISCOVER|"):
+                    app_id = request.split("|", 1)[1].strip()
+                    # Compare as-is (case-sensitive). No transformation.
+                    if self.allowed_app_ids is None or app_id in self.allowed_app_ids:
+                        self.beacon_socket.sendto(response_bytes, client_addr)
+                        logger.debug(f"Responded to discovery request from {client_addr}")
+                    else:
+                        logger.debug(f"Ignored discovery from {client_addr} with appId='{app_id}' (not allowed)")
+                # else ignore silently (old clients without appId)
 
             except TimeoutError:
                 # Timeout is expected for graceful shutdown
@@ -1499,6 +1506,12 @@ def main():
         help="Network variable flush policy (default: drain)",
     )
     parser.add_argument(
+        "--allow-app-id",
+        action="append",
+        default=None,
+        help="Allowed Application.identifier values. Repeatable. Case-sensitive match. If absent, filter is disabled.",
+    )
+    parser.add_argument(
         "-V",
         "--version",
         action="version",
@@ -1521,6 +1534,11 @@ def main():
         logger.info(f"  Server name: {args.name}")
     else:
         logger.info("  Discovery: Disabled")
+    # AppID filter info
+    if args.allow_app_id is None:
+        logger.info("  AppID filter: Disabled (accept all AppIDs)")
+    else:
+        logger.info(f"  Allowed AppIDs: {', '.join(args.allow_app_id)}")
     logger.info(f"  NV flush policy: {args.nv_flush_policy}")
     logger.info("=" * 80)
 
@@ -1530,6 +1548,7 @@ def main():
         enable_beacon=not args.no_beacon,
         beacon_port=args.beacon_port,
         server_name=args.name,
+        allowed_app_ids=args.allow_app_id,
         nv_flush_policy=args.nv_flush_policy,
     )
 
