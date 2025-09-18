@@ -11,6 +11,9 @@ from typing import Optional
 class BenchmarkConfig:
     """Configuration for STYLY NetSync benchmark tests."""
     
+    # Client implementation type
+    client_type: str = "raw_zmq"  # "raw_zmq" or "netsync_manager"
+    
     # Server connection settings
     server_address: str = "localhost"
     dealer_port: int = 5555
@@ -41,6 +44,7 @@ class BenchmarkConfig:
     def from_env(cls) -> "BenchmarkConfig":
         """Create configuration from environment variables."""
         return cls(
+            client_type=os.getenv("STYLY_CLIENT_TYPE", "raw_zmq"),
             server_address=os.getenv("STYLY_SERVER_ADDRESS", "localhost"),
             dealer_port=int(os.getenv("STYLY_DEALER_PORT", "5555")),
             sub_port=int(os.getenv("STYLY_SUB_PORT", "5556")),

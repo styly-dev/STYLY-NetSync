@@ -65,6 +65,7 @@ STYLY_SERVER_ADDRESS=192.168.1.100 STYLY_ROOM_ID=load_test uv run locust -f locu
 
 | 変数 | 説明 |
 |------|------|
+| `STYLY_CLIENT_TYPE` | クライアント実装タイプ (`raw_zmq` または `netsync_manager`) |
 | `STYLY_SERVER_ADDRESS` | サーバーアドレス |
 | `STYLY_DEALER_PORT` | DEALERソケットポート |
 | `STYLY_SUB_PORT` | SUBソケットポート |
@@ -77,13 +78,40 @@ STYLY_SERVER_ADDRESS=192.168.1.100 STYLY_ROOM_ID=load_test uv run locust -f locu
 
 **注意**: デフォルト値については `benchmark_config.py` を参照してください。設定値は定期的に調整される場合があります。
 
+### クライアント実装の選択
+
+ベンチマークには2つのクライアント実装があります：
+
+1. **`raw_zmq`** (デフォルト): 直接ZeroMQソケットを使用する低レベル実装
+2. **`netsync_manager`**: `styly_netsync.client.net_sync_manager`クラスを使用する高レベル実装
+
+#### 環境変数で指定
+```bash
+export STYLY_CLIENT_TYPE=netsync_manager
+uv run locust -f locustfile.py --host=tcp://localhost:5555
+```
+
+#### コマンドライン引数で指定
+```bash
+uv run locust -f locustfile.py --host=tcp://localhost:5555 --styly-client-type=netsync_manager
+```
+
 ### 設定例
 
+#### 高頻度テストと詳細ログ（Raw ZMQ実装）
 ```bash
-# 高頻度テストと詳細ログ
+export STYLY_CLIENT_TYPE=raw_zmq
 export STYLY_TRANSFORM_RATE=100.0
 export STYLY_RPC_PER_TRANSFORMS=6
 export STYLY_DETAILED_LOGGING=true
+
+uv run locust -f locustfile.py --host=tcp://localhost:5555
+```
+
+#### NetSync Manager実装でのテスト
+```bash
+export STYLY_CLIENT_TYPE=netsync_manager
+export STYLY_TRANSFORM_RATE=50.0
 
 uv run locust -f locustfile.py --host=tcp://localhost:5555
 ```

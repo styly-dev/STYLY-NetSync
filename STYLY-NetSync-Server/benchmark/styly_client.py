@@ -1,9 +1,9 @@
 """
-STYLY NetSync client implementation for Locust benchmarking.
+Raw ZeroMQ client implementation for STYLY NetSync benchmarking.
 
-This module provides a ZeroMQ-based client that communicates with the STYLY NetSync server
-and integrates with Locust for load testing. It includes transform synchronization,
-network variables, and RPC functionality with comprehensive metrics collection.
+This module provides a ZeroMQ-based client that communicates directly with the STYLY NetSync server
+using the binary protocol. It includes transform synchronization, network variables, and RPC
+functionality with comprehensive metrics collection.
 """
 
 import json
@@ -33,16 +33,17 @@ from styly_netsync.binary_serializer import (
 
 from benchmark_config import config
 from metrics_collector import MetricsCollector
+from client_interface import INetSyncClient
 
 logger = logging.getLogger(__name__)
 
 
-class STYLYNetSyncClient:
+class RawZMQClient(INetSyncClient):
     """
-    STYLY NetSync client for Locust benchmarking.
+    Raw ZeroMQ implementation of the NetSync client interface.
     
-    This client simulates a VR/MR user in a STYLY NetSync session, sending transform
-    updates, network variables, and RPC messages while measuring performance metrics.
+    This client communicates directly with the STYLY NetSync server using ZeroMQ sockets
+    and the binary protocol, without using the styly_netsync package.
     """
     
     def __init__(self, user_id: Optional[str] = None, metrics_collector: Optional[MetricsCollector] = None):
@@ -87,7 +88,7 @@ class STYLYNetSyncClient:
         self.on_transform_received = None
         self.on_rpc_response_received = None  # Callback for RPC response latency recording
         
-        logger.info(f"STYLYNetSyncClient initialized: user_id={self.user_id}, device_id={self.device_id[:8]}...")
+        logger.info(f"RawZMQClient initialized: user_id={self.user_id}, device_id={self.device_id[:8]}...")
     
     def connect(self) -> bool:
         """Connect to the STYLY NetSync server."""

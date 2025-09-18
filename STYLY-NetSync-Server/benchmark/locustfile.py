@@ -32,7 +32,8 @@ from typing import Any, Dict
 from locust import User, task, events, constant_pacing
 from locust.exception import StopUser
 
-from styly_client import STYLYNetSyncClient
+from client_interface import INetSyncClient
+from client_factory import ClientFactory, ClientType
 from metrics_collector import MetricsCollector
 from benchmark_config import config
 
@@ -46,6 +47,7 @@ global_metrics = MetricsCollector()
 def on_locust_init(environment, **kwargs):
     """Initialize benchmark environment."""
     logger.info("=== STYLY NetSync Benchmark Starting ===")
+    logger.info(f"Client Type: {config.client_type}")
     logger.info(f"Server: {config.server_address}:{config.dealer_port}")
     logger.info(f"Room: {config.room_id}")
     logger.info("=" * 50)
@@ -187,8 +189,12 @@ class STYLYNetSyncUser(User):
     def on_start(self):
         """Called when a user starts."""
         try:
-            # Create STYLY client with shared metrics collector
-            self.client = STYLYNetSyncClient(
+            # Determine client type from configuration
+            client_type = ClientType.from_string(config.client_type)
+            
+            # Create client using factory with shared metrics collector
+            self.client = ClientFactory.create_client(
+                client_type=client_type,
                 user_id=self.user_id,
                 metrics_collector=global_metrics
             )
@@ -401,6 +407,12 @@ def _(parser):
     parser.add_argument("--styly-export-metrics", type=str,
                        help="Export metrics to specified file")
     
+    # Client type selection
+    parser.add_argument("--styly-client-type", type=str,
+                       default=config.client_type,
+                       choices=["raw_zmq", "netsync_manager"],
+                       help=f"Client implementation type (default: {config.client_type})")
+    
     # Rate設定をLocust Web UIの設定画面に表示
     parser.add_argument("--styly-transform-rate", type=float,
                        default=config.transform_update_rate,
@@ -422,6 +434,12 @@ def _(environment, **kwargs):
 def _(environment, **kwargs):
     """Handle custom command line arguments."""
     if environment.parsed_options:
+        # Handle client type selection
+        if hasattr(environment.parsed_options, 'styly_client_type'):
+            if environment.parsed_options.styly_client_type != config.client_type:
+                config.client_type = environment.parsed_options.styly_client_type
+                logger.info(f"Client type updated to: {config.client_type}")
+        
         logger.info(f"OPTION: parsed_options.styly_transform_rate: {environment.parsed_options.styly_transform_rate}")
         logger.info(f"OPTION: parsed_options.styly_rpc_per_transforms: {environment.parsed_options.styly_rpc_per_transforms}")
         
