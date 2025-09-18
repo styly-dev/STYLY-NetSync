@@ -32,10 +32,10 @@ from typing import Any, Dict
 from locust import User, task, events, constant_pacing
 from locust.exception import StopUser
 
-from client_interface import INetSyncClient
-from client_factory import ClientFactory, ClientType
-from metrics_collector import MetricsCollector
-from benchmark_config import config
+from src.clients.client_interface import INetSyncClient
+from src.client_factory import ClientFactory, ClientType
+from src.metrics_collector import MetricsCollector
+from src.benchmark_config import config
 
 logger = logging.getLogger(__name__)
 

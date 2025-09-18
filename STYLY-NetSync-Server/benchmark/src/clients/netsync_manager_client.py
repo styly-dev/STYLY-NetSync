@@ -16,14 +16,14 @@ from typing import Dict, List, Optional, Any
 # Import STYLY NetSync package modules
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src'))
 
 from styly_netsync.client import net_sync_manager
 from styly_netsync.types import client_transform_data, transform_data
 
-from benchmark_config import config
-from metrics_collector import MetricsCollector
-from client_interface import INetSyncClient
+from src.benchmark_config import config
+from src.metrics_collector import MetricsCollector
+from src.clients.client_interface import INetSyncClient
 
 logger = logging.getLogger(__name__)
 

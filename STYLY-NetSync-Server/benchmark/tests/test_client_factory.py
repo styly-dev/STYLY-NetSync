@@ -4,9 +4,12 @@ Quick test script to verify the client factory functionality.
 """
 
 import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import time
-from client_factory import ClientFactory, ClientType
-from benchmark_config import config
+from src.client_factory import ClientFactory, ClientType
+from src.benchmark_config import config
 
 def test_client_creation():
     """Test that both client types can be created successfully."""

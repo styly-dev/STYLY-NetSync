@@ -9,10 +9,10 @@ import logging
 from enum import Enum
 from typing import Optional, Any
 
-from client_interface import INetSyncClient
-from styly_client import RawZMQClient
-from netsync_manager_client import NetSyncManagerClient
-from metrics_collector import MetricsCollector
+from src.clients.client_interface import INetSyncClient
+from src.clients.styly_client import RawZMQClient
+from src.clients.netsync_manager_client import NetSyncManagerClient
+from src.metrics_collector import MetricsCollector
 
 logger = logging.getLogger(__name__)
 

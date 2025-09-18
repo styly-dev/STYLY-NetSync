@@ -5,7 +5,7 @@ Test script to verify Locust command-line argument parsing.
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Simulate what Locust does when it imports the locustfile
 def test_locust_args():
@@ -17,14 +17,14 @@ def test_locust_args():
     
     # Re-import config to pick up new env var
     import importlib
-    import benchmark_config
+    from src import benchmark_config
     importlib.reload(benchmark_config)
     
     print(f"✓ Environment variable STYLY_CLIENT_TYPE=netsync_manager")
     print(f"  Config client_type: {benchmark_config.config.client_type}")
     
     # Test factory with environment config
-    from client_factory import ClientFactory, ClientType
+    from src.client_factory import ClientFactory, ClientType
     client_type = ClientType.from_string(benchmark_config.config.client_type)
     print(f"  Parsed to ClientType: {client_type.value}")
     
