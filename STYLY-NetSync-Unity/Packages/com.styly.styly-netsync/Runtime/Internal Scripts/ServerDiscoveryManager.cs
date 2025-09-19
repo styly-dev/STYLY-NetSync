@@ -18,7 +18,12 @@ namespace Styly.NetSync
 
         public bool EnableDiscovery { get; set; } = true;
         public float DiscoveryTimeout { get; set; } = 5f;
-        public int BeaconPort { get; set; } = 9999;
+        private int _beaconPort = 9999;
+        public int BeaconPort
+        {
+            get => Volatile.Read(ref _beaconPort);
+            private set => Volatile.Write(ref _beaconPort, value);
+        }
         public bool IsDiscovering => _isDiscovering;
         public float DiscoveryInterval { get; set; } = 0.5f; // Send discovery request every 0.5 seconds
 
@@ -27,6 +32,11 @@ namespace Styly.NetSync
         public ServerDiscoveryManager(bool enableDebugLogs)
         {
             _enableDebugLogs = enableDebugLogs;
+        }
+
+        public void SetBeaconPort(int port)
+        {
+            BeaconPort = port;
         }
 
         public void StartDiscovery()

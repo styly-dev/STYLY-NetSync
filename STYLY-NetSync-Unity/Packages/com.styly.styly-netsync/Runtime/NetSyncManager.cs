@@ -21,10 +21,6 @@ namespace Styly.NetSync
         private int _subPort = 5556;
         [SerializeField] private string _roomId = "default_room";
 
-        // [Header("Discovery Settings")]
-        private bool _enableDiscovery = true;
-        private float _discoveryTimeout = 5f;
-
         [Header("Avatar Settings")]
         [SerializeField] private GameObject _localAvatarPrefab;
         [SerializeField] private GameObject _remoteAvatarPrefab;
@@ -46,6 +42,14 @@ namespace Styly.NetSync
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
         public UnityEvent OnReady;
+
+        // Advanced options
+        [Tooltip("UDP port used for server discovery beacons.")]
+        [Min(1)] public int BeaconPort = 9999;
+        [Tooltip("Enable automatic server discovery on the local network when no server address is set.")]
+        public bool EnableDiscovery = true;
+        private float _discoveryTimeout = 5f;
+
         #endregion ------------------------------------------------------------------------
 
         internal Transform _XrOriginTransform;
@@ -451,6 +455,7 @@ namespace Styly.NetSync
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
+            _discoveryManager.SetBeaconPort(BeaconPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
 
@@ -619,7 +624,7 @@ namespace Styly.NetSync
         private void StartNetworking()
         {
             // If server address is empty and discovery is enabled, start discovery
-            if (string.IsNullOrEmpty(_serverAddress) && _enableDiscovery && !_isDiscovering)
+            if (string.IsNullOrEmpty(_serverAddress) && EnableDiscovery && !_isDiscovering)
             {
                 StartDiscovery();
                 return;
@@ -639,6 +644,7 @@ namespace Styly.NetSync
         private void StartDiscovery()
         {
             if (_discoveryManager == null) { return; }
+            _discoveryManager.SetBeaconPort(BeaconPort);
             _connectionManager.StartDiscovery(_discoveryManager, _roomId);
             _isDiscovering = true;
             _discoveryStartTime = Time.time;
@@ -675,7 +681,7 @@ namespace Styly.NetSync
             }
 
             // If not currently discovering and discovery is enabled with no fixed server, retry when due
-            if (!_isDiscovering && string.IsNullOrEmpty(_serverAddress) && _enableDiscovery &&
+            if (!_isDiscovering && string.IsNullOrEmpty(_serverAddress) && EnableDiscovery &&
                 _nextDiscoveryAttemptAt > 0f && Time.time >= _nextDiscoveryAttemptAt)
             {
                 StartDiscovery();
