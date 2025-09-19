@@ -23,10 +23,13 @@ Environment Variables:
     STYLY_RPC_PER_TRANSFORMS: Send RPC every N transforms (default: 10)
 """
 
+import os
+# Force zmq.green for Locust/gevent compatibility - must be set before any styly_netsync imports
+os.environ['STYLY_USE_ZMQ_GREEN'] = 'true'
+
 import logging
 import time
 import random
-import os
 from typing import Any, Dict
 
 from locust import User, task, events, constant_pacing
