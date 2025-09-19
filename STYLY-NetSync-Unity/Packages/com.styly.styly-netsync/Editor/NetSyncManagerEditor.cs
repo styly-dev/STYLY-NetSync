@@ -11,7 +11,6 @@ namespace Styly.NetSync.Editor
         private static bool showAdvanced;
         private static readonly string[] AdvancedPropertyOrder =
         {
-            "EnableDiscovery",
             "BeaconPort"
         };
         private static readonly HashSet<string> AdvancedProperties = new HashSet<string>(AdvancedPropertyOrder);
@@ -40,6 +39,11 @@ namespace Styly.NetSync.Editor
                 if (AdvancedProperties.Contains(iterator.propertyPath))
                 {
                     advancedPropertyPaths.Add(iterator.propertyPath);
+                    continue;
+                }
+
+                if (iterator.propertyPath == "_enableDiscovery")
+                {
                     continue;
                 }
 
