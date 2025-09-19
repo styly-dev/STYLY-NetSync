@@ -82,6 +82,19 @@ DEFAULT_SERVER_NAME = "STYLY-NetSync-Server"
 DEFAULT_NV_FLUSH_POLICY = "drain"
 
 
+def valid_port(value: str) -> int:
+    """Return a validated TCP/UDP port number."""
+    try:
+        port = int(value)
+    except ValueError as exc:  # pragma: no cover - argparse handles messaging
+        raise argparse.ArgumentTypeError("Port must be an integer") from exc
+
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("Port must be between 1 and 65535")
+
+    return port
+
+
 @lru_cache(maxsize=1)
 def get_version() -> str:
     """
@@ -1514,6 +1527,12 @@ def main():
         "--no-beacon", action="store_true", help="Disable beacon discovery"
     )
     parser.add_argument(
+        "--beacon-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"UDP port used for server discovery beacons (default: {DEFAULT_BEACON_PORT})",
+    )
+    parser.add_argument(
         "-V",
         "--version",
         action="version",
@@ -1539,6 +1558,8 @@ def main():
     logger.info(f"  DEALER port: {dealer_port}")
     logger.info(f"  PUB port: {pub_port}")
     if not args.no_beacon:
+        if args.beacon_port is not None:
+            beacon_port = args.beacon_port
         logger.info(f"  Beacon port: {beacon_port}")
         logger.info(f"  Server name: {server_name}")
     else:
