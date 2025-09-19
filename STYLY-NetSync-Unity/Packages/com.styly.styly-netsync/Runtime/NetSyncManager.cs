@@ -46,8 +46,7 @@ namespace Styly.NetSync
         // Advanced options
         [Tooltip("UDP port used for server discovery beacons.")]
         [Min(1)] public int BeaconPort = 9999;
-        [Tooltip("Enable automatic server discovery on the local network when no server address is set.")]
-        public bool EnableDiscovery = true;
+        private bool _enableDiscovery = true;
         private float _discoveryTimeout = 5f;
 
         #endregion ------------------------------------------------------------------------
@@ -624,7 +623,7 @@ namespace Styly.NetSync
         private void StartNetworking()
         {
             // If server address is empty and discovery is enabled, start discovery
-            if (string.IsNullOrEmpty(_serverAddress) && EnableDiscovery && !_isDiscovering)
+            if (string.IsNullOrEmpty(_serverAddress) && _enableDiscovery && !_isDiscovering)
             {
                 StartDiscovery();
                 return;
@@ -681,7 +680,7 @@ namespace Styly.NetSync
             }
 
             // If not currently discovering and discovery is enabled with no fixed server, retry when due
-            if (!_isDiscovering && string.IsNullOrEmpty(_serverAddress) && EnableDiscovery &&
+            if (!_isDiscovering && string.IsNullOrEmpty(_serverAddress) && _enableDiscovery &&
                 _nextDiscoveryAttemptAt > 0f && Time.time >= _nextDiscoveryAttemptAt)
             {
                 StartDiscovery();
