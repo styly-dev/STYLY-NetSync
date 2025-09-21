@@ -1,0 +1,51 @@
+version: "3.0"
+
+services:
+  netsync-locust-master:
+    image: locustio/locust
+    ports:
+        - "8089:8089"
+    volumes:
+        - ../:/mnt/netsync
+    working_dir: /mnt/netsync/benchmark/
+    command: -f locustfile.py --host tcp://host.docker.internal:5555 --master
+
+  netsync-locust-worker:
+    image: locustio/locust
+    volumes:
+        - ../:/mnt/netsync
+    working_dir: /mnt/netsync/benchmark/
+    command: -f locustfile.py --worker --master-host netsync-locust-master
+
+  locust-exporter:
+    image: containersol/locust_exporter
+    ports:
+      - "9646:9646"
+    environment:
+      - LOCUST_EXPORTER_URI=http://netsync-locust-master:8089
+    depends_on:
+      - netsync-locust-master
+
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./visualizer/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - locust-exporter
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      - ./visualizer/grafana/dashboards:/var/lib/grafana/dashboards/
+      - ./visualizer/grafana/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./visualizer/grafana/dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml
+    environment:
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+    restart: always
