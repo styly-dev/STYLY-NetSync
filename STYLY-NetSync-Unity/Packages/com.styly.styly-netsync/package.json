@@ -9,7 +9,7 @@
     "org.nuget.netmq": "4.0.2",
     "com.unity.xr.core-utils": "2.1.1",
     "com.unity.nuget.newtonsoft-json": "3.2.1",
-    "com.styly.styly-xr-rig": "0.4.7"
+    "com.styly.styly-xr-rig": "0.4.8"
   },
   "author": {
     "name": "STYLY, Inc.",
