@@ -2,7 +2,7 @@ version: "3.0"
 
 services:
   netsync-locust-master:
-    image: locustio/locust
+    image: locustio/locust:2.40.5
     ports:
         - "8089:8089"
     volumes:
@@ -11,14 +11,14 @@ services:
     command: -f locustfile.py --host tcp://host.docker.internal:5555 --master
 
   netsync-locust-worker:
-    image: locustio/locust
+    image: locustio/locust:2.40.5
     volumes:
         - ../:/mnt/netsync
     working_dir: /mnt/netsync/benchmark/
     command: -f locustfile.py --worker --master-host netsync-locust-master
 
   locust-exporter:
-    image: containersol/locust_exporter
+    image: containersol/locust_exporter:v0.5.2
     ports:
       - "9646:9646"
     environment:
@@ -27,7 +27,7 @@ services:
       - netsync-locust-master
 
   prometheus:
-    image: prom/prometheus
+    image: prom/prometheus:v3.6.0
     ports:
       - "9090:9090"
     volumes:
@@ -36,7 +36,7 @@ services:
       - locust-exporter
 
   grafana:
-    image: grafana/grafana
+    image: grafana/grafana:12.1
     ports:
       - "3000:3000"
     depends_on:
