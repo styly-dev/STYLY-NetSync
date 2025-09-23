@@ -187,6 +187,16 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 
 ```
 
+### Others
+```csharp
+// Switch to VR mode with an optional transition duration in seconds.
+NetSyncManager.Instance.SwitchToVR(transitionDuration);
+
+// Switch to MR mode with an optional transition duration in seconds.
+NetSyncManager.Instance.SwitchToVR(transitionDuration);
+
+```
+
 
 ## Transport layer
 STYLY NetSync uses [ZeroMQ](https://zeromq.org/) as its transport layer  
