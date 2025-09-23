@@ -184,17 +184,22 @@ namespace Styly.NetSync
                 _pendingSelfClientNV.Add((name, value)); // late-binding until handshake
                 return true; // accepted
             }
-            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(_clientNo, name, value, _roomId) : false;
+            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(name, value, _clientNo, _roomId) : false;
         }
 
-        public bool SetClientVariable(int targetClientNo, string name, string value)
+        public bool SetClientVariable(string name, string value, int targetClientNo)
         {
-            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(targetClientNo, name, value, _roomId) : false;
+            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(name, value, targetClientNo, _roomId) : false;
         }
 
-        public string GetClientVariable(int clientNo, string name, string defaultValue = null)
+        public string GetClientVariable(string name, string defaultValue = null)
         {
-            return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(clientNo, name, defaultValue) : defaultValue;
+            return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(name, _clientNo, defaultValue) : defaultValue;
+        }
+
+        public string GetClientVariable(string name, int clientNo, string defaultValue = null)
+        {
+            return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(name, clientNo, defaultValue) : defaultValue;
         }
 
         /// <summary>
@@ -694,7 +699,7 @@ namespace Styly.NetSync
             // Flush pending self client NV
             foreach (var (name, value) in _pendingSelfClientNV)
             {
-                _networkVariableManager?.SetClientVariable(_clientNo, name, value, _roomId);
+                _networkVariableManager?.SetClientVariable(name, value, _clientNo, _roomId);
             }
             _pendingSelfClientNV.Clear();
 

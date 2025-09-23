@@ -51,15 +51,15 @@ namespace Styly.NetSync
         // Events (using C# events, NOT SendMessage)
         public event Action<string, string, string> OnGlobalVariableChanged;
         public event Action<int, string, string, string> OnClientVariableChanged;
-        
+
         // Flag to track if initial network variables have been received
         private bool _hasReceivedInitialSync = false;
         private DateTime _connectionEstablishedTime = DateTime.MinValue; // Track when connection was established
         // Conservative timeout for initial network variable sync to handle empty rooms
         private const float INITIAL_SYNC_TIMEOUT = 2.0f;
-        
+
         public bool HasReceivedInitialSync => _hasReceivedInitialSync;
-        
+
         /// <summary>
         /// Reset the initial sync flag (called when connection is lost)
         /// </summary>
@@ -68,7 +68,7 @@ namespace Styly.NetSync
             _hasReceivedInitialSync = false;
             _connectionEstablishedTime = DateTime.MinValue;
         }
-        
+
         /// <summary>
         /// Called when connection is established to start tracking sync timeout
         /// </summary>
@@ -76,7 +76,7 @@ namespace Styly.NetSync
         {
             _connectionEstablishedTime = DateTime.UtcNow;
         }
-        
+
         /// <summary>
         /// Check if we should consider initial sync complete based on timeout
         /// This handles cases where server has no variables to send
@@ -209,7 +209,7 @@ namespace Styly.NetSync
         }
 
         // Client Variables API
-        public bool SetClientVariable(int targetClientNo, string name, string value, string roomId)
+        public bool SetClientVariable(string name, string value, int targetClientNo, string roomId)
         {
             if (!ValidateVariableName(name) || !ValidateVariableValue(value))
                 return false;
@@ -313,7 +313,7 @@ namespace Styly.NetSync
             }
         }
 
-        public string GetClientVariable(int clientNo, string name, string defaultValue = null)
+        public string GetClientVariable(string name, int clientNo, string defaultValue = null)
         {
             if (!_hasReceivedInitialSync)
             {
@@ -356,7 +356,7 @@ namespace Styly.NetSync
             {
                 _hasReceivedInitialSync = true;
             }
-            
+
             if (data.TryGetValue("variables", out var variablesObj))
             {
                 object[] variables = ConvertToObjectArray(variablesObj);
@@ -398,7 +398,7 @@ namespace Styly.NetSync
             {
                 _hasReceivedInitialSync = true;
             }
-            
+
             if (data.TryGetValue("clientVariables", out var clientVarsObj))
             {
                 Dictionary<string, object> clientVariables = ConvertToDictionary(clientVarsObj);
@@ -500,7 +500,7 @@ namespace Styly.NetSync
         private static int EstimateGlobalVarSetSize(string name, string value)
         {
             // 1 (type) + 2 (sender) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
-            int nameLen  = ClampedUtf8Length(name, 64);
+            int nameLen = ClampedUtf8Length(name, 64);
             int valueLen = ClampedUtf8Length(value, 1024);
             return 1 + 2 + 1 + nameLen + 2 + valueLen + 8;
         }
@@ -508,7 +508,7 @@ namespace Styly.NetSync
         private static int EstimateClientVarSetSize(string name, string value)
         {
             // 1 (type) + 2 (sender) + 2 (target) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
-            int nameLen  = ClampedUtf8Length(name, 64);
+            int nameLen = ClampedUtf8Length(name, 64);
             int valueLen = ClampedUtf8Length(value, 1024);
             return 1 + 2 + 2 + 1 + nameLen + 2 + valueLen + 8;
         }
