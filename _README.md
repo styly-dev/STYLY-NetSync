@@ -193,7 +193,7 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 NetSyncManager.Instance.SwitchToVR(transitionDuration);
 
 // Switch to MR mode with an optional transition duration in seconds.
-NetSyncManager.Instance.SwitchToVR(transitionDuration);
+NetSyncManager.Instance.SwitchToMR(transitionDuration);
 
 ```
 
