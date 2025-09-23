@@ -54,10 +54,43 @@ namespace Styly.NetSync
         internal Transform _XrOriginTransform;
         internal Vector3 _physicalOffsetPosition;
         internal Vector3 _physicalOffsetRotation;
+        internal Styly.XRRig.PassthroughManager PassthroughManager;
 
         #region === Singleton & Public API ===
         private static NetSyncManager _instance;
         public static NetSyncManager Instance => _instance;
+
+        /// <summary>
+        /// Indicates whether the PassthroughManager is currently in passthrough (MR) mode.
+        /// </summary>
+        public bool PassthroughMode => passthroughMode;
+        private bool passthroughMode;
+
+        /// <summary>
+        /// Switches to VR mode with an optional transition duration.
+        /// </summary>
+        /// <param name="transitionDuration"></param>
+        public void SwitchToVR(float transitionDuration = 1)
+        {
+            if (PassthroughManager != null)
+            {
+                PassthroughManager.SwitchToVR(transitionDuration);
+                passthroughMode = false;
+            }
+        }
+
+        /// <summary>
+        /// Switches to MR (passthrough) mode with an optional transition duration.
+        /// </summary>
+        /// <param name="transitionDuration"></param>
+        public void SwitchToMR(float transitionDuration = 1)
+        {
+            if (PassthroughManager != null)
+            {
+                PassthroughManager.SwitchToMR(transitionDuration);
+                passthroughMode = true;
+            }
+        }
 
         /// <summary>
         /// Get the version of STYLY NetSync.
@@ -301,6 +334,12 @@ namespace Styly.NetSync
                 _XrOriginTransform = xrOrigin.transform;
                 _physicalOffsetPosition = xrOrigin.transform.position;
                 _physicalOffsetRotation = xrOrigin.transform.eulerAngles;
+            }
+
+            var passthrough = FindFirstObjectByType<Styly.XRRig.PassthroughManager>();
+            if (passthrough != null)
+            {
+                PassthroughManager = passthrough;
             }
         }
 
