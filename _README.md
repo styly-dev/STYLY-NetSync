@@ -189,11 +189,16 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 
 ### Others
 ```csharp
-// Switch to VR mode with an optional transition duration in seconds.
-NetSyncManager.Instance.SwitchToVR(transitionDuration);
 
-// Switch to MR mode with an optional transition duration in seconds.
-NetSyncManager.Instance.SwitchToMR(transitionDuration);
+// Switch pass through mode with an optional transition duration in seconds and sync over network frag.
+float transitionDuration = 1.0;
+bool syncOverNetwork = true;
+
+// Switch to VR mode
+NetSyncManager.Instance.SwitchToVR(transitionDuration, syncOverNetwork);
+
+// Switch to MR mode (Pass through mode)
+NetSyncManager.Instance.SwitchToMR(transitionDuration, syncOverNetwork);
 
 ```
 

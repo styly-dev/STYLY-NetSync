@@ -49,6 +49,8 @@ namespace Styly.NetSync
         private bool _enableDiscovery = true;
         private float _discoveryTimeout = 5f;
 
+        internal const string PrefixForSystem = "@system:"; // Prefix for system-only message names
+
         #endregion ------------------------------------------------------------------------
 
         internal Transform _XrOriginTransform;
@@ -70,7 +72,35 @@ namespace Styly.NetSync
         /// Switches to VR mode with an optional transition duration.
         /// </summary>
         /// <param name="transitionDuration"></param>
-        public void SwitchToVR(float transitionDuration = 1)
+        public void SwitchToVR(float transitionDuration = 1, bool syncOverNetwork = true)
+        {
+            if (syncOverNetwork)
+            {
+                Rpc_SystemRPC("SwitchToVR", new[] { transitionDuration.ToString() });
+            }
+            else
+            {
+                SwitchToVR_Internal(transitionDuration);
+            }
+        }
+
+        /// <summary>
+        /// Switches to MR (passthrough) mode with an optional transition duration.
+        /// </summary>
+        /// <param name="transitionDuration"></param>
+        public void SwitchToMR(float transitionDuration = 1, bool syncOverNetwork = true)
+        {
+            if (syncOverNetwork)
+            {
+                Rpc_SystemRPC("SwitchToMR", new[] { transitionDuration.ToString() });
+            }
+            else
+            {
+                SwitchToMR_Internal(transitionDuration);
+            }
+        }
+
+        private void SwitchToVR_Internal(float transitionDuration = 1)
         {
             if (PassthroughManager != null)
             {
@@ -79,11 +109,7 @@ namespace Styly.NetSync
             }
         }
 
-        /// <summary>
-        /// Switches to MR (passthrough) mode with an optional transition duration.
-        /// </summary>
-        /// <param name="transitionDuration"></param>
-        public void SwitchToMR(float transitionDuration = 1)
+        private void SwitchToMR_Internal(float transitionDuration = 1)
         {
             if (PassthroughManager != null)
             {
@@ -91,6 +117,8 @@ namespace Styly.NetSync
                 passthroughMode = true;
             }
         }
+
+
 
         /// <summary>
         /// Get the version of STYLY NetSync.
@@ -112,6 +140,18 @@ namespace Styly.NetSync
             }
         }
 
+        internal void Rpc_SystemRPC(string functionName, string[] args = null)
+        {
+            functionName = PrefixForSystem + functionName;
+
+            if (args == null) { args = Array.Empty<string>(); }
+
+            if (_rpcManager != null)
+            {
+                _rpcManager.Send(_roomId, functionName, args);
+            }
+        }
+
         /// <summary>
         /// Configure the RPC rate limit. Set rpcLimit to 0 or less to disable rate limiting.
         /// </summary>
@@ -125,7 +165,6 @@ namespace Styly.NetSync
                 _rpcManager.ConfigureRpcLimit(rpcLimit, windowSeconds, warnCooldown);
             }
         }
-
 
         // Network Variables API
         public bool SetGlobalVariable(string name, string value)
@@ -589,8 +628,50 @@ namespace Styly.NetSync
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
         {
             string argsStr = args != null && args.Length > 0 ? string.Join(", ", args) : "none";
-            Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
-            OnRPCReceived?.Invoke(senderClientNo, functionName, args);
+
+            // Route system RPCs to internal handler, others to public event
+            if (functionName.StartsWith(PrefixForSystem))
+            {
+                functionName = functionName[PrefixForSystem.Length..]; // Remove prefix
+                OnRPCReceivedHandler_SystemRPC(senderClientNo, functionName, args);
+                Debug.Log($"[NetSyncManager] System RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
+            }
+            else
+            {
+                OnRPCReceived?.Invoke(senderClientNo, functionName, args);
+                Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
+            }
+        }
+
+        private void OnRPCReceivedHandler_SystemRPC(int senderClientNo, string functionName, string[] args)
+        {
+            // Handle known system RPCs
+            switch (functionName)
+            {
+                case "SwitchToVR":
+                    {
+                        float duration = 1f;
+                        if (args.Length > 0 && float.TryParse(args[0], out var parsedDuration))
+                        {
+                            duration = parsedDuration;
+                        }
+                        SwitchToVR_Internal(duration);
+                        break;
+                    }
+                case "SwitchToMR":
+                    {
+                        float duration = 1f;
+                        if (args.Length > 0 && float.TryParse(args[0], out var parsedDuration))
+                        {
+                            duration = parsedDuration;
+                        }
+                        SwitchToMR_Internal(duration);
+                        break;
+                    }
+                default:
+                    DebugLog($"Unknown system RPC received: {functionName}");
+                    break;
+            }
         }
 
         private void OnGlobalVariableChangedHandler(string name, string oldValue, string newValue)
