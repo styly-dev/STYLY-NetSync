@@ -79,6 +79,9 @@ openupm add -f com.styly.styly-netsync@0.5.9
 # Start NetSync server
 # Use the same version of the Unity package
 uvx styly-netsync-server@0.5.9
+
+# [Optional] Start client simulator
+uvx --from styly-netsync-server@0.5.9 styly-netsync-simulator --clients 10
 ```
 The uvx command automatically downloads the package, creates an isolated virtual environment, installs dependencies, and runs the python server program.
 
