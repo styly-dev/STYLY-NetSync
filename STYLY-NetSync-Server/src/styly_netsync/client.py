@@ -7,6 +7,7 @@ snake_case naming and pull-based transform consumption by default.
 
 import json
 import logging
+import os
 import socket
 import threading
 import time
@@ -14,7 +15,13 @@ import uuid
 from queue import Empty, Full, Queue
 from typing import Any
 
-import zmq
+# Dynamic ZMQ import based on environment variable
+env_is_green=os.environ.get('STYLY_USE_ZMQ_GREEN', '')
+if env_is_green.lower() == 'true':
+    print(f"## net_sync_manager client imports green ZeroMQ.")
+    import zmq.green as zmq
+else:
+    import zmq
 
 from . import binary_serializer
 from .adapters import (
