@@ -898,6 +898,10 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
+      propertyPath: _remoteAvatarPrefab
+      value: 
+      objectReference: {fileID: 7715607727795320353, guid: 122df9a4cf7b74c4fbacefa9144f883a, type: 3}
+    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
       propertyPath: OnRPCReceived.m_PersistentCalls.m_Calls.Array.size
       value: 1
       objectReference: {fileID: 0}
