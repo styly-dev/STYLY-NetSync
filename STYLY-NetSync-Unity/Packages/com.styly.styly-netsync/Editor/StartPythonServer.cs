@@ -9,7 +9,7 @@ namespace Styly.NetSync.Editor
 {
     public static class StartPythonServer
     {
-        [MenuItem("STYLY/Start NetSync Server", false, 100)]
+        [MenuItem("STYLY/STYLY NetSync/Start NetSync Server", false, 100)]
         public static void StartServer()
         {
             if (Application.platform == RuntimePlatform.OSXEditor)
