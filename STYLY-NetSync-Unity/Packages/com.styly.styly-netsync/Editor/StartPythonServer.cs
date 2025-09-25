@@ -9,33 +9,6 @@ namespace Styly.NetSync.Editor
 {
     public static class StartPythonServer
     {
-        private static string GetServerVersion()
-        {
-            string versionFilePath = "Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt";
-            string fullPath = Path.Combine(Application.dataPath, "..", versionFilePath);
-
-            if (!File.Exists(fullPath))
-            {
-                Debug.LogWarning($"Version file not found at: {fullPath}. Using default version.");
-                return "latest";
-            }
-
-            try
-            {
-                string version = File.ReadAllText(fullPath).Trim();
-                if (string.IsNullOrEmpty(version))
-                {
-                    Debug.LogWarning("Version file is empty. Using default version.");
-                    return "latest";
-                }
-                return version;
-            }
-            catch (Exception e)
-            {
-                Debug.LogWarning($"Failed to read version file: {e.Message}. Using default version.");
-                return "latest";
-            }
-        }
 
         [MenuItem("STYLY NetSync/Start Python Server", false, 100)]
         public static void StartServer()
@@ -57,7 +30,12 @@ namespace Styly.NetSync.Editor
 
         private static void StartServerMac()
         {
-            string serverVersion = GetServerVersion();
+            string serverVersion = Information.GetVersion();
+            // Fallback to "latest" if version is unknown
+            if (serverVersion == "unknown")
+            {
+                serverVersion = "latest";
+            }
             string terminal = "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal";
             if (!File.Exists(terminal))
             {
@@ -178,7 +156,12 @@ read -p 'Press any key to exit...'
 
         private static void StartServerWindows()
         {
-            string serverVersion = GetServerVersion();
+            string serverVersion = Information.GetVersion();
+            // Fallback to "latest" if version is unknown
+            if (serverVersion == "unknown")
+            {
+                serverVersion = "latest";
+            }
             string powershellScript = @"
 Clear-Host
 Write-Host 'STYLY NetSync Python Server Setup' -ForegroundColor Cyan
