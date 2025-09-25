@@ -9,6 +9,34 @@ namespace Styly.NetSync.Editor
 {
     public static class StartPythonServer
     {
+        private static string GetServerVersion()
+        {
+            string versionFilePath = "Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt";
+            string fullPath = Path.Combine(Application.dataPath, "..", versionFilePath);
+
+            if (!File.Exists(fullPath))
+            {
+                Debug.LogWarning($"Version file not found at: {fullPath}. Using default version.");
+                return "latest";
+            }
+
+            try
+            {
+                string version = File.ReadAllText(fullPath).Trim();
+                if (string.IsNullOrEmpty(version))
+                {
+                    Debug.LogWarning("Version file is empty. Using default version.");
+                    return "latest";
+                }
+                return version;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"Failed to read version file: {e.Message}. Using default version.");
+                return "latest";
+            }
+        }
+
         [MenuItem("STYLY NetSync/Start Python Server", false, 100)]
         public static void StartServer()
         {
@@ -29,6 +57,7 @@ namespace Styly.NetSync.Editor
 
         private static void StartServerMac()
         {
+            string serverVersion = GetServerVersion();
             string terminal = "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal";
             if (!File.Exists(terminal))
             {
@@ -94,21 +123,17 @@ if ! command -v uv &> /dev/null; then
     fi
 fi
 
-# Navigate to server directory
-SERVER_DIR=""$(dirname ""$0"")/../../../../../../STYLY-NetSync-Server""
-cd ""$SERVER_DIR""
-
 echo ''
 echo 'Starting STYLY NetSync Python Server...'
-echo 'Server directory: ' $(pwd)
+echo 'Server version: " + serverVersion + @"'
 echo ''
-echo 'Running: uvx --from . styly-netsync'
+echo 'Running: uvx styly-netsync-server@" + serverVersion + @"'
 echo ''
 echo '========================================='
 echo ''
 
 # Start the server
-uvx --from . styly-netsync
+uvx styly-netsync-server@" + serverVersion + @"
 
 # Keep terminal open if server exits
 echo ''
@@ -153,6 +178,7 @@ read -p 'Press any key to exit...'
 
         private static void StartServerWindows()
         {
+            string serverVersion = GetServerVersion();
             string powershellScript = @"
 Clear-Host
 Write-Host 'STYLY NetSync Python Server Setup' -ForegroundColor Cyan
@@ -201,22 +227,17 @@ if (-not $uvExists) {
     }
 }
 
-# Navigate to server directory
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$serverDir = Join-Path $scriptDir '..\..\..\..\..\..\STYLY-NetSync-Server'
-Set-Location $serverDir
-
 Write-Host ''
 Write-Host 'Starting STYLY NetSync Python Server...' -ForegroundColor Green
-Write-Host ""Server directory: $((Get-Location).Path)"" -ForegroundColor Gray
+Write-Host 'Server version: " + serverVersion + @"' -ForegroundColor Gray
 Write-Host ''
-Write-Host 'Running: uvx --from . styly-netsync' -ForegroundColor Cyan
+Write-Host 'Running: uvx styly-netsync-server@" + serverVersion + @"' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '=========================================' -ForegroundColor Cyan
 Write-Host ''
 
 # Start the server
-uvx --from . styly-netsync
+uvx styly-netsync-server@" + serverVersion + @"
 
 # Keep terminal open if server exits
 Write-Host ''
