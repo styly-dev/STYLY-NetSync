@@ -9,7 +9,6 @@ namespace Styly.NetSync.Editor
 {
     public static class StartPythonServer
     {
-
         [MenuItem("STYLY NetSync/Start Python Server", false, 100)]
         public static void StartServer()
         {
@@ -28,14 +27,32 @@ namespace Styly.NetSync.Editor
             }
         }
 
-        private static void StartServerMac()
+        private static string GetServerVersionSafe()
         {
-            string serverVersion = Information.GetVersion();
+            string serverVersion;
+            try
+            {
+                serverVersion = Information.GetVersion();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("Failed to get server version: " + ex.Message);
+                EditorUtility.DisplayDialog("Error", "Failed to get server version. Defaulting to latest.\n\n" + ex.Message, "OK");
+                serverVersion = "latest";
+            }
+
             // Fallback to "latest" if version is unknown
             if (serverVersion == "unknown")
             {
                 serverVersion = "latest";
             }
+
+            return serverVersion;
+        }
+
+        private static void StartServerMac()
+        {
+            string serverVersion = GetServerVersionSafe();
             string terminal = "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal";
             if (!File.Exists(terminal))
             {
@@ -119,17 +136,35 @@ echo 'Server stopped.'
 read -p 'Press any key to exit...'
 ";
 
-            string tempScriptPath = Path.Combine(Path.GetTempPath(), "start_styly_netsync_server.sh");
+            // Create a unique temp file with .sh extension
+            string tempScriptPath = Path.Combine(Path.GetTempPath(), $"start_styly_netsync_server_{Guid.NewGuid():N}.sh");
             File.WriteAllText(tempScriptPath, shellScript);
 
             // Make script executable
-            Process chmod = new Process();
-            chmod.StartInfo.FileName = "/bin/chmod";
-            chmod.StartInfo.Arguments = $"+x \"{tempScriptPath}\"";
-            chmod.StartInfo.UseShellExecute = false;
-            chmod.StartInfo.CreateNoWindow = true;
-            chmod.Start();
-            chmod.WaitForExit();
+            try
+            {
+                Process chmod = new Process();
+                chmod.StartInfo.FileName = "/bin/chmod";
+                chmod.StartInfo.Arguments = $"+x \"{tempScriptPath}\"";
+                chmod.StartInfo.UseShellExecute = false;
+                chmod.StartInfo.CreateNoWindow = true;
+                chmod.Start();
+                chmod.WaitForExit();
+                if (chmod.ExitCode != 0)
+                {
+                    Debug.LogError($"Failed to make script executable. chmod exit code: {chmod.ExitCode}");
+                    EditorUtility.DisplayDialog("Error",
+                        $"Failed to make script executable. chmod exit code: {chmod.ExitCode}", "OK");
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"Exception while making script executable: {e.Message}");
+                EditorUtility.DisplayDialog("Error",
+                    $"Exception while making script executable: {e.Message}", "OK");
+                return;
+            }
 
             // Get the project root directory (where STYLY-NetSync-Server is located)
             string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "../../"));
@@ -156,12 +191,7 @@ read -p 'Press any key to exit...'
 
         private static void StartServerWindows()
         {
-            string serverVersion = Information.GetVersion();
-            // Fallback to "latest" if version is unknown
-            if (serverVersion == "unknown")
-            {
-                serverVersion = "latest";
-            }
+            string serverVersion = GetServerVersionSafe();
             string powershellScript = @"
 Clear-Host
 Write-Host 'STYLY NetSync Python Server Setup' -ForegroundColor Cyan
@@ -228,7 +258,8 @@ Write-Host 'Server stopped.' -ForegroundColor Yellow
 Read-Host 'Press Enter to exit'
 ";
 
-            string tempScriptPath = Path.Combine(Path.GetTempPath(), "start_styly_netsync_server.ps1");
+            // Create a unique temp file and change its extension to .ps1
+            string tempScriptPath = Path.ChangeExtension(Path.GetTempFileName(), ".ps1");
             File.WriteAllText(tempScriptPath, powershellScript);
 
             // Get the project root directory
