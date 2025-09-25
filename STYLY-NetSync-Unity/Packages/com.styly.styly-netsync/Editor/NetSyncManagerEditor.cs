@@ -9,6 +9,9 @@ namespace Styly.NetSync.Editor
     public class NetSyncManagerEditor : UnityEditor.Editor
     {
         private static bool showAdvanced;
+        private bool _showGlobalVariables = true;
+        // Timestamp of the last inspector repaint. Used to throttle repaint calls in play mode.
+        private double _lastRepaint;
         private static readonly string[] AdvancedPropertyOrder =
         {
             "BeaconPort"
@@ -57,8 +60,22 @@ namespace Styly.NetSync.Editor
             }
 
             DrawAdvancedSection(advancedPropertyPaths);
+            
+            DrawGlobalVariablesSection();
 
             serializedObject.ApplyModifiedProperties();
+            
+            // Throttle inspector repaint during Play mode to reduce CPU usage.
+            // Repaint only once every ~0.2 seconds on Layout events.
+            if (Application.isPlaying && Event.current.type == EventType.Layout)
+            {
+                double now = EditorApplication.timeSinceStartup;
+                if (now - _lastRepaint > 0.2d)
+                {
+                    Repaint();
+                    _lastRepaint = now;
+                }
+            }
         }
 
         private void DrawAdvancedSection(List<string> advancedPropertyPaths)
@@ -96,6 +113,65 @@ namespace Styly.NetSync.Editor
                 }
                 EditorGUILayout.EndFoldoutHeaderGroup();
             }
+        }
+
+        private void DrawGlobalVariablesSection()
+        {
+            // Only show global network variables during play mode
+            if (!Application.isPlaying)
+            {
+                return;
+            }
+            
+            EditorGUILayout.Space();
+            
+            // Global Network Variables section
+            _showGlobalVariables = EditorGUILayout.BeginFoldoutHeaderGroup(_showGlobalVariables, "Global Network Variables");
+            if (_showGlobalVariables)
+            {
+                EditorGUI.indentLevel++;
+                
+                // Get global variables from NetSyncManager instance
+                var globalVars = NetSyncManager.Instance != null ? NetSyncManager.Instance.GetAllGlobalVariables() : null;
+                
+                if (globalVars == null || globalVars.Count == 0)
+                {
+                    EditorGUILayout.HelpBox("No global variables set", MessageType.Info);
+                }
+                else
+                {
+                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                    
+                    foreach (var kvp in globalVars)
+                    {
+                        EditorGUILayout.BeginHorizontal();
+                        
+                        // Key
+                        EditorGUILayout.LabelField(kvp.Key, GUILayout.Width(150));
+                        
+                        // Value
+                        if (kvp.Value.Length > 50)
+                        {
+                            EditorGUILayout.EndHorizontal();
+                            EditorGUI.indentLevel++;
+                            EditorGUILayout.TextArea(kvp.Value, EditorStyles.wordWrappedLabel);
+                            EditorGUI.indentLevel--;
+                        }
+                        else
+                        {
+                            EditorGUILayout.LabelField(kvp.Value, EditorStyles.wordWrappedLabel);
+                            EditorGUILayout.EndHorizontal();
+                        }
+                        
+                        EditorGUILayout.Space(2);
+                    }
+                    
+                    EditorGUILayout.EndVertical();
+                }
+                
+                EditorGUI.indentLevel--;
+            }
+            EditorGUILayout.EndFoldoutHeaderGroup();
         }
     }
 }
