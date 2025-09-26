@@ -44,8 +44,11 @@ namespace Styly.NetSync
         public UnityEvent OnReady;
 
         // Advanced options
+        [Header("Advanced Options")]
         [Tooltip("UDP port used for server discovery beacons.")]
         [Min(1)] public int BeaconPort = 9999;
+        [Tooltip("Enable synchronization of battery levels across devices.")]
+        [SerializeField] private bool _syncBatteryLevel = true;
         private bool _enableDiscovery = true;
         private float _discoveryTimeout = 5f;
 
@@ -582,8 +585,11 @@ namespace Styly.NetSync
                 DebugLog("Connection established during room switch - handshake deferred to main thread");
             }
 
-            // Initialize battery level immediately on connection
-            _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
+            // Initialize battery level immediately on connection if sync is enabled
+            if (_syncBatteryLevel)
+            {
+                _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
+            }
         }
 
         /// <summary>
@@ -909,6 +915,12 @@ namespace Styly.NetSync
         /// </summary>
         private void UpdateBatteryLevel()
         {
+            // Check if battery sync is enabled
+            if (!_syncBatteryLevel)
+            {
+                return;
+            }
+
             float currentTime = Time.time;
             if (currentTime - _lastBatteryUpdate >= _batteryUpdateInterval)
             {
