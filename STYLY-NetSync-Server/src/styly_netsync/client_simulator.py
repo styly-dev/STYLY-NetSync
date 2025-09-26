@@ -762,6 +762,7 @@ class SimulatedClient:
         transport: NetworkTransport,
         room_id: str,
         shared_subscriber: Optional["SharedSubscriber"] = None,
+        simulate_battery: bool = True,
     ):
         self.config = config
         self.transport = transport
@@ -770,24 +771,32 @@ class SimulatedClient:
         self.transform_builder = TransformBuilder(config)
         self.logger = logging.getLogger(f"Client-{config.device_id[-8:]}")
         self.shared_subscriber = shared_subscriber
+        self.simulate_battery = simulate_battery
 
         self.start_time = time.monotonic()
         self.last_update_time = self.start_time
         self.running = False
 
-        # Battery simulation state
-        self.battery_level = random.uniform(
-            self.BATTERY_INITIAL_MIN, self.BATTERY_INITIAL_MAX
-        )
-        self.last_battery_update = self.start_time
-        # Force initial battery send as soon as client number is known
-        self.last_battery_send = self.start_time - self.BATTERY_UPDATE_INTERVAL
-        # Client number assigned by server after handshake (0 until assigned)
-        self.client_number = 0
+        # Battery simulation state (only initialized if enabled)
+        if self.simulate_battery:
+            self.battery_level = random.uniform(
+                self.BATTERY_INITIAL_MIN, self.BATTERY_INITIAL_MAX
+            )
+            self.last_battery_update = self.start_time
+            # Force initial battery send as soon as client number is known
+            self.last_battery_send = self.start_time - self.BATTERY_UPDATE_INTERVAL
+            # Client number assigned by server after handshake (0 until assigned)
+            self.client_number = 0
 
-        self.logger.info(
-            f"Initialized with battery level: {self.battery_level:.1f}%, awaiting client number assignment"
-        )
+            self.logger.info(
+                f"Initialized with battery level: {self.battery_level:.1f}%, awaiting client number assignment"
+            )
+        else:
+            self.battery_level = 0.0
+            self.last_battery_update = self.start_time
+            self.last_battery_send = self.start_time
+            self.client_number = 0
+            self.logger.info("Battery simulation disabled")
 
     def run(self, stop_event: threading.Event):
         """Run the client simulation loop."""
@@ -832,7 +841,8 @@ class SimulatedClient:
                     self._poll_broadcasts()
 
                     # Update battery simulation (may send immediately after client no assigned)
-                    self._update_battery(current_time)
+                    if self.simulate_battery:
+                        self._update_battery(current_time)
 
                     self.last_update_time = current_time
                     last_send_time = current_time
@@ -849,9 +859,12 @@ class SimulatedClient:
         finally:
             self.running = False
             self.transport.disconnect()
-            self.logger.info(
-                f"Client stopped with final battery level: {self.battery_level:.1f}%"
-            )
+            if self.simulate_battery:
+                self.logger.info(
+                    f"Client stopped with final battery level: {self.battery_level:.1f}%"
+                )
+            else:
+                self.logger.info("Client stopped")
 
     def _update_battery(self, current_time: float):
         """Update battery level and send updates when needed."""
@@ -1110,6 +1123,7 @@ class ClientSimulator:
         num_clients: int,
         spawn_batch_size: int | None = None,
         spawn_batch_interval: float | None = None,
+        simulate_battery: bool = True,
     ):
         self.server_addr = server_addr
         self.dealer_port = dealer_port
@@ -1120,6 +1134,7 @@ class ClientSimulator:
         self.spawn_batch_interval = (
             spawn_batch_interval if spawn_batch_interval is not None else 0.0
         )
+        self.simulate_battery = simulate_battery
 
         self.context = zmq.Context()
         self.thread_pool = ClientThreadPool(num_clients)
@@ -1186,6 +1201,7 @@ class ClientSimulator:
         self.logger.info(f"Starting simulation with {self.num_clients} clients")
         self.logger.info(f"Server: {self.server_addr}:{self.dealer_port}")
         self.logger.info(f"Room: {self.room_id}")
+        self.logger.info(f"Battery simulation: {'enabled' if self.simulate_battery else 'disabled'}")
         if self.spawn_batch_size > 0 and self.spawn_batch_interval > 0:
             self.logger.info(
                 f"Spawning clients in batches of {self.spawn_batch_size} "
@@ -1234,7 +1250,8 @@ class ClientSimulator:
 
             # Create client
             client = SimulatedClient(
-                config, transport, self.room_id, shared_subscriber=shared_sub
+                config, transport, self.room_id, shared_subscriber=shared_sub,
+                simulate_battery=self.simulate_battery
             )
 
             # Add to thread pool
@@ -1375,6 +1392,11 @@ Examples:
         default=0.0,
         help="Delay in seconds between batches (requires --spawn-batch-size > 0)",
     )
+    parser.add_argument(
+        "--no-battery",
+        action="store_true",
+        help="Disable battery level simulation",
+    )
 
     args = parser.parse_args()
 
@@ -1400,6 +1422,7 @@ Examples:
         num_clients=args.clients,
         spawn_batch_size=args.spawn_batch_size,
         spawn_batch_interval=args.spawn_batch_interval,
+        simulate_battery=not args.no_battery,
     )
 
     try:
