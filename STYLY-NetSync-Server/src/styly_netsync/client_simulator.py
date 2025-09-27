@@ -1393,9 +1393,9 @@ Examples:
         help="Delay in seconds between batches (requires --spawn-batch-size > 0)",
     )
     parser.add_argument(
-        "--no-battery",
+        "--no-sync-battery",
         action="store_true",
-        help="Disable battery level simulation",
+        help="Disable battery level synchronization",
     )
 
     args = parser.parse_args()
@@ -1422,7 +1422,7 @@ Examples:
         num_clients=args.clients,
         spawn_batch_size=args.spawn_batch_size,
         spawn_batch_interval=args.spawn_batch_interval,
-        simulate_battery=not args.no_battery,
+        simulate_battery=not args.no_sync_battery,
     )
 
     try:
