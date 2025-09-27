@@ -58,7 +58,7 @@ namespace Styly.NetSync
         internal Transform _XrOriginTransform;
         internal Vector3 _physicalOffsetPosition;
         internal Vector3 _physicalOffsetRotation;
-        internal Styly.XRRig.PassthroughManager PassthroughManager;
+        private Styly.XRRig.StylyXrRig stylyXrRig;
 
         #region === Singleton & Public API ===
         private static NetSyncManager _instance;
@@ -104,18 +104,18 @@ namespace Styly.NetSync
 
         private void SwitchToVR_Internal(float transitionDuration = 1)
         {
-            if (PassthroughManager != null)
+            if (stylyXrRig != null)
             {
-                PassthroughManager.SwitchToVR(transitionDuration);
+                stylyXrRig.SwitchToVR(transitionDuration);
                 passthroughMode = false;
             }
         }
 
         private void SwitchToMR_Internal(float transitionDuration = 1)
         {
-            if (PassthroughManager != null)
+            if (stylyXrRig != null)
             {
-                PassthroughManager.SwitchToMR(transitionDuration);
+                stylyXrRig.SwitchToMR(transitionDuration);
                 passthroughMode = true;
             }
         }
@@ -382,11 +382,7 @@ namespace Styly.NetSync
                 _physicalOffsetRotation = xrOrigin.transform.eulerAngles;
             }
 
-            var passthrough = FindFirstObjectByType<Styly.XRRig.PassthroughManager>();
-            if (passthrough != null)
-            {
-                PassthroughManager = passthrough;
-            }
+            stylyXrRig = FindFirstObjectByType<Styly.XRRig.StylyXrRig>();
         }
 
         private void OnEnable()
