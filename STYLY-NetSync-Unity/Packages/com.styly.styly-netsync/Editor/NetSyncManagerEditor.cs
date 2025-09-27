@@ -72,11 +72,9 @@ namespace Styly.NetSync.Editor
             EditorGUILayout.Space();
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
-                showAdvanced = EditorGUILayout.BeginFoldoutHeaderGroup(showAdvanced, "Advanced");
+                showAdvanced = EditorGUILayout.BeginFoldoutHeaderGroup(showAdvanced, "Advanced Options");
                 if (showAdvanced)
                 {
-                    EditorGUI.indentLevel++;
-                    EditorGUILayout.LabelField("Server Discovery Settings", EditorStyles.boldLabel);
                     EditorGUI.indentLevel++;
 
                     foreach (var propertyName in AdvancedPropertyOrder)
@@ -93,7 +91,7 @@ namespace Styly.NetSync.Editor
                         }
                     }
 
-                    EditorGUI.indentLevel -= 2;
+                    EditorGUI.indentLevel--;
                 }
                 EditorGUILayout.EndFoldoutHeaderGroup();
             }
