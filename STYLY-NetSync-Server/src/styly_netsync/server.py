@@ -273,6 +273,11 @@ class NetSyncServer:
         self.nv_monitor_window_size = 1.0  # 1 second window
         self.nv_monitor_threshold = 200  # Log warning if > 200 NV req/s
 
+        # ID mapping broadcast batching
+        self.room_pending_id_mappings: dict[str, bool] = {}  # room_id -> has_pending_mappings
+        self.room_last_id_broadcast: dict[str, float] = {}  # room_id -> last_broadcast_time
+        self.id_broadcast_interval = 0.1  # 100ms batching window
+
         # Network Variables limits
         self.MAX_GLOBAL_VARS = 20
         self.MAX_CLIENT_VARS = 20
@@ -411,6 +416,10 @@ class NetSyncServer:
 
             # Initialize monitoring window
             self.nv_monitor_window[room_id] = []
+
+            # Initialize ID mapping broadcast batching
+            self.room_pending_id_mappings[room_id] = False
+            self.room_last_id_broadcast[room_id] = 0
 
             logger.info(f"Created new room: {room_id}")
 
@@ -761,9 +770,10 @@ class NetSyncServer:
                 # Mark room as dirty since transform data has arrived
                 self.room_dirty_flags[room_id] = True
 
-        # Broadcast ID mappings and Network Variables when a new client joins (outside of lock)
+        # Mark pending ID mappings for batched broadcast when a new client joins
         if is_new_client:
-            self._broadcast_id_mappings(room_id)
+            with self._rooms_lock:
+                self.room_pending_id_mappings[room_id] = True
             self._sync_network_variables_to_new_client(room_id)
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]):
@@ -1258,9 +1268,21 @@ class NetSyncServer:
                 if current_time - last_broadcast_check >= self.BROADCAST_CHECK_INTERVAL:
                     self._adaptive_broadcast_all_rooms(current_time)
 
-                    # Flush Network Variables after other categories
+                    # Flush pending ID mapping broadcasts
                     with self._rooms_lock:
                         rooms = list(self.rooms.keys())
+                    for room_id in rooms:
+                        # Check if we have pending ID mappings to broadcast
+                        has_pending = self.room_pending_id_mappings.get(room_id, False)
+                        last_id_broadcast = self.room_last_id_broadcast.get(room_id, 0.0)
+
+                        if has_pending and (current_time - last_id_broadcast >= self.id_broadcast_interval):
+                            self._broadcast_id_mappings(room_id)
+                            with self._rooms_lock:
+                                self.room_pending_id_mappings[room_id] = False
+                                self.room_last_id_broadcast[room_id] = current_time
+
+                    # Flush Network Variables after other categories
                     for room_id in rooms:
                         last_flush = self.room_last_nv_flush.get(room_id, 0.0)
                         if current_time - last_flush >= self.nv_flush_interval:
@@ -1443,6 +1465,12 @@ class NetSyncServer:
                         del self.room_nv_allowance[room_id]
                     if room_id in self.nv_monitor_window:
                         del self.nv_monitor_window[room_id]
+
+                    # Clean up ID mapping broadcast batching structures
+                    if room_id in self.room_pending_id_mappings:
+                        del self.room_pending_id_mappings[room_id]
+                    if room_id in self.room_last_id_broadcast:
+                        del self.room_last_id_broadcast[room_id]
 
                     logger.info(f"Removed empty room: {room_id}")
 
