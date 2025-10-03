@@ -40,11 +40,29 @@ import zmq
 
 # Import public APIs from styly_netsync module
 from styly_netsync.binary_serializer import (
+    MSG_CLIENT_TRANSFORM,
+    MSG_ROOM_TRANSFORM,
+    MSG_RPC,
     MSG_DEVICE_ID_MAPPING,
+    MSG_GLOBAL_VAR_SET,
+    MSG_GLOBAL_VAR_SYNC,
+    MSG_CLIENT_VAR_SET,
+    MSG_CLIENT_VAR_SYNC,
     deserialize,
     serialize_client_transform,
     serialize_client_var_set,
 )
+
+MESSAGE_TYPE_NAMES: dict[int, str] = {
+    MSG_CLIENT_TRANSFORM: "CLIENT_TRANSFORM",
+    MSG_ROOM_TRANSFORM: "ROOM_TRANSFORM",
+    MSG_RPC: "RPC",
+    MSG_DEVICE_ID_MAPPING: "DEVICE_ID_MAPPING",
+    MSG_GLOBAL_VAR_SET: "GLOBAL_VAR_SET",
+    MSG_GLOBAL_VAR_SYNC: "GLOBAL_VAR_SYNC",
+    MSG_CLIENT_VAR_SET: "CLIENT_VAR_SET",
+    MSG_CLIENT_VAR_SYNC: "CLIENT_VAR_SYNC",
+}
 
 # ============================================================================
 # Data Structures and Enums
@@ -116,6 +134,15 @@ class SimulationConfig:
     virtual_orbit_speed: float = 1.0
     virtual_orbit_radius: float = 1.0
     virtual_count: int = field(default_factory=lambda: random.randint(2, 3))
+
+
+@dataclass
+class ReceiveStats:
+    """Lightweight bookkeeping for received broadcast messages."""
+
+    total_messages: int = 0
+    last_received_at: float = 0.0
+    type_counts: dict[int, int] = field(default_factory=dict)
 
 
 # ============================================================================
@@ -570,11 +597,19 @@ class NetworkTransport:
             self.logger.error(f"Failed to send client variable: {e}")
             return False
 
-    def recv_broadcast(self) -> tuple[int, dict[str, Any]] | None:
-        """Scan incoming broadcasts quickly and return ID mapping if found.
+    def recv_broadcast(
+        self, allow_any: bool = False
+    ) -> tuple[int, dict[str, Any] | None] | None:
+        """Drain incoming broadcasts and optionally surface non-mapping payloads.
 
-        Returns (msg_type, data) for MSG_DEVICE_ID_MAPPING else None. Drains a
-        limited number of messages per call to reduce backlog latency.
+        Args:
+            allow_any: When True, return the first successfully deserialized
+                message regardless of type. When False, only device-ID mapping
+                messages are returned.
+
+        Returns:
+            Tuple of (message_type, data) when a relevant payload is available,
+            otherwise None. Data may be None when deserialization fails.
         """
         if not self.sub_socket:
             return None
@@ -603,12 +638,21 @@ class NetworkTransport:
                 msg_type = payload[0]
             except Exception:
                 continue
-
             if msg_type == MSG_DEVICE_ID_MAPPING:
                 try:
                     _, data, _ = deserialize(payload)
                     if data is not None:
                         return msg_type, data
+                except Exception:
+                    # ignore malformed
+                    continue
+                if allow_any:
+                    return msg_type, None
+
+            if allow_any:
+                try:
+                    _, data, _ = deserialize(payload)
+                    return msg_type, data
                 except Exception:
                     # ignore malformed
                     continue
@@ -763,6 +807,7 @@ class SimulatedClient:
         room_id: str,
         shared_subscriber: Optional["SharedSubscriber"] = None,
         simulate_battery: bool = True,
+        enable_receive: bool = False,
     ):
         self.config = config
         self.transport = transport
@@ -772,6 +817,8 @@ class SimulatedClient:
         self.logger = logging.getLogger(f"Client-{config.device_id[-8:]}")
         self.shared_subscriber = shared_subscriber
         self.simulate_battery = simulate_battery
+        self.enable_receive = enable_receive
+        self.recv_stats: ReceiveStats | None = ReceiveStats() if enable_receive else None
 
         self.start_time = time.monotonic()
         self.last_update_time = self.start_time
@@ -865,6 +912,19 @@ class SimulatedClient:
                 )
             else:
                 self.logger.info("Client stopped")
+            if self.enable_receive and self.recv_stats:
+                if self.recv_stats.total_messages > 0:
+                    breakdown = ", ".join(
+                        f"{MESSAGE_TYPE_NAMES.get(t, t)}:{c}"
+                        for t, c in sorted(self.recv_stats.type_counts.items())
+                    )
+                    self.logger.info(
+                        "Received %d broadcasts (%s)",
+                        self.recv_stats.total_messages,
+                        breakdown,
+                    )
+                else:
+                    self.logger.info("No broadcasts received")
 
     def _update_battery(self, current_time: float):
         """Update battery level and send updates when needed."""
@@ -906,13 +966,13 @@ class SimulatedClient:
             return
 
         # Fallback: use own transport SUB if available
-        msg = self.transport.recv_broadcast()
+        msg = self.transport.recv_broadcast(allow_any=self.enable_receive)
         if not msg:
             return
         msg_type, data = msg
-        try:
-            if msg_type == MSG_DEVICE_ID_MAPPING:
-                mappings = data.get("mappings", [])
+        if msg_type == MSG_DEVICE_ID_MAPPING:
+            try:
+                mappings = data.get("mappings", []) if data else []
                 for m in mappings:
                     if m.get("deviceId") == self.config.device_id:
                         assigned = int(m.get("clientNo", 0))
@@ -922,8 +982,44 @@ class SimulatedClient:
                                 f"Assigned client number by server: {self.client_number}"
                             )
                         break
-        except Exception as e:
-            self.logger.debug(f"Failed to process broadcast: {e}")
+            except Exception as e:
+                self.logger.debug(f"Failed to process broadcast: {e}")
+            return
+
+        if self.enable_receive:
+            self._handle_broadcast_payload(msg_type, data)
+
+
+    def _handle_broadcast_payload(self, msg_type: int, data: dict[str, Any] | None):
+        """Record broadcast metadata for receive-mode load tests."""
+        if not self.recv_stats:
+            return
+
+        now = time.monotonic()
+        self.recv_stats.total_messages += 1
+        self.recv_stats.last_received_at = now
+        self.recv_stats.type_counts[msg_type] = self.recv_stats.type_counts.get(
+            msg_type, 0
+        ) + 1
+
+        if self.logger.isEnabledFor(logging.DEBUG):
+            message_name = MESSAGE_TYPE_NAMES.get(msg_type, f"UNKNOWN_{msg_type}")
+            summary = "payload"
+            if msg_type == MSG_CLIENT_TRANSFORM and data:
+                summary = f"transform from {data.get('deviceId', 'unknown')}"
+            elif msg_type == MSG_ROOM_TRANSFORM and data:
+                summary = (
+                    f"room transform with {len(data.get('clients', []))} clients"
+                )
+            elif msg_type in (MSG_GLOBAL_VAR_SET, MSG_CLIENT_VAR_SET) and data:
+                summary = (
+                    f"var '{data.get('variableName', 'unknown')}'"
+                    if 'variableName' in data
+                    else summary
+                )
+            self.logger.debug(
+                "Received broadcast type %s (%s)", message_name, summary
+            )
 
 
 # ============================================================================
@@ -1124,6 +1220,7 @@ class ClientSimulator:
         spawn_batch_size: int | None = None,
         spawn_batch_interval: float | None = None,
         simulate_battery: bool = True,
+        enable_receive: bool = False,
     ):
         self.server_addr = server_addr
         self.dealer_port = dealer_port
@@ -1135,6 +1232,7 @@ class ClientSimulator:
             spawn_batch_interval if spawn_batch_interval is not None else 0.0
         )
         self.simulate_battery = simulate_battery
+        self.enable_receive = enable_receive
 
         self.context = zmq.Context()
         self.thread_pool = ClientThreadPool(num_clients)
@@ -1202,6 +1300,9 @@ class ClientSimulator:
         self.logger.info(f"Server: {self.server_addr}:{self.dealer_port}")
         self.logger.info(f"Room: {self.room_id}")
         self.logger.info(f"Battery simulation: {'enabled' if self.simulate_battery else 'disabled'}")
+        self.logger.info(
+            f"Broadcast receive mode: {'enabled' if self.enable_receive else 'disabled'}"
+        )
         if self.spawn_batch_size > 0 and self.spawn_batch_interval > 0:
             self.logger.info(
                 f"Spawning clients in batches of {self.spawn_batch_size} "
@@ -1209,12 +1310,19 @@ class ClientSimulator:
             )
 
         # Start shared subscriber for ID mappings (single SUB for all clients)
-        self.shared_subscriber = SharedSubscriber(
-            self.context, self.server_addr, self.sub_port, self.room_id
-        )
-        if not self.shared_subscriber.start():
-            self.logger.warning(
-                "SharedSubscriber failed to start; falling back to per-client SUBs"
+        if not self.enable_receive:
+            self.shared_subscriber = SharedSubscriber(
+                self.context, self.server_addr, self.sub_port, self.room_id
+            )
+            if not self.shared_subscriber.start():
+                self.logger.warning(
+                    "SharedSubscriber failed to start; falling back to per-client SUBs"
+                )
+                self.shared_subscriber = None
+        else:
+            self.shared_subscriber = None
+            self.logger.debug(
+                "SharedSubscriber disabled to keep per-client SUB sockets active"
             )
 
         # Create and start clients
@@ -1244,14 +1352,18 @@ class ClientSimulator:
                 self.sub_port,
                 self.room_id,
                 enable_sub=(
-                    shared_sub is None
-                ),  # disable per-client SUB if shared is running
+                    shared_sub is None or self.enable_receive
+                ),  # disable per-client SUB if shared is running and recv disabled
             )
 
             # Create client
             client = SimulatedClient(
-                config, transport, self.room_id, shared_subscriber=shared_sub,
-                simulate_battery=self.simulate_battery
+                config,
+                transport,
+                self.room_id,
+                shared_subscriber=shared_sub,
+                simulate_battery=self.simulate_battery,
+                enable_receive=self.enable_receive,
             )
 
             # Add to thread pool
@@ -1397,6 +1509,11 @@ Examples:
         action="store_true",
         help="Disable battery level synchronization",
     )
+    parser.add_argument(
+        "--enable-recv",
+        action="store_true",
+        help="Enable per-client SUB sockets and track incoming broadcasts",
+    )
 
     args = parser.parse_args()
 
@@ -1423,6 +1540,7 @@ Examples:
         spawn_batch_size=args.spawn_batch_size,
         spawn_batch_interval=args.spawn_batch_interval,
         simulate_battery=not args.no_sync_battery,
+        enable_receive=args.enable_recv,
     )
 
     try:
