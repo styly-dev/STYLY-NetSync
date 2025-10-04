@@ -969,12 +969,17 @@ class SimulatedClient:
         if not self.transport:
             return
 
-        # Drain multiple messages per poll to keep up with heavy broadcast traffic.
+        # Drain multiple messages per poll, but respect a strict time budget to avoid starvation.
         max_drains = 100 if self.enable_receive else 10
         drained = 0
         assigned_this_poll = False
 
-        while drained < max_drains:
+        # Time budget (nanoseconds)
+        # Higher budget during initial client number assignment, lower during normal operation
+        budget_ns = 5_000_000 if self.client_number == 0 else 1_000_000  # 5ms / 1ms
+        t0 = time.perf_counter_ns()
+
+        while drained < max_drains and (time.perf_counter_ns() - t0) < budget_ns:
             msg = self.transport.recv_broadcast(allow_any=self.enable_receive)
             if not msg:
                 break
@@ -1010,9 +1015,8 @@ class SimulatedClient:
             if self.enable_receive:
                 self._handle_broadcast_payload(msg_type, data)
 
-        # If receive mode is disabled we stop once the mapping queue is drained.
-        # With receive mode enabled we rely on the frequent polling loop above to
-        # continue draining the socket in subsequent iterations.
+        # NOTE: Time budget may interrupt draining, but subsequent ticks will continue
+        # processing messages. This prevents send loop starvation.
 
 
     def _handle_broadcast_payload(self, msg_type: int, data: dict[str, Any] | None):
