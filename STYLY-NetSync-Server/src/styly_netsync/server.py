@@ -1238,7 +1238,7 @@ class NetSyncServer:
                 message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
                 self._enqueue_pub(topic_bytes, message_bytes)
                 logger.info(
-                    f"Broadcasted {len(mappings)} ID mappings to room {room_id}: {[(cno, did[:8], 'stealth' if stealth else 'normal') for cno, did, stealth in mappings]}"
+                    f"Broadcasted {len(mappings)} ID mappings to room {room_id}"
                 )
 
     def _periodic_loop(self):
