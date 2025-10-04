@@ -966,28 +966,53 @@ class SimulatedClient:
             return
 
         # Fallback: use own transport SUB if available
-        msg = self.transport.recv_broadcast(allow_any=self.enable_receive)
-        if not msg:
-            return
-        msg_type, data = msg
-        if msg_type == MSG_DEVICE_ID_MAPPING:
-            try:
-                mappings = data.get("mappings", []) if data else []
-                for m in mappings:
-                    if m.get("deviceId") == self.config.device_id:
-                        assigned = int(m.get("clientNo", 0))
-                        if assigned and assigned != self.client_number:
-                            self.client_number = assigned
-                            self.logger.info(
-                                f"Assigned client number by server: {self.client_number}"
-                            )
-                        break
-            except Exception as e:
-                self.logger.debug(f"Failed to process broadcast: {e}")
+        if not self.transport:
             return
 
-        if self.enable_receive:
-            self._handle_broadcast_payload(msg_type, data)
+        # Drain multiple messages per poll to keep up with heavy broadcast traffic.
+        max_drains = 100 if self.enable_receive else 10
+        drained = 0
+        assigned_this_poll = False
+
+        while drained < max_drains:
+            msg = self.transport.recv_broadcast(allow_any=self.enable_receive)
+            if not msg:
+                break
+
+            drained += 1
+            msg_type, data = msg
+
+            if msg_type == MSG_DEVICE_ID_MAPPING:
+                try:
+                    mappings = data.get("mappings", []) if data else []
+                    for mapping in mappings:
+                        if mapping.get("deviceId") == self.config.device_id:
+                            assigned = int(mapping.get("clientNo", 0))
+                            if assigned and assigned != self.client_number:
+                                self.client_number = assigned
+                                assigned_this_poll = True
+                                self.logger.info(
+                                    f"Assigned client number by server: {self.client_number}"
+                                )
+                            break
+                except Exception as exc:
+                    self.logger.debug(f"Failed to process broadcast: {exc}")
+
+                if self.enable_receive:
+                    self._handle_broadcast_payload(msg_type, data)
+
+                # Once assignment is confirmed we can stop early if we're not
+                # actively measuring receive throughput.
+                if assigned_this_poll and not self.enable_receive:
+                    break
+                continue
+
+            if self.enable_receive:
+                self._handle_broadcast_payload(msg_type, data)
+
+        # If receive mode is disabled we stop once the mapping queue is drained.
+        # With receive mode enabled we rely on the frequent polling loop above to
+        # continue draining the socket in subsequent iterations.
 
 
     def _handle_broadcast_payload(self, msg_type: int, data: dict[str, Any] | None):
