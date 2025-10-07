@@ -24,9 +24,12 @@ import traceback
 from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import zmq
 from . import binary_serializer
+
+if TYPE_CHECKING:
+    from uvicorn import Server
 
 # Log configuration (with optional ANSI colors for console)
 
@@ -300,7 +303,7 @@ class NetSyncServer:
 
         # REST bridge lifecycle
         self._rest_thread: threading.Thread | None = None
-        self._rest_server: Any | None = None
+        self._rest_server: "Server" | None = None
 
     def _increment_stat(self, stat_name: str, amount: int = 1):
         """Thread-safe increment of statistics"""
