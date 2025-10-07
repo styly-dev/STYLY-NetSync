@@ -24,9 +24,12 @@ import traceback
 from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import zmq
 from . import binary_serializer
+
+if TYPE_CHECKING:
+    from uvicorn import Server
 
 # Log configuration (with optional ANSI colors for console)
 
@@ -298,6 +301,10 @@ class NetSyncServer:
         self.broadcast_count = 0
         self.skipped_broadcasts = 0
 
+        # REST bridge lifecycle
+        self._rest_thread: threading.Thread | None = None
+        self._rest_server: "Server" | None = None
+
     def _increment_stat(self, stat_name: str, amount: int = 1):
         """Thread-safe increment of statistics"""
         with self._stats_lock:
@@ -537,6 +544,25 @@ class NetSyncServer:
             logger.info("All threads started successfully")
             logger.info("Server is ready and waiting for connections...")
 
+            try:
+                from .rest_bridge import create_app, run_uvicorn_in_thread
+
+                app = create_app(
+                    server_addr="tcp://127.0.0.1",
+                    dealer_port=self.dealer_port,
+                    sub_port=self.pub_port,
+                )
+                rest_port = int(os.getenv("NETSYNC_REST_PORT", "8800"))
+                self._rest_thread, self._rest_server = run_uvicorn_in_thread(
+                    app, host="0.0.0.0", port=rest_port
+                )
+                logger.info(
+                    f"REST bridge started on http://0.0.0.0:{rest_port} "
+                    f"(room proxy connected to tcp://127.0.0.1:{self.dealer_port}/{self.pub_port})"
+                )
+            except Exception as rest_exc:
+                logger.error(f"Failed to start REST bridge: {rest_exc}")
+
         except zmq.error.ZMQError as e:
             if "Address already in use" in str(e):
                 logger.error(
@@ -568,6 +594,16 @@ class NetSyncServer:
         # Stop beacon
         if self.beacon_running:
             self._stop_beacon()
+
+        if self._rest_server is not None:
+            try:
+                self._rest_server.should_exit = True
+            except Exception as rest_exc:  # pragma: no cover - defensive
+                logger.debug("Failed to signal REST bridge shutdown: %s", rest_exc)
+        if self._rest_thread and self._rest_thread.is_alive():
+            self._rest_thread.join(timeout=2.0)
+        self._rest_thread = None
+        self._rest_server = None
 
         if self.receive_thread:
             self.receive_thread.join()
