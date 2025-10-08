@@ -650,12 +650,9 @@ class NetworkTransport:
                     return msg_type, None
 
             if allow_any:
-                try:
-                    _, data, _ = deserialize(payload)
-                    return msg_type, data
-                except Exception:
-                    # ignore malformed
-                    continue
+                # When measuring receive throughput we only need message type,
+                # not the full payload. Returning None keeps CPU usage low.
+                return msg_type, None
             # For other message types, drop and continue scanning
         return None
 
@@ -1046,6 +1043,8 @@ class SimulatedClient:
                     if 'variableName' in data
                     else summary
                 )
+            elif data is None:
+                summary = "payload omitted"
             self.logger.debug(
                 "Received broadcast type %s (%s)", message_name, summary
             )
