@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from shutil import which
 
 import pytest
 
@@ -47,11 +48,20 @@ class TestAllRunMethods:
             original_cwd = os.getcwd()
             os.chdir(PROJECT_ROOT)
 
+            env = os.environ.copy()
+            src_path = str(PROJECT_ROOT / "src")
+            existing_pythonpath = env.get("PYTHONPATH")
+            if existing_pythonpath:
+                env["PYTHONPATH"] = os.pathsep.join([src_path, existing_pythonpath])
+            else:
+                env["PYTHONPATH"] = src_path
+
             process = subprocess.Popen(
                 full_command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=env,
             )
 
             if expect_help:
@@ -100,6 +110,8 @@ class TestAllRunMethods:
 
     def test_server_cli_entry_point_help(self):
         """Test: styly-netsync-server --help"""
+        if which("styly-netsync-server") is None:
+            pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
             'styly-netsync-server',
             args=['--help'],
@@ -124,6 +136,8 @@ class TestAllRunMethods:
 
     def test_server_cli_entry_point_run(self):
         """Test: styly-netsync-server (brief run)"""
+        if which("styly-netsync-server") is None:
+            pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
             'styly-netsync-server',
             args=['--dealer-port', '15555', '--pub-port', '15556', '--beacon-port', '19999'],
@@ -136,6 +150,8 @@ class TestAllRunMethods:
 
     def test_simulator_cli_entry_point_help(self):
         """Test: styly-netsync-simulator --help"""
+        if which("styly-netsync-simulator") is None:
+            pytest.skip("Simulator CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
             'styly-netsync-simulator',
             args=['--help'],
@@ -153,6 +169,8 @@ class TestAllRunMethods:
 
     def test_server_with_custom_ports(self):
         """Test: styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999"""
+        if which("styly-netsync-server") is None:
+            pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
             'styly-netsync-server',
             args=['--dealer-port', '45555', '--pub-port', '45556', '--beacon-port', '49999'],
@@ -163,6 +181,8 @@ class TestAllRunMethods:
 
     def test_server_no_beacon(self):
         """Test: styly-netsync-server --no-beacon"""
+        if which("styly-netsync-server") is None:
+            pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
             'styly-netsync-server',
             args=['--no-beacon', '--dealer-port', '55555', '--pub-port', '55556'],

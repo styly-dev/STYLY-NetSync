@@ -40,6 +40,7 @@ dependencies = [
     "pyzmq>=26.0.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
+    "msgpack>=1.0.5",
 ]
 
 [project.optional-dependencies]
