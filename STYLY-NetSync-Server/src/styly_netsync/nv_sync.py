@@ -24,12 +24,12 @@ structures.
 
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass
 import struct
 import time
-from typing import Any, Iterable, Literal
 import zlib
+from collections import deque
+from dataclasses import dataclass
+from typing import Any, Literal
 
 import msgpack
 
@@ -184,7 +184,11 @@ class NameTable:
         if not self._pending_added:
             return None
 
-        base_version = self._delta_base_version if self._delta_base_version is not None else self.version
+        base_version = (
+            self._delta_base_version
+            if self._delta_base_version is not None
+            else self.version
+        )
         payload = {
             "type": NAME_TABLE_DELTA_MESSAGE_TYPE,
             "roomId": room_id,
@@ -205,7 +209,7 @@ class NameTable:
 
         return self.version, self.count, self.crc32
 
-    def trim_stale(self, *, stale_after: float) -> Iterable[int]:
+    def trim_stale(self, *, stale_after: float) -> list[int]:
         """Yield name IDs that were removed due to staleness.
 
         ``stale_after`` is expressed in seconds.  Removed name IDs are not reused
@@ -360,7 +364,9 @@ class RoomState:
     # ------------------------------------------------------------------
     def build_snapshot_payload(self) -> dict[str, Any]:
         version, count, crc32 = self.name_table.digest_tuple()
-        globals_payload = {name_id: value for name_id, value in self.globals_by_id.items()}
+        globals_payload = {
+            name_id: value for name_id, value in self.globals_by_id.items()
+        }
         clients_payload = {
             client_no: {name_id: value for name_id, value in scope.items()}
             for client_no, scope in self.clients_by_no.items()
@@ -374,8 +380,7 @@ class RoomState:
             "nameTable": {
                 "version": version,
                 "entries": [
-                    [name_id, name]
-                    for name_id, name in self.name_table.entries()
+                    [name_id, name] for name_id, name in self.name_table.entries()
                 ],
                 "count": count,
                 "crc32": crc32,
@@ -426,4 +431,3 @@ class RoomState:
         """Encode a payload dictionary using MessagePack."""
 
         return msgpack.dumps(payload, use_bin_type=True)
-
