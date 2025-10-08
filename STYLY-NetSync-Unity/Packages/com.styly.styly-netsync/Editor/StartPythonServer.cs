@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Debug = UnityEngine.Debug;
 
 namespace Styly.NetSync.Editor
@@ -29,6 +30,27 @@ namespace Styly.NetSync.Editor
                 EditorUtility.DisplayDialog("Unsupported Platform",
                     "Starting Python server is only supported on Windows, macOS, and Linux.", "OK");
             }
+        }
+
+        private static int GetDefaultBeaconPort()
+        {
+            // Try to find NetSyncManager in the active scene
+            Scene activeScene = SceneManager.GetActiveScene();
+            if (activeScene.isLoaded)
+            {
+                GameObject[] rootObjects = activeScene.GetRootGameObjects();
+                foreach (GameObject rootObject in rootObjects)
+                {
+                    NetSyncManager manager = rootObject.GetComponentInChildren<NetSyncManager>(true);
+                    if (manager != null)
+                    {
+                        return manager.BeaconPort;
+                    }
+                }
+            }
+
+            // Return default port if NetSyncManager is not found
+            return 9999;
         }
 
         private static string GetServerVersionSafe()
@@ -111,6 +133,8 @@ namespace Styly.NetSync.Editor
         private static void StartServerMac()
         {
             string serverVersion = GetServerVersionSafe();
+            int defaultBeaconPort = GetDefaultBeaconPort();
+            bool hasNetSyncManager = defaultBeaconPort != 9999;
             string terminal;
             try
             {
@@ -189,7 +213,7 @@ echo ''
 
 # Configure server discovery
 echo 'Configure server discovery:'
-echo '1. Use default beacon port (9999)'
+echo '1. Use " + (hasNetSyncManager ? $"beacon port from scene ({defaultBeaconPort})" : "default beacon port (9999)") + @"'
 echo '2. Specify custom beacon port'
 echo '3. Disable beacon discovery'
 echo ''
@@ -197,6 +221,7 @@ read -p 'Select option (1-3) [1]: ' option
 option=${option:-1}
 
 BEACON_ARGS=''
+DEFAULT_PORT=" + defaultBeaconPort + @"
 
 case $option in
     2)
@@ -208,7 +233,7 @@ case $option in
             echo ""Using custom beacon port: $beacon_port""
         else
             echo ''
-            echo 'Invalid port number. Using default port 9999.'
+            echo ""Invalid port number. Using port $DEFAULT_PORT.""
         fi
         ;;
     3)
@@ -217,8 +242,9 @@ case $option in
         echo 'Beacon discovery disabled.'
         ;;
     *)
+        BEACON_ARGS=""--beacon-port $DEFAULT_PORT""
         echo ''
-        echo 'Using default beacon port: 9999'
+        echo ""Using beacon port: $DEFAULT_PORT""
         ;;
 esac
 
@@ -296,6 +322,8 @@ read -p 'Press any key to exit...'
         private static void StartServerWindows()
         {
             string serverVersion = GetServerVersionSafe();
+            int defaultBeaconPort = GetDefaultBeaconPort();
+            bool hasNetSyncManager = defaultBeaconPort != 9999;
             string powershellScript = @"
 Clear-Host
 Write-Host 'STYLY NetSync Python Server Setup' -ForegroundColor Cyan
@@ -351,7 +379,7 @@ Write-Host ''
 
 # Configure server discovery
 Write-Host 'Configure server discovery:' -ForegroundColor Cyan
-Write-Host '1. Use default beacon port (9999)'
+Write-Host '1. Use " + (hasNetSyncManager ? $"beacon port from scene ({defaultBeaconPort})" : "default beacon port (9999)") + @"'
 Write-Host '2. Specify custom beacon port'
 Write-Host '3. Disable beacon discovery'
 Write-Host ''
@@ -359,6 +387,7 @@ $option = Read-Host 'Select option (1-3) [1]'
 if ([string]::IsNullOrWhiteSpace($option)) { $option = '1' }
 
 $beaconArgs = ''
+$defaultPort = " + defaultBeaconPort + @"
 
 switch ($option) {
     '2' {
@@ -370,7 +399,7 @@ switch ($option) {
             Write-Host ""Using custom beacon port: $beaconPort"" -ForegroundColor Green
         } else {
             Write-Host ''
-            Write-Host 'Invalid port number. Using default port 9999.' -ForegroundColor Yellow
+            Write-Host ""Invalid port number. Using port $defaultPort."" -ForegroundColor Yellow
         }
     }
     '3' {
@@ -379,8 +408,9 @@ switch ($option) {
         Write-Host 'Beacon discovery disabled.' -ForegroundColor Yellow
     }
     default {
+        $beaconArgs = ""--beacon-port $defaultPort""
         Write-Host ''
-        Write-Host 'Using default beacon port: 9999' -ForegroundColor Green
+        Write-Host ""Using beacon port: $defaultPort"" -ForegroundColor Green
     }
 }
 
@@ -447,6 +477,8 @@ Read-Host 'Press Enter to exit'
         private static void StartServerLinux()
         {
             string serverVersion = GetServerVersionSafe();
+            int defaultBeaconPort = GetDefaultBeaconPort();
+            bool hasNetSyncManager = defaultBeaconPort != 9999;
 
             // Try to find available terminal emulator
             string[] terminals = { "gnome-terminal", "konsole", "xterm", "x-terminal-emulator" };
@@ -522,7 +554,7 @@ echo ''
 
 # Configure server discovery
 echo 'Configure server discovery:'
-echo '1. Use default beacon port (9999)'
+echo '1. Use " + (hasNetSyncManager ? $"beacon port from scene ({defaultBeaconPort})" : "default beacon port (9999)") + @"'
 echo '2. Specify custom beacon port'
 echo '3. Disable beacon discovery'
 echo ''
@@ -530,6 +562,7 @@ read -p 'Select option (1-3) [1]: ' option
 option=${option:-1}
 
 BEACON_ARGS=''
+DEFAULT_PORT=" + defaultBeaconPort + @"
 
 case $option in
     2)
@@ -541,7 +574,7 @@ case $option in
             echo ""Using custom beacon port: $beacon_port""
         else
             echo ''
-            echo 'Invalid port number. Using default port 9999.'
+            echo ""Invalid port number. Using port $DEFAULT_PORT.""
         fi
         ;;
     3)
@@ -550,8 +583,9 @@ case $option in
         echo 'Beacon discovery disabled.'
         ;;
     *)
+        BEACON_ARGS=""--beacon-port $DEFAULT_PORT""
         echo ''
-        echo 'Using default beacon port: 9999'
+        echo ""Using beacon port: $DEFAULT_PORT""
         ;;
 esac
 
