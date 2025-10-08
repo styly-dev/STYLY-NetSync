@@ -18,15 +18,18 @@ namespace Styly.NetSync.Editor
         
         public override void OnInspectorGUI()
         {
+            // Update serialized object to reflect runtime changes
+            serializedObject.Update();
+
             // Draw default inspector
             DrawDefaultInspector();
-            
+
             // Only show network variables during play mode
             if (!Application.isPlaying)
             {
                 return;
             }
-            
+
             EditorGUILayout.Space();
             
             // Client Network Variables section
