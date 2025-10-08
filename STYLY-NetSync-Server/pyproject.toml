@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "styly-netsync-server"
-version = "0.5.9"
+version = "0.6.0"
 description = "STYLY NetSync Server - Multiplayer framework for Location-Based Entertainment VR/MR experiences"
 readme = "README.md"
 requires-python = ">=3.11"
