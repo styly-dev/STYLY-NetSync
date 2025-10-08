@@ -186,13 +186,50 @@ echo ''
 echo 'Starting STYLY NetSync Python Server...'
 echo 'Server version: " + serverVersion + @"'
 echo ''
-echo 'Running: uvx styly-netsync-server@" + serverVersion + @"'
+
+# Configure server discovery
+echo 'Configure server discovery:'
+echo '1. Use default beacon port (9999)'
+echo '2. Specify custom beacon port'
+echo '3. Disable beacon discovery'
+echo ''
+read -p 'Select option (1-3) [1]: ' option
+option=${option:-1}
+
+BEACON_ARGS=''
+
+case $option in
+    2)
+        read -p 'Enter beacon port (1-65535): ' beacon_port
+        # Validate port number
+        if [[ $beacon_port =~ ^[0-9]+$ ]] && [ $beacon_port -ge 1 ] && [ $beacon_port -le 65535 ]; then
+            BEACON_ARGS=""--beacon-port $beacon_port""
+            echo ''
+            echo ""Using custom beacon port: $beacon_port""
+        else
+            echo ''
+            echo 'Invalid port number. Using default port 9999.'
+        fi
+        ;;
+    3)
+        BEACON_ARGS='--no-beacon'
+        echo ''
+        echo 'Beacon discovery disabled.'
+        ;;
+    *)
+        echo ''
+        echo 'Using default beacon port: 9999'
+        ;;
+esac
+
+echo ''
+echo 'Running: uvx styly-netsync-server@" + serverVersion + @"' $BEACON_ARGS
 echo ''
 echo '========================================='
 echo ''
 
 # Start the server
-uvx styly-netsync-server@" + serverVersion + @"
+uvx styly-netsync-server@" + serverVersion + @" $BEACON_ARGS
 
 # Keep terminal open if server exits
 echo ''
@@ -311,13 +348,51 @@ Write-Host ''
 Write-Host 'Starting STYLY NetSync Python Server...' -ForegroundColor Green
 Write-Host 'Server version: " + serverVersion + @"' -ForegroundColor Gray
 Write-Host ''
-Write-Host 'Running: uvx styly-netsync-server@" + serverVersion + @"' -ForegroundColor Cyan
+
+# Configure server discovery
+Write-Host 'Configure server discovery:' -ForegroundColor Cyan
+Write-Host '1. Use default beacon port (9999)'
+Write-Host '2. Specify custom beacon port'
+Write-Host '3. Disable beacon discovery'
+Write-Host ''
+$option = Read-Host 'Select option (1-3) [1]'
+if ([string]::IsNullOrWhiteSpace($option)) { $option = '1' }
+
+$beaconArgs = ''
+
+switch ($option) {
+    '2' {
+        $beaconPort = Read-Host 'Enter beacon port (1-65535)'
+        # Validate port number
+        if ($beaconPort -match '^\d+$' -and [int]$beaconPort -ge 1 -and [int]$beaconPort -le 65535) {
+            $beaconArgs = ""--beacon-port $beaconPort""
+            Write-Host ''
+            Write-Host ""Using custom beacon port: $beaconPort"" -ForegroundColor Green
+        } else {
+            Write-Host ''
+            Write-Host 'Invalid port number. Using default port 9999.' -ForegroundColor Yellow
+        }
+    }
+    '3' {
+        $beaconArgs = '--no-beacon'
+        Write-Host ''
+        Write-Host 'Beacon discovery disabled.' -ForegroundColor Yellow
+    }
+    default {
+        Write-Host ''
+        Write-Host 'Using default beacon port: 9999' -ForegroundColor Green
+    }
+}
+
+Write-Host ''
+Write-Host ""Running: uvx styly-netsync-server@" + serverVersion + @" $beaconArgs"" -ForegroundColor Cyan
 Write-Host ''
 Write-Host '=========================================' -ForegroundColor Cyan
 Write-Host ''
 
 # Start the server
-uvx styly-netsync-server@" + serverVersion + @"
+$command = ""uvx styly-netsync-server@" + serverVersion + @" $beaconArgs""
+Invoke-Expression $command
 
 # Keep terminal open if server exits
 Write-Host ''
@@ -444,13 +519,50 @@ echo ''
 echo 'Starting STYLY NetSync Python Server...'
 echo 'Server version: " + serverVersion + @"'
 echo ''
-echo 'Running: uvx styly-netsync-server@" + serverVersion + @"'
+
+# Configure server discovery
+echo 'Configure server discovery:'
+echo '1. Use default beacon port (9999)'
+echo '2. Specify custom beacon port'
+echo '3. Disable beacon discovery'
+echo ''
+read -p 'Select option (1-3) [1]: ' option
+option=${option:-1}
+
+BEACON_ARGS=''
+
+case $option in
+    2)
+        read -p 'Enter beacon port (1-65535): ' beacon_port
+        # Validate port number
+        if [[ $beacon_port =~ ^[0-9]+$ ]] && [ $beacon_port -ge 1 ] && [ $beacon_port -le 65535 ]; then
+            BEACON_ARGS=""--beacon-port $beacon_port""
+            echo ''
+            echo ""Using custom beacon port: $beacon_port""
+        else
+            echo ''
+            echo 'Invalid port number. Using default port 9999.'
+        fi
+        ;;
+    3)
+        BEACON_ARGS='--no-beacon'
+        echo ''
+        echo 'Beacon discovery disabled.'
+        ;;
+    *)
+        echo ''
+        echo 'Using default beacon port: 9999'
+        ;;
+esac
+
+echo ''
+echo 'Running: uvx styly-netsync-server@" + serverVersion + @"' $BEACON_ARGS
 echo ''
 echo '========================================='
 echo ''
 
 # Start the server
-uvx styly-netsync-server@" + serverVersion + @"
+uvx styly-netsync-server@" + serverVersion + @" $BEACON_ARGS
 
 # Keep terminal open if server exits
 echo ''
