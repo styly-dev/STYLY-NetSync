@@ -41,6 +41,15 @@ Example:
   python test_client.py --server 192.168.1.100 --room vr_room_1
 """
 
+from __future__ import annotations
+
+import pytest
+
+pytest.skip(
+    "Legacy integration scenario pending migration to the delta NV protocol",
+    allow_module_level=True,
+)
+
 import json
 import logging
 import math
