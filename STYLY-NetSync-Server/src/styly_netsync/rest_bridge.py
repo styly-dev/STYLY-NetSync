@@ -32,7 +32,9 @@ class PreseedStore:
         self._data: dict[tuple[str, str], dict[str, str]] = {}
         self._lock = threading.RLock()
 
-    def upsert(self, room_id: str, device_id: str, kvs: dict[str, str]) -> dict[str, str]:
+    def upsert(
+        self, room_id: str, device_id: str, kvs: dict[str, str]
+    ) -> dict[str, str]:
         """Merge incoming key-values for a device within a room."""
         with self._lock:
             key = (room_id, device_id)
@@ -67,7 +69,9 @@ store = PreseedStore()
 class RoomBridge:
     """Internal client per room responsible for flushing queued variables."""
 
-    def __init__(self, server_addr: str, dealer_port: int, sub_port: int, room_id: str) -> None:
+    def __init__(
+        self, server_addr: str, dealer_port: int, sub_port: int, room_id: str
+    ) -> None:
         self.room_id = room_id
         self._manager = net_sync_manager(
             server=server_addr, dealer_port=dealer_port, sub_port=sub_port, room=room_id
@@ -187,7 +191,9 @@ class BridgeManager:
         with self._lock:
             bridge = self._bridges.get(room_id)
             if bridge is None:
-                bridge = RoomBridge(self._server_addr, self._dealer_port, self._sub_port, room_id)
+                bridge = RoomBridge(
+                    self._server_addr, self._dealer_port, self._sub_port, room_id
+                )
                 bridge.start()
                 self._bridges[room_id] = bridge
             return bridge
@@ -227,7 +233,9 @@ def run_uvicorn_in_thread(
     """Spawn a Uvicorn server for the given FastAPI app in a background thread."""
     import uvicorn
 
-    config = uvicorn.Config(app=app, host=host, port=port, log_level="info", lifespan="off")
+    config = uvicorn.Config(
+        app=app, host=host, port=port, log_level="warning", lifespan="off"
+    )
     server = uvicorn.Server(config=config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

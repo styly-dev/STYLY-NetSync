@@ -317,7 +317,6 @@ class NetSyncServer:
             # Create/bind PUB in this thread to avoid cross-thread use
             self.pub = self.context.socket(zmq.PUB)
             self.pub.bind(f"tcp://*:{self.pub_port}")
-            logger.info(f"PUB socket bound to port {self.pub_port} (PublisherThread)")
             self._pub_ready.set()
 
             while self._publisher_running:
@@ -496,15 +495,10 @@ class NetSyncServer:
 
     def start(self):
         """Start the server"""
-        logger.info(
-            f"Starting server on ports {self.dealer_port} (ROUTER) and {self.pub_port} (PUB)"
-        )
-
         try:
             # Setup ROUTER socket
             self.router = self.context.socket(zmq.ROUTER)
             self.router.bind(f"tcp://*:{self.dealer_port}")
-            logger.info(f"ROUTER socket bound to port {self.dealer_port}")
 
             # Start Publisher thread (it creates/binds PUB)
             self._publisher_running = True
@@ -542,9 +536,6 @@ class NetSyncServer:
             if self.enable_beacon:
                 self._start_beacon()
 
-            logger.info("All threads started successfully")
-            logger.info("Server is ready and waiting for connections...")
-
             try:
                 from .rest_bridge import create_app, run_uvicorn_in_thread
 
@@ -557,14 +548,13 @@ class NetSyncServer:
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
                     app, host="0.0.0.0", port=rest_port
                 )
-                logger.info(
-                    f"REST bridge started on http://0.0.0.0:{rest_port} "
-                    f"(room proxy connected to tcp://127.0.0.1:{self.dealer_port}/{self.pub_port})"
-                )
+                logger.info(f"REST bridge started on http://0.0.0.0:{rest_port}")
                 # Display logo after all initialization is complete
                 display_logo()
             except Exception as rest_exc:
                 logger.error(f"Failed to start REST bridge: {rest_exc}")
+
+            logger.info("Server is ready and waiting for connections...")
 
         except zmq.error.ZMQError as e:
             if "Address already in use" in str(e):
@@ -645,8 +635,6 @@ class NetSyncServer:
 
     def _receive_loop(self):
         """Receive messages from clients"""
-        logger.info("Receive loop started")
-
         while self.running:
             try:
                 # Check for incoming messages
@@ -1282,7 +1270,6 @@ class NetSyncServer:
 
     def _periodic_loop(self):
         """Combined broadcast and cleanup loop with adaptive rates"""
-        logger.info("Periodic loop started")
         last_broadcast_check = 0
         last_cleanup = 0
         last_device_id_cleanup = 0
@@ -1502,7 +1489,6 @@ class NetSyncServer:
                 target=self._beacon_loop, name="BeaconThread", daemon=True
             )
             self.beacon_thread.start()
-            logger.info(f"Started discovery service on UDP port {self.beacon_port}")
 
         except Exception as e:
             logger.error(f"Failed to start discovery service: {e}")
