@@ -560,6 +560,8 @@ class NetSyncServer:
                     f"REST bridge started on http://0.0.0.0:{rest_port} "
                     f"(room proxy connected to tcp://127.0.0.1:{self.dealer_port}/{self.pub_port})"
                 )
+                # Display logo after all initialization is complete
+                display_logo()
             except Exception as rest_exc:
                 logger.error(f"Failed to start REST bridge: {rest_exc}")
 
@@ -1584,8 +1586,6 @@ def main():
     beacon_port = DEFAULT_BEACON_PORT
     server_name = DEFAULT_SERVER_NAME
     nv_flush_policy = DEFAULT_NV_FLUSH_POLICY
-
-    display_logo()
 
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
