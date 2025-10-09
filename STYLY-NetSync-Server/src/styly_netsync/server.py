@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import os
+import psutil  # type: ignore[import-untyped]
 import socket
 import threading
 import time
@@ -117,11 +118,11 @@ def get_version() -> str:
         try:
             dist = im.distribution("styly-netsync-server")
             # Development installs typically have .egg-link or direct path references
-            if hasattr(dist, 'files') and dist.files:
+            if hasattr(dist, "files") and dist.files:
                 # Check if any file path contains 'site-packages' - normal install
                 # vs direct source paths - development install
                 for file in list(dist.files)[:5]:  # Check first few files
-                    if file and 'site-packages' not in str(file):
+                    if file and "site-packages" not in str(file):
                         return True
             return False
         except im.PackageNotFoundError:
@@ -1559,6 +1560,53 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
     sys.stdout.flush()
 
 
+def get_local_ip_addresses() -> list[str]:
+    """
+    Get all local IP addresses of the machine from physical network interfaces.
+
+    Filters out virtual interfaces (bridges, VPNs, Docker, etc.) to show only
+    IP addresses that are likely accessible from external devices.
+
+    Returns:
+        list: List of IP addresses as strings
+    """
+    ip_addresses = []
+    try:
+        # Patterns to exclude virtual/bridge interfaces
+        # These are common virtual interface prefixes across different platforms
+        virtual_prefixes = (
+            "bridge",  # VMware, Parallels bridges
+            "docker",  # Docker interfaces
+            "veth",  # Virtual Ethernet (Docker, LXC)
+            "vmnet",  # VMware network
+            "vboxnet",  # VirtualBox network
+            "virbr",  # libvirt bridge
+            "tun",  # VPN tunnels
+            "tap",  # Virtual network tap
+            "utun",  # macOS VPN tunnels
+            "vnic",  # Virtual NIC
+            "ppp",  # Point-to-Point Protocol (VPN)
+        )
+
+        # Get all network interfaces
+        for interface_name, interface_addresses in psutil.net_if_addrs().items():
+            # Skip virtual interfaces
+            if interface_name.lower().startswith(virtual_prefixes):
+                continue
+
+            for address in interface_addresses:
+                # Filter for IPv4 addresses only
+                if address.family == socket.AF_INET:
+                    ip = address.address
+                    # Exclude localhost
+                    if ip != "127.0.0.1":
+                        ip_addresses.append(ip)
+    except Exception as e:
+        logger.warning(f"Failed to get local IP addresses: {e}")
+
+    return ip_addresses
+
+
 def main():
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
@@ -1591,6 +1639,16 @@ def main():
     logger.info("STYLY NetSync Server Starting")
     logger.info("=" * 80)
     logger.info(f"  Version: {get_version()}")
+
+    # Display local IP addresses
+    ip_addresses = get_local_ip_addresses()
+    if ip_addresses:
+        logger.info("  Server IP addresses:")
+        for ip in ip_addresses:
+            logger.info(f"    - {ip}")
+    else:
+        logger.info("  Server IP addresses: Unable to detect")
+
     logger.info(f"  DEALER port: {dealer_port}")
     logger.info(f"  PUB port: {pub_port}")
     if not args.no_beacon:
