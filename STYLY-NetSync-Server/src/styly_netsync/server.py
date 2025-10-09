@@ -1550,8 +1550,8 @@ def get_local_ip_addresses() -> list[str]:
     """
     Get all local IP addresses of the machine from physical network interfaces.
 
-    Filters out virtual interfaces (bridges, VPNs, Docker, etc.) to show only
-    IP addresses that are likely accessible from external devices.
+    Filters out virtual interfaces (bridges, VPNs, Docker, etc.) and APIPA addresses
+    (169.254.x.x) to show only IP addresses that are likely accessible from external devices.
 
     Returns:
         list: List of IP addresses as strings
@@ -1584,8 +1584,8 @@ def get_local_ip_addresses() -> list[str]:
                 # Filter for IPv4 addresses only
                 if address.family == socket.AF_INET:
                     ip = address.address
-                    # Exclude localhost
-                    if ip != "127.0.0.1":
+                    # Exclude localhost and APIPA addresses (169.254.x.x)
+                    if ip != "127.0.0.1" and not ip.startswith("169.254."):
                         ip_addresses.append(ip)
     except Exception as e:
         logger.warning(f"Failed to get local IP addresses: {e}")
