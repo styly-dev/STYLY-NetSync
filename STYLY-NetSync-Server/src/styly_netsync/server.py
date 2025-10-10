@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import os
+import psutil  # type: ignore[import-untyped]
 import socket
 import threading
 import time
@@ -117,11 +118,11 @@ def get_version() -> str:
         try:
             dist = im.distribution("styly-netsync-server")
             # Development installs typically have .egg-link or direct path references
-            if hasattr(dist, 'files') and dist.files:
+            if hasattr(dist, "files") and dist.files:
                 # Check if any file path contains 'site-packages' - normal install
                 # vs direct source paths - development install
                 for file in list(dist.files)[:5]:  # Check first few files
-                    if file and 'site-packages' not in str(file):
+                    if file and "site-packages" not in str(file):
                         return True
             return False
         except im.PackageNotFoundError:
@@ -316,7 +317,6 @@ class NetSyncServer:
             # Create/bind PUB in this thread to avoid cross-thread use
             self.pub = self.context.socket(zmq.PUB)
             self.pub.bind(f"tcp://*:{self.pub_port}")
-            logger.info(f"PUB socket bound to port {self.pub_port} (PublisherThread)")
             self._pub_ready.set()
 
             while self._publisher_running:
@@ -495,15 +495,10 @@ class NetSyncServer:
 
     def start(self):
         """Start the server"""
-        logger.info(
-            f"Starting server on ports {self.dealer_port} (ROUTER) and {self.pub_port} (PUB)"
-        )
-
         try:
             # Setup ROUTER socket
             self.router = self.context.socket(zmq.ROUTER)
             self.router.bind(f"tcp://*:{self.dealer_port}")
-            logger.info(f"ROUTER socket bound to port {self.dealer_port}")
 
             # Start Publisher thread (it creates/binds PUB)
             self._publisher_running = True
@@ -541,9 +536,6 @@ class NetSyncServer:
             if self.enable_beacon:
                 self._start_beacon()
 
-            logger.info("All threads started successfully")
-            logger.info("Server is ready and waiting for connections...")
-
             try:
                 from .rest_bridge import create_app, run_uvicorn_in_thread
 
@@ -556,12 +548,13 @@ class NetSyncServer:
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
                     app, host="0.0.0.0", port=rest_port
                 )
-                logger.info(
-                    f"REST bridge started on http://0.0.0.0:{rest_port} "
-                    f"(room proxy connected to tcp://127.0.0.1:{self.dealer_port}/{self.pub_port})"
-                )
+                logger.info(f"REST bridge started on http://0.0.0.0:{rest_port}")
+                # Display logo after all initialization is complete
+                display_logo()
             except Exception as rest_exc:
                 logger.error(f"Failed to start REST bridge: {rest_exc}")
+
+            logger.info("Server is ready and waiting for connections...")
 
         except zmq.error.ZMQError as e:
             if "Address already in use" in str(e):
@@ -642,8 +635,6 @@ class NetSyncServer:
 
     def _receive_loop(self):
         """Receive messages from clients"""
-        logger.info("Receive loop started")
-
         while self.running:
             try:
                 # Check for incoming messages
@@ -1279,7 +1270,6 @@ class NetSyncServer:
 
     def _periodic_loop(self):
         """Combined broadcast and cleanup loop with adaptive rates"""
-        logger.info("Periodic loop started")
         last_broadcast_check = 0
         last_cleanup = 0
         last_device_id_cleanup = 0
@@ -1499,7 +1489,6 @@ class NetSyncServer:
                 target=self._beacon_loop, name="BeaconThread", daemon=True
             )
             self.beacon_thread.start()
-            logger.info(f"Started discovery service on UDP port {self.beacon_port}")
 
         except Exception as e:
             logger.error(f"Failed to start discovery service: {e}")
@@ -1557,6 +1546,53 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
     sys.stdout.flush()
 
 
+def get_local_ip_addresses() -> list[str]:
+    """
+    Get all local IP addresses of the machine from physical network interfaces.
+
+    Filters out virtual interfaces (bridges, VPNs, Docker, etc.) and APIPA addresses
+    (169.254.x.x) to show only IP addresses that are likely accessible from external devices.
+
+    Returns:
+        list: List of IP addresses as strings
+    """
+    ip_addresses = []
+    try:
+        # Patterns to exclude virtual/bridge interfaces
+        # These are common virtual interface prefixes across different platforms
+        virtual_prefixes = (
+            "bridge",  # VMware, Parallels bridges
+            "docker",  # Docker interfaces
+            "veth",  # Virtual Ethernet (Docker, LXC)
+            "vmnet",  # VMware network
+            "vboxnet",  # VirtualBox network
+            "virbr",  # libvirt bridge
+            "tun",  # VPN tunnels
+            "tap",  # Virtual network tap
+            "utun",  # macOS VPN tunnels
+            "vnic",  # Virtual NIC
+            "ppp",  # Point-to-Point Protocol (VPN)
+        )
+
+        # Get all network interfaces
+        for interface_name, interface_addresses in psutil.net_if_addrs().items():
+            # Skip virtual interfaces
+            if interface_name.lower().startswith(virtual_prefixes):
+                continue
+
+            for address in interface_addresses:
+                # Filter for IPv4 addresses only
+                if address.family == socket.AF_INET:
+                    ip = address.address
+                    # Exclude localhost and APIPA addresses (169.254.x.x)
+                    if ip != "127.0.0.1" and not ip.startswith("169.254."):
+                        ip_addresses.append(ip)
+    except Exception as e:
+        logger.warning(f"Failed to get local IP addresses: {e}")
+
+    return ip_addresses
+
+
 def main():
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
@@ -1585,12 +1621,20 @@ def main():
     server_name = DEFAULT_SERVER_NAME
     nv_flush_policy = DEFAULT_NV_FLUSH_POLICY
 
-    display_logo()
-
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
     logger.info("=" * 80)
     logger.info(f"  Version: {get_version()}")
+
+    # Display local IP addresses
+    ip_addresses = get_local_ip_addresses()
+    if ip_addresses:
+        logger.info("  Server IP addresses:")
+        for ip in ip_addresses:
+            logger.info(f"    - {ip}")
+    else:
+        logger.info("  Server IP addresses: Unable to detect")
+
     logger.info(f"  DEALER port: {dealer_port}")
     logger.info(f"  PUB port: {pub_port}")
     if not args.no_beacon:
