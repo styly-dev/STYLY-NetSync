@@ -6,6 +6,7 @@ import time
 from typing import Dict
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, constr
 
 from .client import net_sync_manager
@@ -202,6 +203,16 @@ class BridgeManager:
 def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
     """Create the FastAPI application hosting the REST bridge."""
     app = FastAPI(title="NetSync REST Bridge", version="1.0.0")
+
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+    )
+
     manager = BridgeManager(server_addr, dealer_port, sub_port)
 
     @app.get("/")
