@@ -204,6 +204,11 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
     app = FastAPI(title="NetSync REST Bridge", version="1.0.0")
     manager = BridgeManager(server_addr, dealer_port, sub_port)
 
+    @app.get("/")
+    def health_check() -> dict[str, str]:
+        """Health check endpoint."""
+        return {"status": "ok"}
+
     @app.post("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
     def upsert(room_id: str, device_id: str, body: UpsertBody) -> dict[str, object]:
         if not body.vars:
