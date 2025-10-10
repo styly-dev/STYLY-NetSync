@@ -211,6 +211,7 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
+        max_age=3600,  # Cache preflight requests for 1 hour
     )
 
     manager = BridgeManager(server_addr, dealer_port, sub_port)
@@ -250,7 +251,7 @@ def run_uvicorn_in_thread(
     import uvicorn
 
     config = uvicorn.Config(
-        app=app, host=host, port=port, log_level="warning", lifespan="off"
+        app=app, host=host, port=port, log_level="info", lifespan="off"
     )
     server = uvicorn.Server(config=config)
     thread = threading.Thread(target=server.run, daemon=True)
