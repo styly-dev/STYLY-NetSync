@@ -49,7 +49,13 @@ namespace Styly.NetSync
         [Tooltip("Enable synchronization of battery levels across devices.")]
         [SerializeField] private bool _syncBatteryLevel = true;
         private bool _enableDiscovery = true;
+#if UNITY_IOS || UNITY_VISIONOS
+        // Longer discovery timeout on iOS/visionOS to allow TCP scan to complete
+        // across typical /24 networks.
+        private float _discoveryTimeout = 30f;
+#else
         private float _discoveryTimeout = 5f;
+#endif
 
         internal const string PrefixForSystem = "@system:"; // Prefix for system-only message names
 
@@ -770,6 +776,9 @@ namespace Styly.NetSync
         {
             if (_discoveryManager == null) { return; }
             _discoveryManager.SetBeaconPort(BeaconPort);
+            // Align discovery scan duration with manager's timeout so a single
+            // authority controls the attempt length across platforms.
+            _discoveryManager.DiscoveryTimeout = _discoveryTimeout;
             _connectionManager.StartDiscovery(_discoveryManager, _roomId);
             _isDiscovering = true;
             _discoveryStartTime = Time.time;

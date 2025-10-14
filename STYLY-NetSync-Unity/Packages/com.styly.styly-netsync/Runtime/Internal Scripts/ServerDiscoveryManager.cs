@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Collections.Concurrent;
 using UnityEngine;
 #if UNITY_IOS || UNITY_VISIONOS
 using System.Collections.Generic;
@@ -20,9 +21,14 @@ namespace Styly.NetSync
         private bool _isDiscovering;
         private bool _enableDebugLogs;
         private readonly object _lockObject = new object();
+        // Round-robin offset to avoid probing the same early IPs first on every retry.
+        private static int _roundRobinOffset;
 #if UNITY_IOS || UNITY_VISIONOS
         private const string LastServersKey = "StylyNetSync.LastServerIPs";
+        private List<string> _cachedLastServerIPs = new List<string>();
 #endif
+        // Unity main thread synchronization context captured at construction time.
+        private readonly SynchronizationContext _unityContext;
 
         public bool EnableDiscovery { get; set; } = true;
         public float DiscoveryTimeout { get; set; } = 5f;
@@ -40,6 +46,8 @@ namespace Styly.NetSync
         public ServerDiscoveryManager(bool enableDebugLogs)
         {
             _enableDebugLogs = enableDebugLogs;
+            // Capture Unity's main thread context to marshal callbacks and logs.
+            _unityContext = SynchronizationContext.Current;
         }
 
         public void SetBeaconPort(int port)
@@ -127,6 +135,8 @@ namespace Styly.NetSync
             try
             {
                 _isDiscovering = true;
+                // Load last-known servers on the main thread (uses PlayerPrefs)
+                _cachedLastServerIPs = new List<string>(LoadLastServerIPs());
 
                 _discoveryThread = new Thread(TcpScanWorker)
                 {
@@ -148,8 +158,8 @@ namespace Styly.NetSync
         {
             try
             {
-                // 1) Probe previously successful addresses first
-                foreach (var cached in LoadLastServerIPs())
+                // 1) Probe previously successful addresses first (cached on main thread)
+                foreach (var cached in _cachedLastServerIPs)
                 {
                     if (!_isDiscovering) { return; }
 
@@ -170,6 +180,24 @@ namespace Styly.NetSync
                     if (!myAddresses.Contains(host))
                     {
                         candidates.Add(host);
+                    }
+                }
+
+                // Apply round-robin offset so subsequent attempts scan a different slice first.
+                if (candidates.Count > 1)
+                {
+                    // Step by typical concurrency to advance the starting window each cycle.
+                    int step = 32;
+                    int next = Interlocked.Add(ref _roundRobinOffset, step);
+                    int start = next % candidates.Count;
+                    if (start != 0)
+                    {
+                        var reordered = new List<string>(candidates.Count);
+                        for (int i = 0; i < candidates.Count; i++)
+                        {
+                            reordered.Add(candidates[(start + i) % candidates.Count]);
+                        }
+                        candidates = reordered;
                     }
                 }
 
@@ -217,7 +245,9 @@ namespace Styly.NetSync
                     {
                         try
                         {
-                            Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(5));
+                            // Wait up to the configured discovery timeout for this scan cycle.
+                            var waitSeconds = DiscoveryTimeout > 0f ? DiscoveryTimeout : 5f;
+                            Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(waitSeconds));
                         }
                         catch (AggregateException)
                         {
@@ -243,11 +273,15 @@ namespace Styly.NetSync
         private void HandleTcpDiscoverySuccess(string ip, int dealerPort, int subPort, string serverName)
         {
             DebugLog($"Discovered server '{serverName}' at tcp://{ip} (dealer:{dealerPort}, sub:{subPort})");
-            SaveLastServerIP(ip);
-            if (OnServerDiscovered != null)
+            // Persist and notify on Unity main thread only.
+            PostToMain(() =>
             {
-                OnServerDiscovered.Invoke($"tcp://{ip}", dealerPort, subPort);
-            }
+                SaveLastServerIP(ip);
+                if (OnServerDiscovered != null)
+                {
+                    OnServerDiscovered.Invoke($"tcp://{ip}", dealerPort, subPort);
+                }
+            });
             lock (_lockObject)
             {
                 _isDiscovering = false;
@@ -448,18 +482,14 @@ namespace Styly.NetSync
 
         private static void SaveLastServerIP(string ip)
         {
+            // Persist only the most recently successful IP address.
             try
             {
-                var list = new List<string>(LoadLastServerIPs());
-                list.Remove(ip);
-                list.Insert(0, ip);
-                if (list.Count > 5)
+                if (!string.IsNullOrEmpty(ip))
                 {
-                    list.RemoveRange(5, list.Count - 5);
+                    PlayerPrefs.SetString(LastServersKey, ip);
+                    PlayerPrefs.Save();
                 }
-
-                PlayerPrefs.SetString(LastServersKey, string.Join(",", list));
-                PlayerPrefs.Save();
             }
             catch
             {
@@ -469,29 +499,27 @@ namespace Styly.NetSync
 
         private static IEnumerable<string> LoadLastServerIPs()
         {
-            string raw;
+            // For backward compatibility the API returns IEnumerable<string>,
+            // but now we store only a single last IP address.
+            string ip;
             try
             {
-                raw = PlayerPrefs.GetString(LastServersKey, string.Empty);
+                ip = PlayerPrefs.GetString(LastServersKey, string.Empty);
             }
             catch
             {
                 yield break;
             }
 
-            if (string.IsNullOrEmpty(raw))
+            if (string.IsNullOrEmpty(ip))
             {
                 yield break;
             }
 
-            var parts = raw.Split(',');
-            foreach (var part in parts)
+            var trimmed = ip.Trim();
+            if (!string.IsNullOrEmpty(trimmed))
             {
-                var trimmed = part.Trim();
-                if (!string.IsNullOrEmpty(trimmed))
-                {
-                    yield return trimmed;
-                }
+                yield return trimmed;
             }
         }
 #endif
@@ -543,10 +571,14 @@ namespace Styly.NetSync
 
                     DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
 
-                    if (OnServerDiscovered != null)
+                    // Notify on the main thread only.
+                    PostToMain(() =>
                     {
-                        OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort);
-                    }
+                        if (OnServerDiscovered != null)
+                        {
+                            OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort);
+                        }
+                    });
 
                     // Stop sending more discovery requests once we found a server
                     lock (_lockObject)
@@ -580,7 +612,27 @@ namespace Styly.NetSync
 
         private void DebugLog(string msg)
         {
-            if (_enableDebugLogs) { Debug.Log($"[ServerDiscovery] {msg}"); }
+            if (!_enableDebugLogs)
+            {
+                return;
+            }
+            // Ensure UnityEngine.Debug is called on the main thread only.
+            PostToMain(() => { Debug.Log($"[ServerDiscovery] {msg}"); });
+        }
+
+        private void PostToMain(Action action)
+        {
+            if (action == null)
+            {
+                return;
+            }
+            // If we captured a Unity SynchronizationContext, use it to marshal back.
+            // Otherwise, skip to avoid calling Unity APIs off the main thread.
+            var ctx = _unityContext;
+            if (ctx != null)
+            {
+                try { ctx.Post(_ => action(), null); } catch { /* ignore */ }
+            }
         }
     }
 }
