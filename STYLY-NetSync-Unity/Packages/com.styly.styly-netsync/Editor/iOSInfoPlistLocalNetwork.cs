@@ -2,7 +2,9 @@
 // Editor utility to inject NSLocalNetworkUsageDescription into iOS Info.plist after build.
 // Note: All comments and documentation are written in English by project policy.
 
-#if UNITY_EDITOR && UNITY_IOS
+// Compile this post-process hook in the Editor for all targets.
+// It will only run for iOS builds at runtime via buildTarget check below.
+#if UNITY_EDITOR
 using System.IO;
 using UnityEditor;
 using UnityEditor.Callbacks;
@@ -26,15 +28,15 @@ namespace STYLY.NetSync.Editor
             "This app uses the local network to discover and communicate with devices for synchronization.";
 
         /// <summary>
-        /// Adds or updates NSLocalNetworkUsageDescription in Info.plist after building for iOS.
+        /// Adds or updates NSLocalNetworkUsageDescription in Info.plist after building for iOS/visionOS.
         /// </summary>
         /// <param name="buildTarget">The build target.</param>
         /// <param name="pathToBuiltProject">The path to the generated Xcode project.</param>
         [PostProcessBuild]
         public static void OnPostProcessBuild(BuildTarget buildTarget, string pathToBuiltProject)
         {
-            // Only process for iOS builds.
-            if (buildTarget != BuildTarget.iOS)
+            // Only process for iOS/visionOS builds.
+            if (buildTarget != BuildTarget.iOS && buildTarget != BuildTarget.VisionOS)
             {
                 return;
             }
@@ -65,14 +67,13 @@ namespace STYLY.NetSync.Editor
                 }
 
                 plist.WriteToFile(plistPath);
-                Debug.Log("[NetSync] iOS post-process: Added NSLocalNetworkUsageDescription to Info.plist.");
+                Debug.Log("[NetSync] iOS/visionOS post-process: Ensured NSLocalNetworkUsageDescription in Info.plist.");
             }
             catch (System.Exception ex)
             {
-                Debug.LogError("[NetSync] iOS post-process: Failed to update Info.plist. " + ex.Message);
+                Debug.LogError("[NetSync] iOS/visionOS post-process: Failed to update Info.plist. " + ex.Message);
             }
         }
     }
 }
 #endif
-
