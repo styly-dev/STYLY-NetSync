@@ -205,6 +205,9 @@ class NetSyncServer:
         self.beacon_socket = None
         self.beacon_thread = None
         self.beacon_running = False
+        self.beacon_tcp_socket = None
+        self.beacon_tcp_thread = None
+        self.beacon_tcp_running = False
 
         # Sockets
         self.router = None
@@ -1490,6 +1493,9 @@ class NetSyncServer:
             )
             self.beacon_thread.start()
 
+            # Start TCP discovery on the same port (different protocol)
+            self._start_tcp_beacon()
+
         except Exception as e:
             logger.error(f"Failed to start discovery service: {e}")
             self.beacon_running = False
@@ -1497,6 +1503,7 @@ class NetSyncServer:
     def _stop_beacon(self):
         """Stop server discovery service"""
         self.beacon_running = False
+        self.beacon_tcp_running = False
 
         if self.beacon_socket:
             self.beacon_socket.close()
@@ -1506,7 +1513,18 @@ class NetSyncServer:
             self.beacon_thread.join(timeout=2)
             self.beacon_thread = None
 
-        logger.info("Stopped discovery service")
+        if self.beacon_tcp_socket:
+            try:
+                self.beacon_tcp_socket.close()
+            except Exception:
+                pass
+            self.beacon_tcp_socket = None
+
+        if self.beacon_tcp_thread:
+            self.beacon_tcp_thread.join(timeout=2)
+            self.beacon_tcp_thread = None
+
+        logger.info("Stopped discovery service (UDP/TCP)")
 
     def _beacon_loop(self):
         """Discovery service loop - responds to client discovery requests"""
@@ -1536,6 +1554,58 @@ class NetSyncServer:
                     self.beacon_running
                 ):  # Only log if we're still supposed to be running
                     logger.error(f"Discovery service error: {e}")
+
+    def _start_tcp_beacon(self) -> None:
+        """Start TCP-based discovery responses on the beacon port."""
+        try:
+            self.beacon_tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.beacon_tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.beacon_tcp_socket.bind(("", self.beacon_port))
+            self.beacon_tcp_socket.listen(16)
+            self.beacon_tcp_socket.settimeout(1.0)
+
+            self.beacon_tcp_running = True
+            self.beacon_tcp_thread = threading.Thread(
+                target=self._tcp_beacon_loop, name="BeaconTCPThread", daemon=True
+            )
+            self.beacon_tcp_thread.start()
+            logger.info(f"TCP discovery listening on port {self.beacon_port}")
+
+        except Exception as exc:
+            logger.error(f"Failed to start TCP discovery service: {exc}")
+            self.beacon_tcp_running = False
+            if self.beacon_tcp_socket:
+                try:
+                    self.beacon_tcp_socket.close()
+                except Exception:
+                    pass
+                self.beacon_tcp_socket = None
+
+    def _tcp_beacon_loop(self) -> None:
+        """Handle TCP discovery requests on the beacon port."""
+        response = (
+            f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}\n"
+        ).encode("utf-8")
+
+        while self.beacon_tcp_running:
+            try:
+                conn, addr = self.beacon_tcp_socket.accept()
+                conn.settimeout(0.5)
+                try:
+                    data = conn.recv(64)
+                    if data and data.strip() == b"STYLY-NETSYNC-DISCOVER":
+                        conn.sendall(response)
+                        logger.debug(f"Responded to TCP discovery from {addr}")
+                finally:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            except (socket.timeout, TimeoutError):
+                continue
+            except Exception as exc:
+                if self.beacon_tcp_running:
+                    logger.error(f"TCP discovery service error: {exc}")
 
 
 def display_logo():
