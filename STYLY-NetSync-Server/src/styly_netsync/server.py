@@ -1569,7 +1569,6 @@ class NetSyncServer:
                 target=self._tcp_beacon_loop, name="BeaconTCPThread", daemon=True
             )
             self.beacon_tcp_thread.start()
-            logger.info(f"TCP discovery listening on port {self.beacon_port}")
 
         except Exception as exc:
             logger.error(f"Failed to start TCP discovery service: {exc}")
