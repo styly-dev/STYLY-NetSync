@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Dict
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +20,7 @@ MAX_CLIENT_VARS = 20
 class UpsertBody(BaseModel):
     """Request body for client variable upsert."""
 
-    vars: Dict[constr(min_length=1, max_length=MAX_NAME), constr(max_length=MAX_VALUE)] = Field(  # type: ignore[type-arg]
+    vars: dict[constr(min_length=1, max_length=MAX_NAME), constr(max_length=MAX_VALUE)] = Field(  # type: ignore[type-arg]
         default_factory=dict
     )
 
@@ -246,7 +245,7 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
 def run_uvicorn_in_thread(
     app: FastAPI, host: str = "0.0.0.0", port: int = 8800
-) -> tuple[threading.Thread, "uvicorn.Server"]:
+) -> tuple[threading.Thread, uvicorn.Server]:
     """Spawn a Uvicorn server for the given FastAPI app in a background thread."""
     import uvicorn
 

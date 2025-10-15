@@ -21,8 +21,8 @@ pip install -e ".[dev]"             # Install with dev dependencies (pytest, bla
 
 # Running server
 python -m styly_netsync
-python -m styly_netsync --dealer-port 5555 --pub-port 5556 --beacon-port 9999
-python -m styly_netsync --no-beacon  # Without UDP discovery
+python -m styly_netsync --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999
+python -m styly_netsync --no-server-discovery  # Without UDP discovery
 
 # Load testing
 python src/styly_netsync/client_simulator.py --clients 100 --server tcp://localhost
