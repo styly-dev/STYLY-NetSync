@@ -223,10 +223,7 @@ namespace Styly.NetSync
             }
             finally
             {
-                if (client != null)
-                {
-                    client.Close();
-                }
+                client?.Close();
             }
 
             return false;
@@ -238,8 +235,9 @@ namespace Styly.NetSync
 
             try
             {
-                // Get local IP address
-                string localIp = GetLocalIpAddress();
+                // Get local IP address and check if it's cellular
+                GetLocalIpAddressWithType(out string localIp, out bool isCellular);
+
                 if (string.IsNullOrEmpty(localIp))
                 {
                     DebugLog("Could not determine local IP address");
@@ -247,6 +245,14 @@ namespace Styly.NetSync
                 }
 
                 DebugLog($"Local IP: {localIp}");
+
+                // Do not perform port scanning on cellular data connections
+                if (isCellular)
+                {
+                    Debug.LogWarning("[ServerDiscovery] Cellular data detected - skipping port scan to avoid data usage and performance issues");
+                    DebugLog("Port scanning is disabled on cellular connections. Please connect to Wi-Fi.");
+                    return ips; // Return empty list
+                }
 
                 // Parse IP address and generate subnet IPs (assuming /24 subnet)
                 string[] parts = localIp.Split('.');
@@ -290,30 +296,130 @@ namespace Styly.NetSync
             return ips;
         }
 
-        private string GetLocalIpAddress()
+        private void GetLocalIpAddressWithType(out string ipAddress, out bool isCellular)
         {
+            ipAddress = null;
+            isCellular = false;
+
             try
             {
-                var host = Dns.GetHostEntry(Dns.GetHostName());
-                foreach (var ip in host.AddressList)
+                // Virtual interface prefixes to exclude (matches server.py logic)
+                var virtualPrefixes = new[]
                 {
-                    if (ip.AddressFamily == AddressFamily.InterNetwork)
+                    "bridge",   // VMware, Parallels bridges
+                    "docker",   // Docker interfaces
+                    "veth",     // Virtual Ethernet (Docker, LXC)
+                    "vmnet",    // VMware network
+                    "vboxnet",  // VirtualBox network
+                    "virbr",    // libvirt bridge
+                    "tun",      // VPN tunnels
+                    "tap",      // Virtual network tap
+                    "utun",     // macOS VPN tunnels
+                    "vnic",     // Virtual NIC
+                    "ppp",      // Point-to-Point Protocol (VPN)
+                };
+
+                // Get all network interfaces
+                var interfaces = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces();
+                var wifiCandidates = new List<string>();
+                var cellularCandidates = new List<string>();
+                var otherCandidates = new List<string>();
+
+                foreach (var iface in interfaces)
+                {
+                    // Skip interfaces that are down or loopback
+                    if (iface.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up)
                     {
-                        string ipStr = ip.ToString();
-                        // Skip loopback and APIPA addresses
-                        if (!ipStr.StartsWith("127.") && !ipStr.StartsWith("169.254."))
+                        continue;
+                    }
+
+                    if (iface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
+                    {
+                        continue;
+                    }
+
+                    // Skip virtual interfaces
+                    string ifaceName = iface.Name.ToLower();
+                    bool isVirtual = false;
+                    foreach (var prefix in virtualPrefixes)
+                    {
+                        if (ifaceName.StartsWith(prefix))
                         {
-                            return ipStr;
+                            isVirtual = true;
+                            break;
                         }
                     }
+                    if (isVirtual)
+                    {
+                        continue;
+                    }
+
+                    // Get IP addresses for this interface
+                    var ipProps = iface.GetIPProperties();
+                    foreach (var addr in ipProps.UnicastAddresses)
+                    {
+                        if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
+                        {
+                            string ipStr = addr.Address.ToString();
+
+                            // Skip loopback and APIPA addresses
+                            if (ipStr.StartsWith("127.") || ipStr.StartsWith("169.254."))
+                            {
+                                continue;
+                            }
+
+                            // Categorize interfaces by type
+                            string ifaceNameLower = iface.Name.ToLower();
+                            bool isWifiOrEthernet = ifaceNameLower.StartsWith("en") ||
+                                                    ifaceNameLower.StartsWith("eth") ||
+                                                    ifaceNameLower.StartsWith("wlan") ||
+                                                    iface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211 ||
+                                                    iface.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Ethernet;
+
+                            bool isCellularInterface = ifaceNameLower.StartsWith("pdp_ip") ||
+                                                    ifaceNameLower.StartsWith("rmnet") ||
+                                                    ifaceNameLower.StartsWith("ccmni");
+
+                            if (isWifiOrEthernet)
+                            {
+                                wifiCandidates.Add(ipStr);
+                            }
+                            else if (isCellularInterface)
+                            {
+                                cellularCandidates.Add(ipStr);
+                            }
+                            else
+                            {
+                                otherCandidates.Add(ipStr);
+                            }
+                        }
+                    }
+                }
+
+                // Prioritize Wi-Fi/Ethernet first, then other, then cellular (last resort)
+                if (wifiCandidates.Count > 0)
+                {
+                    ipAddress = wifiCandidates[0];
+                    isCellular = false;
+                    DebugLog($"Local IP: {ipAddress} (Wi-Fi/Ethernet)");
+                }
+                else if (otherCandidates.Count > 0)
+                {
+                    ipAddress = otherCandidates[0];
+                    isCellular = false;
+                    DebugLog($"Local IP: {ipAddress}");
+                }
+                else if (cellularCandidates.Count > 0)
+                {
+                    ipAddress = cellularCandidates[0];
+                    isCellular = true;
+                    DebugLog($"Local IP: {ipAddress} (Cellular)");
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"Error getting local IP: {ex.Message}");
+                Debug.LogWarning($"[ServerDiscovery] Error getting local IP: {ex.Message}");
             }
-
-            return null;
         }
 
         private string GetCachedServerIp()
