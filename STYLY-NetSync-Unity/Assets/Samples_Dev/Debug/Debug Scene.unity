@@ -153,7 +153,7 @@ MonoBehaviour:
   _subPort: 5556
   _roomId: default_room
   _enableDiscovery: 1
-  _beaconPort: 9999
+  _serverDiscoveryPort: 9999
   _discoveryTimeout: 5
   _localPlayerPrefab: {fileID: 4943129801574805003, guid: 578f2705388a88c409e0069cca33abda, type: 3}
   _remotePlayerPrefab: {fileID: 4943129801574805003, guid: 4fff81e11e6a17a42b5ff718067168c6, type: 3}

@@ -24,11 +24,11 @@ namespace Styly.NetSync
 
         public bool EnableDiscovery { get; set; } = true;
         public float DiscoveryTimeout { get; set; } = 5f;
-        private int _beaconPort = 9999;
-        public int BeaconPort
+        private int _serverDiscoveryPort = 9999;
+        public int ServerDiscoveryPort
         {
-            get => Volatile.Read(ref _beaconPort);
-            private set => Volatile.Write(ref _beaconPort, value);
+            get => Volatile.Read(ref _serverDiscoveryPort);
+            private set => Volatile.Write(ref _serverDiscoveryPort, value);
         }
         public bool IsDiscovering => _isDiscovering;
         public float DiscoveryInterval { get; set; } = 0.5f; // Send discovery request every 0.5 seconds
@@ -40,9 +40,9 @@ namespace Styly.NetSync
             _enableDebugLogs = enableDebugLogs;
         }
 
-        public void SetBeaconPort(int port)
+        public void SetServerDiscoveryPort(int port)
         {
-            BeaconPort = port;
+            ServerDiscoveryPort = port;
         }
 
         public void StartDiscovery()
@@ -72,7 +72,7 @@ namespace Styly.NetSync
                 _discoveryThread = new Thread(() =>
                 {
                     var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
-                    var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, BeaconPort);
+                    var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, ServerDiscoveryPort);
                     var lastRequestTime = DateTime.MinValue;
 
                     while (_isDiscovering)
@@ -112,7 +112,7 @@ namespace Styly.NetSync
                 };
                 _discoveryThread.Start();
 
-                DebugLog($"Started UDP discovery service on port {BeaconPort}");
+                DebugLog($"Started UDP discovery service on port {ServerDiscoveryPort}");
             }
             catch (Exception ex)
             {
@@ -173,7 +173,7 @@ namespace Styly.NetSync
                 };
                 _discoveryThread.Start();
 
-                DebugLog($"Started TCP scan discovery on port {BeaconPort}");
+                DebugLog($"Started TCP scan discovery on port {ServerDiscoveryPort}");
             }
             catch (Exception ex)
             {
@@ -188,7 +188,7 @@ namespace Styly.NetSync
             try
             {
                 client = new TcpClient();
-                var connectResult = client.BeginConnect(ipAddress, BeaconPort, null, null);
+                var connectResult = client.BeginConnect(ipAddress, ServerDiscoveryPort, null, null);
                 bool success = connectResult.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(500));
 
                 if (!success)
@@ -211,7 +211,7 @@ namespace Styly.NetSync
                 if (bytesRead > 0)
                 {
                     // Process response
-                    var remoteEP = new IPEndPoint(IPAddress.Parse(ipAddress), BeaconPort);
+                    var remoteEP = new IPEndPoint(IPAddress.Parse(ipAddress), ServerDiscoveryPort);
                     byte[] responseData = new byte[bytesRead];
                     Array.Copy(buffer, responseData, bytesRead);
                     ProcessDiscoveryResponse(responseData, remoteEP);

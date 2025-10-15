@@ -23,8 +23,8 @@ uv run dev                # Development mode
 ```bash
 # Via CLI entry point
 styly-netsync-server
-styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999
-styly-netsync-server --no-beacon  # Without UDP discovery
+styly-netsync-server --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999
+styly-netsync-server --no-server-discovery  # Without UDP discovery
 
 # As Python module
 python -m styly_netsync
@@ -72,7 +72,7 @@ pkill -f styly-netsync  # Kill all STYLY processes
   - Main Thread: Server lifecycle management
   - Receive Thread: Client message processing  
   - Periodic Thread: Broadcasting and cleanup
-  - Discovery Thread: UDP server discovery beacon
+  - Discovery Thread: UDP server discovery service
 - **BinarySerializer** (`binary_serializer.py`): Custom binary protocol (~60% bandwidth reduction vs JSON)
 - **Python Client API** (`client.py`): `net_sync_manager` class for Python clients
 

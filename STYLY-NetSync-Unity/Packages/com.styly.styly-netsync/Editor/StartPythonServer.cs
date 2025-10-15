@@ -32,7 +32,7 @@ namespace Styly.NetSync.Editor
             }
         }
 
-        private static int GetDefaultBeaconPort()
+        private static int GetDefaultServerDiscoveryPort()
         {
             // Try to find NetSyncManager in the active scene
             Scene activeScene = SceneManager.GetActiveScene();
@@ -44,7 +44,7 @@ namespace Styly.NetSync.Editor
                     NetSyncManager manager = rootObject.GetComponentInChildren<NetSyncManager>(true);
                     if (manager != null)
                     {
-                        return manager.BeaconPort;
+                        return manager.ServerDiscoveryPort;
                     }
                 }
             }
@@ -133,8 +133,8 @@ namespace Styly.NetSync.Editor
         private static void StartServerMac()
         {
             string serverVersion = GetServerVersionSafe();
-            int defaultBeaconPort = GetDefaultBeaconPort();
-            bool hasNetSyncManager = defaultBeaconPort != 9999;
+            int defaultServerDiscoveryPort = GetDefaultServerDiscoveryPort();
+            bool hasNetSyncManager = defaultServerDiscoveryPort != 9999;
             string terminal;
             try
             {
@@ -213,49 +213,49 @@ echo ''
 
 # Configure server discovery
 echo 'Configure server discovery:'
-echo '1. Use " + (hasNetSyncManager ? $"beacon port from scene ({defaultBeaconPort})" : "default beacon port (9999)") + @"'
-echo '2. Specify custom beacon port'
-echo '3. Disable beacon discovery'
+echo '1. Use " + (hasNetSyncManager ? $"server discovery port from scene ({defaultServerDiscoveryPort})" : "default server discovery port (9999)") + @"'
+echo '2. Specify custom server discovery port'
+echo '3. Disable server discovery'
 echo ''
 read -p 'Select option (1-3) [1]: ' option
 option=${option:-1}
 
-BEACON_ARGS=''
-DEFAULT_PORT=" + defaultBeaconPort + @"
+SERVER_DISCOVERY_ARGS=''
+DEFAULT_PORT=" + defaultServerDiscoveryPort + @"
 
 case $option in
     2)
-        read -p 'Enter beacon port (1-65535): ' beacon_port
+        read -p 'Enter server discovery port (1-65535): ' server_discovery_port
         # Validate port number
-        if [[ $beacon_port =~ ^[0-9]+$ ]] && [ $beacon_port -ge 1 ] && [ $beacon_port -le 65535 ]; then
-            BEACON_ARGS=""--beacon-port $beacon_port""
+        if [[ $server_discovery_port =~ ^[0-9]+$ ]] && [ $server_discovery_port -ge 1 ] && [ $server_discovery_port -le 65535 ]; then
+            SERVER_DISCOVERY_ARGS=""--server-discovery-port $server_discovery_port""
             echo ''
-            echo ""Using custom beacon port: $beacon_port""
+            echo ""Using custom server discovery port: $server_discovery_port""
         else
             echo ''
             echo ""Invalid port number. Using port $DEFAULT_PORT.""
         fi
         ;;
     3)
-        BEACON_ARGS='--no-beacon'
+        SERVER_DISCOVERY_ARGS='--no-server-discovery'
         echo ''
-        echo 'Beacon discovery disabled.'
+        echo 'Server discovery disabled.'
         ;;
     *)
-        BEACON_ARGS=""--beacon-port $DEFAULT_PORT""
+        SERVER_DISCOVERY_ARGS=""--server-discovery-port $DEFAULT_PORT""
         echo ''
-        echo ""Using beacon port: $DEFAULT_PORT""
+        echo ""Using server discovery port: $DEFAULT_PORT""
         ;;
 esac
 
 echo ''
-echo 'Running: uvx styly-netsync-server@" + serverVersion + @"' $BEACON_ARGS
+echo 'Running: uvx styly-netsync-server@" + serverVersion + @"' $SERVER_DISCOVERY_ARGS
 echo ''
 echo '========================================='
 echo ''
 
 # Start the server
-uvx styly-netsync-server@" + serverVersion + @" $BEACON_ARGS
+uvx styly-netsync-server@" + serverVersion + @" $SERVER_DISCOVERY_ARGS
 
 # Keep terminal open if server exits
 echo ''
@@ -322,8 +322,8 @@ read -p 'Press any key to exit...'
         private static void StartServerWindows()
         {
             string serverVersion = GetServerVersionSafe();
-            int defaultBeaconPort = GetDefaultBeaconPort();
-            bool hasNetSyncManager = defaultBeaconPort != 9999;
+            int defaultServerDiscoveryPort = GetDefaultServerDiscoveryPort();
+            bool hasNetSyncManager = defaultServerDiscoveryPort != 9999;
             string powershellScript = @"
 Clear-Host
 Write-Host 'STYLY NetSync Python Server Setup' -ForegroundColor Cyan
@@ -379,49 +379,49 @@ Write-Host ''
 
 # Configure server discovery
 Write-Host 'Configure server discovery:' -ForegroundColor Cyan
-Write-Host '1. Use " + (hasNetSyncManager ? $"beacon port from scene ({defaultBeaconPort})" : "default beacon port (9999)") + @"'
-Write-Host '2. Specify custom beacon port'
-Write-Host '3. Disable beacon discovery'
+Write-Host '1. Use " + (hasNetSyncManager ? $"server discovery port from scene ({defaultServerDiscoveryPort})" : "default server discovery port (9999)") + @"'
+Write-Host '2. Specify custom server discovery port'
+Write-Host '3. Disable server discovery'
 Write-Host ''
 $option = Read-Host 'Select option (1-3) [1]'
 if ([string]::IsNullOrWhiteSpace($option)) { $option = '1' }
 
-$beaconArgs = ''
-$defaultPort = " + defaultBeaconPort + @"
+$serverDiscoveryArgs = ''
+$defaultPort = " + defaultServerDiscoveryPort + @"
 
 switch ($option) {
     '2' {
-        $beaconPort = Read-Host 'Enter beacon port (1-65535)'
+        $serverDiscoveryPort = Read-Host 'Enter server discovery port (1-65535)'
         # Validate port number
-        if ($beaconPort -match '^\d+$' -and [int]$beaconPort -ge 1 -and [int]$beaconPort -le 65535) {
-            $beaconArgs = ""--beacon-port $beaconPort""
+        if ($serverDiscoveryPort -match '^\d+$' -and [int]$serverDiscoveryPort -ge 1 -and [int]$serverDiscoveryPort -le 65535) {
+            $serverDiscoveryArgs = ""--server-discovery-port $serverDiscoveryPort""
             Write-Host ''
-            Write-Host ""Using custom beacon port: $beaconPort"" -ForegroundColor Green
+            Write-Host ""Using custom server discovery port: $serverDiscoveryPort"" -ForegroundColor Green
         } else {
             Write-Host ''
             Write-Host ""Invalid port number. Using port $defaultPort."" -ForegroundColor Yellow
         }
     }
     '3' {
-        $beaconArgs = '--no-beacon'
+        $serverDiscoveryArgs = '--no-server-discovery'
         Write-Host ''
-        Write-Host 'Beacon discovery disabled.' -ForegroundColor Yellow
+        Write-Host 'Server discovery disabled.' -ForegroundColor Yellow
     }
     default {
-        $beaconArgs = ""--beacon-port $defaultPort""
+        $serverDiscoveryArgs = ""--server-discovery-port $defaultPort""
         Write-Host ''
-        Write-Host ""Using beacon port: $defaultPort"" -ForegroundColor Green
+        Write-Host ""Using server discovery port: $defaultPort"" -ForegroundColor Green
     }
 }
 
 Write-Host ''
-Write-Host ""Running: uvx styly-netsync-server@" + serverVersion + @" $beaconArgs"" -ForegroundColor Cyan
+Write-Host ""Running: uvx styly-netsync-server@" + serverVersion + @" $serverDiscoveryArgs"" -ForegroundColor Cyan
 Write-Host ''
 Write-Host '=========================================' -ForegroundColor Cyan
 Write-Host ''
 
 # Start the server
-$command = ""uvx styly-netsync-server@" + serverVersion + @" $beaconArgs""
+$command = ""uvx styly-netsync-server@" + serverVersion + @" $serverDiscoveryArgs""
 Invoke-Expression $command
 
 # Keep terminal open if server exits
@@ -477,8 +477,8 @@ Read-Host 'Press Enter to exit'
         private static void StartServerLinux()
         {
             string serverVersion = GetServerVersionSafe();
-            int defaultBeaconPort = GetDefaultBeaconPort();
-            bool hasNetSyncManager = defaultBeaconPort != 9999;
+            int defaultServerDiscoveryPort = GetDefaultServerDiscoveryPort();
+            bool hasNetSyncManager = defaultServerDiscoveryPort != 9999;
 
             // Try to find available terminal emulator
             string[] terminals = { "gnome-terminal", "konsole", "xterm", "x-terminal-emulator" };
@@ -554,49 +554,49 @@ echo ''
 
 # Configure server discovery
 echo 'Configure server discovery:'
-echo '1. Use " + (hasNetSyncManager ? $"beacon port from scene ({defaultBeaconPort})" : "default beacon port (9999)") + @"'
-echo '2. Specify custom beacon port'
-echo '3. Disable beacon discovery'
+echo '1. Use " + (hasNetSyncManager ? $"server discovery port from scene ({defaultServerDiscoveryPort})" : "default server discovery port (9999)") + @"'
+echo '2. Specify custom server discovery port'
+echo '3. Disable server discovery'
 echo ''
 read -p 'Select option (1-3) [1]: ' option
 option=${option:-1}
 
-BEACON_ARGS=''
-DEFAULT_PORT=" + defaultBeaconPort + @"
+SERVER_DISCOVERY_ARGS=''
+DEFAULT_PORT=" + defaultServerDiscoveryPort + @"
 
 case $option in
     2)
-        read -p 'Enter beacon port (1-65535): ' beacon_port
+        read -p 'Enter server discovery port (1-65535): ' server_discovery_port
         # Validate port number
-        if [[ $beacon_port =~ ^[0-9]+$ ]] && [ $beacon_port -ge 1 ] && [ $beacon_port -le 65535 ]; then
-            BEACON_ARGS=""--beacon-port $beacon_port""
+        if [[ $server_discovery_port =~ ^[0-9]+$ ]] && [ $server_discovery_port -ge 1 ] && [ $server_discovery_port -le 65535 ]; then
+            SERVER_DISCOVERY_ARGS=""--server-discovery-port $server_discovery_port""
             echo ''
-            echo ""Using custom beacon port: $beacon_port""
+            echo ""Using custom server discovery port: $server_discovery_port""
         else
             echo ''
             echo ""Invalid port number. Using port $DEFAULT_PORT.""
         fi
         ;;
     3)
-        BEACON_ARGS='--no-beacon'
+        SERVER_DISCOVERY_ARGS='--no-server-discovery'
         echo ''
-        echo 'Beacon discovery disabled.'
+        echo 'Server discovery disabled.'
         ;;
     *)
-        BEACON_ARGS=""--beacon-port $DEFAULT_PORT""
+        SERVER_DISCOVERY_ARGS=""--server-discovery-port $DEFAULT_PORT""
         echo ''
-        echo ""Using beacon port: $DEFAULT_PORT""
+        echo ""Using server discovery port: $DEFAULT_PORT""
         ;;
 esac
 
 echo ''
-echo 'Running: uvx styly-netsync-server@" + serverVersion + @"' $BEACON_ARGS
+echo 'Running: uvx styly-netsync-server@" + serverVersion + @"' $SERVER_DISCOVERY_ARGS
 echo ''
 echo '========================================='
 echo ''
 
 # Start the server
-uvx styly-netsync-server@" + serverVersion + @" $BEACON_ARGS
+uvx styly-netsync-server@" + serverVersion + @" $SERVER_DISCOVERY_ARGS
 
 # Keep terminal open if server exits
 echo ''

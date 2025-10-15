@@ -44,8 +44,8 @@ namespace Styly.NetSync
         public UnityEvent OnReady;
 
         // Advanced options
-        [Tooltip("UDP port used for server discovery beacons.")]
-        [Min(1)] public int BeaconPort = 9999;
+        [Tooltip("UDP port used for server discovery.")]
+        [Min(1)] public int ServerDiscoveryPort = 9999;
         [Tooltip("Enable synchronization of battery levels across devices.")]
         [SerializeField] private bool _syncBatteryLevel = true;
         private bool _enableDiscovery = true;
@@ -541,7 +541,7 @@ namespace Styly.NetSync
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
-            _discoveryManager.SetBeaconPort(BeaconPort);
+            _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
 
@@ -775,7 +775,7 @@ namespace Styly.NetSync
         private void StartDiscovery()
         {
             if (_discoveryManager == null) { return; }
-            _discoveryManager.SetBeaconPort(BeaconPort);
+            _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _connectionManager.StartDiscovery(_discoveryManager, _roomId);
             _isDiscovering = true;
             _discoveryStartTime = Time.time;
