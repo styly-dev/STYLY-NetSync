@@ -459,6 +459,12 @@ namespace Styly.NetSync
                 HandleRoomSwitchHandshake();
             }
 
+            // Process discovery manager main thread queue (for PlayerPrefs operations)
+            if (_discoveryManager != null)
+            {
+                _discoveryManager.Update();
+            }
+
             HandleDiscovery();
             HandleReconnection();
             ProcessMessages();
@@ -788,21 +794,23 @@ namespace Styly.NetSync
         #region === Update Logic ===
         private void HandleDiscovery()
         {
-            // Handle discovery timeout: stop current attempt and schedule retry in 5 seconds
-            if (_isDiscovering && Time.time - _discoveryStartTime > _discoveryTimeout)
-            {
-                DebugLog($"Discovery timeout - retrying in {DiscoveryRetryDelay} seconds");
-                StopDiscovery();
-                _nextDiscoveryAttemptAt = Time.time + DiscoveryRetryDelay;
-            }
-
-            // Process discovered server
+            // Process discovered server FIRST (before timeout check)
+            // This ensures that if a server is found, we handle it immediately
             if (!string.IsNullOrEmpty(_discoveredServer) && _isDiscovering)
             {
                 _isDiscovering = false;
                 StopDiscovery();
                 _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort);
                 _discoveredServer = null;
+                return; // Exit early - no need to check timeout or retry
+            }
+
+            // Handle discovery timeout: stop current attempt and schedule retry in 5 seconds
+            if (_isDiscovering && Time.time - _discoveryStartTime > _discoveryTimeout)
+            {
+                DebugLog($"Discovery timeout - retrying in {DiscoveryRetryDelay} seconds");
+                StopDiscovery();
+                _nextDiscoveryAttemptAt = Time.time + DiscoveryRetryDelay;
             }
 
             // If not currently discovering and discovery is enabled with no fixed server, retry when due

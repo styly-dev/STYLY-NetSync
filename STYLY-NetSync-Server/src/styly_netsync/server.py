@@ -206,6 +206,11 @@ class NetSyncServer:
         self.beacon_thread = None
         self.beacon_running = False
 
+        # TCP beacon discovery settings
+        self.tcp_beacon_socket = None
+        self.tcp_beacon_thread = None
+        self.tcp_beacon_running = False
+
         # Sockets
         self.router = None
         self.pub = None  # Will be created/owned by Publisher thread only
@@ -304,7 +309,7 @@ class NetSyncServer:
 
         # REST bridge lifecycle
         self._rest_thread: threading.Thread | None = None
-        self._rest_server: "Server" | None = None
+        self._rest_server: Server | None = None
 
     def _increment_stat(self, stat_name: str, amount: int = 1):
         """Thread-safe increment of statistics"""
@@ -1478,6 +1483,7 @@ class NetSyncServer:
 
     def _start_beacon(self):
         """Start server discovery service to respond to client requests"""
+        # Start UDP beacon
         try:
             self.beacon_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.beacon_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1491,11 +1497,15 @@ class NetSyncServer:
             self.beacon_thread.start()
 
         except Exception as e:
-            logger.error(f"Failed to start discovery service: {e}")
+            logger.error(f"Failed to start UDP discovery service: {e}")
             self.beacon_running = False
+
+        # Start TCP beacon
+        self._start_tcp_beacon()
 
     def _stop_beacon(self):
         """Stop server discovery service"""
+        # Stop UDP beacon
         self.beacon_running = False
 
         if self.beacon_socket:
@@ -1506,10 +1516,13 @@ class NetSyncServer:
             self.beacon_thread.join(timeout=2)
             self.beacon_thread = None
 
+        # Stop TCP beacon
+        self._stop_tcp_beacon()
+
         logger.info("Stopped discovery service")
 
     def _beacon_loop(self):
-        """Discovery service loop - responds to client discovery requests"""
+        """UDP discovery service loop - responds to client discovery requests"""
         # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName
         response = (
             f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}"
@@ -1526,7 +1539,9 @@ class NetSyncServer:
                 if request == "STYLY-NETSYNC-DISCOVER":
                     # Send response back to requesting client
                     self.beacon_socket.sendto(response_bytes, client_addr)
-                    logger.debug(f"Responded to discovery request from {client_addr}")
+                    logger.debug(
+                        f"Responded to UDP discovery request from {client_addr}"
+                    )
 
             except TimeoutError:
                 # Timeout is expected for graceful shutdown
@@ -1535,7 +1550,79 @@ class NetSyncServer:
                 if (
                     self.beacon_running
                 ):  # Only log if we're still supposed to be running
-                    logger.error(f"Discovery service error: {e}")
+                    logger.error(f"UDP discovery service error: {e}")
+
+    def _start_tcp_beacon(self):
+        """Start TCP-based server discovery service"""
+        try:
+            self.tcp_beacon_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.tcp_beacon_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.tcp_beacon_socket.bind(("", self.beacon_port))
+            self.tcp_beacon_socket.listen(5)
+            self.tcp_beacon_socket.settimeout(1.0)  # Timeout for graceful shutdown
+
+            self.tcp_beacon_running = True
+            self.tcp_beacon_thread = threading.Thread(
+                target=self._tcp_beacon_loop, name="TcpBeaconThread", daemon=True
+            )
+            self.tcp_beacon_thread.start()
+
+        except Exception as e:
+            logger.error(f"Failed to start TCP discovery service: {e}")
+            self.tcp_beacon_running = False
+
+    def _stop_tcp_beacon(self):
+        """Stop TCP-based server discovery service"""
+        self.tcp_beacon_running = False
+
+        if self.tcp_beacon_socket:
+            self.tcp_beacon_socket.close()
+            self.tcp_beacon_socket = None
+
+        if self.tcp_beacon_thread:
+            self.tcp_beacon_thread.join(timeout=2)
+            self.tcp_beacon_thread = None
+
+    def _tcp_beacon_loop(self):
+        """TCP discovery service loop - responds to client discovery requests"""
+        # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName\n
+        response = (
+            f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}\n"
+        )
+        response_bytes = response.encode("utf-8")
+
+        while self.tcp_beacon_running:
+            try:
+                # Accept incoming connection
+                client_socket, client_addr = self.tcp_beacon_socket.accept()
+                client_socket.settimeout(2.0)  # Timeout for client operations
+
+                try:
+                    # Receive discovery request
+                    data = client_socket.recv(1024)
+                    request = data.decode("utf-8").strip()
+
+                    # Validate request format
+                    if request == "STYLY-NETSYNC-DISCOVER":
+                        # Send response back to requesting client
+                        client_socket.sendall(response_bytes)
+                        logger.debug(
+                            f"Responded to TCP discovery request from {client_addr}"
+                        )
+
+                except Exception as e:
+                    logger.debug(f"Error handling TCP client {client_addr}: {e}")
+                finally:
+                    client_socket.close()
+
+            except TimeoutError:
+                # Timeout is expected for graceful shutdown
+                continue
+            except Exception as e:
+                if (
+                    self.tcp_beacon_running
+                ):  # Only log if we're still supposed to be running
+                    logger.error(f"TCP discovery service error: {e}")
 
 
 def display_logo():
