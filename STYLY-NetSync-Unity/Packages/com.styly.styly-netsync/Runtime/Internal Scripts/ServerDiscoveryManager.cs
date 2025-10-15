@@ -424,7 +424,7 @@ namespace Styly.NetSync
 
         private string GetCachedServerIp()
         {
-            return PlayerPrefs.GetString("STYLY_NetSync_LastServerIP", null);
+            return PlayerPrefs.GetString("STYLY_NetSync_LastServerIP", "");
         }
 
         private void QueueCacheServerIp(string ipAddress)
