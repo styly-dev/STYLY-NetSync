@@ -17,7 +17,6 @@ import base64
 import json
 import logging
 import os
-import psutil  # type: ignore[import-untyped]
 import socket
 import threading
 import time
@@ -28,6 +27,7 @@ from queue import Empty, Full, Queue
 from typing import Any, TYPE_CHECKING
 import zmq
 from . import binary_serializer
+from . import network_utils
 
 if TYPE_CHECKING:
     from uvicorn import Server
@@ -1633,53 +1633,6 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
     sys.stdout.flush()
 
 
-def get_local_ip_addresses() -> list[str]:
-    """
-    Get all local IP addresses of the machine from physical network interfaces.
-
-    Filters out virtual interfaces (bridges, VPNs, Docker, etc.) and APIPA addresses
-    (169.254.x.x) to show only IP addresses that are likely accessible from external devices.
-
-    Returns:
-        list: List of IP addresses as strings
-    """
-    ip_addresses = []
-    try:
-        # Patterns to exclude virtual/bridge interfaces
-        # These are common virtual interface prefixes across different platforms
-        virtual_prefixes = (
-            "bridge",  # VMware, Parallels bridges
-            "docker",  # Docker interfaces
-            "veth",  # Virtual Ethernet (Docker, LXC)
-            "vmnet",  # VMware network
-            "vboxnet",  # VirtualBox network
-            "virbr",  # libvirt bridge
-            "tun",  # VPN tunnels
-            "tap",  # Virtual network tap
-            "utun",  # macOS VPN tunnels
-            "vnic",  # Virtual NIC
-            "ppp",  # Point-to-Point Protocol (VPN)
-        )
-
-        # Get all network interfaces
-        for interface_name, interface_addresses in psutil.net_if_addrs().items():
-            # Skip virtual interfaces
-            if interface_name.lower().startswith(virtual_prefixes):
-                continue
-
-            for address in interface_addresses:
-                # Filter for IPv4 addresses only
-                if address.family == socket.AF_INET:
-                    ip = address.address
-                    # Exclude localhost and APIPA addresses (169.254.x.x)
-                    if ip != "127.0.0.1" and not ip.startswith("169.254."):
-                        ip_addresses.append(ip)
-    except Exception as e:
-        logger.warning(f"Failed to get local IP addresses: {e}")
-
-    return ip_addresses
-
-
 def main():
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
@@ -1714,7 +1667,7 @@ def main():
     logger.info(f"  Version: {get_version()}")
 
     # Display local IP addresses
-    ip_addresses = get_local_ip_addresses()
+    ip_addresses = network_utils.get_local_ip_addresses()
     if ip_addresses:
         logger.info("  Server IP addresses:")
         for ip in ip_addresses:
