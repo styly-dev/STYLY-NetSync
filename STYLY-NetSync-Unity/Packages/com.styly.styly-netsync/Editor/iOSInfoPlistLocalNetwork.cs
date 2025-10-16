@@ -2,9 +2,9 @@
 // Editor utility to inject NSLocalNetworkUsageDescription into iOS Info.plist after build.
 // Note: All comments and documentation are written in English by project policy.
 
-// Compile this post-process hook in the Editor for all targets.
+// Compile this post-process hook in the Editor when targeting iOS/visionOS.
 // It will only run for iOS builds at runtime via buildTarget check below.
-#if UNITY_EDITOR
+#if UNITY_EDITOR && (UNITY_IOS || UNITY_VISIONOS)
 using System.IO;
 using UnityEditor;
 using UnityEditor.Callbacks;
