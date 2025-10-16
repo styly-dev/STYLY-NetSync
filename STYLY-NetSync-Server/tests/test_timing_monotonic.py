@@ -17,7 +17,9 @@ def test_monotonic_time_always_increases():
 
     # Verify all times are strictly increasing
     for i in range(1, len(times)):
-        assert times[i] > times[i-1], f"Monotonic time went backwards: {times[i-1]} -> {times[i]}"
+        assert (
+            times[i] > times[i - 1]
+        ), f"Monotonic time went backwards: {times[i-1]} -> {times[i]}"
 
     print(f"✓ Collected {len(times)} monotonic timestamps, all strictly increasing")
 
@@ -51,10 +53,13 @@ def test_monotonic_vs_system_time():
     sys_interval = sys_end - sys_start
 
     # Both should be similar for this short interval
-    assert abs(mono_interval - sys_interval) < 0.01, \
-        f"Large difference between monotonic ({mono_interval:.3f}s) and system ({sys_interval:.3f}s) intervals"
+    assert (
+        abs(mono_interval - sys_interval) < 0.01
+    ), f"Large difference between monotonic ({mono_interval:.3f}s) and system ({sys_interval:.3f}s) intervals"
 
-    print(f"✓ Monotonic interval: {mono_interval:.3f}s, System interval: {sys_interval:.3f}s")
+    print(
+        f"✓ Monotonic interval: {mono_interval:.3f}s, System interval: {sys_interval:.3f}s"
+    )
 
 
 if __name__ == "__main__":

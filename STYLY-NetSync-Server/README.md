@@ -39,3 +39,37 @@ styly-netsync-simulator --clients 100
 # Custom server and room
 styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 ```
+
+## REST bridge for client variables
+
+Starting with this version the server launches an embedded FastAPI application that exposes a REST endpoint for pre-seeding and updating per-client Network Variables by `deviceId`.
+
+- Endpoint: `POST /v1/rooms/{roomId}/devices/{deviceId}/client-variables`
+- Default port: `8800` (override with environment variable `NETSYNC_REST_PORT`)
+- Payload body:
+
+```json
+{
+  "vars": {
+    "name": "Jack",
+    "lang": "EN"
+  }
+}
+```
+
+- Constraints enforced by the bridge:
+  - Variable names: 1–64 characters
+  - Values: up to 1024 characters
+  - Total variables per client: 20 (additional keys return HTTP 409)
+- Behavior:
+  - If a device has not connected yet, the values are queued in an in-memory preseed store and automatically applied once the server assigns a `clientNo`.
+  - If the device is already connected, the variables are sent immediately through the existing ZeroMQ pathway.
+- Typical usage (curl example):
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8800/v1/rooms/default_room/devices/00000000-0000-0000-0000-000000000000/client-variables" \
+  -H "Content-Type: application/json" \
+  -d '{"vars":{"name":"Jack","lang":"EN"}}'
+```
+
+The response includes the current mapping status (`clientNo` or `null`) and whether each key was queued or applied.

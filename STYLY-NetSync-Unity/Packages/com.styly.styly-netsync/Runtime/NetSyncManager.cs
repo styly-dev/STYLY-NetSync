@@ -44,8 +44,10 @@ namespace Styly.NetSync
         public UnityEvent OnReady;
 
         // Advanced options
-        [Tooltip("UDP port used for server discovery beacons.")]
-        [Min(1)] public int BeaconPort = 9999;
+        [Tooltip("UDP port used for server discovery.")]
+        [Min(1)] public int ServerDiscoveryPort = 9999;
+        [Tooltip("Enable synchronization of battery levels across devices.")]
+        [SerializeField] private bool _syncBatteryLevel = true;
         private bool _enableDiscovery = true;
         private float _discoveryTimeout = 5f;
 
@@ -56,7 +58,7 @@ namespace Styly.NetSync
         internal Transform _XrOriginTransform;
         internal Vector3 _physicalOffsetPosition;
         internal Vector3 _physicalOffsetRotation;
-        internal Styly.XRRig.PassthroughManager PassthroughManager;
+        private Styly.XRRig.StylyXrRig stylyXrRig;
 
         #region === Singleton & Public API ===
         private static NetSyncManager _instance;
@@ -102,18 +104,18 @@ namespace Styly.NetSync
 
         private void SwitchToVR_Internal(float transitionDuration = 1)
         {
-            if (PassthroughManager != null)
+            if (stylyXrRig != null)
             {
-                PassthroughManager.SwitchToVR(transitionDuration);
+                stylyXrRig.SwitchToVR(transitionDuration);
                 passthroughMode = false;
             }
         }
 
         private void SwitchToMR_Internal(float transitionDuration = 1)
         {
-            if (PassthroughManager != null)
+            if (stylyXrRig != null)
             {
-                PassthroughManager.SwitchToMR(transitionDuration);
+                stylyXrRig.SwitchToMR(transitionDuration);
                 passthroughMode = true;
             }
         }
@@ -380,11 +382,7 @@ namespace Styly.NetSync
                 _physicalOffsetRotation = xrOrigin.transform.eulerAngles;
             }
 
-            var passthrough = FindFirstObjectByType<Styly.XRRig.PassthroughManager>();
-            if (passthrough != null)
-            {
-                PassthroughManager = passthrough;
-            }
+            stylyXrRig = FindFirstObjectByType<Styly.XRRig.StylyXrRig>();
         }
 
         private void OnEnable()
@@ -459,6 +457,12 @@ namespace Styly.NetSync
             {
                 _shouldSendHandshake = false;
                 HandleRoomSwitchHandshake();
+            }
+
+            // Process discovery manager main thread queue (for PlayerPrefs operations)
+            if (_discoveryManager != null)
+            {
+                _discoveryManager.Update();
             }
 
             HandleDiscovery();
@@ -537,7 +541,7 @@ namespace Styly.NetSync
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
-            _discoveryManager.SetBeaconPort(BeaconPort);
+            _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
 
@@ -582,8 +586,11 @@ namespace Styly.NetSync
                 DebugLog("Connection established during room switch - handshake deferred to main thread");
             }
 
-            // Initialize battery level immediately on connection
-            _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
+            // Initialize battery level immediately on connection if sync is enabled
+            if (_syncBatteryLevel)
+            {
+                _lastBatteryUpdate = -_batteryUpdateInterval; // Force immediate update on next Update()
+            }
         }
 
         /// <summary>
@@ -768,7 +775,7 @@ namespace Styly.NetSync
         private void StartDiscovery()
         {
             if (_discoveryManager == null) { return; }
-            _discoveryManager.SetBeaconPort(BeaconPort);
+            _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _connectionManager.StartDiscovery(_discoveryManager, _roomId);
             _isDiscovering = true;
             _discoveryStartTime = Time.time;
@@ -787,21 +794,23 @@ namespace Styly.NetSync
         #region === Update Logic ===
         private void HandleDiscovery()
         {
-            // Handle discovery timeout: stop current attempt and schedule retry in 5 seconds
-            if (_isDiscovering && Time.time - _discoveryStartTime > _discoveryTimeout)
-            {
-                DebugLog($"Discovery timeout - retrying in {DiscoveryRetryDelay} seconds");
-                StopDiscovery();
-                _nextDiscoveryAttemptAt = Time.time + DiscoveryRetryDelay;
-            }
-
-            // Process discovered server
+            // Process discovered server FIRST (before timeout check)
+            // This ensures that if a server is found, we handle it immediately
             if (!string.IsNullOrEmpty(_discoveredServer) && _isDiscovering)
             {
                 _isDiscovering = false;
                 StopDiscovery();
                 _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort);
                 _discoveredServer = null;
+                return; // Exit early - no need to check timeout or retry
+            }
+
+            // Handle discovery timeout: stop current attempt and schedule retry in 5 seconds
+            if (_isDiscovering && Time.time - _discoveryStartTime > _discoveryTimeout)
+            {
+                DebugLog($"Discovery timeout - retrying in {DiscoveryRetryDelay} seconds");
+                StopDiscovery();
+                _nextDiscoveryAttemptAt = Time.time + DiscoveryRetryDelay;
             }
 
             // If not currently discovering and discovery is enabled with no fixed server, retry when due
@@ -909,6 +918,12 @@ namespace Styly.NetSync
         /// </summary>
         private void UpdateBatteryLevel()
         {
+            // Check if battery sync is enabled
+            if (!_syncBatteryLevel)
+            {
+                return;
+            }
+
             float currentTime = Time.time;
             if (currentTime - _lastBatteryUpdate >= _batteryUpdateInterval)
             {

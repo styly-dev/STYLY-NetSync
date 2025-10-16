@@ -7,6 +7,7 @@ snake_case naming and pull-based transform consumption by default.
 
 import json
 import logging
+import os
 import socket
 import threading
 import time
@@ -14,7 +15,13 @@ import uuid
 from queue import Empty, Full, Queue
 from typing import Any
 
-import zmq
+# Dynamic ZMQ import based on environment variable
+env_is_green = os.environ.get("STYLY_USE_ZMQ_GREEN", "")
+if env_is_green.lower() == "true":
+    print("## net_sync_manager client imports green ZeroMQ.")
+    import zmq.green as zmq
+else:
+    import zmq
 
 from . import binary_serializer
 from .adapters import (
@@ -392,9 +399,7 @@ class net_sync_manager:
 
                     event = ("global", name, old_value, value)
                     if self._auto_dispatch:
-                        self.on_global_variable_changed.invoke(
-                            name, old_value, value
-                        )
+                        self.on_global_variable_changed.invoke(name, old_value, value)
                     else:
                         try:
                             self._nv_queue.put_nowait(event)
@@ -456,9 +461,7 @@ class net_sync_manager:
         with self._snapshot_lock:
             return self._latest_room_snapshot
 
-    def get_client_transform_data(
-        self, client_no: int
-    ) -> client_transform_data | None:
+    def get_client_transform_data(self, client_no: int) -> client_transform_data | None:
         """Get latest transform for a specific client."""
         snapshot = self.get_room_transform_data()
         if snapshot and client_no in snapshot.clients:
@@ -608,9 +611,7 @@ class net_sync_manager:
                 event = self._nv_queue.get_nowait()
                 if event[0] == "global":
                     _, name, old_value, new_value = event
-                    self.on_global_variable_changed.invoke(
-                        name, old_value, new_value
-                    )
+                    self.on_global_variable_changed.invoke(name, old_value, new_value)
                 elif event[0] == "client":
                     _, client_no, name, old_value, new_value = event
                     self.on_client_variable_changed.invoke(
@@ -623,7 +624,7 @@ class net_sync_manager:
         return dispatched
 
     # Discovery API
-    def start_discovery(self, beacon_port: int = 9999) -> None:
+    def start_discovery(self, server_discovery_port: int = 9999) -> None:
         """Start UDP discovery for servers."""
         if self._discovery_running:
             return
@@ -635,11 +636,11 @@ class net_sync_manager:
 
             self._discovery_running = True
             self._discovery_thread = threading.Thread(
-                target=self._discovery_loop, args=(beacon_port,), daemon=True
+                target=self._discovery_loop, args=(server_discovery_port,), daemon=True
             )
             self._discovery_thread.start()
 
-            logger.info(f"Started UDP discovery on port {beacon_port}")
+            logger.info(f"Started UDP discovery on port {server_discovery_port}")
 
         except Exception as e:
             logger.error(f"Error starting discovery: {e}")
@@ -657,14 +658,14 @@ class net_sync_manager:
 
         logger.info("Stopped UDP discovery")
 
-    def _discovery_loop(self, beacon_port: int) -> None:
+    def _discovery_loop(self, server_discovery_port: int) -> None:
         """UDP discovery loop."""
         while self._discovery_running:
             try:
                 # Send discovery request
                 message = "STYLY-NETSYNC-DISCOVER"
                 self._discovery_socket.sendto(
-                    message.encode(), ("<broadcast>", beacon_port)
+                    message.encode(), ("<broadcast>", server_discovery_port)
                 )
 
                 # Listen for response

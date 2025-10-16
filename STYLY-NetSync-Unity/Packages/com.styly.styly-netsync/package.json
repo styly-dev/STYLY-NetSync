@@ -1,6 +1,6 @@
 {
   "name": "com.styly.styly-netsync",
-  "version": "0.5.9",
+  "version": "0.6.0",
   "displayName": "STYLY NetSync",
   "unity": "6000.0",
   "description": "STYLY NetSync",
@@ -9,12 +9,12 @@
     "org.nuget.netmq": "4.0.2",
     "com.unity.xr.core-utils": "2.1.1",
     "com.unity.nuget.newtonsoft-json": "3.2.1",
-    "com.styly.styly-xr-rig": "0.4.8"
+    "com.styly.styly-xr-rig": "0.4.10"
   },
   "author": {
     "name": "STYLY, Inc.",
     "email": "info@styly.inc",
-    "url": "https://styly.cc/"
+    "url": "https://styly.inc/"
   },
   "samples": []
 }

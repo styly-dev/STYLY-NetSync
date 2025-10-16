@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "styly-netsync-server"
-version = "0.5.9"
+version = "0.6.0"
 description = "STYLY NetSync Server - Multiplayer framework for Location-Based Entertainment VR/MR experiences"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -37,7 +37,11 @@ classifiers = [
 ]
 
 dependencies = [
-    "pyzmq>=26.0.0"
+    "pyzmq>=26.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "msgpack>=1.0.5",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]
@@ -128,6 +132,10 @@ strict_equality = true
 module = "zmq.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "psutil.*"
+ignore_missing_imports = true
+
 # Pytest configuration
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -156,4 +164,3 @@ exclude_lines = [
 
 [tool.coverage.html]
 directory = "htmlcov"
-
