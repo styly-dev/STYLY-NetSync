@@ -16,7 +16,7 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private int _clientNo = 0;
 
         [Header("Connection Settings")]
-        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
+        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "";
         private int _dealerPort = 5555;
         private int _subPort = 5556;
         [SerializeField] private string _roomId = "default_room";
@@ -49,7 +49,7 @@ namespace Styly.NetSync
         [Tooltip("Enable synchronization of battery levels across devices.")]
         [SerializeField] private bool _syncBatteryLevel = true;
         private bool _enableDiscovery = true;
-        private float _discoveryTimeout = 5f;
+        private float _discoveryTimeout = 10f;
 
         internal const string PrefixForSystem = "@system:"; // Prefix for system-only message names
 
