@@ -172,16 +172,6 @@ MonoBehaviour:
   head: {fileID: 2041796224729081718}
   rightHand: {fileID: 8259009603360022221}
   leftHand: {fileID: 6992804918366304625}
-  headToChest: 0.24
-  chestBack: 0.06
-  handPushForwardMax: 0.05
-  yawFollow: 0.9
-  pitchRollFollow: 0.25
-  handYawInfluence: 0.25
-  standingHeadHeight: 1.65
-  crouchRange: 0.4
-  crouchMaxPitch: 15
-  smoothingTime: 0.08
 --- !u!1 &7927846321792083688
 GameObject:
   m_ObjectHideFlags: 0
@@ -240,7 +230,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 0f3bdacc1c6464f659a5149a063b45ce, type: 3}
       propertyPath: m_LocalPosition.y
-      value: -0.458
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 0f3bdacc1c6464f659a5149a063b45ce, type: 3}
       propertyPath: m_LocalPosition.z
@@ -396,7 +386,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 6610bb9ce05f44944a29f76241b6f877, type: 3}
       propertyPath: m_LocalPosition.y
-      value: -0.092
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 6610bb9ce05f44944a29f76241b6f877, type: 3}
       propertyPath: m_LocalPosition.z
