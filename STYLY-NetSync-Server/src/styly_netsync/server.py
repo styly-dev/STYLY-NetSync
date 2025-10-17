@@ -222,6 +222,11 @@ class NetSyncServer:
         self._pub_ready = threading.Event()  # signaled after successful bind
         self._publisher_exception = None  # bind/run errors are stored here
 
+        # Latest-only coalescing buffer for high-rate topics (e.g., room transforms)
+        self._coalesce_lock = threading.Lock()
+        # topic_bytes -> message_bytes (keep only the most-recent per topic)
+        self._coalesce_latest: dict[bytes, bytes] = {}
+
         # Thread-safe room management with locks
         self.rooms: dict[str, dict[str, Any]] = (
             {}
@@ -325,6 +330,22 @@ class NetSyncServer:
             self._pub_ready.set()
 
             while self._publisher_running:
+                # 1) Flush coalesced (latest-only) topics first
+                try:
+                    with self._coalesce_lock:
+                        coalesced_items = list(self._coalesce_latest.items())
+                        self._coalesce_latest.clear()
+                except Exception:
+                    coalesced_items = []
+
+                for topic_bytes, message_bytes in coalesced_items:
+                    try:
+                        self.pub.send_multipart([topic_bytes, message_bytes])
+                        self._increment_stat("broadcast_count")
+                    except Exception as e:
+                        logger.error(f"Publisher failed to send (coalesced): {e}")
+
+                # 2) Then handle normal queue (RPC / NV etc.)
                 try:
                     item = self._pub_queue.get(timeout=0.05)
                 except Empty:
@@ -358,13 +379,23 @@ class NetSyncServer:
             logger.info("Publisher loop ended")
 
     def _enqueue_pub(self, topic_bytes: bytes, message_bytes: bytes):
-        """Thread-safe enqueue of a broadcast. Never touches self.pub directly."""
+        """Thread-safe enqueue of a broadcast for reliable/low-rate messages (RPC/NV).
+        Backpressure policy: drop the oldest item (ring buffer) to prefer newer updates.
+        """
         try:
             self._pub_queue.put_nowait((topic_bytes, message_bytes))
         except Full:
-            # Backpressure policy: drop oldest-style or simply count the drop
-            self._increment_stat("skipped_broadcasts")
-            logger.debug("PUB queue full: dropping a message")
+            # Ring-buffer behavior: remove oldest then enqueue latest
+            try:
+                _ = self._pub_queue.get_nowait()
+            except Empty:
+                pass
+            try:
+                self._pub_queue.put_nowait((topic_bytes, message_bytes))
+            except Full:
+                # If still full, count as skipped
+                self._increment_stat("skipped_broadcasts")
+                logger.debug("PUB queue full: dropping a message")
 
     def _get_or_assign_client_no(self, room_id: str, device_id: str) -> int:
         """Get existing client number or assign a new one for the given device ID in the room"""
@@ -1381,6 +1412,11 @@ class NetSyncServer:
                 else:
                     self._increment_stat("skipped_broadcasts")
 
+    def _enqueue_pub_latest(self, topic_bytes: bytes, message_bytes: bytes):
+        """Latest-only coalescing enqueue for high-rate topics (e.g., room transforms)."""
+        with self._coalesce_lock:
+            self._coalesce_latest[topic_bytes] = message_bytes
+
     def _broadcast_room(self, room_id, clients):
         """Broadcast a specific room's state"""
         # Filter out stealth clients from broadcasts
@@ -1399,7 +1435,8 @@ class NetSyncServer:
             # Send binary format with client numbers
             topic_bytes = room_id.encode("utf-8")
             message_bytes = binary_serializer.serialize_room_transform(room_transform)
-            self._enqueue_pub(topic_bytes, message_bytes)
+            # Transform is overwrite-only => keep only the latest per room/topic
+            self._enqueue_pub_latest(topic_bytes, message_bytes)
 
     def _cleanup_clients(self, current_time):
         """Clean up disconnected clients with atomic operations to prevent memory leaks"""
