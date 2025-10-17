@@ -23,7 +23,7 @@ namespace Styly.NetSync
         private readonly Queue<Action> _mainThreadQueue = new Queue<Action>();
 
         public bool EnableDiscovery { get; set; } = true;
-        public float DiscoveryTimeout { get; set; } = 5f;
+        public float DiscoveryTimeout { get; set; } = 1f;
         private int _serverDiscoveryPort = 9999;
         public int ServerDiscoveryPort
         {
@@ -31,7 +31,11 @@ namespace Styly.NetSync
             private set => Volatile.Write(ref _serverDiscoveryPort, value);
         }
         public bool IsDiscovering => _isDiscovering;
-        public float DiscoveryInterval { get; set; } = 0.5f; // Send discovery request every 0.5 seconds
+        public float DiscoveryInterval { get; set; } = 0.1f; // Send discovery request every 0.1 seconds
+
+        // Parallel scanning configuration for iOS/visionOS
+        public int MaxParallelConnections { get; set; } = 20; // Scan up to 20 IPs concurrently
+        public int TcpConnectionTimeoutMs { get; set; } = 300; // Reduced timeout for faster scanning
 
         public event Action<string, int, int> OnServerDiscovered;
 
@@ -71,6 +75,18 @@ namespace Styly.NetSync
                 // Start discovery thread that sends requests and waits for responses
                 _discoveryThread = new Thread(() =>
                 {
+                    // First, try to connect to localhost using TCP
+                    DebugLog("Attempting to discover server on localhost via TCP...");
+                    if (TryTcpDiscovery("127.0.0.1"))
+                    {
+                        DebugLog("Server discovered on localhost via TCP.");
+                        return; // Exit thread if server is found
+                    }
+                    
+                    // If localhost fails, proceed with UDP broadcast discovery
+                    if (!_isDiscovering) return; // Check if discovery was stopped
+                    DebugLog("Localhost discovery failed, proceeding with UDP broadcast.");
+
                     var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
                     var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, ServerDiscoveryPort);
                     var lastRequestTime = DateTime.MinValue;
@@ -135,7 +151,16 @@ namespace Styly.NetSync
                 {
                     DebugLog("Starting TCP scan discovery for iOS/visionOS");
 
-                    // Try last known server first
+                    // First, try to connect to localhost
+                    DebugLog("Attempting to discover server on localhost...");
+                    if (TryTcpDiscovery("127.0.0.1"))
+                    {
+                        DebugLog("Server discovered on localhost.");
+                        return; // Exit thread if server is found
+                    }
+
+                    // If localhost fails, try last known server
+                    if (!_isDiscovering) return; // Check if discovery was stopped
                     if (!string.IsNullOrEmpty(cachedServerIp))
                     {
                         DebugLog($"Trying cached server IP: {cachedServerIp}");
@@ -145,21 +170,11 @@ namespace Styly.NetSync
                         }
                     }
 
-                    // Get local subnet and scan
+                    // Get local subnet and scan in parallel
                     List<string> ipsToScan = GetSubnetIpAddresses();
-                    DebugLog($"Scanning {ipsToScan.Count} IP addresses in subnet");
+                    DebugLog($"Scanning {ipsToScan.Count} IP addresses in subnet with {MaxParallelConnections} parallel connections");
 
-                    foreach (var ip in ipsToScan)
-                    {
-                        if (!_isDiscovering) { break; }
-
-                        if (TryTcpDiscovery(ip))
-                        {
-                            // Queue caching to happen on main thread
-                            QueueCacheServerIp(ip);
-                            break;
-                        }
-                    }
+                    PerformParallelTcpScan(ipsToScan);
 
                     if (_isDiscovering)
                     {
@@ -182,6 +197,66 @@ namespace Styly.NetSync
             }
         }
 
+        private void PerformParallelTcpScan(List<string> ipsToScan)
+        {
+            if (ipsToScan.Count == 0) { return; }
+
+            var pendingScans = new Queue<string>(ipsToScan);
+            var activeThreads = new List<Thread>();
+            var lockObj = new object();
+            bool serverFound = false;
+
+            // Launch worker threads
+            for (int i = 0; i < Math.Min(MaxParallelConnections, ipsToScan.Count); i++)
+            {
+                var workerThread = new Thread(() =>
+                {
+                    while (true)
+                    {
+                        string ipToScan = null;
+
+                        // Check if we should stop (server found or discovery stopped)
+                        lock (lockObj)
+                        {
+                            if (serverFound || !_isDiscovering || pendingScans.Count == 0)
+                            {
+                                return;
+                            }
+                            ipToScan = pendingScans.Dequeue();
+                        }
+
+                        // Attempt TCP discovery
+                        if (TryTcpDiscovery(ipToScan))
+                        {
+                            lock (lockObj)
+                            {
+                                if (!serverFound)
+                                {
+                                    serverFound = true;
+                                    QueueCacheServerIp(ipToScan);
+                                    DebugLog($"Server found at {ipToScan}, stopping other scans");
+                                }
+                            }
+                            return; // Exit this worker thread
+                        }
+                    }
+                })
+                {
+                    IsBackground = true,
+                    Name = $"STYLY_TcpScanWorker_{i}"
+                };
+
+                workerThread.Start();
+                activeThreads.Add(workerThread);
+            }
+
+            // Wait for all workers to complete
+            foreach (var thread in activeThreads)
+            {
+                thread.Join();
+            }
+        }
+
         private bool TryTcpDiscovery(string ipAddress)
         {
             TcpClient client = null;
@@ -189,7 +264,7 @@ namespace Styly.NetSync
             {
                 client = new TcpClient();
                 var connectResult = client.BeginConnect(ipAddress, ServerDiscoveryPort, null, null);
-                bool success = connectResult.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(500));
+                bool success = connectResult.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(TcpConnectionTimeoutMs));
 
                 if (!success)
                 {
