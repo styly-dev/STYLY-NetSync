@@ -75,6 +75,18 @@ namespace Styly.NetSync
                 // Start discovery thread that sends requests and waits for responses
                 _discoveryThread = new Thread(() =>
                 {
+                    // First, try to connect to localhost using TCP
+                    DebugLog("Attempting to discover server on localhost via TCP...");
+                    if (TryTcpDiscovery("127.0.0.1"))
+                    {
+                        DebugLog("Server discovered on localhost via TCP.");
+                        return; // Exit thread if server is found
+                    }
+                    
+                    // If localhost fails, proceed with UDP broadcast discovery
+                    if (!_isDiscovering) return; // Check if discovery was stopped
+                    DebugLog("Localhost discovery failed, proceeding with UDP broadcast.");
+
                     var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
                     var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, ServerDiscoveryPort);
                     var lastRequestTime = DateTime.MinValue;
@@ -139,7 +151,16 @@ namespace Styly.NetSync
                 {
                     DebugLog("Starting TCP scan discovery for iOS/visionOS");
 
-                    // Try last known server first
+                    // First, try to connect to localhost
+                    DebugLog("Attempting to discover server on localhost...");
+                    if (TryTcpDiscovery("127.0.0.1"))
+                    {
+                        DebugLog("Server discovered on localhost.");
+                        return; // Exit thread if server is found
+                    }
+
+                    // If localhost fails, try last known server
+                    if (!_isDiscovering) return; // Check if discovery was stopped
                     if (!string.IsNullOrEmpty(cachedServerIp))
                     {
                         DebugLog($"Trying cached server IP: {cachedServerIp}");
