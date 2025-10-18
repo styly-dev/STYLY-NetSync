@@ -83,10 +83,23 @@ namespace Styly.NetSync.Editor
             return System.Text.RegularExpressions.Regex.Replace(version, @"[^\w\.\-]", "");
         }
 
+        private static string EscapeForAppleScript(string text)
+        {
+            return text
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("\r", "\\r")
+                .Replace("\n", "\\n");
+        }
+
+        private static string QuoteForShell(string value)
+        {
+            return "'" + value.Replace("'", "'\\''") + "'";
+        }
+
         private static void RunInTerminal(string command)
         {
-            // Escape command for AppleScript
-            string escaped = command.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            string escaped = EscapeForAppleScript(command);
 
             // Use AppleScript to open Terminal and run the command, then bring Terminal to front
             string appleScript = $"-e \"tell application \\\"Terminal\\\"\" " +
@@ -102,7 +115,16 @@ namespace Styly.NetSync.Editor
                 CreateNoWindow = true
             };
 
-            Process.Start(psi);
+            try
+            {
+                Process.Start(psi);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to start Terminal with osascript: {ex.Message}\n" +
+                               "Please ensure that 'osascript' and the Terminal application are available on your system.");
+                throw;
+            }
         }
 
         private static string GetProjectRoot()
@@ -290,7 +312,7 @@ read -p 'Press any key to exit...'
             // Execute script in Terminal using AppleScript
             try
             {
-                RunInTerminal($"bash {tempScriptPath}");
+                RunInTerminal($"/bin/bash {QuoteForShell(tempScriptPath)}");
                 Debug.Log("STYLY NetSync: Starting Python server in Terminal...");
 
                 // Schedule cleanup of temporary script file
