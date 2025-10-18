@@ -83,21 +83,26 @@ namespace Styly.NetSync.Editor
             return System.Text.RegularExpressions.Regex.Replace(version, @"[^\w\.\-]", "");
         }
 
-        private static string FindTerminalPath()
+        private static void RunInTerminal(string command)
         {
-            string[] possiblePaths = {
-                "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
-                "/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",
-                "/System/Applications/Terminal.app/Contents/MacOS/Terminal",
-                "/Applications/Terminal.app/Contents/MacOS/Terminal"
+            // Escape command for AppleScript
+            string escaped = command.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+            // Use AppleScript to open Terminal and run the command, then bring Terminal to front
+            string appleScript = $"-e \"tell application \\\"Terminal\\\"\" " +
+                                 $"-e \"do script \\\"{escaped}\\\"\" " +
+                                 $"-e \"activate\" " +
+                                 $"-e \"end tell\"";
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "osascript",
+                Arguments = appleScript,
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
 
-            foreach (var path in possiblePaths)
-            {
-                if (File.Exists(path)) return path;
-            }
-
-            throw new FileNotFoundException("Terminal application not found. Please ensure Terminal.app is installed.");
+            Process.Start(psi);
         }
 
         private static string GetProjectRoot()
@@ -135,17 +140,6 @@ namespace Styly.NetSync.Editor
             string serverVersion = GetServerVersionSafe();
             int defaultServerDiscoveryPort = GetDefaultServerDiscoveryPort();
             bool hasNetSyncManager = defaultServerDiscoveryPort != 9999;
-            string terminal;
-            try
-            {
-                terminal = FindTerminalPath();
-            }
-            catch (FileNotFoundException e)
-            {
-                Debug.LogError(e.Message);
-                EditorUtility.DisplayDialog("Error", e.Message, "OK");
-                return;
-            }
 
             string shellScript = @"#!/bin/bash
 clear
@@ -293,19 +287,10 @@ read -p 'Press any key to exit...'
                 return;
             }
 
-            // Get the project root directory (where STYLY-NetSync-Server is located)
-            string projectRoot = GetProjectRoot();
-
-            // Execute script in Terminal
-            Process process = new Process();
-            process.StartInfo.FileName = terminal;
-            process.StartInfo.Arguments = tempScriptPath;
-            process.StartInfo.UseShellExecute = false;
-            process.StartInfo.WorkingDirectory = projectRoot;
-
+            // Execute script in Terminal using AppleScript
             try
             {
-                process.Start();
+                RunInTerminal($"bash {tempScriptPath}");
                 Debug.Log("STYLY NetSync: Starting Python server in Terminal...");
 
                 // Schedule cleanup of temporary script file
