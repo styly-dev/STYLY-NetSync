@@ -14,7 +14,7 @@ namespace Styly.NetSync.Editor
         private double _lastRepaint;
         private static readonly string[] AdvancedPropertyOrder =
         {
-            "ServerDiscoveryPort",
+            "BeaconPort",
             "_syncBatteryLevel"
         };
         private static readonly HashSet<string> AdvancedProperties = new HashSet<string>(AdvancedPropertyOrder);

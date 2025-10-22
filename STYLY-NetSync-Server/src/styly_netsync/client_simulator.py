@@ -41,13 +41,13 @@ import zmq
 # Import public APIs from styly_netsync module
 from styly_netsync.binary_serializer import (
     MSG_CLIENT_TRANSFORM,
-    MSG_CLIENT_VAR_SET,
-    MSG_CLIENT_VAR_SYNC,
+    MSG_ROOM_TRANSFORM,
+    MSG_RPC,
     MSG_DEVICE_ID_MAPPING,
     MSG_GLOBAL_VAR_SET,
     MSG_GLOBAL_VAR_SYNC,
-    MSG_ROOM_TRANSFORM,
-    MSG_RPC,
+    MSG_CLIENT_VAR_SET,
+    MSG_CLIENT_VAR_SYNC,
     deserialize,
     serialize_client_transform,
     serialize_client_var_set,
@@ -815,9 +815,7 @@ class SimulatedClient:
         self.shared_subscriber = shared_subscriber
         self.simulate_battery = simulate_battery
         self.enable_receive = enable_receive
-        self.recv_stats: ReceiveStats | None = (
-            ReceiveStats() if enable_receive else None
-        )
+        self.recv_stats: ReceiveStats | None = ReceiveStats() if enable_receive else None
 
         self.start_time = time.monotonic()
         self.last_update_time = self.start_time
@@ -1017,6 +1015,7 @@ class SimulatedClient:
         # NOTE: Time budget may interrupt draining, but subsequent ticks will continue
         # processing messages. This prevents send loop starvation.
 
+
     def _handle_broadcast_payload(self, msg_type: int, data: dict[str, Any] | None):
         """Record broadcast metadata for receive-mode load tests."""
         if not self.recv_stats:
@@ -1025,9 +1024,9 @@ class SimulatedClient:
         now = time.monotonic()
         self.recv_stats.total_messages += 1
         self.recv_stats.last_received_at = now
-        self.recv_stats.type_counts[msg_type] = (
-            self.recv_stats.type_counts.get(msg_type, 0) + 1
-        )
+        self.recv_stats.type_counts[msg_type] = self.recv_stats.type_counts.get(
+            msg_type, 0
+        ) + 1
 
         if self.logger.isEnabledFor(logging.DEBUG):
             message_name = MESSAGE_TYPE_NAMES.get(msg_type, f"UNKNOWN_{msg_type}")
@@ -1035,16 +1034,20 @@ class SimulatedClient:
             if msg_type == MSG_CLIENT_TRANSFORM and data:
                 summary = f"transform from {data.get('deviceId', 'unknown')}"
             elif msg_type == MSG_ROOM_TRANSFORM and data:
-                summary = f"room transform with {len(data.get('clients', []))} clients"
+                summary = (
+                    f"room transform with {len(data.get('clients', []))} clients"
+                )
             elif msg_type in (MSG_GLOBAL_VAR_SET, MSG_CLIENT_VAR_SET) and data:
                 summary = (
                     f"var '{data.get('variableName', 'unknown')}'"
-                    if "variableName" in data
+                    if 'variableName' in data
                     else summary
                 )
             elif data is None:
                 summary = "payload omitted"
-            self.logger.debug("Received broadcast type %s (%s)", message_name, summary)
+            self.logger.debug(
+                "Received broadcast type %s (%s)", message_name, summary
+            )
 
 
 # ============================================================================
@@ -1324,9 +1327,7 @@ class ClientSimulator:
         self.logger.info(f"Starting simulation with {self.num_clients} clients")
         self.logger.info(f"Server: {self.server_addr}:{self.dealer_port}")
         self.logger.info(f"Room: {self.room_id}")
-        self.logger.info(
-            f"Battery simulation: {'enabled' if self.simulate_battery else 'disabled'}"
-        )
+        self.logger.info(f"Battery simulation: {'enabled' if self.simulate_battery else 'disabled'}")
         self.logger.info(
             f"Broadcast receive mode: {'enabled' if self.enable_receive else 'disabled'}"
         )

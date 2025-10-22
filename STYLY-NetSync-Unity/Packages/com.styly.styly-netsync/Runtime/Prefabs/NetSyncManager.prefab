@@ -49,7 +49,7 @@ MonoBehaviour:
   _serverAddress: 
   _roomId: default_room
   _localAvatarPrefab: {fileID: 5433920805635859656, guid: 533c4bfc8e64a634c991381ba7791b99, type: 3}
-  _remoteAvatarPrefab: {fileID: 7715607727795320353, guid: 122df9a4cf7b74c4fbacefa9144f883a, type: 3}
+  _remoteAvatarPrefab: {fileID: 4943129801574805003, guid: ab3b1ca71deaa734dabad80f2cbbe3f6, type: 3}
   _humanPresencePrefab: {fileID: 0}
   OnAvatarConnected:
     m_PersistentCalls:
@@ -69,5 +69,3 @@ MonoBehaviour:
   OnReady:
     m_PersistentCalls:
       m_Calls: []
-  ServerDiscoveryPort: 9999
-  _syncBatteryLevel: 1

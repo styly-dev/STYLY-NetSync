@@ -25,18 +25,18 @@ class TestAllRunMethods:
     def run_command(self, command, args=None, timeout=5, expect_help=False):
         """
         Run a command and check if it executes successfully.
-
+        
         Args:
             command: Command to run (can be string or list)
             args: Additional arguments (default: ['--help'])
             timeout: Maximum time to wait for command
             expect_help: If True, expect the command to show help and exit
-
+        
         Returns:
             tuple: (success, stdout, stderr, return_code)
         """
         if args is None:
-            args = ["--help"] if expect_help else []
+            args = ['--help'] if expect_help else []
 
         if isinstance(command, str):
             command = command.split()
@@ -113,7 +113,9 @@ class TestAllRunMethods:
         if which("styly-netsync-server") is None:
             pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
-            "styly-netsync-server", args=["--help"], expect_help=True
+            'styly-netsync-server',
+            args=['--help'],
+            expect_help=True
         )
         assert success, f"Failed with stderr: {stderr}"
         assert "STYLY NetSync Server" in stdout or "STYLY NetSync Server" in stderr
@@ -122,7 +124,9 @@ class TestAllRunMethods:
     def test_server_module_execution_help(self):
         """Test: python -m styly_netsync --help (development/debugging)"""
         success, stdout, stderr, code = self.run_command(
-            [sys.executable, "-m", "styly_netsync"], args=["--help"], expect_help=True
+            [sys.executable, '-m', 'styly_netsync'],
+            args=['--help'],
+            expect_help=True
         )
         assert success, f"Failed with stderr: {stderr}"
         assert "STYLY NetSync Server" in stdout or "STYLY NetSync Server" in stderr
@@ -135,17 +139,10 @@ class TestAllRunMethods:
         if which("styly-netsync-server") is None:
             pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
-            "styly-netsync-server",
-            args=[
-                "--dealer-port",
-                "15555",
-                "--pub-port",
-                "15556",
-                "--server-discovery-port",
-                "19999",
-            ],
+            'styly-netsync-server',
+            args=['--dealer-port', '15555', '--pub-port', '15556', '--beacon-port', '19999'],
             expect_help=False,
-            timeout=3,
+            timeout=3
         )
         assert success, f"Server failed to start. stderr: {stderr}"
 
@@ -156,14 +153,12 @@ class TestAllRunMethods:
         if which("styly-netsync-simulator") is None:
             pytest.skip("Simulator CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
-            "styly-netsync-simulator", args=["--help"], expect_help=True
+            'styly-netsync-simulator',
+            args=['--help'],
+            expect_help=True
         )
         assert success, f"Failed with stderr: {stderr}"
-        assert (
-            "STYLY NetSync Client Simulator" in stdout
-            or "Client Simulator" in stdout
-            or "client_simulator" in stdout.lower()
-        )
+        assert "STYLY NetSync Client Simulator" in stdout or "Client Simulator" in stdout or "client_simulator" in stdout.lower()
         assert code == 0
 
     # Removed deprecated execution methods:
@@ -173,55 +168,39 @@ class TestAllRunMethods:
     # Server options tests
 
     def test_server_with_custom_ports(self):
-        """Test: styly-netsync-server --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999"""
+        """Test: styly-netsync-server --dealer-port 5555 --pub-port 5556 --beacon-port 9999"""
         if which("styly-netsync-server") is None:
             pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
-            "styly-netsync-server",
-            args=[
-                "--dealer-port",
-                "45555",
-                "--pub-port",
-                "45556",
-                "--server-discovery-port",
-                "49999",
-            ],
+            'styly-netsync-server',
+            args=['--dealer-port', '45555', '--pub-port', '45556', '--beacon-port', '49999'],
             expect_help=False,
-            timeout=3,
+            timeout=3
         )
         assert success, f"Server with custom ports failed. stderr: {stderr}"
 
-    def test_server_no_server_discovery(self):
-        """Test: styly-netsync-server --no-server-discovery"""
+    def test_server_no_beacon(self):
+        """Test: styly-netsync-server --no-beacon"""
         if which("styly-netsync-server") is None:
             pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
-            "styly-netsync-server",
-            args=[
-                "--no-server-discovery",
-                "--dealer-port",
-                "55555",
-                "--pub-port",
-                "55556",
-            ],
+            'styly-netsync-server',
+            args=['--no-beacon', '--dealer-port', '55555', '--pub-port', '55556'],
             expect_help=False,
-            timeout=3,
+            timeout=3
         )
-        assert success, f"Server with --no-server-discovery failed. stderr: {stderr}"
+        assert success, f"Server with --no-beacon failed. stderr: {stderr}"
 
 
 if __name__ == "__main__":
     # Run tests with pytest if available, otherwise run directly
     try:
         import pytest
-
-        pytest.main([__file__, "-v"])
+        pytest.main([__file__, '-v'])
     except ImportError:
         # Basic test runner without pytest
         test_instance = TestAllRunMethods()
-        test_methods = [
-            method for method in dir(test_instance) if method.startswith("test_")
-        ]
+        test_methods = [method for method in dir(test_instance) if method.startswith('test_')]
 
         passed = 0
         failed = 0

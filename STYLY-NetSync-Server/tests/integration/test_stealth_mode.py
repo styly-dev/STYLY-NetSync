@@ -24,31 +24,30 @@ def create_stealth_handshake(device_id: str) -> bytes:
     buffer.append(1)
 
     # Device ID
-    device_id_bytes = device_id.encode("utf-8")
+    device_id_bytes = device_id.encode('utf-8')
     buffer.append(len(device_id_bytes))
     buffer.extend(device_id_bytes)
 
     # Physical transform with NaN values (now 6 floats for consistency)
     for _ in range(6):
-        buffer.extend(struct.pack("<f", float("nan")))
+        buffer.extend(struct.pack('<f', float('nan')))
 
     # Head transform with NaN values (6 floats)
     for _ in range(6):
-        buffer.extend(struct.pack("<f", float("nan")))
+        buffer.extend(struct.pack('<f', float('nan')))
 
     # Right hand transform with NaN values (6 floats)
     for _ in range(6):
-        buffer.extend(struct.pack("<f", float("nan")))
+        buffer.extend(struct.pack('<f', float('nan')))
 
     # Left hand transform with NaN values (6 floats)
     for _ in range(6):
-        buffer.extend(struct.pack("<f", float("nan")))
+        buffer.extend(struct.pack('<f', float('nan')))
 
     # Virtual transforms count (0 for stealth)
     buffer.append(0)
 
     return bytes(buffer)
-
 
 def test_stealth_client():
     """Test stealth client connection and message sending"""
@@ -71,7 +70,7 @@ def test_stealth_client():
 
     # Send stealth handshake
     handshake = create_stealth_handshake(device_id)
-    dealer.send_multipart([room_id.encode("utf-8"), handshake])
+    dealer.send_multipart([room_id.encode('utf-8'), handshake])
     print("Stealth handshake sent")
 
     # Test RPC
@@ -83,21 +82,21 @@ def test_stealth_client():
     rpc_buffer.append(3)  # MSG_RPC
 
     # Sender client number (will be overwritten by server)
-    rpc_buffer.extend(struct.pack("<H", 0))
+    rpc_buffer.extend(struct.pack('<H', 0))
 
     # Function name
     func_name = "StealthTest"
-    func_bytes = func_name.encode("utf-8")
-    rpc_buffer.extend(struct.pack("<H", len(func_bytes)))
+    func_bytes = func_name.encode('utf-8')
+    rpc_buffer.extend(struct.pack('<H', len(func_bytes)))
     rpc_buffer.extend(func_bytes)
 
     # Arguments JSON
     args_json = '["Hello from stealth client"]'
-    args_bytes = args_json.encode("utf-8")
-    rpc_buffer.extend(struct.pack("<H", len(args_bytes)))
+    args_bytes = args_json.encode('utf-8')
+    rpc_buffer.extend(struct.pack('<H', len(args_bytes)))
     rpc_buffer.extend(args_bytes)
 
-    dealer.send_multipart([room_id.encode("utf-8"), bytes(rpc_buffer)])
+    dealer.send_multipart([room_id.encode('utf-8'), bytes(rpc_buffer)])
     print("RPC sent")
 
     # Listen for messages
@@ -112,14 +111,14 @@ def test_stealth_client():
             # Send periodic handshake to maintain connection (once per second)
             current_time = time.monotonic()
             if current_time - last_handshake_time >= 1.0:
-                dealer.send_multipart([room_id.encode("utf-8"), handshake])
+                dealer.send_multipart([room_id.encode('utf-8'), handshake])
                 last_handshake_time = current_time
 
             # Check for incoming messages
             if sub.poll(100):
                 parts = sub.recv_multipart()
                 if len(parts) >= 2:
-                    topic = parts[0].decode("utf-8")
+                    topic = parts[0].decode('utf-8')
                     payload = parts[1]
 
                     if len(payload) > 0:
@@ -136,15 +135,11 @@ def test_stealth_client():
                                 # Client count
                                 if offset < len(payload):
                                     client_count = payload[offset]
-                                    print(
-                                        f"  Group transform received for {topic}: {client_count} clients"
-                                    )
+                                    print(f"  Group transform received for {topic}: {client_count} clients")
 
                                     # Check if our device ID appears (it shouldn't)
-                                    if device_id.encode("utf-8") in payload:
-                                        print(
-                                            "  ⚠️  WARNING: Stealth client visible in room transform!"
-                                        )
+                                    if device_id.encode('utf-8') in payload:
+                                        print("  ⚠️  WARNING: Stealth client visible in room transform!")
                                     else:
                                         print("  ✓ Stealth client not visible")
                         elif msg_type == 3:  # MSG_RPC
@@ -152,10 +147,8 @@ def test_stealth_client():
                         elif msg_type == 6:  # MSG_DEVICE_ID_MAPPING
                             print(f"  ID mapping received on {topic}")
                             # Check if stealth client appears in mapping
-                            if device_id.encode("utf-8") in payload:
-                                print(
-                                    "  ⚠️  WARNING: Stealth client visible in ID mapping!"
-                                )
+                            if device_id.encode('utf-8') in payload:
+                                print("  ⚠️  WARNING: Stealth client visible in ID mapping!")
                             else:
                                 print("  ✓ Stealth client not in ID mapping")
 
@@ -168,7 +161,6 @@ def test_stealth_client():
     dealer.close()
     sub.close()
     context.term()
-
 
 if __name__ == "__main__":
     test_stealth_client()

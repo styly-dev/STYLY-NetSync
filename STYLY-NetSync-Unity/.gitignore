@@ -116,8 +116,8 @@ ContentPackages/com.unity.xr-content.xr-sim-environments-*.tgz
 # Others
 **/.DS_Store
 .idea
-/_[Bb]uild*/
-/_[Bb]uild*.meta
+/_[Bb]uild/
+/_[Bb]uild.meta
 /[Aa]ssets/_temp/
 /[Aa]ssets/_temp.meta
 /_Output/*
