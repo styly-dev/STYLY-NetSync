@@ -27,6 +27,7 @@ from queue import Empty, Full, Queue
 from typing import Any, TYPE_CHECKING
 import zmq
 from . import binary_serializer
+from . import network_utils
 
 if TYPE_CHECKING:
     from uvicorn import Server
@@ -80,7 +81,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DEALER_PORT = 5555
 DEFAULT_PUB_PORT = 5556
-DEFAULT_BEACON_PORT = 9999
+DEFAULT_SERVER_DISCOVERY_PORT = 9999
 DEFAULT_SERVER_NAME = "STYLY-NetSync-Server"
 DEFAULT_NV_FLUSH_POLICY = "drain"
 
@@ -117,11 +118,11 @@ def get_version() -> str:
         try:
             dist = im.distribution("styly-netsync-server")
             # Development installs typically have .egg-link or direct path references
-            if hasattr(dist, 'files') and dist.files:
+            if hasattr(dist, "files") and dist.files:
                 # Check if any file path contains 'site-packages' - normal install
                 # vs direct source paths - development install
                 for file in list(dist.files)[:5]:  # Check first few files
-                    if file and 'site-packages' not in str(file):
+                    if file and "site-packages" not in str(file):
                         return True
             return False
         except im.PackageNotFoundError:
@@ -188,8 +189,8 @@ class NetSyncServer:
         self,
         dealer_port: int = DEFAULT_DEALER_PORT,
         pub_port: int = DEFAULT_PUB_PORT,
-        enable_beacon: bool = True,
-        beacon_port: int = DEFAULT_BEACON_PORT,
+        enable_server_discovery: bool = True,
+        server_discovery_port: int = DEFAULT_SERVER_DISCOVERY_PORT,
         server_name: str = DEFAULT_SERVER_NAME,
         nv_flush_policy: str = DEFAULT_NV_FLUSH_POLICY,
     ):
@@ -197,13 +198,18 @@ class NetSyncServer:
         self.pub_port = pub_port
         self.context = zmq.Context()
 
-        # Beacon discovery settings
-        self.enable_beacon = enable_beacon
-        self.beacon_port = beacon_port
+        # Server discovery settings
+        self.enable_server_discovery = enable_server_discovery
+        self.server_discovery_port = server_discovery_port
         self.server_name = server_name
-        self.beacon_socket = None
-        self.beacon_thread = None
-        self.beacon_running = False
+        self.server_discovery_socket = None
+        self.server_discovery_thread = None
+        self.server_discovery_running = False
+
+        # TCP server discovery settings
+        self.tcp_server_discovery_socket = None
+        self.tcp_server_discovery_thread = None
+        self.tcp_server_discovery_running = False
 
         # Sockets
         self.router = None
@@ -215,6 +221,11 @@ class NetSyncServer:
         self._publisher_running = False
         self._pub_ready = threading.Event()  # signaled after successful bind
         self._publisher_exception = None  # bind/run errors are stored here
+
+        # Latest-only coalescing buffer for high-rate topics (e.g., room transforms)
+        self._coalesce_lock = threading.Lock()
+        # topic_bytes -> message_bytes (keep only the most-recent per topic)
+        self._coalesce_latest: dict[bytes, bytes] = {}
 
         # Thread-safe room management with locks
         self.rooms: dict[str, dict[str, Any]] = (
@@ -303,7 +314,7 @@ class NetSyncServer:
 
         # REST bridge lifecycle
         self._rest_thread: threading.Thread | None = None
-        self._rest_server: "Server" | None = None
+        self._rest_server: Server | None = None
 
     def _increment_stat(self, stat_name: str, amount: int = 1):
         """Thread-safe increment of statistics"""
@@ -316,10 +327,25 @@ class NetSyncServer:
             # Create/bind PUB in this thread to avoid cross-thread use
             self.pub = self.context.socket(zmq.PUB)
             self.pub.bind(f"tcp://*:{self.pub_port}")
-            logger.info(f"PUB socket bound to port {self.pub_port} (PublisherThread)")
             self._pub_ready.set()
 
             while self._publisher_running:
+                # 1) Flush coalesced (latest-only) topics first
+                try:
+                    with self._coalesce_lock:
+                        coalesced_items = list(self._coalesce_latest.items())
+                        self._coalesce_latest.clear()
+                except Exception:
+                    coalesced_items = []
+
+                for topic_bytes, message_bytes in coalesced_items:
+                    try:
+                        self.pub.send_multipart([topic_bytes, message_bytes])
+                        self._increment_stat("broadcast_count")
+                    except Exception as e:
+                        logger.error(f"Publisher failed to send (coalesced): {e}")
+
+                # 2) Then handle normal queue (RPC / NV etc.)
                 try:
                     item = self._pub_queue.get(timeout=0.05)
                 except Empty:
@@ -353,13 +379,23 @@ class NetSyncServer:
             logger.info("Publisher loop ended")
 
     def _enqueue_pub(self, topic_bytes: bytes, message_bytes: bytes):
-        """Thread-safe enqueue of a broadcast. Never touches self.pub directly."""
+        """Thread-safe enqueue of a broadcast for reliable/low-rate messages (RPC/NV).
+        Backpressure policy: drop the oldest item (ring buffer) to prefer newer updates.
+        """
         try:
             self._pub_queue.put_nowait((topic_bytes, message_bytes))
         except Full:
-            # Backpressure policy: drop oldest-style or simply count the drop
-            self._increment_stat("skipped_broadcasts")
-            logger.debug("PUB queue full: dropping a message")
+            # Ring-buffer behavior: remove oldest then enqueue latest
+            try:
+                _ = self._pub_queue.get_nowait()
+            except Empty:
+                pass
+            try:
+                self._pub_queue.put_nowait((topic_bytes, message_bytes))
+            except Full:
+                # If still full, count as skipped
+                self._increment_stat("skipped_broadcasts")
+                logger.debug("PUB queue full: dropping a message")
 
     def _get_or_assign_client_no(self, room_id: str, device_id: str) -> int:
         """Get existing client number or assign a new one for the given device ID in the room"""
@@ -495,15 +531,10 @@ class NetSyncServer:
 
     def start(self):
         """Start the server"""
-        logger.info(
-            f"Starting server on ports {self.dealer_port} (ROUTER) and {self.pub_port} (PUB)"
-        )
-
         try:
             # Setup ROUTER socket
             self.router = self.context.socket(zmq.ROUTER)
             self.router.bind(f"tcp://*:{self.dealer_port}")
-            logger.info(f"ROUTER socket bound to port {self.dealer_port}")
 
             # Start Publisher thread (it creates/binds PUB)
             self._publisher_running = True
@@ -537,12 +568,9 @@ class NetSyncServer:
             self.receive_thread.start()
             self.periodic_thread.start()
 
-            # Start beacon if enabled
-            if self.enable_beacon:
-                self._start_beacon()
-
-            logger.info("All threads started successfully")
-            logger.info("Server is ready and waiting for connections...")
+            # Start server discovery if enabled
+            if self.enable_server_discovery:
+                self._start_server_discovery()
 
             try:
                 from .rest_bridge import create_app, run_uvicorn_in_thread
@@ -556,12 +584,13 @@ class NetSyncServer:
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
                     app, host="0.0.0.0", port=rest_port
                 )
-                logger.info(
-                    f"REST bridge started on http://0.0.0.0:{rest_port} "
-                    f"(room proxy connected to tcp://127.0.0.1:{self.dealer_port}/{self.pub_port})"
-                )
+                logger.info(f"REST bridge started on http://0.0.0.0:{rest_port}")
+                # Display logo after all initialization is complete
+                display_logo()
             except Exception as rest_exc:
                 logger.error(f"Failed to start REST bridge: {rest_exc}")
+
+            logger.info("Server is ready and waiting for connections...")
 
         except zmq.error.ZMQError as e:
             if "Address already in use" in str(e):
@@ -591,9 +620,9 @@ class NetSyncServer:
         logger.info("Stopping server...")
         self.running = False
 
-        # Stop beacon
-        if self.beacon_running:
-            self._stop_beacon()
+        # Stop server discovery
+        if self.server_discovery_running:
+            self._stop_server_discovery()
 
         if self._rest_server is not None:
             try:
@@ -642,8 +671,6 @@ class NetSyncServer:
 
     def _receive_loop(self):
         """Receive messages from clients"""
-        logger.info("Receive loop started")
-
         while self.running:
             try:
                 # Check for incoming messages
@@ -1279,7 +1306,6 @@ class NetSyncServer:
 
     def _periodic_loop(self):
         """Combined broadcast and cleanup loop with adaptive rates"""
-        logger.info("Periodic loop started")
         last_broadcast_check = 0
         last_cleanup = 0
         last_device_id_cleanup = 0
@@ -1386,6 +1412,11 @@ class NetSyncServer:
                 else:
                     self._increment_stat("skipped_broadcasts")
 
+    def _enqueue_pub_latest(self, topic_bytes: bytes, message_bytes: bytes):
+        """Latest-only coalescing enqueue for high-rate topics (e.g., room transforms)."""
+        with self._coalesce_lock:
+            self._coalesce_latest[topic_bytes] = message_bytes
+
     def _broadcast_room(self, room_id, clients):
         """Broadcast a specific room's state"""
         # Filter out stealth clients from broadcasts
@@ -1404,7 +1435,8 @@ class NetSyncServer:
             # Send binary format with client numbers
             topic_bytes = room_id.encode("utf-8")
             message_bytes = binary_serializer.serialize_room_transform(room_transform)
-            self._enqueue_pub(topic_bytes, message_bytes)
+            # Transform is overwrite-only => keep only the latest per room/topic
+            self._enqueue_pub_latest(topic_bytes, message_bytes)
 
     def _cleanup_clients(self, current_time):
         """Clean up disconnected clients with atomic operations to prevent memory leaks"""
@@ -1486,67 +1518,164 @@ class NetSyncServer:
                     logger.error(f"Error during room cleanup for {room_id}: {e}")
                     # Continue with other rooms even if one fails
 
-    def _start_beacon(self):
+    def _start_server_discovery(self):
         """Start server discovery service to respond to client requests"""
+        # Start UDP server discovery
         try:
-            self.beacon_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.beacon_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.beacon_socket.bind(("", self.beacon_port))
-            self.beacon_socket.settimeout(1.0)  # Timeout for graceful shutdown
-
-            self.beacon_running = True
-            self.beacon_thread = threading.Thread(
-                target=self._beacon_loop, name="BeaconThread", daemon=True
+            self.server_discovery_socket = socket.socket(
+                socket.AF_INET, socket.SOCK_DGRAM
             )
-            self.beacon_thread.start()
-            logger.info(f"Started discovery service on UDP port {self.beacon_port}")
+            self.server_discovery_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+            )
+            self.server_discovery_socket.bind(("", self.server_discovery_port))
+            self.server_discovery_socket.settimeout(
+                1.0
+            )  # Timeout for graceful shutdown
+
+            self.server_discovery_running = True
+            self.server_discovery_thread = threading.Thread(
+                target=self._server_discovery_loop,
+                name="ServerDiscoveryThread",
+                daemon=True,
+            )
+            self.server_discovery_thread.start()
 
         except Exception as e:
-            logger.error(f"Failed to start discovery service: {e}")
-            self.beacon_running = False
+            logger.error(f"Failed to start UDP discovery service: {e}")
+            self.server_discovery_running = False
 
-    def _stop_beacon(self):
+        # Start TCP server discovery
+        self._start_tcp_server_discovery()
+
+    def _stop_server_discovery(self):
         """Stop server discovery service"""
-        self.beacon_running = False
+        # Stop UDP server discovery
+        self.server_discovery_running = False
 
-        if self.beacon_socket:
-            self.beacon_socket.close()
-            self.beacon_socket = None
+        if self.server_discovery_socket:
+            self.server_discovery_socket.close()
+            self.server_discovery_socket = None
 
-        if self.beacon_thread:
-            self.beacon_thread.join(timeout=2)
-            self.beacon_thread = None
+        if self.server_discovery_thread:
+            self.server_discovery_thread.join(timeout=2)
+            self.server_discovery_thread = None
+
+        # Stop TCP server discovery
+        self._stop_tcp_server_discovery()
 
         logger.info("Stopped discovery service")
 
-    def _beacon_loop(self):
-        """Discovery service loop - responds to client discovery requests"""
+    def _server_discovery_loop(self):
+        """UDP discovery service loop - responds to client discovery requests"""
         # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName
         response = (
             f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}"
         )
         response_bytes = response.encode("utf-8")
 
-        while self.beacon_running:
+        while self.server_discovery_running:
             try:
                 # Wait for client discovery request
-                data, client_addr = self.beacon_socket.recvfrom(1024)
+                data, client_addr = self.server_discovery_socket.recvfrom(1024)
                 request = data.decode("utf-8")
 
                 # Validate request format
                 if request == "STYLY-NETSYNC-DISCOVER":
                     # Send response back to requesting client
-                    self.beacon_socket.sendto(response_bytes, client_addr)
-                    logger.debug(f"Responded to discovery request from {client_addr}")
+                    self.server_discovery_socket.sendto(response_bytes, client_addr)
+                    logger.debug(
+                        f"Responded to UDP discovery request from {client_addr}"
+                    )
 
             except TimeoutError:
                 # Timeout is expected for graceful shutdown
                 continue
             except Exception as e:
                 if (
-                    self.beacon_running
+                    self.server_discovery_running
                 ):  # Only log if we're still supposed to be running
-                    logger.error(f"Discovery service error: {e}")
+                    logger.error(f"UDP discovery service error: {e}")
+
+    def _start_tcp_server_discovery(self):
+        """Start TCP-based server discovery service"""
+        try:
+            self.tcp_server_discovery_socket = socket.socket(
+                socket.AF_INET, socket.SOCK_STREAM
+            )
+            self.tcp_server_discovery_socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+            )
+            self.tcp_server_discovery_socket.bind(("", self.server_discovery_port))
+            self.tcp_server_discovery_socket.listen(5)
+            self.tcp_server_discovery_socket.settimeout(
+                1.0
+            )  # Timeout for graceful shutdown
+
+            self.tcp_server_discovery_running = True
+            self.tcp_server_discovery_thread = threading.Thread(
+                target=self._tcp_server_discovery_loop,
+                name="TcpServerDiscoveryThread",
+                daemon=True,
+            )
+            self.tcp_server_discovery_thread.start()
+
+        except Exception as e:
+            logger.error(f"Failed to start TCP discovery service: {e}")
+            self.tcp_server_discovery_running = False
+
+    def _stop_tcp_server_discovery(self):
+        """Stop TCP-based server discovery service"""
+        self.tcp_server_discovery_running = False
+
+        if self.tcp_server_discovery_socket:
+            self.tcp_server_discovery_socket.close()
+            self.tcp_server_discovery_socket = None
+
+        if self.tcp_server_discovery_thread:
+            self.tcp_server_discovery_thread.join(timeout=2)
+            self.tcp_server_discovery_thread = None
+
+    def _tcp_server_discovery_loop(self):
+        """TCP discovery service loop - responds to client discovery requests"""
+        # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName\n
+        response = (
+            f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}\n"
+        )
+        response_bytes = response.encode("utf-8")
+
+        while self.tcp_server_discovery_running:
+            try:
+                # Accept incoming connection
+                client_socket, client_addr = self.tcp_server_discovery_socket.accept()
+                client_socket.settimeout(2.0)  # Timeout for client operations
+
+                try:
+                    # Receive discovery request
+                    data = client_socket.recv(1024)
+                    request = data.decode("utf-8").strip()
+
+                    # Validate request format
+                    if request == "STYLY-NETSYNC-DISCOVER":
+                        # Send response back to requesting client
+                        client_socket.sendall(response_bytes)
+                        logger.debug(
+                            f"Responded to TCP discovery request from {client_addr}"
+                        )
+
+                except Exception as e:
+                    logger.debug(f"Error handling TCP client {client_addr}: {e}")
+                finally:
+                    client_socket.close()
+
+            except TimeoutError:
+                # Timeout is expected for graceful shutdown
+                continue
+            except Exception as e:
+                if (
+                    self.tcp_server_discovery_running
+                ):  # Only log if we're still supposed to be running
+                    logger.error(f"TCP discovery service error: {e}")
 
 
 def display_logo():
@@ -1560,13 +1689,13 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
 def main():
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
-        "--no-beacon", action="store_true", help="Disable beacon discovery"
+        "--no-server-discovery", action="store_true", help="Disable server discovery"
     )
     parser.add_argument(
-        "--beacon-port",
+        "--server-discovery-port",
         type=valid_port,
         metavar="PORT",
-        help=f"UDP port used for server discovery beacons (default: {DEFAULT_BEACON_PORT})",
+        help=f"UDP port used for server discovery (default: {DEFAULT_SERVER_DISCOVERY_PORT})",
     )
     parser.add_argument(
         "-V",
@@ -1581,22 +1710,30 @@ def main():
     # Set default values from module constants (previously from argparse)
     dealer_port = DEFAULT_DEALER_PORT
     pub_port = DEFAULT_PUB_PORT
-    beacon_port = DEFAULT_BEACON_PORT
+    server_discovery_port = DEFAULT_SERVER_DISCOVERY_PORT
     server_name = DEFAULT_SERVER_NAME
     nv_flush_policy = DEFAULT_NV_FLUSH_POLICY
-
-    display_logo()
 
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
     logger.info("=" * 80)
     logger.info(f"  Version: {get_version()}")
+
+    # Display local IP addresses
+    ip_addresses = network_utils.get_local_ip_addresses()
+    if ip_addresses:
+        logger.info("  Server IP addresses:")
+        for ip in ip_addresses:
+            logger.info(f"    - {ip}")
+    else:
+        logger.info("  Server IP addresses: Unable to detect")
+
     logger.info(f"  DEALER port: {dealer_port}")
     logger.info(f"  PUB port: {pub_port}")
-    if not args.no_beacon:
-        if args.beacon_port is not None:
-            beacon_port = args.beacon_port
-        logger.info(f"  Beacon port: {beacon_port}")
+    if not args.no_server_discovery:
+        if args.server_discovery_port is not None:
+            server_discovery_port = args.server_discovery_port
+        logger.info(f"  Server discovery port: {server_discovery_port}")
         logger.info(f"  Server name: {server_name}")
     else:
         logger.info("  Discovery: Disabled")
@@ -1606,8 +1743,8 @@ def main():
     server = NetSyncServer(
         dealer_port=dealer_port,
         pub_port=pub_port,
-        enable_beacon=not args.no_beacon,
-        beacon_port=beacon_port,
+        enable_server_discovery=not args.no_server_discovery,
+        server_discovery_port=server_discovery_port,
         server_name=server_name,
         nv_flush_policy=nv_flush_policy,
     )

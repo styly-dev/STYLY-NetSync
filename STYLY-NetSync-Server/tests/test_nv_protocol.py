@@ -118,4 +118,3 @@ def test_encode_roundtrip(count: int) -> None:
     encoded = RoomState.encode_payload(payload)
     decoded = unpack(encoded)
     assert decoded == payload
-

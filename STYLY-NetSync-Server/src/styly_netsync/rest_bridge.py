@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Dict
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, constr
 
 from .client import net_sync_manager
@@ -20,7 +20,7 @@ MAX_CLIENT_VARS = 20
 class UpsertBody(BaseModel):
     """Request body for client variable upsert."""
 
-    vars: Dict[constr(min_length=1, max_length=MAX_NAME), constr(max_length=MAX_VALUE)] = Field(  # type: ignore[type-arg]
+    vars: dict[constr(min_length=1, max_length=MAX_NAME), constr(max_length=MAX_VALUE)] = Field(  # type: ignore[type-arg]
         default_factory=dict
     )
 
@@ -32,7 +32,9 @@ class PreseedStore:
         self._data: dict[tuple[str, str], dict[str, str]] = {}
         self._lock = threading.RLock()
 
-    def upsert(self, room_id: str, device_id: str, kvs: dict[str, str]) -> dict[str, str]:
+    def upsert(
+        self, room_id: str, device_id: str, kvs: dict[str, str]
+    ) -> dict[str, str]:
         """Merge incoming key-values for a device within a room."""
         with self._lock:
             key = (room_id, device_id)
@@ -67,7 +69,9 @@ store = PreseedStore()
 class RoomBridge:
     """Internal client per room responsible for flushing queued variables."""
 
-    def __init__(self, server_addr: str, dealer_port: int, sub_port: int, room_id: str) -> None:
+    def __init__(
+        self, server_addr: str, dealer_port: int, sub_port: int, room_id: str
+    ) -> None:
         self.room_id = room_id
         self._manager = net_sync_manager(
             server=server_addr, dealer_port=dealer_port, sub_port=sub_port, room=room_id
@@ -187,7 +191,9 @@ class BridgeManager:
         with self._lock:
             bridge = self._bridges.get(room_id)
             if bridge is None:
-                bridge = RoomBridge(self._server_addr, self._dealer_port, self._sub_port, room_id)
+                bridge = RoomBridge(
+                    self._server_addr, self._dealer_port, self._sub_port, room_id
+                )
                 bridge.start()
                 self._bridges[room_id] = bridge
             return bridge
@@ -196,7 +202,23 @@ class BridgeManager:
 def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
     """Create the FastAPI application hosting the REST bridge."""
     app = FastAPI(title="NetSync REST Bridge", version="1.0.0")
+
+    # Add CORS middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        max_age=3600,  # Cache preflight requests for 1 hour
+    )
+
     manager = BridgeManager(server_addr, dealer_port, sub_port)
+
+    @app.get("/")
+    def health_check() -> dict[str, str]:
+        """Health check endpoint."""
+        return {"status": "ok"}
 
     @app.post("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
     def upsert(room_id: str, device_id: str, body: UpsertBody) -> dict[str, object]:
@@ -223,11 +245,13 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
 def run_uvicorn_in_thread(
     app: FastAPI, host: str = "0.0.0.0", port: int = 8800
-) -> tuple[threading.Thread, "uvicorn.Server"]:
+) -> tuple[threading.Thread, uvicorn.Server]:
     """Spawn a Uvicorn server for the given FastAPI app in a background thread."""
     import uvicorn
 
-    config = uvicorn.Config(app=app, host=host, port=port, log_level="info", lifespan="off")
+    config = uvicorn.Config(
+        app=app, host=host, port=port, log_level="info", lifespan="off"
+    )
     server = uvicorn.Server(config=config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

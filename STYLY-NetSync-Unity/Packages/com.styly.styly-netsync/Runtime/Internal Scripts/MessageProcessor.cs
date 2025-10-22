@@ -16,7 +16,7 @@ namespace Styly.NetSync
         // Ring buffer for room transform updates: keep only the latest few frames.
         // Rationale: room state is overwrite-only; older frames are not useful.
         private readonly ConcurrentQueue<RoomTransformData> _roomTransformQueue = new();
-        private const int MaxRoomTransformUpdatesQueueSize = 2; // Keep only the most recent N updates
+        private const int MaxRoomTransformUpdatesQueueSize = 1; // Keep only the most recent update (latest-wins)
         private readonly bool _logNetworkTraffic;
         private int _messagesReceived;
         private readonly Dictionary<int, string> _clientNoToDeviceId = new();

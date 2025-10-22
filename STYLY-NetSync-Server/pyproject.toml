@@ -41,6 +41,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "msgpack>=1.0.5",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]
@@ -129,6 +130,10 @@ strict_equality = true
 
 [[tool.mypy.overrides]]
 module = "zmq.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "psutil.*"
 ignore_missing_imports = true
 
 # Pytest configuration

@@ -16,7 +16,7 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private int _clientNo = 0;
 
         [Header("Connection Settings")]
-        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "localhost";
+        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "";
         private int _dealerPort = 5555;
         private int _subPort = 5556;
         [SerializeField] private string _roomId = "default_room";
@@ -44,12 +44,12 @@ namespace Styly.NetSync
         public UnityEvent OnReady;
 
         // Advanced options
-        [Tooltip("UDP port used for server discovery beacons.")]
-        [Min(1)] public int BeaconPort = 9999;
+        [Tooltip("UDP port used for server discovery.")]
+        [Min(1)] public int ServerDiscoveryPort = 9999;
         [Tooltip("Enable synchronization of battery levels across devices.")]
         [SerializeField] private bool _syncBatteryLevel = true;
         private bool _enableDiscovery = true;
-        private float _discoveryTimeout = 5f;
+        private float _discoveryTimeout = 10f;
 
         internal const string PrefixForSystem = "@system:"; // Prefix for system-only message names
 
@@ -459,6 +459,12 @@ namespace Styly.NetSync
                 HandleRoomSwitchHandshake();
             }
 
+            // Process discovery manager main thread queue (for PlayerPrefs operations)
+            if (_discoveryManager != null)
+            {
+                _discoveryManager.Update();
+            }
+
             HandleDiscovery();
             HandleReconnection();
             ProcessMessages();
@@ -535,7 +541,7 @@ namespace Styly.NetSync
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
-            _discoveryManager.SetBeaconPort(BeaconPort);
+            _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
 
@@ -769,7 +775,7 @@ namespace Styly.NetSync
         private void StartDiscovery()
         {
             if (_discoveryManager == null) { return; }
-            _discoveryManager.SetBeaconPort(BeaconPort);
+            _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _connectionManager.StartDiscovery(_discoveryManager, _roomId);
             _isDiscovering = true;
             _discoveryStartTime = Time.time;
@@ -788,21 +794,23 @@ namespace Styly.NetSync
         #region === Update Logic ===
         private void HandleDiscovery()
         {
-            // Handle discovery timeout: stop current attempt and schedule retry in 5 seconds
-            if (_isDiscovering && Time.time - _discoveryStartTime > _discoveryTimeout)
-            {
-                DebugLog($"Discovery timeout - retrying in {DiscoveryRetryDelay} seconds");
-                StopDiscovery();
-                _nextDiscoveryAttemptAt = Time.time + DiscoveryRetryDelay;
-            }
-
-            // Process discovered server
+            // Process discovered server FIRST (before timeout check)
+            // This ensures that if a server is found, we handle it immediately
             if (!string.IsNullOrEmpty(_discoveredServer) && _isDiscovering)
             {
                 _isDiscovering = false;
                 StopDiscovery();
                 _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort);
                 _discoveredServer = null;
+                return; // Exit early - no need to check timeout or retry
+            }
+
+            // Handle discovery timeout: stop current attempt and schedule retry in 5 seconds
+            if (_isDiscovering && Time.time - _discoveryStartTime > _discoveryTimeout)
+            {
+                DebugLog($"Discovery timeout - retrying in {DiscoveryRetryDelay} seconds");
+                StopDiscovery();
+                _nextDiscoveryAttemptAt = Time.time + DiscoveryRetryDelay;
             }
 
             // If not currently discovering and discovery is enabled with no fixed server, retry when due
