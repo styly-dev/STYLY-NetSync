@@ -50,6 +50,7 @@
       "name": "package.openupm.com",
       "url": "https://package.openupm.com",
       "scopes": [
+        "com.styly.device-id-provider",
         "com.styly.styly-xr-rig",
         "com.styly.shader-collection.urp",
         "org.nuget.asyncio",
