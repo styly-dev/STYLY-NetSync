@@ -33,8 +33,8 @@ When you install the package with pip install -e . (editable / development mode)
 # Start STYLY NetSync Server
 styly-netsync-server
 
-# Simulate 100 clients
-styly-netsync-simulator --clients 100
+# Simulate 50 clients
+styly-netsync-simulator --clients 50
 
 # Custom server and room
 styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
