@@ -8,7 +8,6 @@ snake_case naming and pull-based transform consumption by default.
 import json
 import logging
 import os
-import socket
 import threading
 import time
 import uuid
@@ -108,12 +107,6 @@ class net_sync_manager:
         self.on_client_variable_changed = EventHandler()
         self.on_avatar_connected = EventHandler()
         self.on_client_disconnected = EventHandler()
-        self.on_server_discovered = EventHandler()
-
-        # Discovery
-        self._discovery_socket: socket.socket | None = None
-        self._discovery_thread: threading.Thread | None = None
-        self._discovery_running = False
 
         # Statistics
         self._stats = {
@@ -210,9 +203,6 @@ class net_sync_manager:
                 return
 
             self._running = False
-
-            # Stop discovery if running
-            self.stop_discovery()
 
             # Wait for receive thread
             if self._receive_thread and self._receive_thread.is_alive():
@@ -622,88 +612,6 @@ class net_sync_manager:
                 break
 
         return dispatched
-
-    # Discovery API
-    def start_discovery(self, server_discovery_port: int = 9999) -> None:
-        """Start UDP discovery for servers."""
-        if self._discovery_running:
-            return
-
-        try:
-            self._discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self._discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            self._discovery_socket.settimeout(1.0)
-
-            self._discovery_running = True
-            self._discovery_thread = threading.Thread(
-                target=self._discovery_loop, args=(server_discovery_port,), daemon=True
-            )
-            self._discovery_thread.start()
-
-            logger.info(f"Started UDP discovery on port {server_discovery_port}")
-
-        except Exception as e:
-            logger.error(f"Error starting discovery: {e}")
-
-    def stop_discovery(self) -> None:
-        """Stop UDP discovery."""
-        self._discovery_running = False
-
-        if self._discovery_socket:
-            self._discovery_socket.close()
-            self._discovery_socket = None
-
-        if self._discovery_thread and self._discovery_thread.is_alive():
-            self._discovery_thread.join(timeout=1.0)
-
-        logger.info("Stopped UDP discovery")
-
-    def _discovery_loop(self, server_discovery_port: int) -> None:
-        """UDP discovery loop."""
-        while self._discovery_running:
-            try:
-                # Send discovery request
-                message = "STYLY-NETSYNC-DISCOVER"
-                self._discovery_socket.sendto(
-                    message.encode(), ("<broadcast>", server_discovery_port)
-                )
-
-                # Listen for response
-                try:
-                    data, addr = self._discovery_socket.recvfrom(1024)
-                    response = data.decode("utf-8")
-
-                    if response.startswith("STYLY-NETSYNC|"):
-                        parts = response.split("|")
-                        if len(parts) >= 4:
-                            dealer_port = int(parts[1])
-                            sub_port = int(parts[2])
-                            server_name = parts[3]
-
-                            logger.info(
-                                f"Discovered server: {server_name} at {addr[0]}:{dealer_port}/{sub_port}"
-                            )
-                            server_address = f"tcp://{addr[0]}"
-                            self.on_server_discovered.invoke(
-                                server_address, dealer_port, sub_port
-                            )
-                            # Could auto-reconnect here if desired
-
-                except TimeoutError:
-                    pass
-
-                time.sleep(5.0)  # Discovery interval
-
-            except PermissionError:
-                # Broadcast not permitted in sandboxed environment - this is expected
-                logger.debug(
-                    "Discovery broadcast not permitted (sandboxed environment)"
-                )
-                time.sleep(1.0)
-            except Exception as e:
-                if self._discovery_running:
-                    logger.error(f"Discovery error: {e}")
-                    time.sleep(1.0)
 
     # Diagnostics
     def get_stats(self) -> dict[str, Any]:

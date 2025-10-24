@@ -198,15 +198,10 @@ class NetSyncServer:
         self.pub_port = pub_port
         self.context = zmq.Context()
 
-        # Server discovery settings
+        # Server discovery settings (TCP only)
         self.enable_server_discovery = enable_server_discovery
         self.server_discovery_port = server_discovery_port
         self.server_name = server_name
-        self.server_discovery_socket = None
-        self.server_discovery_thread = None
-        self.server_discovery_running = False
-
-        # TCP server discovery settings
         self.tcp_server_discovery_socket = None
         self.tcp_server_discovery_thread = None
         self.tcp_server_discovery_running = False
@@ -621,7 +616,7 @@ class NetSyncServer:
         self.running = False
 
         # Stop server discovery
-        if self.server_discovery_running:
+        if self.tcp_server_discovery_running:
             self._stop_server_discovery()
 
         if self._rest_server is not None:
@@ -1519,83 +1514,13 @@ class NetSyncServer:
                     # Continue with other rooms even if one fails
 
     def _start_server_discovery(self):
-        """Start server discovery service to respond to client requests"""
-        # Start UDP server discovery
-        try:
-            self.server_discovery_socket = socket.socket(
-                socket.AF_INET, socket.SOCK_DGRAM
-            )
-            self.server_discovery_socket.setsockopt(
-                socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
-            )
-            self.server_discovery_socket.bind(("", self.server_discovery_port))
-            self.server_discovery_socket.settimeout(
-                1.0
-            )  # Timeout for graceful shutdown
-
-            self.server_discovery_running = True
-            self.server_discovery_thread = threading.Thread(
-                target=self._server_discovery_loop,
-                name="ServerDiscoveryThread",
-                daemon=True,
-            )
-            self.server_discovery_thread.start()
-
-        except Exception as e:
-            logger.error(f"Failed to start UDP discovery service: {e}")
-            self.server_discovery_running = False
-
-        # Start TCP server discovery
+        """Start TCP-based server discovery service to respond to client requests"""
         self._start_tcp_server_discovery()
 
     def _stop_server_discovery(self):
-        """Stop server discovery service"""
-        # Stop UDP server discovery
-        self.server_discovery_running = False
-
-        if self.server_discovery_socket:
-            self.server_discovery_socket.close()
-            self.server_discovery_socket = None
-
-        if self.server_discovery_thread:
-            self.server_discovery_thread.join(timeout=2)
-            self.server_discovery_thread = None
-
-        # Stop TCP server discovery
+        """Stop TCP-based server discovery service"""
         self._stop_tcp_server_discovery()
-
         logger.info("Stopped discovery service")
-
-    def _server_discovery_loop(self):
-        """UDP discovery service loop - responds to client discovery requests"""
-        # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName
-        response = (
-            f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}"
-        )
-        response_bytes = response.encode("utf-8")
-
-        while self.server_discovery_running:
-            try:
-                # Wait for client discovery request
-                data, client_addr = self.server_discovery_socket.recvfrom(1024)
-                request = data.decode("utf-8")
-
-                # Validate request format
-                if request == "STYLY-NETSYNC-DISCOVER":
-                    # Send response back to requesting client
-                    self.server_discovery_socket.sendto(response_bytes, client_addr)
-                    logger.debug(
-                        f"Responded to UDP discovery request from {client_addr}"
-                    )
-
-            except TimeoutError:
-                # Timeout is expected for graceful shutdown
-                continue
-            except Exception as e:
-                if (
-                    self.server_discovery_running
-                ):  # Only log if we're still supposed to be running
-                    logger.error(f"UDP discovery service error: {e}")
 
     def _start_tcp_server_discovery(self):
         """Start TCP-based server discovery service"""
@@ -1695,7 +1620,7 @@ def main():
         "--server-discovery-port",
         type=valid_port,
         metavar="PORT",
-        help=f"UDP port used for server discovery (default: {DEFAULT_SERVER_DISCOVERY_PORT})",
+        help=f"TCP port used for server discovery (default: {DEFAULT_SERVER_DISCOVERY_PORT})",
     )
     parser.add_argument(
         "-V",

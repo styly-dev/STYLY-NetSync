@@ -13,7 +13,6 @@ namespace Styly.NetSync
 {
     internal class ServerDiscoveryManager
     {
-        private UdpClient _discoveryClient;
         private Thread _discoveryThread;
         private bool _isDiscovering;
         private bool _enableDebugLogs;
@@ -53,88 +52,8 @@ namespace Styly.NetSync
         {
             if (_isDiscovering) { return; }
 
-#if UNITY_IOS || UNITY_VISIONOS
-            // Use TCP scanning for iOS/visionOS platforms
+            // Use TCP scanning for all platforms
             StartTcpScanDiscovery();
-#else
-            // Use UDP broadcast for other platforms
-            StartUdpBroadcastDiscovery();
-#endif
-        }
-
-        private void StartUdpBroadcastDiscovery()
-        {
-            try
-            {
-                _isDiscovering = true;
-
-                _discoveryClient = new UdpClient();
-                _discoveryClient.EnableBroadcast = true;
-                _discoveryClient.Client.ReceiveTimeout = 500; // 500ms timeout for responses
-
-                // Start discovery thread that sends requests and waits for responses
-                _discoveryThread = new Thread(() =>
-                {
-                    // First, try to connect to localhost using TCP
-                    DebugLog("Attempting to discover server on localhost via TCP...");
-                    if (TryTcpDiscovery("127.0.0.1"))
-                    {
-                        DebugLog("Server discovered on localhost via TCP.");
-                        return; // Exit thread if server is found
-                    }
-                    
-                    // If localhost fails, proceed with UDP broadcast discovery
-                    if (!_isDiscovering) return; // Check if discovery was stopped
-                    DebugLog("Localhost discovery failed, proceeding with UDP broadcast.");
-
-                    var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
-                    var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, ServerDiscoveryPort);
-                    var lastRequestTime = DateTime.MinValue;
-
-                    while (_isDiscovering)
-                    {
-                        try
-                        {
-                            // Send discovery request at specified interval
-                            if ((DateTime.Now - lastRequestTime).TotalSeconds >= DiscoveryInterval)
-                            {
-                                _discoveryClient.Send(discoveryMessage, discoveryMessage.Length, broadcastEndpoint);
-                                lastRequestTime = DateTime.Now;
-                                DebugLog("Sent UDP discovery request");
-                            }
-
-                            // Try to receive response (with timeout)
-                            IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
-                            byte[] data = _discoveryClient.Receive(ref remoteEP);
-                            ProcessDiscoveryResponse(data, remoteEP);
-                        }
-                        catch (SocketException ex)
-                        {
-                            // Timeout is normal - just continue
-                            if (ex.SocketErrorCode != SocketError.TimedOut && _isDiscovering)
-                            {
-                                Debug.LogWarning($"Discovery socket error: {ex.Message}");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            if (_isDiscovering) { Debug.LogWarning($"Discovery error: {ex.Message}"); }
-                        }
-                    }
-                })
-                {
-                    IsBackground = true,
-                    Name = "STYLY_DiscoveryThread"
-                };
-                _discoveryThread.Start();
-
-                DebugLog($"Started UDP discovery service on port {ServerDiscoveryPort}");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"Failed to start UDP discovery: {ex.Message}");
-                _isDiscovering = false;
-            }
         }
 
         private void StartTcpScanDiscovery()
@@ -149,7 +68,7 @@ namespace Styly.NetSync
                 // Start discovery thread that scans subnet using TCP
                 _discoveryThread = new Thread(() =>
                 {
-                    DebugLog("Starting TCP scan discovery for iOS/visionOS");
+                    DebugLog("Starting TCP scan discovery");
 
                     // First, try to connect to localhost
                     DebugLog("Attempting to discover server on localhost...");
@@ -426,14 +345,6 @@ namespace Styly.NetSync
 
             try
             {
-                // Close UDP client if it exists
-                if (_discoveryClient != null)
-                {
-                    _discoveryClient.Close();
-                    _discoveryClient.Dispose();
-                    _discoveryClient = null;
-                }
-
                 // Wait for discovery thread to exit
                 if (_discoveryThread != null)
                 {
