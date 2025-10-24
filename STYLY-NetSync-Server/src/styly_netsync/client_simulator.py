@@ -1485,8 +1485,8 @@ Examples:
     parser.add_argument(
         "--clients",
         type=int,
-        default=100,
-        help="Number of clients to simulate (default: 100)",
+        default=50,
+        help="Number of clients to simulate (default: 50)",
     )
     parser.add_argument(
         "--server",
