@@ -1,5 +1,12 @@
 {
   "dependencies": {
+    "com.styly.device-id-provider": {
+      "version": "0.2.0",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {},
+      "url": "https://package.openupm.com"
+    },
     "com.styly.shader-collection.urp": {
       "version": "0.0.5",
       "depth": 1,
@@ -12,6 +19,7 @@
       "depth": 0,
       "source": "embedded",
       "dependencies": {
+        "com.styly.device-id-provider": "0.2.0",
         "com.styly.shader-collection.urp": "0.0.5",
         "org.nuget.netmq": "4.0.2",
         "com.unity.xr.core-utils": "2.1.1",
