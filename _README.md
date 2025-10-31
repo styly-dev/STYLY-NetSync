@@ -30,14 +30,17 @@ STYLY NetSync includes an easy-to-integrate Unity package and a lightweight Pyth
 ## Features
 
 ### Main features
-- Avatar Transform Synchronization
-- RPC (Remote Procedure Call) 
-- Network Variable
+- Avatar Transform Synchronization (1-120Hz adaptive broadcasting)
+- RPC (Remote Procedure Call)
+- Network Variable (synchronized key-value storage)
 
 ### Other features
 - One-click SDK setup for HMDs
 - Multifunctional XR Rig
 - Battery level management
+- Device ID mapping
+- Automatic server discovery (UDP)
+- Binary protocol (~60% bandwidth reduction)
 
 Some features are provided via dependent package STYLY XR Rig.
 
@@ -80,8 +83,8 @@ openupm add -f com.styly.styly-netsync@0.6.1
 # Use the same version of the Unity package
 uvx styly-netsync-server@0.6.1
 
-# [Optional] Start client simulator
-uvx --from styly-netsync-server@0.6.1 styly-netsync-simulator --clients 10
+# [Optional] Start client simulator for testing
+uvx --from styly-netsync-server@0.6.1 styly-netsync-simulator --clients 50
 ```
 The uvx command automatically downloads the package, creates an isolated virtual environment, installs dependencies, and runs the python server program.
 
@@ -192,9 +195,8 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 
 ### Others
 ```csharp
-
-// Switch pass through mode with an optional transition duration in seconds and sync over network frag.
-float transitionDuration = 1.0;
+// Switch pass through mode with an optional transition duration in seconds and sync over network flag.
+float transitionDuration = 1.0f;
 bool syncOverNetwork = true;
 
 // Switch to VR mode
@@ -202,14 +204,114 @@ NetSyncManager.Instance.SwitchToVR(transitionDuration, syncOverNetwork);
 
 // Switch to MR mode (Pass through mode)
 NetSyncManager.Instance.SwitchToMR(transitionDuration, syncOverNetwork);
-
 ```
 
+## Server Features
 
-## Transport layer
-STYLY NetSync uses [ZeroMQ](https://zeromq.org/) as its transport layer  
-– C# (Unity): [NetMQ](https://github.com/zeromq/netmq)  
-– Python (server): [pyzmq](https://github.com/zeromq/pyzmq)  
+### REST Bridge API
+
+Pre-seed Network Variables before client connection via HTTP REST API.
+
+**Endpoint**: `POST http://localhost:8800/v1/rooms/{roomId}/devices/{deviceId}/client-variables`
+
+**Example**:
+```bash
+curl -X POST "http://localhost:8800/v1/rooms/room1/devices/device123/client-variables" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "playerName": "Alice",
+    "playerLevel": "5"
+  }'
+```
+
+**Constraints**:
+- Variable name: 1-64 characters
+- Variable value: 1-1024 characters
+- Max 20 variables per client
+
+### Load Testing
+
+Use the built-in client simulator for performance testing:
+
+```shell
+# Run with 50 simulated clients (default)
+uvx --from styly-netsync-server@0.6.1 styly-netsync-simulator
+
+# Specify client count
+uvx --from styly-netsync-server@0.6.1 styly-netsync-simulator --clients 100
+
+# Specify server address
+uvx --from styly-netsync-server@0.6.1 styly-netsync-simulator --server tcp://192.168.1.100
+```
+
+### Development Server (Python)
+
+For development and testing:
+
+```bash
+cd STYLY-NetSync-Server
+
+# Install package with dependencies
+pip install -e .
+
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Run server directly
+python -m styly_netsync
+
+# Run with custom ports
+python -m styly_netsync --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999
+
+# Run without UDP discovery
+python -m styly_netsync --no-server-discovery
+
+# Development tools
+black src/ tests/    # Format code
+ruff src/ tests/     # Lint code
+mypy src/           # Type check
+pytest              # Run tests
+```
+
+## Architecture
+
+### Repository Structure
+
+- **STYLY-NetSync-Server/**: Python server using ZeroMQ for networking
+- **STYLY-NetSync-Unity/**: Unity package with client implementation
+
+### Core Components
+
+**Server (Python)**:
+- `server.py` - Main server with group management and room handling
+- `binary_serializer.py` - Binary protocol implementation (~60% bandwidth reduction)
+- `rest_bridge.py` - REST API for pre-seeding client variables
+- `client_simulator.py` - Load testing tool for performance validation
+
+**Unity Client**:
+- `NetSyncManager.cs` - Main singleton entry point and API
+- `NetSyncAvatar.cs` - Component for avatar synchronization
+- `Internal/` - Core networking components (ConnectionManager, MessageProcessor, etc.)
+
+### Protocol Details
+
+- Uses ZeroMQ with DEALER-ROUTER and PUB-SUB patterns
+- Binary serialization with client number system (2-byte IDs)
+- UDP discovery service for automatic server finding
+- Adaptive broadcasting (1-120Hz) with thread-safe design
+
+## Transport Layer
+
+STYLY NetSync uses [ZeroMQ](https://zeromq.org/) as its transport layer:
+- C# (Unity): [NetMQ](https://github.com/zeromq/netmq)
+- Python (server): [pyzmq](https://github.com/zeromq/pyzmq)
 
 ## License
+
 This repository contains multiple sub-projects, each with its own license file. All sub-projects are licensed under the Apache License, Version 2.0.
+
+## Links
+
+- [Homepage](https://styly.inc)
+- [Repository](https://github.com/styly-dev/STYLY-NetSync)
+- [Issues](https://github.com/styly-dev/STYLY-NetSync/issues)
