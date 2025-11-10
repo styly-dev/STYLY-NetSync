@@ -131,26 +131,13 @@ GameObject:
   - component: {fileID: 186923350}
   - component: {fileID: 186923349}
   - component: {fileID: 186923348}
-  - component: {fileID: 186923347}
   m_Layer: 5
-  m_Name: DebugCanvas
+  m_Name: Canvas
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &186923347
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 186923346}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fef6aef6d86db44eba0d1c94e4a788c8, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!114 &186923348
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -227,13 +214,60 @@ RectTransform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 615774033}
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 451473069}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0, y: 0}
+--- !u!1 &451473067
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 451473069}
+  - component: {fileID: 451473068}
+  m_Layer: 0
+  m_Name: Debug
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &451473068
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 451473067}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fef6aef6d86db44eba0d1c94e4a788c8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _canvas: {fileID: 186923350}
+  _stylyXrRig: {fileID: 1378898228}
+--- !u!4 &451473069
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 451473067}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 186923351}
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &615774032
 GameObject:
   m_ObjectHideFlags: 0
@@ -317,8 +351,8 @@ MonoBehaviour:
   m_OnClick:
     m_PersistentCalls:
       m_Calls:
-      - m_Target: {fileID: 186923347}
-        m_TargetAssemblyTypeName: Styly.NetSync.AvatarAdjust.DebugCanvas, Assembly-CSharp
+      - m_Target: {fileID: 451473068}
+        m_TargetAssemblyTypeName: Styly.NetSync.AvatarAdjust.Debug, Assembly-CSharp
         m_MethodName: ToggleVRMode
         m_Mode: 1
         m_Arguments:
@@ -488,6 +522,17 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
+--- !u!114 &1378898228 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 2774931430840022790, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
+  m_PrefabInstance: {fileID: 1746028485}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5e3eb85024d9e48048e4c26bab4eabad, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
 --- !u!1 &1514333464
 GameObject:
   m_ObjectHideFlags: 0
@@ -942,5 +987,5 @@ SceneRoots:
   - {fileID: 1746028485}
   - {fileID: 2137075065}
   - {fileID: 2028653548}
-  - {fileID: 186923351}
   - {fileID: 1514333467}
+  - {fileID: 451473069}
