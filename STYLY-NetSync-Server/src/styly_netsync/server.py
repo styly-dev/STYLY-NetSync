@@ -593,7 +593,7 @@ class NetSyncServer:
             logger.info("Server is ready and waiting for connections...")
 
         except zmq.error.ZMQError as e:
-            if "Address already in use" in str(e):
+            if "Address already in use" in str(e) or "Address in use" in str(e):
                 logger.error(
                     f"Error: Another server instance is already running on port {self.dealer_port}"
                 )
