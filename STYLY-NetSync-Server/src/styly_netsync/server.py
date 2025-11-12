@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import os
+import platform
 import socket
 import threading
 import time
@@ -77,6 +78,36 @@ _handler.setFormatter(
 )
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger(__name__)
+
+
+def _is_address_in_use_error(exc: zmq.error.ZMQError) -> bool:
+    """Check if ZMQError is an 'address already in use' error.
+
+    Uses errno check for reliable cross-platform detection.
+
+    Args:
+        exc: ZMQError exception to check
+
+    Returns:
+        True if the error indicates address is already in use
+    """
+    return exc.errno == zmq.EADDRINUSE
+
+
+def _get_port_troubleshooting_message(port: int) -> str:
+    """Get platform-specific troubleshooting message for port conflicts.
+
+    Args:
+        port: The port number that is in use
+
+    Returns:
+        Platform-appropriate troubleshooting command
+    """
+    system = platform.system()
+    if system == "Windows":
+        return f"Use 'netstat -ano | findstr :{port}' to find the process and 'taskkill /PID <PID> /F' to stop it."
+    else:  # Unix-like systems (Linux, macOS, etc.)
+        return f"Use 'lsof -i :{port}' to find the process and 'kill <PID>' to stop it."
 
 
 DEFAULT_DEALER_PORT = 5555
@@ -329,12 +360,12 @@ class NetSyncServer:
             try:
                 self.pub.bind(f"tcp://*:{self.pub_port}")
             except zmq.error.ZMQError as e:
-                if "Address already in use" in str(e) or "Address in use" in str(e):
+                if _is_address_in_use_error(e):
                     # Create a more user-friendly error
                     raise RuntimeError(
                         f"Publisher port {self.pub_port} is already in use. "
                         f"Another server instance may be running. "
-                        f"Use 'lsof -i :{self.pub_port}' to find the process and 'kill <PID>' to stop it."
+                        f"{_get_port_troubleshooting_message(self.pub_port)}"
                     ) from e
                 else:
                     raise
@@ -548,16 +579,13 @@ class NetSyncServer:
             try:
                 self.router.bind(f"tcp://*:{self.dealer_port}")
             except zmq.error.ZMQError as e:
-                if "Address already in use" in str(e) or "Address in use" in str(e):
+                if _is_address_in_use_error(e):
                     logger.error(
                         f"Error: Dealer port {self.dealer_port} is already in use."
                     )
-                    logger.error(
-                        "Another server instance may be running on this port."
-                    )
-                    logger.error(f"Use 'lsof -i :{self.dealer_port}' to find the process and 'kill <PID>' to stop it.")
-                    if self.router:
-                        self.router.close()
+                    logger.error("Another server instance may be running on this port.")
+                    logger.error(_get_port_troubleshooting_message(self.dealer_port))
+                    self.router.close()
                     self.context.term()
                     raise SystemExit(1) from e
                 else:
@@ -577,11 +605,16 @@ class NetSyncServer:
                 )
             if self._publisher_exception:
                 # Clean up and re-raise the failure so callers get a proper error
-                if self.router:
-                    self.router.close()
+                self.router.close()
+                # Ensure publisher thread is stopped before terminating context
+                self._publisher_running = False
+                if self._publisher_thread is not None:
+                    self._publisher_thread.join(timeout=5.0)
                 self.context.term()
                 # Check if it's a port-in-use error and log appropriately
-                if isinstance(self._publisher_exception, RuntimeError) and "already in use" in str(self._publisher_exception):
+                if isinstance(
+                    self._publisher_exception, RuntimeError
+                ) and "already in use" in str(self._publisher_exception):
                     logger.error(str(self._publisher_exception))
                     raise SystemExit(1) from self._publisher_exception
                 raise self._publisher_exception
