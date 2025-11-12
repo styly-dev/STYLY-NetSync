@@ -326,7 +326,18 @@ class NetSyncServer:
         try:
             # Create/bind PUB in this thread to avoid cross-thread use
             self.pub = self.context.socket(zmq.PUB)
-            self.pub.bind(f"tcp://*:{self.pub_port}")
+            try:
+                self.pub.bind(f"tcp://*:{self.pub_port}")
+            except zmq.error.ZMQError as e:
+                if "Address already in use" in str(e) or "Address in use" in str(e):
+                    # Create a more user-friendly error
+                    raise RuntimeError(
+                        f"Publisher port {self.pub_port} is already in use. "
+                        f"Another server instance may be running. "
+                        f"Use 'lsof -i :{self.pub_port}' to find the process and 'kill <PID>' to stop it."
+                    ) from e
+                else:
+                    raise
             self._pub_ready.set()
 
             while self._publisher_running:
@@ -534,7 +545,23 @@ class NetSyncServer:
         try:
             # Setup ROUTER socket
             self.router = self.context.socket(zmq.ROUTER)
-            self.router.bind(f"tcp://*:{self.dealer_port}")
+            try:
+                self.router.bind(f"tcp://*:{self.dealer_port}")
+            except zmq.error.ZMQError as e:
+                if "Address already in use" in str(e) or "Address in use" in str(e):
+                    logger.error(
+                        f"Error: Dealer port {self.dealer_port} is already in use."
+                    )
+                    logger.error(
+                        "Another server instance may be running on this port."
+                    )
+                    logger.error(f"Use 'lsof -i :{self.dealer_port}' to find the process and 'kill <PID>' to stop it.")
+                    if self.router:
+                        self.router.close()
+                    self.context.term()
+                    raise SystemExit(1) from e
+                else:
+                    raise
 
             # Start Publisher thread (it creates/binds PUB)
             self._publisher_running = True
@@ -553,6 +580,10 @@ class NetSyncServer:
                 if self.router:
                     self.router.close()
                 self.context.term()
+                # Check if it's a port-in-use error and log appropriately
+                if isinstance(self._publisher_exception, RuntimeError) and "already in use" in str(self._publisher_exception):
+                    logger.error(str(self._publisher_exception))
+                    raise SystemExit(1) from self._publisher_exception
                 raise self._publisher_exception
 
             self.running = True
@@ -592,24 +623,6 @@ class NetSyncServer:
 
             logger.info("Server is ready and waiting for connections...")
 
-        except zmq.error.ZMQError as e:
-            if "Address already in use" in str(e):
-                logger.error(
-                    f"Error: Another server instance is already running on port {self.dealer_port}"
-                )
-                logger.error(
-                    "Please stop the existing server before starting a new one."
-                )
-                logger.error("You can find the process using: lsof -i :5555")
-                logger.error("And stop it using: kill <PID>")
-                # Clean up sockets if partially created
-                if self.router:
-                    self.router.close()
-                self.context.term()
-                raise SystemExit(1) from e
-            else:
-                logger.error(f"ZMQ Error: {e}")
-                raise
         except Exception as e:
             logger.error(f"Failed to start server: {e}")
             logger.error(traceback.format_exc())
