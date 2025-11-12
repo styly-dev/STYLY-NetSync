@@ -8,7 +8,7 @@ version = "0.6.1"
 description = "STYLY NetSync Server - Multiplayer framework for Location-Based Entertainment VR/MR experiences"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 authors = [
     { name = "STYLY, Inc.", email = "info@styly.inc" }
 ]
@@ -25,7 +25,6 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
