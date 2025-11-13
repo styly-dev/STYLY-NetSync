@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import os
+import platform
 import socket
 import threading
 import time
@@ -600,8 +601,19 @@ class NetSyncServer:
                 logger.error(
                     "Please stop the existing server before starting a new one."
                 )
-                logger.error("You can find the process using: lsof -i :5555")
-                logger.error("And stop it using: kill <PID>")
+
+                # Provide platform-specific instructions
+                if platform.system() == "Windows":
+                    logger.error(
+                        f"You can find the process using: netstat -ano | findstr :{self.dealer_port}"
+                    )
+                    logger.error("And stop it using: taskkill /PID <PID> /F")
+                else:
+                    logger.error(
+                        f"You can find the process using: lsof -i :{self.dealer_port}"
+                    )
+                    logger.error("And stop it using: kill <PID>")
+
                 # Clean up sockets if partially created
                 if self.router:
                     self.router.close()
