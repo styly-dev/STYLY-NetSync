@@ -44,8 +44,8 @@ namespace Styly.NetSync
         public UnityEvent OnReady;
 
         // Advanced options
-        [Tooltip("UDP port used for server discovery.")]
-        [Min(1)] public int ServerDiscoveryPort = 9999;
+        [Tooltip("UDP port used for server discovery.\n(49152 to 65535)")]
+        [Range(49152, 65535)] public int ServerDiscoveryPort = 9999;
         [Tooltip("Enable synchronization of battery levels across devices.")]
         [SerializeField] private bool _syncBatteryLevel = true;
         private bool _enableDiscovery = true;
