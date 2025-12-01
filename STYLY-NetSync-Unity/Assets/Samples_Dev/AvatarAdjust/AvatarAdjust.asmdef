@@ -1,0 +1,17 @@
+{
+    "name": "AvatarAdjust",
+    "rootNamespace": "",
+    "references": [
+        "GUID:3755b4bd67fe24030815e9baccb497e7",
+        "GUID:71f73dfa490a5b84b9b17b2b59b31cec"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
