@@ -964,7 +964,7 @@ PrefabInstance:
     - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
       propertyPath: _localAvatarPrefab
       value: 
-      objectReference: {fileID: 5433920805635859656, guid: c51ba352adcc6af4b90caf0f7a17f48e, type: 3}
+      objectReference: {fileID: 5433920805635859656, guid: 533c4bfc8e64a634c991381ba7791b99, type: 3}
     - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
       propertyPath: ServerDiscoveryPort
       value: 10123
