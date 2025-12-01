@@ -168,8 +168,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: dfac97f15ac5b4b66978c8dca79a5a3e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  body: {fileID: 2041796224729081718}
-  head: {fileID: 6481340575715535886}
+  body: {fileID: 6481340575715535886}
+  head: {fileID: 2041796224729081718}
   offsetY: 0.4
 --- !u!1 &7927846321792083688
 GameObject:
