@@ -16,26 +16,35 @@ STYLY-NetSync is a Unity multiplayer framework for Location-Based Entertainment 
 ```bash
 # Setup
 cd STYLY-NetSync-Server
-pip install -e .                    # Install package with dependencies (pyzmq>=26.0.0)
+pip install -e .                    # Install package with dependencies
 pip install -e ".[dev]"             # Install with dev dependencies (pytest, black, ruff, mypy)
 
-# Running server
+# Running server - CLI entry points (recommended)
+styly-netsync-server                # Main server command
+styly-netsync-server --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999
+styly-netsync-server --no-server-discovery  # Without UDP discovery
+
+# Alternative: module execution
 python -m styly_netsync
-python -m styly_netsync --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999
-python -m styly_netsync --no-server-discovery  # Without UDP discovery
 
 # Load testing
-python src/styly_netsync/client_simulator.py --clients 100 --server tcp://localhost
+styly-netsync-simulator --clients 50 --server tcp://localhost --room default_room
+python src/styly_netsync/client_simulator.py --clients 50
 
 # Development tools (ALWAYS run before committing)
 black src/ tests/                   # Format code
-ruff src/ tests/                    # Lint code  
-mypy src/                          # Type check
-pytest                             # Run tests
+ruff check src/ tests/              # Lint code
+mypy src/                           # Type check
+pytest                              # Run tests
+pytest --cov=src                    # Run tests with coverage
+
+# Complete quality pipeline
+black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest
 
 # Port management
-lsof -i :5555                      # Check port conflicts (macOS/Linux)
-kill <PID>                         # Kill process using port
+lsof -i :5555                       # Check port conflicts (macOS/Linux)
+netstat -ano | findstr :5555        # Check port conflicts (Windows)
+kill <PID>                          # Kill process using port
 ```
 
 ### Unity Client (STYLY-NetSync-Unity/)
@@ -49,28 +58,57 @@ kill <PID>                         # Kill process using port
 ### Core Components
 
 **Server (Python):**
-- `server.py` - Main server with group management and room handling
+- `server.py` - Main server with multi-threaded architecture and room management
 - `binary_serializer.py` - Binary protocol implementation (~60% bandwidth reduction)
+- `client.py` - Python client API (`net_sync_manager` class) for non-Unity clients
 - `client_simulator.py` - Load testing tool for performance validation
+- `rest_bridge.py` - FastAPI-based REST API bridge for external integrations
+- `types.py` - Core data types (transform_data, client_transform_data, room_snapshot)
+- `nv_sync.py` - Network variable synchronization utilities
+- `cli.py` - CLI entry point wrapper
 
 **Unity Client:**
 - `NetSyncManager.cs` - Main singleton entry point and API
 - `NetSyncAvatar.cs` - Component for avatar synchronization
-- `Internal/` - Core networking components (ConnectionManager, MessageProcessor, etc.)
+- `Internal/` - Core networking components:
+  - `ConnectionManager.cs` - ZeroMQ socket management and threading
+  - `MessageProcessor.cs` - Binary protocol message handling
+  - `TransformSyncManager.cs` - Position/rotation synchronization (1-120Hz)
+  - `RPCManager.cs` - Remote procedure call system
+  - `NetworkVariableManager.cs` - Synchronized key-value storage
+  - `AvatarManager.cs` - Player spawn/despawn management
+  - `ServerDiscoveryManager.cs` - UDP discovery service client
+  - `HumanPresenceManager.cs` - Collision avoidance visualization
 
 ### Protocol Details
 
 - Uses ZeroMQ with DEALER-ROUTER and PUB-SUB patterns
 - Binary serialization with client number system (2-byte IDs)
-- UDP discovery service for automatic server finding
-- Adaptive broadcasting (2-20Hz) with thread-safe design
+- UDP discovery service for automatic server finding (port 9999)
+- Adaptive broadcasting (1-120Hz) with thread-safe design
 
 ### Key Architectural Patterns
 
-- **Server**: Group-based room management with transform broadcasting
+- **Server**: Multi-threaded (receive, periodic, discovery threads) with group-based room management
 - **Unity**: Manager pattern with internal components handling specific concerns
 - **Networking**: Binary protocol with efficient serialization
 - **Synchronization**: Transform, RPC, Network Variables, Device ID Mapping
+
+## Technology Stack
+
+### Server
+- **Python**: 3.11+ required
+- **ZeroMQ**: pyzmq >= 26.0.0
+- **REST API**: FastAPI >= 0.115.0, uvicorn >= 0.30.0
+- **Serialization**: msgpack >= 1.0.5
+- **System**: psutil >= 5.9.0
+
+### Unity Client
+- **Unity**: 6000.0.48f1+
+- **NetMQ**: 4.0.2 (ZeroMQ for Unity)
+- **Newtonsoft.Json**: 3.2.1
+- **STYLY XR Rig**: 0.4.10
+- **Device ID Provider**: 0.2.0
 
 ## Unity C# Coding Rules (CRITICAL)
 
@@ -87,7 +125,7 @@ Before submitting code:
 
 **Python Server:**
 1. `black src/ tests/` (format)
-2. `ruff src/ tests/` (lint)
+2. `ruff check src/ tests/` (lint)
 3. `mypy src/` (type check)
 4. `pytest` (tests)
 
