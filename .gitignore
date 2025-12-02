@@ -3,6 +3,22 @@
 .mcp.json
 .serena/*
 **/.serena/*
+
+# Claude Code
 **/.claude/settings.local.json
 **/.claude/commands/*
 **/.claude/agents/*
+**/.claude/todos.json
+
+# Python (root level)
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# IDE
+.idea/
+
+# Environment files
+.env
+.env.local
+.env.*.local
