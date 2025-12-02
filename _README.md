@@ -1,8 +1,3 @@
-# 🛑This repository hasn't been officially announced yet🛑
-⚠️⚠️You found this hidden README!!⚠️⚠️  
-🚫🚫Please refrain from posting about it on social media🚫🚫
-
-
 # STYLY NetSync for LBE
 A Unity networking module and server for XR-powered Location Based Entertainment
 
@@ -15,6 +10,7 @@ A Unity networking module and server for XR-powered Location Based Entertainment
 
 <img width="600" height="228" alt="STYLY-NetSync_1200" src="_images/STYLY-NetSync_logo.png" />
 
+<img width="600" height="336" alt="STYLY-NetSync_1200" src="_images/Others/video_OpenSourceProjectForLBE.gif" />
 
 ## Overview
 
@@ -98,10 +94,20 @@ The uvx command automatically downloads the package, creates an isolated virtual
 <table>
   <thead>
     <tr>
-      <th align="left">Inspector</th>
+      <th align="left">Screenshot</th>
       <th align="left">Description</th>
     </tr>
   </thead>
+  <tbody>
+    <tr>
+      <td align="left" valign="top">
+        <img src="_images/Screenshots/Add_NetSyncManager.png">
+      </td>
+      <td align="left" valign="top">
+        Right click on the hierarchy window and select `STYLY NetSync` - `NetSyncManager` to add NetSyncManager.
+      </td>
+    </tr>
+  </tbody>
   <tbody>
     <tr>
       <td align="left" valign="top">
