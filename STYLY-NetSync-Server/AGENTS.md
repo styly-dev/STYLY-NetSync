@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Unity client (Unity 6000.0.48f1): `STYLY-NetSync-Unity`  
+- Unity client (6000.0.59f2): `STYLY-NetSync-Unity`  
   Runtime: `Packages/com.styly.styly-netsync/Runtime/`; Editor: `Packages/com.styly.styly-netsync/Editor/`; Samples: `Assets/Samples_Dev/` (e.g., `Demo-01.unity`, `Debug Scene.unity`).
 - Python server (this repo): `STYLY-NetSync-Server`  
   Source: `src/styly_netsync/`; Tests: `tests/`; Config: `pyproject.toml`.
