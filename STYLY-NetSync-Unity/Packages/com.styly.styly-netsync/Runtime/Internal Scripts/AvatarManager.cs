@@ -4,7 +4,9 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.XR;
+using UnityEngine.XR.Hands;
 using UnityEngine.XR.Interaction.Toolkit.Inputs.Composites;
+using Styly.NetSync.Internal;
 
 namespace Styly.NetSync
 {
@@ -266,6 +268,11 @@ namespace Styly.NetSync
                 _tpd.rotationAction = _rotationAction;
                 _positionAction.Enable();
                 _rotationAction.Enable();
+
+                // Add hand pose normalizer for cross-platform compatibility
+                var rightNormalizer = rightHand.gameObject.AddComponent<HandPoseNormalizer>();
+                rightNormalizer.Handedness = Handedness.Right;
+                rightNormalizer.EnableDebugLog = _enableDebugLogs;
             }
 
             if (leftHand != null)
@@ -291,6 +298,11 @@ namespace Styly.NetSync
                 _tpd.rotationAction = _rotationAction;
                 _positionAction.Enable();
                 _rotationAction.Enable();
+
+                // Add hand pose normalizer for cross-platform compatibility
+                var leftNormalizer = leftHand.gameObject.AddComponent<HandPoseNormalizer>();
+                leftNormalizer.Handedness = Handedness.Left;
+                leftNormalizer.EnableDebugLog = _enableDebugLogs;
             }
         }
 
