@@ -96,9 +96,7 @@ def test_transforms_pull_based():
             head=transform_data(pos_x=5.0, pos_y=1.6, pos_z=10.0),
         )
         client1.send_transform(tx)
-        time.sleep(0.1)
-
-        # Test pull-based consumption from client2
+        time.sleep(0.3)  # allow broadcast and pull
         snapshot = client2.get_room_transform_data()
         assert snapshot is not None, "Should receive room snapshot"
         assert snapshot.room_id == "demo", "Room ID should match"

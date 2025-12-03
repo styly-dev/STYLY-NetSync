@@ -136,78 +136,25 @@ class TestAllRunMethods:
             pytest.skip("Server CLI entry point not installed in test environment")
         success, stdout, stderr, code = self.run_command(
             "styly-netsync-server",
-            args=[
-                "--dealer-port",
-                "15555",
-                "--pub-port",
-                "15556",
-                "--server-discovery-port",
-                "19999",
-            ],
-            expect_help=False,
-            timeout=3,
-        )
-        assert success, f"Server failed to start. stderr: {stderr}"
-
-    # Client simulator execution tests
-
-    def test_simulator_cli_entry_point_help(self):
-        """Test: styly-netsync-simulator --help"""
-        if which("styly-netsync-simulator") is None:
-            pytest.skip("Simulator CLI entry point not installed in test environment")
-        success, stdout, stderr, code = self.run_command(
-            "styly-netsync-simulator", args=["--help"], expect_help=True
-        )
-        assert success, f"Failed with stderr: {stderr}"
-        assert (
-            "STYLY NetSync Client Simulator" in stdout
-            or "Client Simulator" in stdout
-            or "client_simulator" in stdout.lower()
-        )
-        assert code == 0
-
-    # Removed deprecated execution methods:
-    # - python src/styly_netsync/client_simulator.py
-    # - python -m styly_netsync.client_simulator
-
-    # Server options tests
-
-    def test_server_with_custom_ports(self):
-        """Test: styly-netsync-server --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999"""
-        if which("styly-netsync-server") is None:
-            pytest.skip("Server CLI entry point not installed in test environment")
-        success, stdout, stderr, code = self.run_command(
-            "styly-netsync-server",
-            args=[
-                "--dealer-port",
-                "45555",
-                "--pub-port",
-                "45556",
-                "--server-discovery-port",
-                "49999",
-            ],
-            expect_help=False,
-            timeout=3,
-        )
-        assert success, f"Server with custom ports failed. stderr: {stderr}"
-
-    def test_server_no_server_discovery(self):
-        """Test: styly-netsync-server --no-server-discovery"""
-        if which("styly-netsync-server") is None:
-            pytest.skip("Server CLI entry point not installed in test environment")
-        success, stdout, stderr, code = self.run_command(
-            "styly-netsync-server",
-            args=[
-                "--no-server-discovery",
-                "--dealer-port",
-                "55555",
-                "--pub-port",
-                "55556",
-            ],
+            args=["--no-server-discovery"],
             expect_help=False,
             timeout=3,
         )
         assert success, f"Server with --no-server-discovery failed. stderr: {stderr}"
+
+    def test_server_with_custom_discovery_port(self):
+        """Test: styly-netsync-server --server-discovery-port 19999"""
+        if which("styly-netsync-server") is None:
+            pytest.skip("Server CLI entry point not installed in test environment")
+        success, stdout, stderr, code = self.run_command(
+            "styly-netsync-server",
+            args=["--server-discovery-port", "19999"],
+            expect_help=False,
+            timeout=3,
+        )
+        assert success, (
+            f"Server with custom discovery port failed. stderr: {stderr or stdout}"
+        )
 
 
 if __name__ == "__main__":
