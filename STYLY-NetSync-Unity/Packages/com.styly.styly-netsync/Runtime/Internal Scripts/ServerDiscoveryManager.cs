@@ -177,32 +177,9 @@ namespace Styly.NetSync
                 {
                     DebugLog("Starting TCP scan discovery for iOS/visionOS");
 
-                    // First, try to connect to localhost
-                    DebugLog("Attempting to discover server on localhost...");
-                    if (TryTcpDiscovery("127.0.0.1"))
-                    {
-                        DebugLog("Server discovered on localhost.");
-                        return; // Exit thread if server is found
-                    }
+                    bool discoveryCompleted = RunTcpScanDiscovery(cachedServerIp, includeLocalhostCheck: true, isFallbackScenario: false);
 
-                    // If localhost fails, try last known server
-                    if (!_isDiscovering) return; // Check if discovery was stopped
-                    if (!string.IsNullOrEmpty(cachedServerIp))
-                    {
-                        DebugLog($"Trying cached server IP: {cachedServerIp}");
-                        if (TryTcpDiscovery(cachedServerIp))
-                        {
-                            return; // Successfully discovered from cache
-                        }
-                    }
-
-                    // Get local subnet and scan in parallel
-                    List<string> ipsToScan = GetSubnetIpAddresses();
-                    DebugLog($"Scanning {ipsToScan.Count} IP addresses in subnet with {MaxParallelConnections} parallel connections");
-
-                    PerformParallelTcpScan(ipsToScan);
-
-                    if (_isDiscovering)
+                    if (!discoveryCompleted && _isDiscovering)
                     {
                         Debug.LogWarning("TCP discovery scan completed without finding server");
                         _isDiscovering = false;
@@ -232,22 +209,68 @@ namespace Styly.NetSync
 
             DebugLog("UDP discovery timed out – starting TCP fallback scan");
 
+            return RunTcpScanDiscovery(cachedServerIp, includeLocalhostCheck: false, isFallbackScenario: true);
+        }
+
+        private bool RunTcpScanDiscovery(string cachedServerIp, bool includeLocalhostCheck, bool isFallbackScenario)
+        {
+            if (!_isDiscovering)
+            {
+                return false;
+            }
+
+            if (includeLocalhostCheck)
+            {
+                DebugLog("Attempting to discover server on localhost...");
+                if (TryTcpDiscovery("127.0.0.1"))
+                {
+                    DebugLog("Server discovered on localhost.");
+                    return true;
+                }
+
+                if (!_isDiscovering)
+                {
+                    return false;
+                }
+            }
+
             if (!string.IsNullOrEmpty(cachedServerIp))
             {
-                DebugLog($"Trying cached server IP during fallback: {cachedServerIp}");
+                if (isFallbackScenario)
+                {
+                    DebugLog($"Trying cached server IP during fallback: {cachedServerIp}");
+                }
+                else
+                {
+                    DebugLog($"Trying cached server IP: {cachedServerIp}");
+                }
+
                 if (TryTcpDiscovery(cachedServerIp))
                 {
                     return true;
+                }
+
+                if (!_isDiscovering)
+                {
+                    return false;
                 }
             }
 
             var ipsToScan = GetSubnetIpAddresses();
             if (ipsToScan.Count == 0)
             {
-                DebugLog("No subnet IPs available for TCP fallback scan");
+                if (isFallbackScenario)
+                {
+                    DebugLog("No subnet IPs available for TCP fallback scan");
+                }
+                else
+                {
+                    DebugLog("No subnet IPs available for TCP scan");
+                }
                 return false;
             }
 
+            DebugLog($"Scanning {ipsToScan.Count} IP addresses in subnet with {MaxParallelConnections} parallel connections");
             PerformParallelTcpScan(ipsToScan);
             return !_isDiscovering ? true : false;
         }
