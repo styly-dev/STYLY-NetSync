@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from styly_netsync import server
+from styly_netsync import logging_utils, server
 
 # NOTE: _patch_quick_exit monkeypatches time.sleep globally via server.time.
 # Capture the real sleep so tests can opt out of the interrupting stub.
@@ -151,8 +151,8 @@ def test_rotation_triggers_on_age(monkeypatch, tmp_path):
     store: dict[str, object] = {}
     _patch_quick_exit(monkeypatch)
     _patch_dummy_server(monkeypatch, store)
-    server._last_rotation_time = None
-    monkeypatch.setattr(server, "LOG_ROTATION_MAX_AGE", timedelta(seconds=1))
+    logging_utils._last_rotation_time = None
+    monkeypatch.setattr(logging_utils, "LOG_ROTATION_MAX_AGE", timedelta(seconds=1))
 
     original_configure = server.configure_logging
 
@@ -189,7 +189,7 @@ def test_rotation_triggers_on_age(monkeypatch, tmp_path):
 
     rotated = sorted(tmp_path.glob("netsync-server*.log"))
     assert len(rotated) >= 2, "Expected rotation to create an additional log file"
-    server._last_rotation_time = None
+    logging_utils._last_rotation_time = None
 
 
 def _make_message(ts: float):
@@ -200,8 +200,8 @@ def test_rotation_triggers_on_size(monkeypatch, tmp_path):
     _patch_quick_exit(monkeypatch)
     store: dict[str, object] = {}
     _patch_dummy_server(monkeypatch, store)
-    server._last_rotation_time = None
-    monkeypatch.setattr(server, "LOG_ROTATION_SIZE_BYTES", 1)
+    logging_utils._last_rotation_time = None
+    monkeypatch.setattr(logging_utils, "LOG_ROTATION_SIZE_BYTES", 1)
 
     original_configure = server.configure_logging
 
@@ -237,25 +237,25 @@ def test_rotation_triggers_on_size(monkeypatch, tmp_path):
 
     rotated = sorted(tmp_path.glob("netsync-server*.log"))
     assert len(rotated) >= 2, "Expected size-based rotation to create another file"
-    server._last_rotation_time = None
+    logging_utils._last_rotation_time = None
 
 
 def test_rotation_uses_cached_start_time(monkeypatch, tmp_path):
-    server._last_rotation_time = None
+    logging_utils._last_rotation_time = None
     log_file = tmp_path / "netsync-server.log"
     log_file.write_text("dummy\n", encoding="utf-8")
 
     start_ts = 1_000_000.0
-    monkeypatch.setattr(server, "get_ctime", lambda path: start_ts)
+    monkeypatch.setattr(logging_utils, "get_ctime", lambda path: start_ts)
 
-    before_threshold = start_ts + server.LOG_ROTATION_MAX_AGE.total_seconds() - 1
+    before_threshold = start_ts + logging_utils.LOG_ROTATION_MAX_AGE.total_seconds() - 1
     message_before = _make_message(before_threshold)
     assert server._default_rotation_condition(message_before, log_file) is False
-    assert server._last_rotation_time == pytest.approx(start_ts)
+    assert logging_utils._last_rotation_time == pytest.approx(start_ts)
 
-    after_threshold = start_ts + server.LOG_ROTATION_MAX_AGE.total_seconds() + 1
+    after_threshold = start_ts + logging_utils.LOG_ROTATION_MAX_AGE.total_seconds() + 1
     message_after = _make_message(after_threshold)
     assert server._default_rotation_condition(message_after, log_file) is True
-    assert server._last_rotation_time == pytest.approx(after_threshold)
+    assert logging_utils._last_rotation_time == pytest.approx(after_threshold)
 
-    server._last_rotation_time = None
+    logging_utils._last_rotation_time = None
