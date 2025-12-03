@@ -32,6 +32,8 @@ namespace Styly.NetSync
         }
         public bool IsDiscovering => _isDiscovering;
         public float DiscoveryInterval { get; set; } = 0.1f; // Send discovery request every 0.1 seconds
+        public bool EnableTcpFallback { get; set; } = true; // Allow TCP scanning when UDP broadcast is blocked
+        public float TcpFallbackDelaySeconds { get; set; } = 2f; // Delay before starting TCP fallback
 
         // Parallel scanning configuration for iOS/visionOS
         public int MaxParallelConnections { get; set; } = 20; // Scan up to 20 IPs concurrently
@@ -71,6 +73,7 @@ namespace Styly.NetSync
                 _discoveryClient = new UdpClient();
                 _discoveryClient.EnableBroadcast = true;
                 _discoveryClient.Client.ReceiveTimeout = 500; // 500ms timeout for responses
+                string cachedServerIp = GetCachedServerIp();
 
                 // Start discovery thread that sends requests and waits for responses
                 _discoveryThread = new Thread(() =>
@@ -82,14 +85,28 @@ namespace Styly.NetSync
                         DebugLog("Server discovered on localhost via TCP.");
                         return; // Exit thread if server is found
                     }
-                    
-                    // If localhost fails, proceed with UDP broadcast discovery
-                    if (!_isDiscovering) return; // Check if discovery was stopped
-                    DebugLog("Localhost discovery failed, proceeding with UDP broadcast.");
+
+                    if (!_isDiscovering) { return; }
+
+                    if (!string.IsNullOrEmpty(cachedServerIp))
+                    {
+                        DebugLog($"Attempting cached server IP {cachedServerIp} via TCP before broadcast...");
+                        if (TryTcpDiscovery(cachedServerIp))
+                        {
+                            DebugLog("Server discovered from cached IP before UDP broadcast.");
+                            return;
+                        }
+                    }
+
+                    if (!_isDiscovering) { return; }
+                    DebugLog("No cached server reachable, proceeding with UDP broadcast.");
 
                     var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
                     var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, ServerDiscoveryPort);
                     var lastRequestTime = DateTime.MinValue;
+                    var fallbackDelaySeconds = Math.Max(0.1f, TcpFallbackDelaySeconds);
+                    var fallbackTriggerTime = DateTime.UtcNow.AddSeconds(fallbackDelaySeconds);
+                    bool tcpFallbackAttempted = !EnableTcpFallback;
 
                     while (_isDiscovering)
                     {
@@ -119,6 +136,15 @@ namespace Styly.NetSync
                         catch (Exception ex)
                         {
                             if (_isDiscovering) { Debug.LogWarning($"Discovery error: {ex.Message}"); }
+                        }
+
+                        if (!tcpFallbackAttempted && _isDiscovering && DateTime.UtcNow >= fallbackTriggerTime)
+                        {
+                            tcpFallbackAttempted = true;
+                            if (TryTcpFallbackDiscovery(cachedServerIp))
+                            {
+                                return;
+                            }
                         }
                     }
                 })
@@ -195,6 +221,35 @@ namespace Styly.NetSync
                 Debug.LogError($"Failed to start TCP discovery: {ex.Message}");
                 _isDiscovering = false;
             }
+        }
+
+        private bool TryTcpFallbackDiscovery(string cachedServerIp)
+        {
+            if (!_isDiscovering)
+            {
+                return false;
+            }
+
+            DebugLog("UDP discovery timed out – starting TCP fallback scan");
+
+            if (!string.IsNullOrEmpty(cachedServerIp))
+            {
+                DebugLog($"Trying cached server IP during fallback: {cachedServerIp}");
+                if (TryTcpDiscovery(cachedServerIp))
+                {
+                    return true;
+                }
+            }
+
+            var ipsToScan = GetSubnetIpAddresses();
+            if (ipsToScan.Count == 0)
+            {
+                DebugLog("No subnet IPs available for TCP fallback scan");
+                return false;
+            }
+
+            PerformParallelTcpScan(ipsToScan);
+            return !_isDiscovering ? true : false;
         }
 
         private void PerformParallelTcpScan(List<string> ipsToScan)
@@ -465,6 +520,8 @@ namespace Styly.NetSync
                     var serverAddress = $"tcp://{sender.Address}";
 
                     DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+
+                    QueueCacheServerIp(sender.Address.ToString());
 
                     if (OnServerDiscovered != null)
                     {
