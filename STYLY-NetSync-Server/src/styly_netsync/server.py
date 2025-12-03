@@ -1682,12 +1682,18 @@ def main():
     parser.add_argument(
         "--log-rotation",
         type=str,
-        help="loguru rotation rule; default triggers at 10MB or 7 days",
+        help=(
+            "Rotation rule for log files (loguru syntax, e.g., '10 MB', '1 day', "
+            "'12:00'); default triggers at 10MB or 7 days"
+        ),
     )
     parser.add_argument(
         "--log-retention",
         type=str,
-        help="loguru retention rule; default keeps newest 20 files",
+        help=(
+            "Retention rule for log files (loguru syntax, e.g., '5', '1 week', "
+            "'keep 10 files'); default keeps newest 20 files"
+        ),
     )
     parser.add_argument(
         "--log-json-console",

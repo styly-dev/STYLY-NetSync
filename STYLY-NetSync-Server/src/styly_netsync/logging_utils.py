@@ -1,6 +1,7 @@
 # logging_utils.py
 import sys
 import logging
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,8 @@ LOG_ROTATION_SIZE_BYTES = 10 * 1024 * 1024
 LOG_ROTATION_MAX_AGE = timedelta(days=7)
 LOG_RETENTION_MAX_FILES = 20
 DEFAULT_LOG_FILENAME = "netsync-server.log"
+RotationRule = str | int | float | timedelta | Callable[[Any, Any], bool]
+RetentionRule = str | int | float | timedelta | Callable[[list[Any]], Any]
 _last_rotation_time: float | None = None
 
 
@@ -70,7 +73,7 @@ def _get_rotation_start_time(file_path: Path, record_ts: float) -> float:
     return _last_rotation_time
 
 
-def _default_rotation_condition(message, file) -> bool:  # type: ignore[override]
+def _default_rotation_condition(message: Any, file: Any) -> bool:
     """Rotate when file exceeds size or age thresholds."""
 
     global _last_rotation_time
@@ -95,7 +98,7 @@ def _default_rotation_condition(message, file) -> bool:  # type: ignore[override
     return False
 
 
-def _default_retention_policy(logs):  # type: ignore[override]
+def _default_retention_policy(logs: list[Any]) -> None:
     """Keep the newest N files; delete older ones."""
 
     valid_logs: list[tuple[float, Any]] = []
@@ -118,43 +121,53 @@ def configure_logging(
     log_dir: Path | None,
     console_level: str = "INFO",
     console_json: bool = False,
-    rotation: str | None = None,
-    retention: str | None = None,
+    rotation: RotationRule | None = None,
+    retention: RetentionRule | None = None,
 ) -> None:
     logger.remove()
 
-    console_format = (
-        "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}"
-    )
-    logger.add(
-        sys.stderr,
-        level=str(console_level).upper(),
-        serialize=console_json,
-        format=console_format,
-        enqueue=True,
-        backtrace=False,
-        diagnose=False,
-    )
+    console_kwargs: dict[str, Any] = {
+        "level": console_level.upper(),
+        "serialize": console_json,
+        "enqueue": True,
+        "backtrace": False,
+        "diagnose": False,
+    }
+    if not console_json:
+        console_kwargs["format"] = (
+            "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}"
+        )
 
-    rotation_rule = rotation if rotation else _default_rotation_condition
-    retention_rule = retention if retention else _default_retention_policy
+    logger.add(sys.stderr, **console_kwargs)
 
     if log_dir is not None:
-        log_dir_path = Path(log_dir)
-        log_dir_path.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir_path / DEFAULT_LOG_FILENAME
-        logger.add(
-            log_file,
-            level="DEBUG",
-            serialize=True,
-            rotation=rotation_rule,
-            retention=retention_rule,
-            enqueue=True,
-            backtrace=False,
-            diagnose=False,
+        rotation_rule: RotationRule = (
+            rotation if rotation is not None else _default_rotation_condition
         )
-        logger.info(f"File logging enabled at {log_file} (rotation/retention active)")
+        retention_rule: RetentionRule = (
+            retention if retention is not None else _default_retention_policy
+        )
+
+        log_dir_path = Path(log_dir)
+        try:
+            log_dir_path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.error(f"Failed to create log directory {log_dir_path}: {exc}")
+        else:
+            log_file = log_dir_path / DEFAULT_LOG_FILENAME
+            logger.add(
+                log_file,
+                level="DEBUG",
+                serialize=True,
+                rotation=rotation_rule,
+                retention=retention_rule,
+                enqueue=True,
+                backtrace=False,
+                diagnose=False,
+            )
+            logger.info(
+                f"File logging enabled at {log_file} (rotation/retention active)"
+            )
 
     logging.basicConfig(handlers=[InterceptHandler()], level=logging.NOTSET, force=True)
     logging.captureWarnings(True)
-

@@ -1,3 +1,4 @@
+import logging
 import sys
 import time
 from datetime import datetime, timedelta
@@ -196,6 +197,38 @@ def _make_message(ts: float):
     return type("Message", (), {"record": {"time": datetime.fromtimestamp(ts)}})()
 
 
+class DummyLogger:
+    def __init__(self):
+        self.add_calls: list[dict[str, object]] = []
+        self.errors: list[str] = []
+        self.infos: list[str] = []
+        self.logged: list[dict[str, object]] = []
+
+    def remove(self):
+        return None
+
+    def add(self, *args, **kwargs):
+        self.add_calls.append({"args": args, "kwargs": kwargs})
+        return len(self.add_calls)
+
+    def level(self, name):
+        return type("Level", (), {"name": name})()
+
+    def opt(self, depth, exception):
+        self.logged.append({"depth": depth, "exception": exception})
+        return self
+
+    def log(self, level, message):
+        self.logged[-1]["level"] = level
+        self.logged[-1]["message"] = message
+
+    def error(self, message):
+        self.errors.append(str(message))
+
+    def info(self, message):
+        self.infos.append(str(message))
+
+
 def test_rotation_triggers_on_size(monkeypatch, tmp_path):
     _patch_quick_exit(monkeypatch)
     store: dict[str, object] = {}
@@ -259,3 +292,81 @@ def test_rotation_uses_cached_start_time(monkeypatch, tmp_path):
     assert logging_utils._last_rotation_time == pytest.approx(after_threshold)
 
     logging_utils._last_rotation_time = None
+
+
+def test_intercept_handler_redirects_stdlib(monkeypatch):
+    dummy_logger = DummyLogger()
+    monkeypatch.setattr(logging_utils, "logger", dummy_logger)
+
+    handler = logging_utils.InterceptHandler()
+    record = logging.LogRecord(
+        name="dummy",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="hello",
+        args=(),
+        exc_info=None,
+    )
+
+    handler.emit(record)
+
+    assert dummy_logger.logged[-1]["message"] == "hello"
+    assert dummy_logger.logged[-1]["level"] == "WARNING"
+
+
+def test_configure_logging_console_json(monkeypatch):
+    dummy_logger = DummyLogger()
+    monkeypatch.setattr(logging_utils, "logger", dummy_logger)
+    monkeypatch.setattr(logging, "basicConfig", lambda **_: None)
+    monkeypatch.setattr(logging, "captureWarnings", lambda *_, **__: None)
+
+    logging_utils.configure_logging(
+        log_dir=None, console_level="warning", console_json=True
+    )
+
+    console_kwargs = dummy_logger.add_calls[0]["kwargs"]
+    assert console_kwargs["serialize"] is True
+    assert "format" not in console_kwargs
+    assert console_kwargs["level"] == "WARNING"
+
+
+def test_configure_logging_uses_custom_rotation_and_retention(monkeypatch, tmp_path):
+    dummy_logger = DummyLogger()
+    monkeypatch.setattr(logging_utils, "logger", dummy_logger)
+    monkeypatch.setattr(logging, "basicConfig", lambda **_: None)
+    monkeypatch.setattr(logging, "captureWarnings", lambda *_, **__: None)
+
+    def custom_rotation(*_, **__):
+        return False
+
+    def custom_retention(logs):
+        logs.clear()
+
+    logging_utils.configure_logging(
+        log_dir=tmp_path,
+        rotation=custom_rotation,
+        retention=custom_retention,
+    )
+
+    assert len(dummy_logger.add_calls) == 2
+    file_kwargs = dummy_logger.add_calls[1]["kwargs"]
+    assert file_kwargs["rotation"] is custom_rotation
+    assert file_kwargs["retention"] is custom_retention
+
+
+def test_configure_logging_handles_directory_errors(monkeypatch, tmp_path):
+    dummy_logger = DummyLogger()
+    monkeypatch.setattr(logging_utils, "logger", dummy_logger)
+    monkeypatch.setattr(logging, "basicConfig", lambda **_: None)
+    monkeypatch.setattr(logging, "captureWarnings", lambda *_, **__: None)
+
+    def fail_mkdir(*_, **__):  # pragma: no cover - error path
+        raise OSError("fail")
+
+    monkeypatch.setattr(logging_utils.Path, "mkdir", fail_mkdir)
+
+    logging_utils.configure_logging(log_dir=tmp_path / "logs")
+
+    assert dummy_logger.errors, "Expected log directory failure to be reported"
+    assert len(dummy_logger.add_calls) == 1, "File sink should not be registered"
