@@ -30,6 +30,10 @@ from typing import Any, TYPE_CHECKING
 
 import zmq
 from loguru import logger
+# NOTE: This imports a loguru internal helper; we rely on it because stdlib
+# file birth time is not portable, and we need a cross-platform ctime source
+# for rotation age calculations.
+from loguru._ctime_functions import get_ctime
 from . import binary_serializer
 from . import network_utils
 
@@ -40,6 +44,7 @@ LOG_ROTATION_SIZE_BYTES = 10 * 1024 * 1024
 LOG_ROTATION_MAX_AGE = timedelta(days=7)
 LOG_RETENTION_MAX_FILES = 20
 DEFAULT_LOG_FILENAME = "netsync-server.log"
+_last_rotation_time: float | None = None
 
 
 class InterceptHandler(logging.Handler):
@@ -62,18 +67,68 @@ class InterceptHandler(logging.Handler):
         )
 
 
-def _default_rotation_condition(message, file) -> bool:  # type: ignore[override]
-    """Rotate when file exceeds size or age thresholds."""
-    try:
-        stat = file.stat()
-        if stat.st_size >= LOG_ROTATION_SIZE_BYTES:
-            return True
+def _resolve_log_path(file) -> Path:
+    """Return a Path for the log file supporting loguru handles and Path objects."""
 
-        record_ts = message.record["time"].timestamp()
-        if record_ts - stat.st_mtime >= LOG_ROTATION_MAX_AGE.total_seconds():
-            return True
+    if isinstance(file, Path):
+        return file
+
+    name = getattr(file, "name", file)
+    try:
+        return Path(name)
+    except Exception:
+        return Path(str(name))
+
+
+def _get_rotation_start_time(file_path: Path, record_ts: float) -> float:
+    """Return the baseline timestamp for age-based rotation.
+
+    Prefers the cached last rotation time; otherwise uses loguru's get_ctime
+    helper (path-based) and falls back to the current record timestamp.
+    """
+
+    global _last_rotation_time
+
+    if _last_rotation_time is not None:
+        return _last_rotation_time
+
+    start_time = None
+    try:
+        start_time = get_ctime(str(file_path))
+    except Exception:
+        pass
+
+    _last_rotation_time = start_time or record_ts
+    return _last_rotation_time
+
+
+def _default_rotation_condition(message, file) -> bool:  # type: ignore[override]
+    """Rotate when file exceeds size or age thresholds.
+
+    Age-based rotation avoids platform-specific birthtime by using loguru's
+    `get_ctime` helper and caches the last rotation time in memory for the
+    process lifetime.
+    """
+
+    global _last_rotation_time
+
+    record_ts = message.record["time"].timestamp()
+
+    try:
+        path = _resolve_log_path(file)
+        stat = path.stat()
     except Exception:
         return False
+
+    if stat.st_size >= LOG_ROTATION_SIZE_BYTES:
+        _last_rotation_time = record_ts
+        return True
+
+    start_ts = _get_rotation_start_time(path, record_ts)
+    if record_ts - start_ts >= LOG_ROTATION_MAX_AGE.total_seconds():
+        _last_rotation_time = record_ts
+        return True
+
     return False
 
 
