@@ -41,6 +41,7 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "msgpack>=1.0.5",
     "psutil>=5.9.0",
+    "loguru>=0.7.2",
 ]
 
 [project.optional-dependencies]

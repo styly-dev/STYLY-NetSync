@@ -22,62 +22,122 @@ import socket
 import threading
 import time
 import traceback
+from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any, TYPE_CHECKING
+
 import zmq
+from loguru import logger
 from . import binary_serializer
 from . import network_utils
 
 if TYPE_CHECKING:
     from uvicorn import Server
 
-# Log configuration (with optional ANSI colors for console)
+LOG_ROTATION_SIZE_BYTES = 10 * 1024 * 1024
+LOG_ROTATION_MAX_AGE = timedelta(days=7)
+LOG_RETENTION_MAX_FILES = 20
+DEFAULT_LOG_FILENAME = "netsync-server.log"
 
 
-class ColorFormatter(logging.Formatter):
-    """Simple ANSI colorizing formatter.
+class InterceptHandler(logging.Handler):
+    """Redirect stdlib logging to loguru."""
 
-    - INFO: default
-    - WARNING: yellow
-    - ERROR: bright red
-    - CRITICAL: white on red background
-    """
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = logger.level(record.levelname).name
+        except Exception:
+            level = record.levelno
 
-    RESET = "\x1b[0m"
-    COLORS = {
-        "WARNING": "\x1b[33m",  # yellow
-        "ERROR": "\x1b[91m\x1b[1m",  # bright red + bold
-        "CRITICAL": "\x1b[97m\x1b[41m\x1b[1m",  # white on red bg + bold
-    }
+        frame = logging.currentframe()
+        depth = 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back  # type: ignore[assignment]
+            depth += 1
 
-    def __init__(self, fmt: str, datefmt: str | None = None, enable_color: bool = True):
-        super().__init__(fmt=fmt, datefmt=datefmt)
-        self.enable_color = enable_color
-
-    def format(self, record: logging.LogRecord) -> str:
-        base = super().format(record)
-        if not self.enable_color:
-            return base
-        color = self.COLORS.get(record.levelname)
-        if not color:
-            return base
-        return f"{color}{base}{self.RESET}"
+        logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
+        )
 
 
-# Use colors only when outputting to a TTY and NO_COLOR is not set
-_use_color = sys.stderr.isatty() and os.getenv("NO_COLOR") is None
-_handler = logging.StreamHandler()
-_handler.setFormatter(
-    ColorFormatter(
-        "%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%H:%M:%S",
-        enable_color=_use_color,
+def _default_rotation_condition(message, file) -> bool:  # type: ignore[override]
+    """Rotate when file exceeds size or age thresholds."""
+    try:
+        stat = file.stat()
+        if stat.st_size >= LOG_ROTATION_SIZE_BYTES:
+            return True
+
+        record_ts = message.record["time"].timestamp()
+        if record_ts - stat.st_mtime >= LOG_ROTATION_MAX_AGE.total_seconds():
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _default_retention_policy(logs):  # type: ignore[override]
+    """Keep the newest N files; delete older ones."""
+    valid_logs: list[tuple[float, Any]] = []
+    for path in logs:
+        try:
+            p = Path(path)
+            valid_logs.append((p.stat().st_mtime, p))
+        except (OSError, TypeError, ValueError):
+            continue
+
+    valid_logs.sort(key=lambda item: item[0], reverse=True)
+    for _, path in valid_logs[LOG_RETENTION_MAX_FILES:]:
+        try:
+            path.unlink()
+        except Exception:
+            continue
+
+
+def configure_logging(
+    log_dir: Path | None,
+    console_level: str = "INFO",
+    console_json: bool = False,
+    rotation: str | None = None,
+    retention: str | None = None,
+) -> None:
+    logger.remove()
+
+    console_format = (
+        "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}"
     )
-)
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
-logger = logging.getLogger(__name__)
+    logger.add(
+        sys.stderr,
+        level=str(console_level).upper(),
+        serialize=console_json,
+        format=console_format,
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+    )
+
+    rotation_rule = rotation if rotation else _default_rotation_condition
+    retention_rule = retention if retention else _default_retention_policy
+
+    if log_dir is not None:
+        log_dir_path = Path(log_dir)
+        log_dir_path.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir_path / DEFAULT_LOG_FILENAME
+        logger.add(
+            log_file,
+            level="DEBUG",
+            serialize=True,
+            rotation=rotation_rule,
+            retention=retention_rule,
+            enqueue=True,
+            backtrace=False,
+            diagnose=False,
+        )
+        logger.info(f"File logging enabled at {log_file} (rotation/retention active)")
+
+    logging.basicConfig(handlers=[InterceptHandler()], level=logging.NOTSET, force=True)
+    logging.captureWarnings(True)
 
 
 DEFAULT_DEALER_PORT = 5555
@@ -1716,8 +1776,41 @@ def main():
         version=f"%(prog)s {get_version()}",
         help="Show version and exit",
     )
+    parser.add_argument(
+        "--log-dir",
+        type=Path,
+        help="Directory for log files (enables file logging with rotation)",
+    )
+    parser.add_argument(
+        "--log-rotation",
+        type=str,
+        help="loguru rotation rule; default triggers at 10MB or 7 days",
+    )
+    parser.add_argument(
+        "--log-retention",
+        type=str,
+        help="loguru retention rule; default keeps newest 20 files",
+    )
+    parser.add_argument(
+        "--log-json-console",
+        action="store_true",
+        help="Emit console logs as JSON instead of text",
+    )
+    parser.add_argument(
+        "--log-level-console",
+        default="INFO",
+        help="Console log level (default: INFO)",
+    )
 
     args = parser.parse_args()
+
+    configure_logging(
+        log_dir=args.log_dir,
+        console_level=args.log_level_console,
+        console_json=args.log_json_console,
+        rotation=args.log_rotation,
+        retention=args.log_retention,
+    )
 
     # Set default values from module constants (previously from argparse)
     dealer_port = DEFAULT_DEALER_PORT
