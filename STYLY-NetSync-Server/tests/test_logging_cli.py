@@ -182,7 +182,7 @@ def test_rotation_triggers_on_age(monkeypatch, tmp_path):
 
     server.logger.add(
         log_file,
-        rotation=server._default_rotation_condition,
+        rotation=logging_utils._default_rotation_condition,
         serialize=True,
     )  # ensure handler present after previous remove
     server.logger.info("trigger rotation")
@@ -262,7 +262,7 @@ def test_rotation_triggers_on_size(monkeypatch, tmp_path):
 
     server.logger.add(
         log_file,
-        rotation=server._default_rotation_condition,
+        rotation=logging_utils._default_rotation_condition,
         serialize=True,
     )
     server.logger.info("trigger size rotation")
@@ -283,12 +283,12 @@ def test_rotation_uses_cached_start_time(monkeypatch, tmp_path):
 
     before_threshold = start_ts + logging_utils.LOG_ROTATION_MAX_AGE.total_seconds() - 1
     message_before = _make_message(before_threshold)
-    assert server._default_rotation_condition(message_before, log_file) is False
+    assert logging_utils._default_rotation_condition(message_before, log_file) is False
     assert logging_utils._last_rotation_time == pytest.approx(start_ts)
 
     after_threshold = start_ts + logging_utils.LOG_ROTATION_MAX_AGE.total_seconds() + 1
     message_after = _make_message(after_threshold)
-    assert server._default_rotation_condition(message_after, log_file) is True
+    assert logging_utils._default_rotation_condition(message_after, log_file) is True
     assert logging_utils._last_rotation_time == pytest.approx(after_threshold)
 
     logging_utils._last_rotation_time = None

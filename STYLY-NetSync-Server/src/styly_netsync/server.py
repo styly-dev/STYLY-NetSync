@@ -22,7 +22,6 @@ import socket
 import threading
 import time
 import traceback
-from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
@@ -32,8 +31,7 @@ import zmq
 from loguru import logger
 from . import binary_serializer
 from . import network_utils
-from . import logging_utils
-from .logging_utils import _default_rotation_condition, configure_logging
+from .logging_utils import configure_logging
 
 if TYPE_CHECKING:
     from uvicorn import Server

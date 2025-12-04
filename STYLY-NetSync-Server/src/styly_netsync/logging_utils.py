@@ -1,6 +1,7 @@
 # logging_utils.py
 import sys
 import logging
+import threading
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ DEFAULT_LOG_FILENAME = "netsync-server.log"
 RotationRule = str | int | float | timedelta | Callable[[Any, Any], bool]
 RetentionRule = str | int | float | timedelta | Callable[[list[Any]], Any]
 _last_rotation_time: float | None = None
+_rotation_lock = threading.Lock()
 
 
 class InterceptHandler(logging.Handler):
@@ -28,7 +30,7 @@ class InterceptHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             level = logger.level(record.levelname).name
-        except Exception:
+        except (ValueError, TypeError):
             level = record.levelno
 
         frame = logging.currentframe()
@@ -51,26 +53,34 @@ def _resolve_log_path(file) -> Path:
     name = getattr(file, "name", file)
     try:
         return Path(name)
-    except Exception:
+    except (OSError, TypeError, ValueError):
         return Path(str(name))
 
 
 def _get_rotation_start_time(file_path: Path, record_ts: float) -> float:
-    """Return the baseline timestamp for age-based rotation."""
+    """
+    Baseline timestamp for age-based rotation.
+
+    Args:
+        file_path: Path of the log file being evaluated.
+        record_ts: Current log record timestamp used as a fallback.
+    """
 
     global _last_rotation_time
 
-    if _last_rotation_time is not None:
-        return _last_rotation_time
+    with _rotation_lock:
+        if _last_rotation_time is not None:
+            return _last_rotation_time
 
     start_time = None
     try:
         start_time = get_ctime(str(file_path))
-    except Exception:
-        pass
+    except (OSError, ValueError) as exc:
+        logger.debug(f"get_ctime failed for {file_path}: {exc}")
 
-    _last_rotation_time = start_time or record_ts
-    return _last_rotation_time
+    with _rotation_lock:
+        _last_rotation_time = start_time or record_ts
+        return _last_rotation_time
 
 
 def _default_rotation_condition(message: Any, file: Any) -> bool:
@@ -83,23 +93,31 @@ def _default_rotation_condition(message: Any, file: Any) -> bool:
     try:
         path = _resolve_log_path(file)
         stat = path.stat()
-    except Exception:
+    except (OSError, TypeError, ValueError) as exc:
+        logger.debug(f"Rotation check skipped; stat failed: {exc}")
         return False
 
     if stat.st_size >= LOG_ROTATION_SIZE_BYTES:
-        _last_rotation_time = record_ts
+        with _rotation_lock:
+            _last_rotation_time = record_ts
         return True
 
     start_ts = _get_rotation_start_time(path, record_ts)
     if record_ts - start_ts >= LOG_ROTATION_MAX_AGE.total_seconds():
-        _last_rotation_time = record_ts
+        with _rotation_lock:
+            _last_rotation_time = record_ts
         return True
 
     return False
 
 
 def _default_retention_policy(logs: list[Any]) -> None:
-    """Keep the newest N files; delete older ones."""
+    """
+    Keep the newest log files and drop older ones.
+
+    Args:
+        logs: Paths (string or Path) of log files to consider.
+    """
 
     valid_logs: list[tuple[float, Any]] = []
     for path in logs:
@@ -113,7 +131,8 @@ def _default_retention_policy(logs: list[Any]) -> None:
     for _, path in valid_logs[LOG_RETENTION_MAX_FILES:]:
         try:
             path.unlink()
-        except Exception:
+        except OSError as exc:
+            logger.debug(f"Retention skip for {path}: {exc}")
             continue
 
 
@@ -124,6 +143,16 @@ def configure_logging(
     rotation: RotationRule | None = None,
     retention: RetentionRule | None = None,
 ) -> None:
+    """
+    Initialize console logging and optional rotated file sink (default: rotate at 10 MB or 7 days, keep newest 20 files).
+
+    Args:
+        log_dir: Target directory for `netsync-server.log`; enables file sink when set.
+        console_level: Console level string (e.g., INFO/DEBUG).
+        console_json: Emit console as JSON when True; otherwise colored text.
+        rotation: loguru rotation rule (e.g., '10 MB', '1 day', '12:00') or callable.
+        retention: loguru retention rule (e.g., '5', '1 week', 'keep 10 files') or callable.
+    """
     logger.remove()
 
     console_kwargs: dict[str, Any] = {
