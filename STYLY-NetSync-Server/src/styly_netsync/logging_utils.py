@@ -20,8 +20,26 @@ LOG_RETENTION_MAX_FILES = 20
 DEFAULT_LOG_FILENAME = "netsync-server.log"
 RotationRule = str | int | float | timedelta | Callable[[Any, Any], bool]
 RetentionRule = str | int | float | timedelta | Callable[[list[Any]], Any]
-_last_rotation_time: float | None = None
-_rotation_lock = threading.Lock()
+
+
+class _RotationState:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._last: float | None = None
+
+    def get(self) -> float | None:
+        with self._lock:
+            return self._last
+
+    def set(self, value: float | None) -> None:
+        with self._lock:
+            self._last = value
+
+    def reset(self) -> None:
+        self.set(None)
+
+
+_rotation_state = _RotationState()
 
 
 class InterceptHandler(logging.Handler):
@@ -66,11 +84,9 @@ def _get_rotation_start_time(file_path: Path, record_ts: float) -> float:
         record_ts: Current log record timestamp used as a fallback.
     """
 
-    global _last_rotation_time
-
-    with _rotation_lock:
-        if _last_rotation_time is not None:
-            return _last_rotation_time
+    last = _rotation_state.get()
+    if last is not None:
+        return last
 
     start_time = None
     try:
@@ -78,15 +94,13 @@ def _get_rotation_start_time(file_path: Path, record_ts: float) -> float:
     except (OSError, ValueError) as exc:
         logger.debug(f"get_ctime failed for {file_path}: {exc}")
 
-    with _rotation_lock:
-        _last_rotation_time = start_time or record_ts
-        return _last_rotation_time
+    baseline = start_time or record_ts
+    _rotation_state.set(baseline)
+    return baseline
 
 
 def _default_rotation_condition(message: Any, file: Any) -> bool:
     """Rotate when file exceeds size or age thresholds."""
-
-    global _last_rotation_time
 
     record_ts = message.record["time"].timestamp()
 
@@ -98,14 +112,12 @@ def _default_rotation_condition(message: Any, file: Any) -> bool:
         return False
 
     if stat.st_size >= LOG_ROTATION_SIZE_BYTES:
-        with _rotation_lock:
-            _last_rotation_time = record_ts
+        _rotation_state.set(record_ts)
         return True
 
     start_ts = _get_rotation_start_time(path, record_ts)
     if record_ts - start_ts >= LOG_ROTATION_MAX_AGE.total_seconds():
-        with _rotation_lock:
-            _last_rotation_time = record_ts
+        _rotation_state.set(record_ts)
         return True
 
     return False
@@ -153,6 +165,7 @@ def configure_logging(
         rotation: loguru rotation rule (e.g., '10 MB', '1 day', '12:00') or callable.
         retention: loguru retention rule (e.g., '5', '1 week', 'keep 10 files') or callable.
     """
+    reset_rotation_state()
     logger.remove()
 
     console_kwargs: dict[str, Any] = {
@@ -200,3 +213,15 @@ def configure_logging(
 
     logging.basicConfig(handlers=[InterceptHandler()], level=logging.NOTSET, force=True)
     logging.captureWarnings(True)
+
+
+def reset_rotation_state() -> None:
+    """Helper for tests to reset cached rotation timestamp."""
+
+    _rotation_state.reset()
+
+
+def get_last_rotation_time() -> float | None:
+    """Return the cached rotation timestamp (for tests/diagnostics)."""
+
+    return _rotation_state.get()

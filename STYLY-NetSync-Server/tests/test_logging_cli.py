@@ -13,6 +13,13 @@ from styly_netsync import logging_utils, server
 REAL_SLEEP = time.sleep
 
 
+@pytest.fixture(autouse=True)
+def _reset_rotation_state():
+    # Keep rotation cache clean across tests without per-test calls
+    logging_utils.reset_rotation_state()
+    yield
+
+
 def _patch_quick_exit(monkeypatch):
     # Skip base64 logo and avoid network lookups for determinism
     monkeypatch.setattr(server, "display_logo", lambda: None)
@@ -152,7 +159,6 @@ def test_rotation_triggers_on_age(monkeypatch, tmp_path):
     store: dict[str, object] = {}
     _patch_quick_exit(monkeypatch)
     _patch_dummy_server(monkeypatch, store)
-    logging_utils._last_rotation_time = None
     monkeypatch.setattr(logging_utils, "LOG_ROTATION_MAX_AGE", timedelta(seconds=1))
 
     original_configure = server.configure_logging
@@ -190,7 +196,6 @@ def test_rotation_triggers_on_age(monkeypatch, tmp_path):
 
     rotated = sorted(tmp_path.glob("netsync-server*.log"))
     assert len(rotated) >= 2, "Expected rotation to create an additional log file"
-    logging_utils._last_rotation_time = None
 
 
 def _make_message(ts: float):
@@ -233,7 +238,6 @@ def test_rotation_triggers_on_size(monkeypatch, tmp_path):
     _patch_quick_exit(monkeypatch)
     store: dict[str, object] = {}
     _patch_dummy_server(monkeypatch, store)
-    logging_utils._last_rotation_time = None
     monkeypatch.setattr(logging_utils, "LOG_ROTATION_SIZE_BYTES", 1)
 
     original_configure = server.configure_logging
@@ -270,11 +274,9 @@ def test_rotation_triggers_on_size(monkeypatch, tmp_path):
 
     rotated = sorted(tmp_path.glob("netsync-server*.log"))
     assert len(rotated) >= 2, "Expected size-based rotation to create another file"
-    logging_utils._last_rotation_time = None
 
 
 def test_rotation_uses_cached_start_time(monkeypatch, tmp_path):
-    logging_utils._last_rotation_time = None
     log_file = tmp_path / "netsync-server.log"
     log_file.write_text("dummy\n", encoding="utf-8")
 
@@ -284,14 +286,12 @@ def test_rotation_uses_cached_start_time(monkeypatch, tmp_path):
     before_threshold = start_ts + logging_utils.LOG_ROTATION_MAX_AGE.total_seconds() - 1
     message_before = _make_message(before_threshold)
     assert logging_utils._default_rotation_condition(message_before, log_file) is False
-    assert logging_utils._last_rotation_time == pytest.approx(start_ts)
+    assert logging_utils.get_last_rotation_time() == pytest.approx(start_ts)
 
     after_threshold = start_ts + logging_utils.LOG_ROTATION_MAX_AGE.total_seconds() + 1
     message_after = _make_message(after_threshold)
     assert logging_utils._default_rotation_condition(message_after, log_file) is True
-    assert logging_utils._last_rotation_time == pytest.approx(after_threshold)
-
-    logging_utils._last_rotation_time = None
+    assert logging_utils.get_last_rotation_time() == pytest.approx(after_threshold)
 
 
 def test_intercept_handler_redirects_stdlib(monkeypatch):
