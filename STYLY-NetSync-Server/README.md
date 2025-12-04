@@ -40,6 +40,13 @@ styly-netsync-simulator --clients 50
 styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 ```
 
+## Logging
+
+- Console output: human-friendly text by default. Use `--log-json-console` for JSON and `--log-level-console LEVEL` to change the level.
+- File output: add `--log-dir DIR` to write JSON lines to `DIR/netsync-server.log` (DEBUG level).
+- Rotation & retention: default is 10 MB or 7 days, keeping the newest 20 files. Override with `--log-rotation` / `--log-retention` (loguru syntax like `"10 MB"`, `"1 day"`, `"keep 5 files"`).
+- Bridging: stdlib `logging` is routed to loguru automatically.
+
 ## REST bridge for client variables
 
 Starting with this version the server launches an embedded FastAPI application that exposes a REST endpoint for pre-seeding and updating per-client Network Variables by `deviceId`.
