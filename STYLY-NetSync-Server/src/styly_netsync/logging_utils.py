@@ -38,6 +38,16 @@ class _RotationState:
     def reset(self) -> None:
         self.set(None)
 
+    def get_or_set(self, factory: Callable[[], float]) -> float:
+        """Return cached value or compute/set once under lock."""
+
+        with self._lock:
+            if self._last is not None:
+                return self._last
+
+            self._last = factory()
+            return self._last
+
 
 _rotation_state = _RotationState()
 
@@ -84,19 +94,15 @@ def _get_rotation_start_time(file_path: Path, record_ts: float) -> float:
         record_ts: Current log record timestamp used as a fallback.
     """
 
-    last = _rotation_state.get()
-    if last is not None:
-        return last
+    def _compute_baseline() -> float:
+        start_time = None
+        try:
+            start_time = get_ctime(str(file_path))
+        except (OSError, ValueError) as exc:
+            logger.debug(f"get_ctime failed for {file_path}: {exc}")
+        return start_time or record_ts
 
-    start_time = None
-    try:
-        start_time = get_ctime(str(file_path))
-    except (OSError, ValueError) as exc:
-        logger.debug(f"get_ctime failed for {file_path}: {exc}")
-
-    baseline = start_time or record_ts
-    _rotation_state.set(baseline)
-    return baseline
+    return _rotation_state.get_or_set(_compute_baseline)
 
 
 def _default_rotation_condition(message: Any, file: Any) -> bool:
