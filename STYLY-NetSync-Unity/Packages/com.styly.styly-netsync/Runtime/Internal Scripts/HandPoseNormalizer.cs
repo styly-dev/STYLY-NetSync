@@ -1,4 +1,5 @@
 // HandPoseNormalizer.cs - Follows HandVisualizer's wrist transform for cross-platform hand tracking
+using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.InputSystem.XR;
 using UnityEngine.XR.Hands;
@@ -145,20 +146,23 @@ namespace Styly.NetSync.Internal
 
         private void TryFindActiveWristTransform()
         {
-            // Try to find an active wrist transform (different platform mesh might be active)
+            // Try to find an active wrist transform under XROrigin (different platform mesh might be active)
+            var xrOrigin = Object.FindFirstObjectByType<XROrigin>();
+            if (xrOrigin == null) return;
+
             string wristName = _handedness == Handedness.Left ? "L_Wrist" : "R_Wrist";
-            var allTransforms = Object.FindObjectsByType<Transform>(FindObjectsSortMode.None);
+            var allTransforms = xrOrigin.GetComponentsInChildren<Transform>(true);
 
             foreach (var t in allTransforms)
             {
-                if (t == null || t == _handTransform) continue;
+                if (t == _handTransform) continue;
 
-                if (t.name == wristName && t.gameObject.activeInHierarchy && IsPartOfHandVisualizer(t))
+                if (t.name == wristName && t.gameObject.activeInHierarchy)
                 {
                     _handTransform = t;
                     if (_enableDebugLog)
                     {
-                        Debug.Log($"[HandPoseNormalizer] Switched to active wrist transform: {GetFullPath(t)}");
+                        Debug.Log($"[HandPoseNormalizer] Switched to active wrist: {GetFullPath(t)}");
                     }
                     return;
                 }
@@ -167,93 +171,63 @@ namespace Styly.NetSync.Internal
 
         private void FindHandTransform()
         {
-            // Search for HandVisualizer's wrist transform in the scene
-            // The naming convention is "L_Wrist" or "R_Wrist"
-            // HandVisualizer has multiple hand meshes for different platforms (MetaQuest, AndroidXR, etc.)
-            // We need to find the one that is currently active
+            // First, find XROrigin (local player's root)
+            // This ensures we only find wrist transforms for the local player, not remote avatars
+            var xrOrigin = Object.FindFirstObjectByType<XROrigin>();
+            if (xrOrigin == null)
+            {
+                if (!_hasLoggedWarning)
+                {
+                    Debug.LogWarning("[HandPoseNormalizer] XROrigin not found in scene.");
+                    _hasLoggedWarning = true;
+                }
+                return;
+            }
 
+            // Search for wrist transform under XROrigin
             string wristName = _handedness == Handedness.Left ? "L_Wrist" : "R_Wrist";
-
-            var allTransforms = Object.FindObjectsByType<Transform>(FindObjectsSortMode.None);
             Transform fallbackTransform = null;
+
+            // GetComponentsInChildren searches only within XROrigin hierarchy
+            var allTransforms = xrOrigin.GetComponentsInChildren<Transform>(true); // includeInactive=true
 
             foreach (var t in allTransforms)
             {
-                if (t == null) continue;
-
-                // Check for exact match with L_Wrist or R_Wrist
                 if (t.name == wristName)
                 {
-                    // Verify this is part of a hand visualization hierarchy (has XRHandSkeletonDriver in parent)
-                    if (IsPartOfHandVisualizer(t))
+                    if (t.gameObject.activeInHierarchy)
                     {
-                        // Prefer the active one (correct platform)
-                        if (t.gameObject.activeInHierarchy)
+                        _handTransform = t;
+                        _isInitialized = true;
+                        if (_enableDebugLog)
                         {
-                            _handTransform = t;
-                            _isInitialized = true;
-                            if (_enableDebugLog)
-                            {
-                                Debug.Log($"[HandPoseNormalizer] Found active wrist transform: {GetFullPath(t)}");
-                            }
-                            return;
+                            Debug.Log($"[HandPoseNormalizer] Found active wrist: {GetFullPath(t)}");
                         }
-                        else
-                        {
-                            // Keep as fallback in case no active one is found yet
-                            fallbackTransform = t;
-                        }
+                        return;
+                    }
+                    else
+                    {
+                        fallbackTransform = t;
                     }
                 }
             }
 
-            // Use fallback if no active one found (hand tracking may not be active yet)
             if (fallbackTransform != null)
             {
                 _handTransform = fallbackTransform;
                 _isInitialized = true;
                 if (_enableDebugLog)
                 {
-                    Debug.Log($"[HandPoseNormalizer] Found inactive wrist transform (will monitor): {GetFullPath(fallbackTransform)}");
+                    Debug.Log($"[HandPoseNormalizer] Found inactive wrist (will monitor): {GetFullPath(fallbackTransform)}");
                 }
                 return;
             }
 
-            // Log warning only once
             if (!_hasLoggedWarning)
             {
-                Debug.LogWarning($"[HandPoseNormalizer] Could not find {_handedness} wrist transform ({wristName}). Make sure HandVisualizer is in the scene.");
+                Debug.LogWarning($"[HandPoseNormalizer] Could not find {wristName} under XROrigin.");
                 _hasLoggedWarning = true;
             }
-        }
-
-        private bool IsPartOfHandVisualizer(Transform t)
-        {
-            // Walk up the hierarchy to find XRHandSkeletonDriver or HandVisualizer
-            var current = t;
-            int depth = 0;
-            const int maxDepth = 10;
-
-            while (current != null && depth < maxDepth)
-            {
-                // Check for XRHandSkeletonDriver component
-                if (current.GetComponent<XRHandSkeletonDriver>() != null)
-                {
-                    return true;
-                }
-
-                // Check for object names that indicate hand visualizer
-                string name = current.name.ToLower();
-                if (name.Contains("handvisualizer") || name.Contains("hand visualizer"))
-                {
-                    return true;
-                }
-
-                current = current.parent;
-                depth++;
-            }
-
-            return false;
         }
 
         private string GetFullPath(Transform t)
