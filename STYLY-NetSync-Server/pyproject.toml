@@ -41,11 +41,12 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "msgpack>=1.0.5",
     "psutil>=5.9.0",
+    "loguru>=0.7.2",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
+    "pytest>=8.4.1",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
@@ -163,3 +164,8 @@ exclude_lines = [
 
 [tool.coverage.html]
 directory = "htmlcov"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]

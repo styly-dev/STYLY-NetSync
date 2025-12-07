@@ -26,59 +26,15 @@ from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any, TYPE_CHECKING
+
 import zmq
+from loguru import logger
 from . import binary_serializer
 from . import network_utils
+from .logging_utils import configure_logging
 
 if TYPE_CHECKING:
     from uvicorn import Server
-
-# Log configuration (with optional ANSI colors for console)
-
-
-class ColorFormatter(logging.Formatter):
-    """Simple ANSI colorizing formatter.
-
-    - INFO: default
-    - WARNING: yellow
-    - ERROR: bright red
-    - CRITICAL: white on red background
-    """
-
-    RESET = "\x1b[0m"
-    COLORS = {
-        "WARNING": "\x1b[33m",  # yellow
-        "ERROR": "\x1b[91m\x1b[1m",  # bright red + bold
-        "CRITICAL": "\x1b[97m\x1b[41m\x1b[1m",  # white on red bg + bold
-    }
-
-    def __init__(self, fmt: str, datefmt: str | None = None, enable_color: bool = True):
-        super().__init__(fmt=fmt, datefmt=datefmt)
-        self.enable_color = enable_color
-
-    def format(self, record: logging.LogRecord) -> str:
-        base = super().format(record)
-        if not self.enable_color:
-            return base
-        color = self.COLORS.get(record.levelname)
-        if not color:
-            return base
-        return f"{color}{base}{self.RESET}"
-
-
-# Use colors only when outputting to a TTY and NO_COLOR is not set
-_use_color = sys.stderr.isatty() and os.getenv("NO_COLOR") is None
-_handler = logging.StreamHandler()
-_handler.setFormatter(
-    ColorFormatter(
-        "%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%H:%M:%S",
-        enable_color=_use_color,
-    )
-)
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
-logger = logging.getLogger(__name__)
-
 
 DEFAULT_DEALER_PORT = 5555
 DEFAULT_PUB_PORT = 5556
@@ -1716,8 +1672,47 @@ def main():
         version=f"%(prog)s {get_version()}",
         help="Show version and exit",
     )
+    parser.add_argument(
+        "--log-dir",
+        type=Path,
+        help="Directory for log files (enables file logging with rotation)",
+    )
+    parser.add_argument(
+        "--log-rotation",
+        type=str,
+        help=(
+            "Rotation rule for log files (loguru syntax, e.g., '10 MB', '1 day', "
+            "'12:00'); default triggers at 10MB or 7 days"
+        ),
+    )
+    parser.add_argument(
+        "--log-retention",
+        type=str,
+        help=(
+            "Retention rule for log files (loguru syntax, e.g., '5', '1 week', "
+            "'keep 10 files'); default keeps newest 20 files"
+        ),
+    )
+    parser.add_argument(
+        "--log-json-console",
+        action="store_true",
+        help="Emit console logs as JSON instead of text",
+    )
+    parser.add_argument(
+        "--log-level-console",
+        default="INFO",
+        help="Console log level (default: INFO)",
+    )
 
     args = parser.parse_args()
+
+    configure_logging(
+        log_dir=args.log_dir,
+        console_level=args.log_level_console,
+        console_json=args.log_json_console,
+        rotation=args.log_rotation,
+        retention=args.log_retention,
+    )
 
     # Set default values from module constants (previously from argparse)
     dealer_port = DEFAULT_DEALER_PORT
