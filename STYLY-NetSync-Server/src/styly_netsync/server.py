@@ -245,8 +245,8 @@ class NetSyncServer:
         self.nv_monitor_threshold = 200  # Log warning if > 200 NV req/s
 
         # Network Variables limits
-        self.MAX_GLOBAL_VARS = 20
-        self.MAX_CLIENT_VARS = 20
+        self.MAX_GLOBAL_VARS = 100
+        self.MAX_CLIENT_VARS = 100
         self.MAX_VAR_NAME_LENGTH = 64
         self.MAX_VAR_VALUE_LENGTH = 1024
 
