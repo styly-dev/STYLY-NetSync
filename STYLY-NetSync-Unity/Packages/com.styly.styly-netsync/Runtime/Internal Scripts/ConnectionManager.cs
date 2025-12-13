@@ -21,6 +21,8 @@ namespace Styly.NetSync
         private bool _connectionError;
         private ServerDiscoveryManager _discoveryManager;
         private string _currentRoomId;
+        private DateTime _lastMessageReceivedTime;
+        private const double HeartbeatTimeoutSeconds = 15.0; // Timeout if no messages received for 15 seconds
 
         public DealerSocket DealerSocket => _dealerSocket;
         public SubscriberSocket SubSocket => _subSocket;
@@ -112,6 +114,9 @@ namespace Styly.NetSync
 
                 DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
 
+                // Initialize heartbeat timestamp
+                _lastMessageReceivedTime = DateTime.UtcNow;
+
                 // Notify connection established
                 if (OnConnectionEstablished != null)
                 {
@@ -121,10 +126,23 @@ namespace Styly.NetSync
                 while (!_shouldStop)
                 {
                     // Receive two frames: [topic][payload]. Use string topic and direct comparison.
-                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
-                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
+                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic))
+                    {
+                        // Check for heartbeat timeout
+                        CheckHeartbeatTimeout();
+                        continue;
+                    }
+                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload))
+                    {
+                        // Check for heartbeat timeout
+                        CheckHeartbeatTimeout();
+                        continue;
+                    }
 
                     if (topic != roomId) { continue; }
+
+                    // Update last message received time
+                    _lastMessageReceivedTime = DateTime.UtcNow;
 
                     try
                     {
@@ -147,6 +165,15 @@ namespace Styly.NetSync
                         OnConnectionError.Invoke(ex.Message);
                     }
                 }
+            }
+        }
+
+        private void CheckHeartbeatTimeout()
+        {
+            var elapsed = (DateTime.UtcNow - _lastMessageReceivedTime).TotalSeconds;
+            if (elapsed > HeartbeatTimeoutSeconds)
+            {
+                throw new Exception($"Heartbeat timeout: no messages received for {elapsed:F1} seconds (threshold: {HeartbeatTimeoutSeconds}s)");
             }
         }
 
