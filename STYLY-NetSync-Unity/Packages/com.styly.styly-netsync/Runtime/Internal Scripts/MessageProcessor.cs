@@ -94,9 +94,8 @@ namespace Styly.NetSync
 
 
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
-                        // Process ID mappings immediately (don't queue)
-                        // ID mapping data received
-                        ProcessIdMappings(mappingData);
+                        // Queue ID mappings for main thread processing (thread-safety fix)
+                        _messageQueue.Enqueue(new NetworkMessage { type = "id_mapping", dataObj = mappingData });
                         _messagesReceived++;
                         break;
 
@@ -179,6 +178,13 @@ namespace Styly.NetSync
 
                     case "client_var_sync":
                         ProcessClientVariableSync(msg.dataObj as Dictionary<string, object>, networkVariableManager);
+                        break;
+
+                    case "id_mapping":
+                        if (msg.dataObj is DeviceIdMappingData mappingData)
+                        {
+                            ProcessIdMappings(mappingData);
+                        }
                         break;
                 }
             }
