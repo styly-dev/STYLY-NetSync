@@ -26,8 +26,8 @@ namespace Styly.NetSync
         private readonly Dictionary<int, Dictionary<string, string>> _clientVariables = new();
 
         // Network Variables limits (must match server)
-        private const int MAX_GLOBAL_VARS = 20;
-        private const int MAX_CLIENT_VARS = 20;
+        private const int MAX_GLOBAL_VARS = 100;
+        private const int MAX_CLIENT_VARS = 100;
         private const int MAX_VAR_NAME_LENGTH = 64;
         private const int MAX_VAR_VALUE_LENGTH = 1024;
 
