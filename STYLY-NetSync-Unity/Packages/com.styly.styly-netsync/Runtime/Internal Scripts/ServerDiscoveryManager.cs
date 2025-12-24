@@ -22,6 +22,9 @@ namespace Styly.NetSync
         // Queue for PlayerPrefs operations that must run on main thread
         private readonly Queue<Action> _mainThreadQueue = new Queue<Action>();
 
+        // PlayerPrefs key for server IP caching
+        private const string CACHED_SERVER_IP_KEY = "STYLY_NetSync_LastServerIP";
+
         public bool EnableDiscovery { get; set; } = true;
         public float DiscoveryTimeout { get; set; } = 1f;
         private int _serverDiscoveryPort = 9999;
@@ -68,6 +71,9 @@ namespace Styly.NetSync
             {
                 _isDiscovering = true;
 
+                // Read cached IP on main thread before starting background thread
+                string cachedServerIp = GetCachedServerIp();
+
                 _discoveryClient = new UdpClient();
                 _discoveryClient.EnableBroadcast = true;
                 _discoveryClient.Client.ReceiveTimeout = 500; // 500ms timeout for responses
@@ -76,16 +82,30 @@ namespace Styly.NetSync
                 _discoveryThread = new Thread(() =>
                 {
                     // First, try to connect to localhost using TCP
+                    // Note: localhost is not cached because it is always available locally
                     DebugLog("Attempting to discover server on localhost via TCP...");
                     if (TryTcpDiscovery("127.0.0.1"))
                     {
                         DebugLog("Server discovered on localhost via TCP.");
                         return; // Exit thread if server is found
                     }
-                    
-                    // If localhost fails, proceed with UDP broadcast discovery
+
+                    // If localhost fails, try cached server IP
                     if (!_isDiscovering) return; // Check if discovery was stopped
-                    DebugLog("Localhost discovery failed, proceeding with UDP broadcast.");
+                    if (!string.IsNullOrEmpty(cachedServerIp))
+                    {
+                        DebugLog($"Trying cached server IP: {cachedServerIp}");
+                        if (TryTcpDiscovery(cachedServerIp))
+                        {
+                            QueueCacheServerIp(cachedServerIp); // Refresh cache timestamp for consistency
+                            DebugLog($"Server discovered at cached IP: {cachedServerIp}");
+                            return; // Exit thread if server is found
+                        }
+                    }
+
+                    // If cached IP fails, proceed with UDP broadcast discovery
+                    if (!_isDiscovering) return; // Check if discovery was stopped
+                    DebugLog("Proceeding with UDP broadcast discovery.");
 
                     var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
                     var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, ServerDiscoveryPort);
@@ -152,6 +172,7 @@ namespace Styly.NetSync
                     DebugLog("Starting TCP scan discovery for iOS/visionOS");
 
                     // First, try to connect to localhost
+                    // Note: localhost is not cached because it is always available locally
                     DebugLog("Attempting to discover server on localhost...");
                     if (TryTcpDiscovery("127.0.0.1"))
                     {
@@ -382,7 +403,22 @@ namespace Styly.NetSync
 
         private string GetCachedServerIp()
         {
-            return PlayerPrefs.GetString("STYLY_NetSync_LastServerIP", "");
+            string cachedIp = PlayerPrefs.GetString(CACHED_SERVER_IP_KEY, "");
+
+            if (string.IsNullOrEmpty(cachedIp))
+            {
+                return cachedIp;
+            }
+
+            if (IPAddress.TryParse(cachedIp, out _))
+            {
+                return cachedIp;
+            }
+
+            DebugLog($"Invalid cached IP format: {cachedIp}, clearing cache");
+            PlayerPrefs.DeleteKey(CACHED_SERVER_IP_KEY);
+            PlayerPrefs.Save();
+            return string.Empty;
         }
 
         private void QueueCacheServerIp(string ipAddress)
@@ -391,7 +427,7 @@ namespace Styly.NetSync
             {
                 _mainThreadQueue.Enqueue(() =>
                 {
-                    PlayerPrefs.SetString("STYLY_NetSync_LastServerIP", ipAddress);
+                    PlayerPrefs.SetString(CACHED_SERVER_IP_KEY, ipAddress);
                     PlayerPrefs.Save();
                     DebugLog($"Cached server IP: {ipAddress}");
                 });
@@ -463,6 +499,9 @@ namespace Styly.NetSync
                     var serverName = parts.Length >= 4 ? parts[3] : "Unknown Server";
 
                     var serverAddress = $"tcp://{sender.Address}";
+
+                    // Cache the discovered server IP for future connections
+                    QueueCacheServerIp(sender.Address.ToString());
 
                     DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
 
