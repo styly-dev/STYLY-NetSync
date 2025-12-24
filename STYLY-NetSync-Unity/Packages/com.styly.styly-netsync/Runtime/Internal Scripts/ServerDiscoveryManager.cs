@@ -82,6 +82,7 @@ namespace Styly.NetSync
                 _discoveryThread = new Thread(() =>
                 {
                     // First, try to connect to localhost using TCP
+                    // Note: localhost is not cached because it is always available locally
                     DebugLog("Attempting to discover server on localhost via TCP...");
                     if (TryTcpDiscovery("127.0.0.1"))
                     {
@@ -96,6 +97,7 @@ namespace Styly.NetSync
                         DebugLog($"Trying cached server IP: {cachedServerIp}");
                         if (TryTcpDiscovery(cachedServerIp))
                         {
+                            QueueCacheServerIp(cachedServerIp); // Refresh cache timestamp for consistency
                             DebugLog($"Server discovered at cached IP: {cachedServerIp}");
                             return; // Exit thread if server is found
                         }
@@ -170,6 +172,7 @@ namespace Styly.NetSync
                     DebugLog("Starting TCP scan discovery for iOS/visionOS");
 
                     // First, try to connect to localhost
+                    // Note: localhost is not cached because it is always available locally
                     DebugLog("Attempting to discover server on localhost...");
                     if (TryTcpDiscovery("127.0.0.1"))
                     {
@@ -400,7 +403,22 @@ namespace Styly.NetSync
 
         private string GetCachedServerIp()
         {
-            return PlayerPrefs.GetString(CACHED_SERVER_IP_KEY, "");
+            string cachedIp = PlayerPrefs.GetString(CACHED_SERVER_IP_KEY, "");
+
+            if (string.IsNullOrEmpty(cachedIp))
+            {
+                return cachedIp;
+            }
+
+            if (IPAddress.TryParse(cachedIp, out _))
+            {
+                return cachedIp;
+            }
+
+            DebugLog($"Invalid cached IP format: {cachedIp}, clearing cache");
+            PlayerPrefs.DeleteKey(CACHED_SERVER_IP_KEY);
+            PlayerPrefs.Save();
+            return string.Empty;
         }
 
         private void QueueCacheServerIp(string ipAddress)
