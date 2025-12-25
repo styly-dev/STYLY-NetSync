@@ -134,11 +134,16 @@ namespace Styly.NetSync
                             if (ex.SocketErrorCode != SocketError.TimedOut && _isDiscovering)
                             {
                                 Debug.LogWarning($"Discovery socket error: {ex.Message}");
+                                Thread.Sleep(1000);
                             }
                         }
                         catch (Exception ex)
                         {
-                            if (_isDiscovering) { Debug.LogWarning($"Discovery error: {ex.Message}"); }
+                            if (_isDiscovering)
+                            {
+                                Debug.LogWarning($"Discovery error: {ex.Message}");
+                                Thread.Sleep(1000);
+                            }
                         }
                     }
                 })
