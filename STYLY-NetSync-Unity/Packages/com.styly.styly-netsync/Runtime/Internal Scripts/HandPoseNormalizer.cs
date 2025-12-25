@@ -37,6 +37,11 @@ namespace Styly.NetSync.Internal
         private XRHandSubsystem _handSubsystem;
         private bool _wasTracked = false;
 
+        // Delayed lost detection
+        private bool _pendingLostCheck = false;
+        private int _lostCheckFrameCount = 0;
+        private const int LostCheckDelayFrames = 3; // Wait 3 frames before confirming lost
+
         /// <summary>
         /// Event fired when hand tracking state changes (acquired or lost).
         /// Parameters: (Handedness handedness, bool isTracking)
@@ -103,9 +108,6 @@ namespace Styly.NetSync.Internal
                 return;
             }
 
-            // Update XRHandSubsystem tracking state and fire events
-            UpdateHandTrackingState();
-
             // Check if hand tracking is active (HandVisualizer activates the hand object when tracking)
             bool isHandTrackingActive = _handTransform.gameObject.activeInHierarchy;
 
@@ -130,6 +132,119 @@ namespace Styly.NetSync.Internal
 
                 // Controller mode: re-enable TrackedPoseDriver
                 EnableTrackedPoseDriver();
+            }
+
+            // Update hand tracking state and fire events AFTER TrackedPoseDriver state is updated
+            UpdateHandTrackingState();
+        }
+
+        /// <summary>
+        /// Updates hand tracking state from XRHandSubsystem and fires events on state change.
+        /// Uses delayed check for lost detection to allow TrackedPoseDriver to update first.
+        /// </summary>
+        private void UpdateHandTrackingState()
+        {
+            // Try to get XRHandSubsystem if not available or not running
+            if (_handSubsystem == null || !_handSubsystem.running)
+            {
+                var subsystems = new List<XRHandSubsystem>();
+                SubsystemManager.GetSubsystems(subsystems);
+                _handSubsystem = null;
+                foreach (var s in subsystems)
+                {
+                    if (s.running)
+                    {
+                        _handSubsystem = s;
+                        break;
+                    }
+                }
+            }
+
+            // If no running XRHandSubsystem, don't fire events
+            if (_handSubsystem == null || !_handSubsystem.running)
+            {
+                _wasTracked = false;
+                _pendingLostCheck = false;
+                return;
+            }
+
+            // Get true tracking state from XRHandSubsystem
+            var hand = _handedness == Handedness.Left
+                ? _handSubsystem.leftHand
+                : _handSubsystem.rightHand;
+            bool isTracked = hand.isTracked;
+
+            // Handle pending lost check (delayed confirmation)
+            if (_pendingLostCheck)
+            {
+                _lostCheckFrameCount++;
+
+                // If tracking resumed, cancel the pending lost check
+                if (isTracked)
+                {
+                    if (_enableDebugLog)
+                    {
+                        Debug.Log($"[HandPoseNormalizer] {_handedness} tracking resumed - cancelling pending lost check");
+                    }
+                    _pendingLostCheck = false;
+                    _lostCheckFrameCount = 0;
+                    _wasTracked = true;
+                    OnTrackingStateChanged?.Invoke(_handedness, true);
+                    return;
+                }
+
+                // Wait for delay frames
+                if (_lostCheckFrameCount < LostCheckDelayFrames)
+                {
+                    return;
+                }
+
+                // Delay complete - now check if controller mode
+                _pendingLostCheck = false;
+                _lostCheckFrameCount = 0;
+
+                if (_trackedPoseDriver != null && _trackedPoseDriver.enabled)
+                {
+                    if (_enableDebugLog)
+                    {
+                        Debug.Log($"[HandPoseNormalizer] {_handedness} tracking lost but TrackedPoseDriver is active - suppressing Lost event (controller mode)");
+                    }
+                    return;
+                }
+
+                // True lost - fire event
+                if (_enableDebugLog)
+                {
+                    Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Lost (confirmed after delay)");
+                }
+                OnTrackingStateChanged?.Invoke(_handedness, false);
+                return;
+            }
+
+            // Detect state change
+            if (_wasTracked != isTracked)
+            {
+                _wasTracked = isTracked;
+
+                if (isTracked)
+                {
+                    // Tracking acquired - fire immediately
+                    if (_enableDebugLog)
+                    {
+                        Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Acquired");
+                    }
+                    OnTrackingStateChanged?.Invoke(_handedness, true);
+                }
+                else
+                {
+                    // Tracking lost - start delayed check
+                    if (_enableDebugLog)
+                    {
+                        Debug.Log($"[HandPoseNormalizer] {_handedness} tracking lost - starting delayed check");
+                    }
+                    _pendingLostCheck = true;
+                    _lostCheckFrameCount = 0;
+                }
             }
         }
 
@@ -156,49 +271,6 @@ namespace Styly.NetSync.Internal
                 {
                     Debug.Log($"[HandPoseNormalizer] Controller mode, re-enabled TrackedPoseDriver for {_handedness}");
                 }
-            }
-        }
-
-        /// <summary>
-        /// Updates hand tracking state from XRHandSubsystem and fires events on state change.
-        /// This distinguishes true hand tracking loss from controller mode switch.
-        /// </summary>
-        private void UpdateHandTrackingState()
-        {
-            // Try to get XRHandSubsystem if not available or not running
-            if (_handSubsystem == null || !_handSubsystem.running)
-            {
-                var subsystems = new List<XRHandSubsystem>();
-                SubsystemManager.GetSubsystems(subsystems);
-                foreach (var s in subsystems)
-                {
-                    if (s.running)
-                    {
-                        _handSubsystem = s;
-                        break;
-                    }
-                }
-            }
-
-            // Get true tracking state from XRHandSubsystem
-            bool isTracked = false;
-            if (_handSubsystem != null && _handSubsystem.running)
-            {
-                var hand = _handedness == Handedness.Left
-                    ? _handSubsystem.leftHand
-                    : _handSubsystem.rightHand;
-                isTracked = hand.isTracked;
-            }
-
-            // Detect state change and fire event
-            if (_wasTracked != isTracked)
-            {
-                _wasTracked = isTracked;
-                if (_enableDebugLog)
-                {
-                    Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: {(isTracked ? "Acquired" : "Lost")}");
-                }
-                OnTrackingStateChanged?.Invoke(_handedness, isTracked);
             }
         }
 
