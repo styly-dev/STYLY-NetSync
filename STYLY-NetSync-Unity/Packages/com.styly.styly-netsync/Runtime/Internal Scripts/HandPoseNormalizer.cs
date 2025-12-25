@@ -1,4 +1,6 @@
 // HandPoseNormalizer.cs - Follows HandVisualizer's wrist transform for cross-platform hand tracking
+using System;
+using System.Collections.Generic;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.InputSystem.XR;
@@ -30,6 +32,16 @@ namespace Styly.NetSync.Internal
         private bool _isInitialized = false;
         private bool _hasLoggedWarning = false;
         private bool _trackedPoseDriverWasDisabled = false;
+
+        // XRHandSubsystem tracking state
+        private XRHandSubsystem _handSubsystem;
+        private bool _wasTracked = false;
+
+        /// <summary>
+        /// Event fired when hand tracking state changes (acquired or lost).
+        /// Parameters: (Handedness handedness, bool isTracking)
+        /// </summary>
+        public event Action<Handedness, bool> OnTrackingStateChanged;
 
         /// <summary>
         /// Gets or sets which hand this normalizer is for.
@@ -91,6 +103,9 @@ namespace Styly.NetSync.Internal
                 return;
             }
 
+            // Update XRHandSubsystem tracking state and fire events
+            UpdateHandTrackingState();
+
             // Check if hand tracking is active (HandVisualizer activates the hand object when tracking)
             bool isHandTrackingActive = _handTransform.gameObject.activeInHierarchy;
 
@@ -144,10 +159,53 @@ namespace Styly.NetSync.Internal
             }
         }
 
+        /// <summary>
+        /// Updates hand tracking state from XRHandSubsystem and fires events on state change.
+        /// This distinguishes true hand tracking loss from controller mode switch.
+        /// </summary>
+        private void UpdateHandTrackingState()
+        {
+            // Try to get XRHandSubsystem if not available or not running
+            if (_handSubsystem == null || !_handSubsystem.running)
+            {
+                var subsystems = new List<XRHandSubsystem>();
+                SubsystemManager.GetSubsystems(subsystems);
+                foreach (var s in subsystems)
+                {
+                    if (s.running)
+                    {
+                        _handSubsystem = s;
+                        break;
+                    }
+                }
+            }
+
+            // Get true tracking state from XRHandSubsystem
+            bool isTracked = false;
+            if (_handSubsystem != null && _handSubsystem.running)
+            {
+                var hand = _handedness == Handedness.Left
+                    ? _handSubsystem.leftHand
+                    : _handSubsystem.rightHand;
+                isTracked = hand.isTracked;
+            }
+
+            // Detect state change and fire event
+            if (_wasTracked != isTracked)
+            {
+                _wasTracked = isTracked;
+                if (_enableDebugLog)
+                {
+                    Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: {(isTracked ? "Acquired" : "Lost")}");
+                }
+                OnTrackingStateChanged?.Invoke(_handedness, isTracked);
+            }
+        }
+
         private void TryFindActiveWristTransform()
         {
             // Try to find an active wrist transform under XROrigin (different platform mesh might be active)
-            var xrOrigin = Object.FindFirstObjectByType<XROrigin>();
+            var xrOrigin = UnityEngine.Object.FindFirstObjectByType<XROrigin>();
             if (xrOrigin == null) return;
 
             string wristName = _handedness == Handedness.Left ? "L_Wrist" : "R_Wrist";
@@ -173,7 +231,7 @@ namespace Styly.NetSync.Internal
         {
             // First, find XROrigin (local player's root)
             // This ensures we only find wrist transforms for the local player, not remote avatars
-            var xrOrigin = Object.FindFirstObjectByType<XROrigin>();
+            var xrOrigin = UnityEngine.Object.FindFirstObjectByType<XROrigin>();
             if (xrOrigin == null)
             {
                 if (!_hasLoggedWarning)
