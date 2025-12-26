@@ -19,6 +19,23 @@ namespace Styly.NetSync.Internal
     /// </summary>
     internal class HandPoseNormalizer : MonoBehaviour
     {
+        /// <summary>
+        /// Hand tracking state for state machine management.
+        /// </summary>
+        private enum TrackingState
+        {
+            /// <summary>Not yet initialized or no XRHandSubsystem available</summary>
+            Unknown,
+            /// <summary>Hand is being actively tracked</summary>
+            Tracking,
+            /// <summary>Waiting to confirm if tracking is truly lost (3-frame delay)</summary>
+            PendingLostCheck,
+            /// <summary>True tracking lost - maintaining head-relative position</summary>
+            TrueLost,
+            /// <summary>Controller mode - TrackedPoseDriver handles input</summary>
+            ControllerMode
+        }
+
         [SerializeField]
         private Handedness _handedness = Handedness.Right;
 
@@ -33,18 +50,13 @@ namespace Styly.NetSync.Internal
         private bool _hasLoggedWarning = false;
         private bool _trackedPoseDriverWasDisabled = false;
 
-        // XRHandSubsystem tracking state
+        // XRHandSubsystem reference
         private XRHandSubsystem _handSubsystem;
-        private bool _wasTracked = false;
 
-        // Delayed lost detection
-        private bool _pendingLostCheck = false;
+        // State machine for tracking state
+        private TrackingState _trackingState = TrackingState.Unknown;
         private int _lostCheckFrameCount = 0;
         private const int LostCheckDelayFrames = 3; // Wait 3 frames before confirming lost
-
-        // True lost state - when hand tracking is truly lost (not controller switch)
-        // In this state, TrackedPoseDriver should stay disabled and we maintain head-relative position
-        private bool _isTrueLost = false;
 
         // Head transform reference for maintaining relative position during lost state
         private Transform _headTransform;
@@ -109,19 +121,24 @@ namespace Styly.NetSync.Internal
 
         private void LateUpdate()
         {
-            // If in true lost state, maintain head-relative position and check for restoration
-            if (_isTrueLost)
+            // Handle state-specific behavior
+            switch (_trackingState)
             {
-                // Update position relative to head
-                if (_headTransform != null)
-                {
-                    _selfTransform.position = _headTransform.TransformPoint(_lostPositionOffsetFromHead);
-                    _selfTransform.rotation = _headTransform.rotation * _lostRotationOffsetFromHead;
-                }
+                case TrackingState.TrueLost:
+                    // Maintain head-relative position
+                    if (_headTransform != null)
+                    {
+                        _selfTransform.position = _headTransform.TransformPoint(_lostPositionOffsetFromHead);
+                        _selfTransform.rotation = _headTransform.rotation * _lostRotationOffsetFromHead;
+                    }
+                    // Check for tracking restoration
+                    UpdateHandTrackingState();
+                    return;
 
-                // Still check for tracking state changes to detect restoration
-                UpdateHandTrackingState();
-                return;
+                case TrackingState.ControllerMode:
+                    // TrackedPoseDriver handles input, just check for state changes
+                    UpdateHandTrackingState();
+                    return;
             }
 
             // Try to find hand transform if not initialized
@@ -174,8 +191,8 @@ namespace Styly.NetSync.Internal
         }
 
         /// <summary>
-        /// Updates hand tracking state from XRHandSubsystem and fires events on state change.
-        /// Uses delayed check for lost detection to allow TrackedPoseDriver to update first.
+        /// Updates hand tracking state from XRHandSubsystem using state machine.
+        /// Uses delayed check for lost detection to distinguish controller switch from true lost.
         /// </summary>
         private void UpdateHandTrackingState()
         {
@@ -195,11 +212,14 @@ namespace Styly.NetSync.Internal
                 }
             }
 
-            // If no running XRHandSubsystem, don't fire events
+            // If no running XRHandSubsystem, reset to Unknown state
             if (_handSubsystem == null || !_handSubsystem.running)
             {
-                _wasTracked = false;
-                _pendingLostCheck = false;
+                if (_trackingState != TrackingState.Unknown && _trackingState != TrackingState.ControllerMode)
+                {
+                    _trackingState = TrackingState.Unknown;
+                    _lostCheckFrameCount = 0;
+                }
                 return;
             }
 
@@ -209,88 +229,97 @@ namespace Styly.NetSync.Internal
                 : _handSubsystem.rightHand;
             bool isTracked = hand.isTracked;
 
-            // Handle pending lost check (delayed confirmation)
-            if (_pendingLostCheck)
+            // State machine transitions
+            switch (_trackingState)
             {
-                _lostCheckFrameCount++;
-
-                // If tracking resumed, cancel the pending lost check
-                if (isTracked)
-                {
-                    if (_enableDebugLog)
+                case TrackingState.Unknown:
+                case TrackingState.ControllerMode:
+                    if (isTracked)
                     {
-                        Debug.Log($"[HandPoseNormalizer] {_handedness} tracking resumed - cancelling pending lost check");
+                        // Start tracking
+                        if (_enableDebugLog)
+                        {
+                            Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Acquired");
+                        }
+                        _trackingState = TrackingState.Tracking;
+                        OnTrackingStateChanged?.Invoke(_handedness, true);
                     }
-                    _pendingLostCheck = false;
-                    _lostCheckFrameCount = 0;
-                    _wasTracked = true;
-                    _isTrueLost = false;
-                    OnTrackingStateChanged?.Invoke(_handedness, true);
-                    return;
-                }
+                    break;
 
-                // Wait for delay frames
-                if (_lostCheckFrameCount < LostCheckDelayFrames)
-                {
-                    return;
-                }
-
-                // Delay complete - now check if controller mode
-                _pendingLostCheck = false;
-                _lostCheckFrameCount = 0;
-
-                if (_trackedPoseDriver != null && _trackedPoseDriver.enabled)
-                {
-                    if (_enableDebugLog)
+                case TrackingState.Tracking:
+                    if (!isTracked)
                     {
-                        Debug.Log($"[HandPoseNormalizer] {_handedness} tracking lost but TrackedPoseDriver is active - suppressing Lost event (controller mode)");
+                        // Start delayed lost check
+                        if (_enableDebugLog)
+                        {
+                            Debug.Log($"[HandPoseNormalizer] {_handedness} tracking lost - starting delayed check");
+                        }
+                        _trackingState = TrackingState.PendingLostCheck;
+                        _lostCheckFrameCount = 0;
                     }
-                    return;
-                }
+                    break;
 
-                // True lost - record head-relative offset and fire event
-                if (_enableDebugLog)
-                {
-                    Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Lost (confirmed after delay)");
-                }
+                case TrackingState.PendingLostCheck:
+                    _lostCheckFrameCount++;
 
-                // Record current position relative to head before entering lost state
-                if (_headTransform != null)
-                {
-                    _lostPositionOffsetFromHead = _headTransform.InverseTransformPoint(_selfTransform.position);
-                    _lostRotationOffsetFromHead = Quaternion.Inverse(_headTransform.rotation) * _selfTransform.rotation;
-                }
-
-                _isTrueLost = true;
-                OnTrackingStateChanged?.Invoke(_handedness, false);
-                return;
-            }
-
-            // Detect state change
-            if (_wasTracked != isTracked)
-            {
-                _wasTracked = isTracked;
-
-                if (isTracked)
-                {
-                    // Tracking acquired - fire immediately
-                    if (_enableDebugLog)
+                    if (isTracked)
                     {
-                        Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Acquired");
+                        // Tracking resumed - cancel lost check
+                        if (_enableDebugLog)
+                        {
+                            Debug.Log($"[HandPoseNormalizer] {_handedness} tracking resumed - cancelling pending lost check");
+                        }
+                        _trackingState = TrackingState.Tracking;
+                        _lostCheckFrameCount = 0;
+                        OnTrackingStateChanged?.Invoke(_handedness, true);
                     }
-                    _isTrueLost = false;
-                    OnTrackingStateChanged?.Invoke(_handedness, true);
-                }
-                else
-                {
-                    // Tracking lost - start delayed check
-                    if (_enableDebugLog)
+                    else if (_lostCheckFrameCount >= LostCheckDelayFrames)
                     {
-                        Debug.Log($"[HandPoseNormalizer] {_handedness} tracking lost - starting delayed check");
+                        // Delay complete - determine if controller mode or true lost
+                        _lostCheckFrameCount = 0;
+
+                        if (_trackedPoseDriver != null && _trackedPoseDriver.enabled)
+                        {
+                            // Controller mode - suppress Lost event
+                            if (_enableDebugLog)
+                            {
+                                Debug.Log($"[HandPoseNormalizer] {_handedness} tracking lost but TrackedPoseDriver is active - controller mode");
+                            }
+                            _trackingState = TrackingState.ControllerMode;
+                        }
+                        else
+                        {
+                            // True lost - record head-relative offset and fire event
+                            if (_enableDebugLog)
+                            {
+                                Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Lost (confirmed after delay)");
+                            }
+
+                            // Record current position relative to head
+                            if (_headTransform != null)
+                            {
+                                _lostPositionOffsetFromHead = _headTransform.InverseTransformPoint(_selfTransform.position);
+                                _lostRotationOffsetFromHead = Quaternion.Inverse(_headTransform.rotation) * _selfTransform.rotation;
+                            }
+
+                            _trackingState = TrackingState.TrueLost;
+                            OnTrackingStateChanged?.Invoke(_handedness, false);
+                        }
                     }
-                    _pendingLostCheck = true;
-                    _lostCheckFrameCount = 0;
-                }
+                    break;
+
+                case TrackingState.TrueLost:
+                    if (isTracked)
+                    {
+                        // Tracking restored
+                        if (_enableDebugLog)
+                        {
+                            Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Acquired");
+                        }
+                        _trackingState = TrackingState.Tracking;
+                        OnTrackingStateChanged?.Invoke(_handedness, true);
+                    }
+                    break;
             }
         }
 
