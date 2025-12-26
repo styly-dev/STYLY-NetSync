@@ -277,6 +277,7 @@ namespace Styly.NetSync
                 var rightNormalizer = rightHand.gameObject.AddComponent<HandPoseNormalizer>();
                 rightNormalizer.Handedness = Handedness.Right;
                 rightNormalizer.EnableDebugLog = _enableDebugLogs;
+                rightNormalizer.HeadTransform = head;
 
                 // Subscribe to hand tracking state changes
                 rightNormalizer.OnTrackingStateChanged += HandleHandTrackingStateChanged;
@@ -311,6 +312,7 @@ namespace Styly.NetSync
                 var leftNormalizer = leftHand.gameObject.AddComponent<HandPoseNormalizer>();
                 leftNormalizer.Handedness = Handedness.Left;
                 leftNormalizer.EnableDebugLog = _enableDebugLogs;
+                leftNormalizer.HeadTransform = head;
 
                 // Subscribe to hand tracking state changes
                 leftNormalizer.OnTrackingStateChanged += HandleHandTrackingStateChanged;

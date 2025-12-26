@@ -42,6 +42,17 @@ namespace Styly.NetSync.Internal
         private int _lostCheckFrameCount = 0;
         private const int LostCheckDelayFrames = 3; // Wait 3 frames before confirming lost
 
+        // True lost state - when hand tracking is truly lost (not controller switch)
+        // In this state, TrackedPoseDriver should stay disabled and we maintain head-relative position
+        private bool _isTrueLost = false;
+
+        // Head transform reference for maintaining relative position during lost state
+        private Transform _headTransform;
+
+        // Offset from head recorded when tracking is lost
+        private Vector3 _lostPositionOffsetFromHead;
+        private Quaternion _lostRotationOffsetFromHead;
+
         /// <summary>
         /// Event fired when hand tracking state changes (acquired or lost).
         /// Parameters: (Handedness handedness, bool isTracking)
@@ -64,6 +75,15 @@ namespace Styly.NetSync.Internal
         {
             get => _enableDebugLog;
             set => _enableDebugLog = value;
+        }
+
+        /// <summary>
+        /// Gets or sets the head transform for maintaining relative position during lost state.
+        /// </summary>
+        public Transform HeadTransform
+        {
+            get => _headTransform;
+            set => _headTransform = value;
         }
 
         private void Start()
@@ -89,6 +109,21 @@ namespace Styly.NetSync.Internal
 
         private void LateUpdate()
         {
+            // If in true lost state, maintain head-relative position and check for restoration
+            if (_isTrueLost)
+            {
+                // Update position relative to head
+                if (_headTransform != null)
+                {
+                    _selfTransform.position = _headTransform.TransformPoint(_lostPositionOffsetFromHead);
+                    _selfTransform.rotation = _headTransform.rotation * _lostRotationOffsetFromHead;
+                }
+
+                // Still check for tracking state changes to detect restoration
+                UpdateHandTrackingState();
+                return;
+            }
+
             // Try to find hand transform if not initialized
             if (!_isInitialized)
             {
@@ -189,6 +224,7 @@ namespace Styly.NetSync.Internal
                     _pendingLostCheck = false;
                     _lostCheckFrameCount = 0;
                     _wasTracked = true;
+                    _isTrueLost = false;
                     OnTrackingStateChanged?.Invoke(_handedness, true);
                     return;
                 }
@@ -212,11 +248,20 @@ namespace Styly.NetSync.Internal
                     return;
                 }
 
-                // True lost - fire event
+                // True lost - record head-relative offset and fire event
                 if (_enableDebugLog)
                 {
                     Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Lost (confirmed after delay)");
                 }
+
+                // Record current position relative to head before entering lost state
+                if (_headTransform != null)
+                {
+                    _lostPositionOffsetFromHead = _headTransform.InverseTransformPoint(_selfTransform.position);
+                    _lostRotationOffsetFromHead = Quaternion.Inverse(_headTransform.rotation) * _selfTransform.rotation;
+                }
+
+                _isTrueLost = true;
                 OnTrackingStateChanged?.Invoke(_handedness, false);
                 return;
             }
@@ -233,6 +278,7 @@ namespace Styly.NetSync.Internal
                     {
                         Debug.Log($"[HandPoseNormalizer] {_handedness} tracking state changed: Acquired");
                     }
+                    _isTrueLost = false;
                     OnTrackingStateChanged?.Invoke(_handedness, true);
                 }
                 else

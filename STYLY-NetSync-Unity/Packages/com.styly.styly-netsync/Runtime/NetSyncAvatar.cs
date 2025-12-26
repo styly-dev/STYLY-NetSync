@@ -290,24 +290,19 @@ namespace Styly.NetSync
         /// <summary>
         /// Called by AvatarManager when hand tracking state changes.
         /// This is only called for local avatars.
+        /// Note: Head-relative position maintenance is handled by HandPoseNormalizer.
         /// </summary>
         internal void NotifyHandTrackingStateChanged(Hand hand, bool isTracking)
         {
             if (isTracking)
             {
                 Debug.Log($"[NetSyncAvatar] {hand} hand tracking restored");
-                if (OnHandTrackingRestored != null)
-                {
-                    OnHandTrackingRestored.Invoke(hand);
-                }
+                OnHandTrackingRestored?.Invoke(hand);
             }
             else
             {
                 Debug.Log($"[NetSyncAvatar] {hand} hand tracking lost");
-                if (OnHandTrackingLost != null)
-                {
-                    OnHandTrackingLost.Invoke(hand);
-                }
+                OnHandTrackingLost?.Invoke(hand);
             }
         }
 
