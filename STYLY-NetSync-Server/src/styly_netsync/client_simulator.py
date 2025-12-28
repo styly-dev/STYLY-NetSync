@@ -15,6 +15,7 @@ Architecture:
 """
 
 import argparse
+import atexit
 import logging
 import math
 import random
@@ -510,7 +511,9 @@ class NetworkTransport:
             # DEALER for sending
             self.socket = self.context.socket(zmq.DEALER)
             self.socket.setsockopt(zmq.LINGER, 0)
+            self.socket.setsockopt(zmq.IMMEDIATE, 1)
             self.socket.setsockopt(zmq.RCVTIMEO, 1000)
+            self.socket.setsockopt(zmq.SNDTIMEO, 1000)
 
             dealer_endpoint = f"{self.server_addr}:{self.dealer_port}"
             self.socket.connect(dealer_endpoint)
@@ -563,9 +566,13 @@ class NetworkTransport:
                 [
                     room_id.encode("utf-8"),
                     binary_data,
-                ]
+                ],
+                flags=zmq.NOBLOCK,
             )
             return True
+        except zmq.Again:
+            # Drop when socket is not ready to avoid blocking under congestion.
+            return False
         except Exception as e:
             self.logger.error(f"Failed to send transform: {e}")
             return False
@@ -590,9 +597,13 @@ class NetworkTransport:
                 [
                     room_id.encode("utf-8"),
                     binary_data,
-                ]
+                ],
+                flags=zmq.NOBLOCK,
             )
             return True
+        except zmq.Again:
+            # Drop when socket is not ready to avoid blocking under congestion.
+            return False
         except Exception as e:
             self.logger.error(f"Failed to send client variable: {e}")
             return False
@@ -1069,7 +1080,7 @@ class ClientThreadPool:
             return False
 
         thread = threading.Thread(
-            target=client.run, args=(self.stop_event,), daemon=True
+            target=client.run, args=(self.stop_event,), daemon=False
         )
 
         try:
@@ -1223,8 +1234,20 @@ class ResourceManager:
     @staticmethod
     def setup_signal_handlers(handler):
         """Setup signal handlers for clean shutdown."""
-        signal.signal(signal.SIGINT, handler)
-        signal.signal(signal.SIGTERM, handler)
+        try:
+            signal.signal(signal.SIGINT, handler)
+        except Exception:
+            pass
+        if hasattr(signal, "SIGTERM"):
+            try:
+                signal.signal(signal.SIGTERM, handler)
+            except Exception:
+                pass
+        if hasattr(signal, "SIGBREAK"):
+            try:
+                signal.signal(signal.SIGBREAK, handler)
+            except Exception:
+                pass
 
 
 # ============================================================================
@@ -1262,16 +1285,35 @@ class ClientSimulator:
         self.context = zmq.Context()
         self.thread_pool = ClientThreadPool(num_clients)
         self.running = False
+        self._stop_requested = threading.Event()
+        self._stop_lock = threading.Lock()
+        self._stopped = False
         self.logger = logging.getLogger(self.__class__.__name__)
         self.shared_subscriber: SharedSubscriber | None = None
 
         # Setup signal handlers
         ResourceManager.setup_signal_handlers(self._signal_handler)
 
+        # Best-effort cleanup on interpreter exit
+        atexit.register(self._atexit_cleanup)
+
     def _signal_handler(self, signum, frame):
         """Handle interrupt signals."""
-        self.logger.info(f"\nReceived signal {signum}, stopping simulation...")
-        self.stop()
+        self.logger.info(f"\nReceived signal {signum}, requesting stop...")
+        self.request_stop()
+
+    def request_stop(self):
+        """Request shutdown from non-blocking contexts (signal handlers, etc.)."""
+        self._stop_requested.set()
+        self.running = False
+
+    def _atexit_cleanup(self):
+        """Best-effort cleanup at process exit."""
+        try:
+            self.request_stop()
+            self.stop()
+        except Exception:
+            pass
 
     def start(self):
         """Start the simulation."""
@@ -1427,6 +1469,8 @@ class ClientSimulator:
         # Run until interrupted
         try:
             while self.running:
+                if self._stop_requested.is_set():
+                    break
                 active = self.thread_pool.get_active_count()
                 if active == 0:
                     self.logger.info("All clients stopped")
@@ -1439,8 +1483,10 @@ class ClientSimulator:
 
     def stop(self):
         """Stop the simulation."""
-        if not self.running:
-            return
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
 
         self.running = False
         self.logger.info("Stopping simulation...")
