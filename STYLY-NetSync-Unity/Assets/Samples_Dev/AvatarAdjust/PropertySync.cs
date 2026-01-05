@@ -9,7 +9,7 @@ namespace Styly.NetSync.AvatarAdjust
 
         [SerializeField] private Transform head;
         [SerializeField] private Transform body;
-        [SerializeField] private BodyTransformSolver2 bodyTransformSolver;
+        [SerializeField] private BodyTransformSolver bodyTransformSolver;
         
         const string VarName_HeadScale = "HeadScale";
         const string VarName_BodyScale = "BodyScale";
