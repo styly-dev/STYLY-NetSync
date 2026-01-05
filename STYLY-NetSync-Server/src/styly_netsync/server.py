@@ -27,6 +27,11 @@ from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any, TYPE_CHECKING
 
+try:
+    import resource
+except Exception:
+    resource = None  # type: ignore[assignment]
+
 import zmq
 from loguru import logger
 from . import binary_serializer
@@ -141,6 +146,9 @@ class NetSyncServer:
         300.0  # 5 minutes - remove device ID mappings after this time
     )
     POLL_TIMEOUT = 100  # ZMQ poll timeout in ms
+    ROUTER_BACKLOG = 512  # Accept queue depth for DEALER/ROUTER connections
+    PUB_BACKLOG = 512  # Accept queue depth for SUB connections
+    DEFAULT_FD_LIMIT = 4096
 
     def __init__(
         self,
@@ -278,11 +286,38 @@ class NetSyncServer:
         with self._stats_lock:
             setattr(self, stat_name, getattr(self, stat_name) + amount)
 
+    def _bump_fd_soft_limit(self, target: int):
+        """Best-effort bump of RLIMIT_NOFILE for macOS/Linux."""
+        if resource is None:
+            logger.info(
+                "Skipping FD soft limit bump: 'resource' module not available on this platform."
+            )
+            return
+
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            new_soft = min(max(soft, target), hard)
+            if new_soft != soft:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+                logger.info(
+                    "Raised RLIMIT_NOFILE: %d -> %d (hard=%d)", soft, new_soft, hard
+                )
+            else:
+                logger.info(
+                    "FD limits already sufficient (soft=%d, hard=%d)", soft, hard
+                )
+        except Exception as exc:
+            logger.warning("Failed to raise RLIMIT_NOFILE: %s", exc)
+
     def _publisher_loop(self):
         """The only place that owns/uses self.pub and performs ZMQ sends."""
         try:
             # Create/bind PUB in this thread to avoid cross-thread use
             self.pub = self.context.socket(zmq.PUB)
+            try:
+                self.pub.setsockopt(zmq.BACKLOG, self.PUB_BACKLOG)
+            except Exception:
+                pass
             self.pub.bind(f"tcp://*:{self.pub_port}")
             self._pub_ready.set()
 
@@ -489,8 +524,17 @@ class NetSyncServer:
     def start(self):
         """Start the server"""
         try:
+            # Raise FD soft limit early to avoid connection drops when many clients connect
+            self._bump_fd_soft_limit(self.DEFAULT_FD_LIMIT)
+
             # Setup ROUTER socket
             self.router = self.context.socket(zmq.ROUTER)
+            # Increase accept backlog to survive connection stampedes from simulators
+            try:
+                self.router.setsockopt(zmq.BACKLOG, self.ROUTER_BACKLOG)
+            except Exception:
+                # Best effort; fall back to default backlog if unsupported
+                pass
             self.router.bind(f"tcp://*:{self.dealer_port}")
 
             # Start Publisher thread (it creates/binds PUB)
