@@ -94,9 +94,8 @@ namespace Styly.NetSync
 
 
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
-                        // Process ID mappings immediately (don't queue)
-                        // ID mapping data received
-                        ProcessIdMappings(mappingData);
+                        // Queue ID mappings for main thread processing (thread-safety fix)
+                        _messageQueue.Enqueue(new NetworkMessage { type = "id_mapping", dataObj = mappingData });
                         _messagesReceived++;
                         break;
 
@@ -174,11 +173,36 @@ namespace Styly.NetSync
                         break;
 
                     case "global_var_sync":
-                        ProcessGlobalVariableSync(msg.dataObj as Dictionary<string, object>, networkVariableManager);
+                        if (msg.dataObj is Dictionary<string, object> globalVarData)
+                        {
+                            ProcessGlobalVariableSync(globalVarData, networkVariableManager);
+                        }
+                        else
+                        {
+                            Debug.LogError("[MessageProcessor] global_var_sync without valid dataObj (unexpected)");
+                        }
                         break;
 
                     case "client_var_sync":
-                        ProcessClientVariableSync(msg.dataObj as Dictionary<string, object>, networkVariableManager);
+                        if (msg.dataObj is Dictionary<string, object> clientVarData)
+                        {
+                            ProcessClientVariableSync(clientVarData, networkVariableManager);
+                        }
+                        else
+                        {
+                            Debug.LogError("[MessageProcessor] client_var_sync without valid dataObj (unexpected)");
+                        }
+                        break;
+
+                    case "id_mapping":
+                        if (msg.dataObj is DeviceIdMappingData mappingData)
+                        {
+                            ProcessIdMappings(mappingData);
+                        }
+                        else
+                        {
+                            Debug.LogError("[MessageProcessor] id_mapping without valid dataObj (unexpected)");
+                        }
                         break;
                 }
             }
