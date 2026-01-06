@@ -299,9 +299,6 @@ class NetSyncServer:
             new_soft = min(max(soft, target), hard)
             if new_soft != soft:
                 resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
-                logger.info(
-                    "Raised RLIMIT_NOFILE: %d -> %d (hard=%d)", soft, new_soft, hard
-                )
             else:
                 logger.info(
                     "FD limits already sufficient (soft=%d, hard=%d)", soft, hard
