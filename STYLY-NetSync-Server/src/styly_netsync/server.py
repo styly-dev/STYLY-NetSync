@@ -40,7 +40,6 @@ DEFAULT_DEALER_PORT = 5555
 DEFAULT_PUB_PORT = 5556
 DEFAULT_SERVER_DISCOVERY_PORT = 9999
 DEFAULT_SERVER_NAME = "STYLY-NetSync-Server"
-DEFAULT_NV_FLUSH_POLICY = "drain"
 
 
 def valid_port(value: str) -> int:
@@ -149,7 +148,6 @@ class NetSyncServer:
         enable_server_discovery: bool = True,
         server_discovery_port: int = DEFAULT_SERVER_DISCOVERY_PORT,
         server_name: str = DEFAULT_SERVER_NAME,
-        nv_flush_policy: str = DEFAULT_NV_FLUSH_POLICY,
     ):
         self.dealer_port = dealer_port
         self.pub_port = pub_port
@@ -226,18 +224,9 @@ class NetSyncServer:
             {}
         )  # room_id -> {(target_client_no, var_name): (sender_client_no, value, timestamp)}
 
-        # NV flush behaviour
-        self.nv_flush_policy = nv_flush_policy  # "drain" or "rate_limited"
-
-        # NV fairness and rate control
+        # NV flush cadence configuration
         self.nv_flush_interval = 0.05  # 50ms flush cadence
-        self.nv_per_client_rate = 5.0  # 5 updates/second per client
-        self.nv_per_room_cap = 50.0  # 50 updates/second per room
         self.room_last_nv_flush: dict[str, float] = {}  # room_id -> last_flush_time
-        self.room_client_nv_allowance: dict[str, dict[int, float]] = (
-            {}
-        )  # room_id -> {client_no: fractional_allowance}
-        self.room_nv_allowance: dict[str, float] = {}  # room_id -> fractional_allowance
 
         # NV monitoring window (1s sliding window for logging only)
         self.nv_monitor_window: dict[str, list] = {}  # room_id -> [timestamps]
@@ -402,12 +391,10 @@ class NetSyncServer:
             self.global_variables[room_id] = {}
             self.client_variables[room_id] = {}
 
-            # Initialize NV pending buffers and rate control
+            # Initialize NV pending buffers
             self.pending_global_nv[room_id] = {}
             self.pending_client_nv[room_id] = {}
             self.room_last_nv_flush[room_id] = 0
-            self.room_client_nv_allowance[room_id] = {}
-            self.room_nv_allowance[room_id] = 0.0
 
             # Initialize monitoring window
             self.nv_monitor_window[room_id] = []
@@ -1131,121 +1118,6 @@ class NetSyncServer:
         else:
             logger.debug(f"NV flush took {elapsed_ms:.2f} ms (room={room_id})")
 
-    def _flush_nv_rate_limited(self, room_id: str) -> None:
-        """Flush NV updates using existing rate-limited fairness logic."""
-        now = time.monotonic()
-        with self._rooms_lock:
-            last_flush = self.room_last_nv_flush.get(room_id, 0.0)
-            pending_global = self.pending_global_nv.get(room_id, {})
-            pending_client = self.pending_client_nv.get(room_id, {})
-            if now - last_flush < self.nv_flush_interval:
-                return
-            if not pending_global and not pending_client:
-                return
-
-            interval = now - last_flush if last_flush > 0 else self.nv_flush_interval
-
-            room_allowance = self.room_nv_allowance.get(room_id, 0.0)
-            room_allowance = min(1.0, room_allowance + self.nv_per_room_cap * interval)
-            self.room_nv_allowance[room_id] = room_allowance
-
-            client_updates: dict[int, list[tuple[bool, Any, tuple]]] = {}
-            for var_name, (sender_no, value, ts) in pending_global.items():
-                client_updates.setdefault(sender_no, []).append(
-                    (True, var_name, (sender_no, value, ts))
-                )
-            for (target_no, var_name), (sender_no, value, ts) in pending_client.items():
-                client_updates.setdefault(sender_no, []).append(
-                    (False, (target_no, var_name), (sender_no, value, ts))
-                )
-
-            client_allowances = self.room_client_nv_allowance.get(room_id, {})
-            for client_no in client_updates.keys():
-                client_allowances[client_no] = min(
-                    1.0,
-                    client_allowances.get(client_no, 0.0)
-                    + self.nv_per_client_rate * interval,
-                )
-            self.room_client_nv_allowance[room_id] = client_allowances
-
-        global_dirty = False
-        client_dirty = False
-        processed_global: list[str] = []
-        processed_client: list[tuple[int, str]] = []
-
-        client_list = list(client_updates.keys())
-        max_safety_iterations = 1000
-        iteration_count = 0
-
-        while client_list and iteration_count < max_safety_iterations:
-            progress_made = False
-            clients_to_process = len(client_list)
-
-            for _ in range(clients_to_process):
-                if not client_list:
-                    break
-                iteration_count += 1
-                client_no = client_list.pop(0)
-
-                if client_no not in client_updates or not client_updates[client_no]:
-                    continue
-
-                if client_allowances.get(client_no, 0.0) < 1.0:
-                    client_list.append(client_no)
-                    continue
-
-                if room_allowance < 1.0:
-                    client_list.insert(0, client_no)
-                    break
-
-                is_global, key, data = client_updates[client_no].pop(0)
-                if is_global:
-                    var_name = key
-                    sender_no, value, ts = data
-                    if self._apply_global_var_set(
-                        room_id, sender_no, var_name, value, ts
-                    ):
-                        global_dirty = True
-                        processed_global.append(var_name)
-                        client_allowances[client_no] -= 1.0
-                        room_allowance -= 1.0
-                        progress_made = True
-                else:
-                    target_no, var_name = key
-                    sender_no, value, ts = data
-                    if self._apply_client_var_set(
-                        room_id, sender_no, target_no, var_name, value, ts
-                    ):
-                        client_dirty = True
-                        processed_client.append((target_no, var_name))
-                        client_allowances[client_no] -= 1.0
-                        room_allowance -= 1.0
-                        progress_made = True
-
-                if client_updates[client_no]:
-                    client_list.append(client_no)
-
-            if not progress_made or room_allowance < 1.0:
-                break
-
-        if iteration_count >= max_safety_iterations:
-            logger.warning(
-                f"Network variable processing hit safety limit for room {room_id}"
-            )
-
-        with self._rooms_lock:
-            self.room_client_nv_allowance[room_id] = client_allowances
-            self.room_nv_allowance[room_id] = room_allowance
-            for var_name in processed_global:
-                del self.pending_global_nv[room_id][var_name]
-            for key in processed_client:
-                del self.pending_client_nv[room_id][key]
-
-        if global_dirty:
-            self._broadcast_global_var_sync(room_id)
-        if client_dirty:
-            self._broadcast_client_var_sync(room_id)
-
     def _broadcast_id_mappings(self, room_id: str):
         """Broadcast all device ID mappings for a room (including stealth clients with flag)"""
         with self._rooms_lock:
@@ -1294,10 +1166,7 @@ class NetSyncServer:
                     for room_id in rooms:
                         last_flush = self.room_last_nv_flush.get(room_id, 0.0)
                         if current_time - last_flush >= self.nv_flush_interval:
-                            if self.nv_flush_policy == "drain":
-                                self._flush_nv_drain(room_id)
-                            else:
-                                self._flush_nv_rate_limited(room_id)
+                            self._flush_nv_drain(room_id)
                             self.room_last_nv_flush[room_id] = current_time
 
                     last_broadcast_check = current_time
@@ -1473,10 +1342,6 @@ class NetSyncServer:
                         del self.pending_client_nv[room_id]
                     if room_id in self.room_last_nv_flush:
                         del self.room_last_nv_flush[room_id]
-                    if room_id in self.room_client_nv_allowance:
-                        del self.room_client_nv_allowance[room_id]
-                    if room_id in self.room_nv_allowance:
-                        del self.room_nv_allowance[room_id]
                     if room_id in self.nv_monitor_window:
                         del self.nv_monitor_window[room_id]
 
@@ -1719,7 +1584,6 @@ def main():
     pub_port = DEFAULT_PUB_PORT
     server_discovery_port = DEFAULT_SERVER_DISCOVERY_PORT
     server_name = DEFAULT_SERVER_NAME
-    nv_flush_policy = DEFAULT_NV_FLUSH_POLICY
 
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
@@ -1744,7 +1608,6 @@ def main():
         logger.info(f"  Server name: {server_name}")
     else:
         logger.info("  Discovery: Disabled")
-    logger.info(f"  NV flush policy: {nv_flush_policy}")
     logger.info("=" * 80)
 
     server = NetSyncServer(
@@ -1753,7 +1616,6 @@ def main():
         enable_server_discovery=not args.no_server_discovery,
         server_discovery_port=server_discovery_port,
         server_name=server_name,
-        nv_flush_policy=nv_flush_policy,
     )
 
     try:
