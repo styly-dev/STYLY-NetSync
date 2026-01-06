@@ -90,6 +90,12 @@ MonoBehaviour:
   OnClientVariableChanged:
     m_PersistentCalls:
       m_Calls: []
+  OnHandTrackingLost:
+    m_PersistentCalls:
+      m_Calls: []
+  OnHandTrackingRestored:
+    m_PersistentCalls:
+      m_Calls: []
 --- !u!1 &5582494831680522701
 GameObject:
   m_ObjectHideFlags: 0
@@ -175,7 +181,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f1ede3837f2ae4753aa932ecc1887e53, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 0.05
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f1ede3837f2ae4753aa932ecc1887e53, type: 3}
       propertyPath: m_LocalPosition.y
@@ -183,7 +189,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f1ede3837f2ae4753aa932ecc1887e53, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -0.15
+      value: 0.08
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f1ede3837f2ae4753aa932ecc1887e53, type: 3}
       propertyPath: m_LocalRotation.w
@@ -253,7 +259,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 431ae8c474a074169ab003b892657542, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -0.05
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 431ae8c474a074169ab003b892657542, type: 3}
       propertyPath: m_LocalPosition.y
@@ -261,7 +267,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 431ae8c474a074169ab003b892657542, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -0.15
+      value: 0.08
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 431ae8c474a074169ab003b892657542, type: 3}
       propertyPath: m_LocalRotation.w
