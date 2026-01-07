@@ -302,19 +302,32 @@ class NetSyncServer:
         )  # room_id -> {(target_client_no, var_name): (sender_client_no, value, timestamp)}
 
         # NV flush cadence configuration
-        self.nv_flush_interval = 0.05  # 50ms flush cadence
+        if config is not None:
+            self.nv_flush_interval = config.nv_flush_interval
+        else:
+            self.nv_flush_interval = 0.05  # 50ms flush cadence
         self.room_last_nv_flush: dict[str, float] = {}  # room_id -> last_flush_time
 
-        # NV monitoring window (1s sliding window for logging only)
+        # NV monitoring window (sliding window for logging only)
         self.nv_monitor_window: dict[str, list] = {}  # room_id -> [timestamps]
-        self.nv_monitor_window_size = 1.0  # 1 second window
-        self.nv_monitor_threshold = 200  # Log warning if > 200 NV req/s
+        if config is not None:
+            self.nv_monitor_window_size = config.nv_monitor_window_size
+            self.nv_monitor_threshold = config.nv_monitor_threshold
+        else:
+            self.nv_monitor_window_size = 1.0  # 1 second window
+            self.nv_monitor_threshold = 200  # Log warning if > 200 NV req/s
 
         # Network Variables limits
-        self.MAX_GLOBAL_VARS = 100
-        self.MAX_CLIENT_VARS = 100
-        self.MAX_VAR_NAME_LENGTH = 64
-        self.MAX_VAR_VALUE_LENGTH = 1024
+        if config is not None:
+            self.MAX_GLOBAL_VARS = config.max_global_vars
+            self.MAX_CLIENT_VARS = config.max_client_vars
+            self.MAX_VAR_NAME_LENGTH = config.max_var_name_length
+            self.MAX_VAR_VALUE_LENGTH = config.max_var_value_length
+        else:
+            self.MAX_GLOBAL_VARS = 100
+            self.MAX_CLIENT_VARS = 100
+            self.MAX_VAR_NAME_LENGTH = 64
+            self.MAX_VAR_VALUE_LENGTH = 1024
 
         # Thread synchronization
         self._rooms_lock = threading.RLock()  # Reentrant lock for nested access
