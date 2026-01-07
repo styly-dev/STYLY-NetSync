@@ -21,13 +21,19 @@ namespace Styly.NetSync
         private bool _connectionError;
         private ServerDiscoveryManager _discoveryManager;
         private string _currentRoomId;
+        
+        // Thread-safe exception state (written on receive thread, read on main thread)
+        private volatile Exception _lastException;
+        private volatile long _lastExceptionAtUnixMs;
 
         public DealerSocket DealerSocket => _dealerSocket;
         public SubscriberSocket SubSocket => _subSocket;
         public bool IsConnected => _dealerSocket != null && _subSocket != null && !_connectionError;
         public bool IsConnectionError => _connectionError;
-        public Exception LastException { get; private set; }
-        public long LastExceptionAtUnixMs { get; private set; }
+        
+        // Thread-safe accessors for exception state
+        public Exception LastException => _lastException;
+        public long LastExceptionAtUnixMs => _lastExceptionAtUnixMs;
 
         public event Action<string> OnConnectionError;
         public event Action OnConnectionEstablished;
@@ -145,27 +151,31 @@ namespace Styly.NetSync
             {
                 if (!_shouldStop)
                 {
-                    // Store exception details for diagnostics
-                    LastException = ex;
-                    LastExceptionAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    // Store exception details for diagnostics (thread-safe with volatile fields)
+                    var ex_local = ex;
+                    var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    
+                    // Write timestamp first, then exception (helps with ordering)
+                    _lastExceptionAtUnixMs = timestamp;
+                    _lastException = ex_local;
                     
                     // Log detailed exception context
                     var threadId = Thread.CurrentThread.ManagedThreadId;
                     var endpoint = $"{serverAddress}:{dealerPort}/{subPort}";
                     Debug.LogError($"[ConnectionManager] Network thread error. " +
-                                   $"Type={ex.GetType().Name} Message={ex.Message} " +
+                                   $"Type={ex_local.GetType().Name} Message={ex_local.Message} " +
                                    $"Endpoint={endpoint} ThreadId={threadId} " +
-                                   $"Time={LastExceptionAtUnixMs}");
+                                   $"Time={timestamp}");
                     
 #if NETSYNC_DEBUG_CONNECTION
                     // Verbose logging: include stack trace
-                    Debug.LogError($"[ConnectionManager] Stack trace: {ex.StackTrace}");
+                    Debug.LogError($"[ConnectionManager] Stack trace: {ex_local.StackTrace}");
 #endif
                     
                     _connectionError = true;
                     if (OnConnectionError != null)
                     {
-                        OnConnectionError.Invoke(ex.Message);
+                        OnConnectionError.Invoke(ex_local.Message);
                     }
                 }
             }

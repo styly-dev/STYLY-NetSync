@@ -327,9 +327,9 @@ namespace Styly.NetSync
         
         // Connection error handling fields (main-thread handoff)
         private int _pendingConnectionError; // Atomic flag: 0=none, 1=pending
-        private Exception _pendingConnectionException;
-        private long _pendingConnectionErrorAtUnixMs;
-        private bool _isHandlingConnectionError; // Re-entrancy guard
+        private volatile Exception _pendingConnectionException; // Written on receive thread, read on main
+        private volatile long _pendingConnectionErrorAtUnixMs; // Written on receive thread, read on main
+        private bool _isHandlingConnectionError; // Re-entrancy guard (main-thread only)
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
@@ -957,14 +957,21 @@ namespace Styly.NetSync
         {
             // DO NOT execute teardown here (receive thread context)
             // Instead, mark pending for main thread processing
-            System.Threading.Interlocked.Exchange(ref _pendingConnectionError, 1);
             
-            // Copy exception context from ConnectionManager if available
+            // Copy exception context from ConnectionManager BEFORE setting flag
+            // This ensures consistency between exception and timestamp
             if (_connectionManager != null)
             {
-                _pendingConnectionException = _connectionManager.LastException;
-                _pendingConnectionErrorAtUnixMs = _connectionManager.LastExceptionAtUnixMs;
+                // Read volatile fields - they are written in order (timestamp first, then exception)
+                var timestamp = _connectionManager.LastExceptionAtUnixMs;
+                var exception = _connectionManager.LastException;
+                
+                _pendingConnectionErrorAtUnixMs = timestamp;
+                _pendingConnectionException = exception;
             }
+            
+            // Now set the pending flag (atomic operation ensures main thread sees the exception data)
+            System.Threading.Interlocked.Exchange(ref _pendingConnectionError, 1);
             
             // Log simple notification on receive thread (safe)
             Debug.LogError($"[NetSyncManager] Connection error detected: {reason}");
