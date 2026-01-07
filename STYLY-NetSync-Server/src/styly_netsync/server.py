@@ -1989,23 +1989,27 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    configure_logging(
-        log_dir=args.log_dir,
-        console_level=args.log_level_console,
-        console_json=args.log_json_console,
-        rotation=args.log_rotation,
-        retention=args.log_retention,
-    )
-
     # Load configuration from file and/or CLI args
+    # Note: Logging is configured after this to use config values
     try:
         config = create_config_from_args(args)
     except FileNotFoundError:
-        logger.error(f"Configuration file not found: {args.config}")
+        # Basic error output before logging is configured
+        print(f"ERROR: Configuration file not found: {args.config}")
         return
     except Exception as e:
-        logger.error(f"Failed to load configuration: {e}")
+        print(f"ERROR: Failed to load configuration: {e}")
         return
+
+    # Configure logging with merged settings (config file + CLI overrides)
+    log_dir = Path(config.log_dir) if config.log_dir else None
+    configure_logging(
+        log_dir=log_dir,
+        console_level=config.log_level_console,
+        console_json=config.log_json_console,
+        rotation=config.log_rotation,
+        retention=config.log_retention,
+    )
 
     # Apply global configuration settings
     binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)
