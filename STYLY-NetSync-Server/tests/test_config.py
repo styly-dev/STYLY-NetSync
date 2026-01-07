@@ -41,6 +41,32 @@ class TestServerConfig:
         assert config.server_name == "Custom Server"
         assert config.enable_server_discovery is False
 
+    def test_timing_default_values(self):
+        """Test that timing default values are set correctly."""
+        config = ServerConfig()
+        assert config.base_broadcast_interval == 0.1
+        assert config.idle_broadcast_interval == 0.5
+        assert config.dirty_threshold == 0.05
+        assert config.client_timeout == 1.0
+        assert config.cleanup_interval == 1.0
+        assert config.device_id_expiry_time == 300.0
+        assert config.status_log_interval == 10.0
+        assert config.main_loop_sleep == 0.02
+        assert config.poll_timeout == 100
+
+    def test_timing_custom_values(self):
+        """Test that timing custom values override defaults."""
+        config = ServerConfig(
+            base_broadcast_interval=0.2,
+            idle_broadcast_interval=1.0,
+            client_timeout=2.0,
+            poll_timeout=200,
+        )
+        assert config.base_broadcast_interval == 0.2
+        assert config.idle_broadcast_interval == 1.0
+        assert config.client_timeout == 2.0
+        assert config.poll_timeout == 200
+
 
 class TestLoadConfigFromToml:
     """Tests for load_config_from_toml function."""
@@ -142,6 +168,32 @@ class TestFlattenTomlConfig:
         assert "unknown_key" not in flat
         assert flat == {"dealer_port": 5555}
 
+    def test_flatten_timing_section(self):
+        """Test flattening timing section."""
+        toml_data = {
+            "timing": {
+                "base_broadcast_interval": 0.2,
+                "idle_broadcast_interval": 1.0,
+                "dirty_threshold": 0.1,
+                "client_timeout": 2.0,
+                "cleanup_interval": 2.0,
+                "device_id_expiry_time": 600.0,
+                "status_log_interval": 20.0,
+                "main_loop_sleep": 0.05,
+                "poll_timeout": 200,
+            }
+        }
+        flat = flatten_toml_config(toml_data)
+        assert flat["base_broadcast_interval"] == 0.2
+        assert flat["idle_broadcast_interval"] == 1.0
+        assert flat["dirty_threshold"] == 0.1
+        assert flat["client_timeout"] == 2.0
+        assert flat["cleanup_interval"] == 2.0
+        assert flat["device_id_expiry_time"] == 600.0
+        assert flat["status_log_interval"] == 20.0
+        assert flat["main_loop_sleep"] == 0.05
+        assert flat["poll_timeout"] == 200
+
 
 class TestValidateConfig:
     """Tests for validate_config function."""
@@ -182,6 +234,40 @@ class TestValidateConfig:
             dealer_port=1,
             pub_port=65535,
             server_discovery_port=1024,
+        )
+        errors = validate_config(config)
+        assert errors == []
+
+    def test_invalid_timing_zero(self):
+        """Test that zero timing values fail validation."""
+        config = ServerConfig(base_broadcast_interval=0)
+        errors = validate_config(config)
+        assert any("base_broadcast_interval" in e for e in errors)
+
+    def test_invalid_timing_negative(self):
+        """Test that negative timing values fail validation."""
+        config = ServerConfig(client_timeout=-1.0)
+        errors = validate_config(config)
+        assert any("client_timeout" in e for e in errors)
+
+    def test_invalid_poll_timeout(self):
+        """Test that invalid poll_timeout fails validation."""
+        config = ServerConfig(poll_timeout=0)
+        errors = validate_config(config)
+        assert any("poll_timeout" in e for e in errors)
+
+    def test_valid_timing_values(self):
+        """Test that valid timing values pass validation."""
+        config = ServerConfig(
+            base_broadcast_interval=0.001,
+            idle_broadcast_interval=0.001,
+            dirty_threshold=0.001,
+            client_timeout=0.001,
+            cleanup_interval=0.001,
+            device_id_expiry_time=0.001,
+            status_log_interval=0.001,
+            main_loop_sleep=0.001,
+            poll_timeout=1,
         )
         errors = validate_config(config)
         assert errors == []

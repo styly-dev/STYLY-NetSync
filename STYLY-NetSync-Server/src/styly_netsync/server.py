@@ -43,7 +43,7 @@ from loguru import logger
 from . import binary_serializer
 from . import network_utils
 from .logging_utils import configure_logging
-from .config import create_config_from_args
+from .config import ServerConfig, create_config_from_args
 
 if TYPE_CHECKING:
     from uvicorn import Server
@@ -139,19 +139,19 @@ def get_version() -> str:
 
 
 class NetSyncServer:
-    # Performance and timing constants
-    BASE_BROADCAST_INTERVAL = 0.1  # 10Hz base rate
-    IDLE_BROADCAST_INTERVAL = 0.5  # 2Hz when idle
-    DIRTY_THRESHOLD = 0.05  # 20Hz max rate when very active
-    BROADCAST_CHECK_INTERVAL = 0.05  # Check broadcasts every 50ms
-    CLEANUP_INTERVAL = 1.0  # Cleanup every 1 second
-    STATUS_LOG_INTERVAL = 10.0  # Log status every 10 seconds
-    MAIN_LOOP_SLEEP = 0.02  # 50Hz main loop sleep
-    CLIENT_TIMEOUT = 1.0  # 1 second timeout for client disconnect
-    DEVICE_ID_EXPIRY_TIME = (
-        300.0  # 5 minutes - remove device ID mappings after this time
-    )
-    POLL_TIMEOUT = 100  # ZMQ poll timeout in ms
+    # Default timing constants (can be overridden via config)
+    _DEFAULT_BASE_BROADCAST_INTERVAL = 0.1  # 10Hz base rate
+    _DEFAULT_IDLE_BROADCAST_INTERVAL = 0.5  # 2Hz when idle
+    _DEFAULT_DIRTY_THRESHOLD = 0.05  # 20Hz max rate when very active
+    _DEFAULT_BROADCAST_CHECK_INTERVAL = 0.05  # Check broadcasts every 50ms
+    _DEFAULT_CLEANUP_INTERVAL = 1.0  # Cleanup every 1 second
+    _DEFAULT_STATUS_LOG_INTERVAL = 10.0  # Log status every 10 seconds
+    _DEFAULT_MAIN_LOOP_SLEEP = 0.02  # 50Hz main loop sleep
+    _DEFAULT_CLIENT_TIMEOUT = 1.0  # 1 second timeout for client disconnect
+    _DEFAULT_DEVICE_ID_EXPIRY_TIME = 300.0  # 5 minutes - device ID mapping expiry
+    _DEFAULT_POLL_TIMEOUT = 100  # ZMQ poll timeout in ms
+
+    # Non-configurable constants
     ROUTER_BACKLOG = 512  # Accept queue depth for DEALER/ROUTER connections
     PUB_BACKLOG = 512  # Accept queue depth for SUB connections
     DEFAULT_FD_LIMIT = 4096
@@ -176,10 +176,38 @@ class NetSyncServer:
         enable_server_discovery: bool = True,
         server_discovery_port: int = DEFAULT_SERVER_DISCOVERY_PORT,
         server_name: str = DEFAULT_SERVER_NAME,
+        config: ServerConfig | None = None,
     ):
         self.dealer_port = dealer_port
         self.pub_port = pub_port
         self.context = zmq.Context()
+
+        # Store config for reference
+        self._config = config
+
+        # Initialize timing settings from config or defaults
+        if config is not None:
+            self.BASE_BROADCAST_INTERVAL = config.base_broadcast_interval
+            self.IDLE_BROADCAST_INTERVAL = config.idle_broadcast_interval
+            self.DIRTY_THRESHOLD = config.dirty_threshold
+            self.BROADCAST_CHECK_INTERVAL = self._DEFAULT_BROADCAST_CHECK_INTERVAL
+            self.CLEANUP_INTERVAL = config.cleanup_interval
+            self.STATUS_LOG_INTERVAL = config.status_log_interval
+            self.MAIN_LOOP_SLEEP = config.main_loop_sleep
+            self.CLIENT_TIMEOUT = config.client_timeout
+            self.DEVICE_ID_EXPIRY_TIME = config.device_id_expiry_time
+            self.POLL_TIMEOUT = config.poll_timeout
+        else:
+            self.BASE_BROADCAST_INTERVAL = self._DEFAULT_BASE_BROADCAST_INTERVAL
+            self.IDLE_BROADCAST_INTERVAL = self._DEFAULT_IDLE_BROADCAST_INTERVAL
+            self.DIRTY_THRESHOLD = self._DEFAULT_DIRTY_THRESHOLD
+            self.BROADCAST_CHECK_INTERVAL = self._DEFAULT_BROADCAST_CHECK_INTERVAL
+            self.CLEANUP_INTERVAL = self._DEFAULT_CLEANUP_INTERVAL
+            self.STATUS_LOG_INTERVAL = self._DEFAULT_STATUS_LOG_INTERVAL
+            self.MAIN_LOOP_SLEEP = self._DEFAULT_MAIN_LOOP_SLEEP
+            self.CLIENT_TIMEOUT = self._DEFAULT_CLIENT_TIMEOUT
+            self.DEVICE_ID_EXPIRY_TIME = self._DEFAULT_DEVICE_ID_EXPIRY_TIME
+            self.POLL_TIMEOUT = self._DEFAULT_POLL_TIMEOUT
 
         # Server discovery settings
         self.enable_server_discovery = enable_server_discovery
@@ -1994,6 +2022,7 @@ def main() -> None:
         enable_server_discovery=config.enable_server_discovery,
         server_discovery_port=config.server_discovery_port,
         server_name=config.server_name,
+        config=config,
     )
 
     try:
