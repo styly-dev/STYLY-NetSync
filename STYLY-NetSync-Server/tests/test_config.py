@@ -109,6 +109,30 @@ class TestServerConfig:
         assert config.pub_queue_maxsize == 20000
         assert config.delta_ring_size == 5000
 
+    def test_logging_default_values(self):
+        """Test that logging default values are set correctly."""
+        config = ServerConfig()
+        assert config.log_dir is None
+        assert config.log_level_console == "INFO"
+        assert config.log_json_console is False
+        assert config.log_rotation is None  # None = use internal default
+        assert config.log_retention is None  # None = use internal default
+
+    def test_logging_custom_values(self):
+        """Test that logging custom values override defaults."""
+        config = ServerConfig(
+            log_dir="/var/log/netsync",
+            log_level_console="DEBUG",
+            log_json_console=True,
+            log_rotation="1 day",
+            log_retention="7 days",
+        )
+        assert config.log_dir == "/var/log/netsync"
+        assert config.log_level_console == "DEBUG"
+        assert config.log_json_console is True
+        assert config.log_rotation == "1 day"
+        assert config.log_retention == "7 days"
+
 
 class TestLoadConfigFromToml:
     """Tests for load_config_from_toml function."""
@@ -272,6 +296,24 @@ class TestFlattenTomlConfig:
         assert flat["pub_queue_maxsize"] == 20000
         assert flat["delta_ring_size"] == 5000
 
+    def test_flatten_logging_section(self):
+        """Test flattening logging section."""
+        toml_data = {
+            "logging": {
+                "log_dir": "/var/log/netsync",
+                "log_level_console": "DEBUG",
+                "log_json_console": True,
+                "log_rotation": "1 day",
+                "log_retention": "7 days",
+            }
+        }
+        flat = flatten_toml_config(toml_data)
+        assert flat["log_dir"] == "/var/log/netsync"
+        assert flat["log_level_console"] == "DEBUG"
+        assert flat["log_json_console"] is True
+        assert flat["log_rotation"] == "1 day"
+        assert flat["log_retention"] == "7 days"
+
 
 class TestValidateConfig:
     """Tests for validate_config function."""
@@ -398,6 +440,25 @@ class TestValidateConfig:
         errors = validate_config(config)
         assert errors == []
 
+    def test_invalid_log_level(self):
+        """Test that invalid log_level_console fails validation."""
+        config = ServerConfig(log_level_console="INVALID")
+        errors = validate_config(config)
+        assert any("log_level_console" in e for e in errors)
+
+    def test_valid_log_levels(self):
+        """Test that all valid log levels pass validation."""
+        for level in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+            config = ServerConfig(log_level_console=level)
+            errors = validate_config(config)
+            assert errors == [], f"Failed for log level: {level}"
+
+    def test_log_level_case_insensitive(self):
+        """Test that log level validation is case insensitive."""
+        config = ServerConfig(log_level_console="debug")
+        errors = validate_config(config)
+        assert errors == []
+
 
 class TestMergeCliArgs:
     """Tests for merge_cli_args function."""
@@ -447,3 +508,28 @@ class TestMergeCliArgs:
 
         merged = merge_cli_args(config, args)
         assert merged == config
+
+    def test_cli_overrides_logging_settings(self):
+        """Test that CLI logging settings override config."""
+        config = ServerConfig(
+            log_dir=None,
+            log_level_console="INFO",
+            log_json_console=False,
+        )
+
+        args = argparse.Namespace(
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir="/tmp/logs",
+            log_level_console="DEBUG",
+            log_json_console=True,
+            log_rotation="5 MB",
+            log_retention="10 files",
+        )
+
+        merged = merge_cli_args(config, args)
+        assert merged.log_dir == "/tmp/logs"
+        assert merged.log_level_console == "DEBUG"
+        assert merged.log_json_console is True
+        assert merged.log_rotation == "5 MB"
+        assert merged.log_retention == "10 files"
