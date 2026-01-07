@@ -229,9 +229,10 @@ class NetSyncServer:
         )
 
         # Publisher thread infrastructure
+        pub_queue_size = config.pub_queue_maxsize if config is not None else 10000
         self._pub_queue_ctrl: Queue[tuple[bytes | None, bytes | None]] = Queue(
-            maxsize=10000
-        )  # tuneable
+            maxsize=pub_queue_size
+        )
         self._publisher_thread: threading.Thread | None = None
         self._publisher_running = False
         self._pub_ready = threading.Event()  # signaled after successful bind
@@ -2005,6 +2006,9 @@ def main() -> None:
     except Exception as e:
         logger.error(f"Failed to load configuration: {e}")
         return
+
+    # Apply global configuration settings
+    binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)
 
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
