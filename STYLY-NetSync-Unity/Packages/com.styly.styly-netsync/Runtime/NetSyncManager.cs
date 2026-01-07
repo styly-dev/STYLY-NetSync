@@ -325,11 +325,35 @@ namespace Styly.NetSync
         private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
         private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
         
-        // Connection error handling fields (main-thread handoff)
-        private int _pendingConnectionError; // Atomic flag: 0=none, 1=pending
-        private volatile Exception _pendingConnectionException; // Written on receive thread, read on main
-        private volatile long _pendingConnectionErrorAtUnixMs; // Written on receive thread, read on main
-        private bool _isHandlingConnectionError; // Re-entrancy guard (main-thread only)
+        // Connection error handling fields (main-thread handoff for thread-safe error handling)
+        /// <summary>
+        /// Atomic flag for pending connection errors. 
+        /// Written by receive thread, consumed by main thread.
+        /// Values: 0=no pending error, 1=error pending
+        /// </summary>
+        private int _pendingConnectionError;
+        
+        /// <summary>
+        /// Exception instance from the last connection error.
+        /// Written on receive thread, read on main thread. Volatile for visibility.
+        /// </summary>
+        private volatile Exception _pendingConnectionException;
+        
+        /// <summary>
+        /// Unix timestamp (milliseconds) when the last connection error occurred.
+        /// Written on receive thread, read on main thread. Volatile for visibility.
+        /// </summary>
+        private volatile long _pendingConnectionErrorAtUnixMs;
+        
+        /// <summary>
+        /// Re-entrancy guard for ProcessPendingConnectionErrorOnMainThread.
+        /// Main-thread only, prevents concurrent error handling.
+        /// </summary>
+        private bool _isHandlingConnectionError;
+        
+        // Constants for atomic flag values
+        private const int PENDING_ERROR_NONE = 0;
+        private const int PENDING_ERROR_SET = 1;
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
@@ -897,7 +921,7 @@ namespace Styly.NetSync
         private void ProcessPendingConnectionErrorOnMainThread()
         {
             // Consume the pending flag atomically
-            if (System.Threading.Interlocked.Exchange(ref _pendingConnectionError, 0) == 0)
+            if (System.Threading.Interlocked.Exchange(ref _pendingConnectionError, PENDING_ERROR_NONE) == PENDING_ERROR_NONE)
             {
                 return; // No pending error
             }
@@ -971,7 +995,7 @@ namespace Styly.NetSync
             }
             
             // Now set the pending flag (atomic operation ensures main thread sees the exception data)
-            System.Threading.Interlocked.Exchange(ref _pendingConnectionError, 1);
+            System.Threading.Interlocked.Exchange(ref _pendingConnectionError, PENDING_ERROR_SET);
             
             // Log simple notification on receive thread (safe)
             Debug.LogError($"[NetSyncManager] Connection error detected: {reason}");
