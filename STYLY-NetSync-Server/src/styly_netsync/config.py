@@ -27,6 +27,17 @@ class ServerConfig:
     server_name: str = "STYLY-NetSync-Server"
     enable_server_discovery: bool = True
 
+    # Timing settings
+    base_broadcast_interval: float = 0.1  # 10Hz base rate
+    idle_broadcast_interval: float = 0.5  # 2Hz when idle
+    dirty_threshold: float = 0.05  # 20Hz max rate when very active
+    client_timeout: float = 1.0  # 1 second timeout for client disconnect
+    cleanup_interval: float = 1.0  # Cleanup every 1 second
+    device_id_expiry_time: float = 300.0  # 5 minutes for device ID mapping expiry
+    status_log_interval: float = 10.0  # Log status every 10 seconds
+    main_loop_sleep: float = 0.02  # 50Hz main loop sleep
+    poll_timeout: int = 100  # ZMQ poll timeout in ms
+
 
 # TOML section to config field mapping
 _SECTION_MAPPING: dict[str, list[str]] = {
@@ -36,6 +47,17 @@ _SECTION_MAPPING: dict[str, list[str]] = {
         "server_discovery_port",
         "server_name",
         "enable_server_discovery",
+    ],
+    "timing": [
+        "base_broadcast_interval",
+        "idle_broadcast_interval",
+        "dirty_threshold",
+        "client_timeout",
+        "cleanup_interval",
+        "device_id_expiry_time",
+        "status_log_interval",
+        "main_loop_sleep",
+        "poll_timeout",
     ],
 }
 
@@ -94,6 +116,26 @@ def validate_config(config: ServerConfig) -> list[str]:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
             errors.append(f"{field_name} must be between 1 and 65535, got {port}")
+
+    # Timing validation (must be positive)
+    timing_fields = [
+        "base_broadcast_interval",
+        "idle_broadcast_interval",
+        "dirty_threshold",
+        "client_timeout",
+        "cleanup_interval",
+        "device_id_expiry_time",
+        "status_log_interval",
+        "main_loop_sleep",
+    ]
+    for field_name in timing_fields:
+        value = getattr(config, field_name)
+        if value <= 0:
+            errors.append(f"{field_name} must be positive, got {value}")
+
+    # poll_timeout must be positive integer
+    if config.poll_timeout <= 0:
+        errors.append(f"poll_timeout must be positive, got {config.poll_timeout}")
 
     return errors
 
