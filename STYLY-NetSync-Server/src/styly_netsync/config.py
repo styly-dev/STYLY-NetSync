@@ -52,6 +52,15 @@ class ServerConfig:
     pub_queue_maxsize: int = 10000  # PUB queue maximum size
     delta_ring_size: int = 10000  # Delta ring buffer size for NV sync
 
+    # Logging settings
+    log_dir: str | None = None  # Directory for log files (None = console only)
+    log_level_console: str = "INFO"  # Console log level
+    log_json_console: bool = False  # Output console logs as JSON
+    log_rotation: str | None = None  # Log rotation rule (loguru syntax); None = default
+    log_retention: str | None = (
+        None  # Log retention rule (loguru syntax); None = default
+    )
+
 
 # TOML section to config field mapping
 _SECTION_MAPPING: dict[str, list[str]] = {
@@ -86,6 +95,13 @@ _SECTION_MAPPING: dict[str, list[str]] = {
         "max_virtual_transforms",
         "pub_queue_maxsize",
         "delta_ring_size",
+    ],
+    "logging": [
+        "log_dir",
+        "log_level_console",
+        "log_json_console",
+        "log_rotation",
+        "log_retention",
     ],
 }
 
@@ -192,6 +208,14 @@ def validate_config(config: ServerConfig) -> list[str]:
         if value <= 0:
             errors.append(f"{field_name} must be positive, got {value}")
 
+    # Logging validation
+    valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    if config.log_level_console.upper() not in valid_log_levels:
+        errors.append(
+            f"log_level_console must be one of {valid_log_levels}, "
+            f"got {config.log_level_console}"
+        )
+
     return errors
 
 
@@ -219,6 +243,18 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
     # Special handling for --no-server-discovery flag
     if hasattr(args, "no_server_discovery") and args.no_server_discovery:
         updates["enable_server_discovery"] = False
+
+    # Logging settings from CLI
+    if hasattr(args, "log_dir") and args.log_dir is not None:
+        updates["log_dir"] = str(args.log_dir)
+    if hasattr(args, "log_level_console") and args.log_level_console is not None:
+        updates["log_level_console"] = args.log_level_console
+    if hasattr(args, "log_json_console") and args.log_json_console:
+        updates["log_json_console"] = True
+    if hasattr(args, "log_rotation") and args.log_rotation is not None:
+        updates["log_rotation"] = args.log_rotation
+    if hasattr(args, "log_retention") and args.log_retention is not None:
+        updates["log_retention"] = args.log_retention
 
     if not updates:
         return config
