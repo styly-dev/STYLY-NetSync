@@ -38,6 +38,19 @@ namespace Styly.NetSync
         [Header("Network Variable Events")]
         public UnityEvent<string, string, string> OnClientVariableChanged;
 
+        [Header("Hand Tracking Events")]
+        /// <summary>
+        /// Invoked when hand tracking is lost (true hand tracking loss, not controller switch).
+        /// Parameter: Hand (Left or Right)
+        /// </summary>
+        public UnityEvent<Hand> OnHandTrackingLost;
+
+        /// <summary>
+        /// Invoked when hand tracking is restored.
+        /// Parameter: Hand (Left or Right)
+        /// </summary>
+        public UnityEvent<Hand> OnHandTrackingRestored;
+
         // --- Cached objects for zero-allocation transform packaging on send ---
         // These are reused every frame to avoid GC pressure from frequent network sends.
         private ClientTransformData _tx;
@@ -271,6 +284,25 @@ namespace Styly.NetSync
                 {
                     OnClientVariableChanged.Invoke(name, oldValue, newValue);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Called by AvatarManager when hand tracking state changes.
+        /// This is only called for local avatars.
+        /// Note: Head-relative position maintenance is handled by HandPoseNormalizer.
+        /// </summary>
+        internal void NotifyHandTrackingStateChanged(Hand hand, bool isTracking)
+        {
+            if (isTracking)
+            {
+                Debug.Log($"[NetSyncAvatar] {hand} hand tracking restored");
+                OnHandTrackingRestored?.Invoke(hand);
+            }
+            else
+            {
+                Debug.Log($"[NetSyncAvatar] {hand} hand tracking lost");
+                OnHandTrackingLost?.Invoke(hand);
             }
         }
 
