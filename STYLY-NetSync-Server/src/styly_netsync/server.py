@@ -43,6 +43,7 @@ from loguru import logger
 from . import binary_serializer
 from . import network_utils
 from .logging_utils import configure_logging
+from .config import create_config_from_args
 
 if TYPE_CHECKING:
     from uvicorn import Server
@@ -1891,6 +1892,12 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
 def main() -> None:
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
+        "--config",
+        type=Path,
+        metavar="FILE",
+        help="Path to TOML configuration file",
+    )
+    parser.add_argument(
         "--no-server-discovery", action="store_true", help="Disable server discovery"
     )
     parser.add_argument(
@@ -1948,11 +1955,15 @@ def main() -> None:
         retention=args.log_retention,
     )
 
-    # Set default values from module constants (previously from argparse)
-    dealer_port = DEFAULT_DEALER_PORT
-    pub_port = DEFAULT_PUB_PORT
-    server_discovery_port = DEFAULT_SERVER_DISCOVERY_PORT
-    server_name = DEFAULT_SERVER_NAME
+    # Load configuration from file and/or CLI args
+    try:
+        config = create_config_from_args(args)
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {args.config}")
+        return
+    except Exception as e:
+        logger.error(f"Failed to load configuration: {e}")
+        return
 
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
@@ -1968,23 +1979,21 @@ def main() -> None:
     else:
         logger.info("  Server IP addresses: Unable to detect")
 
-    logger.info(f"  DEALER port: {dealer_port}")
-    logger.info(f"  PUB port: {pub_port}")
-    if not args.no_server_discovery:
-        if args.server_discovery_port is not None:
-            server_discovery_port = args.server_discovery_port
-        logger.info(f"  Server discovery port: {server_discovery_port}")
-        logger.info(f"  Server name: {server_name}")
+    logger.info(f"  DEALER port: {config.dealer_port}")
+    logger.info(f"  PUB port: {config.pub_port}")
+    if config.enable_server_discovery:
+        logger.info(f"  Server discovery port: {config.server_discovery_port}")
+        logger.info(f"  Server name: {config.server_name}")
     else:
         logger.info("  Discovery: Disabled")
     logger.info("=" * 80)
 
     server = NetSyncServer(
-        dealer_port=dealer_port,
-        pub_port=pub_port,
-        enable_server_discovery=not args.no_server_discovery,
-        server_discovery_port=server_discovery_port,
-        server_name=server_name,
+        dealer_port=config.dealer_port,
+        pub_port=config.pub_port,
+        enable_server_discovery=config.enable_server_discovery,
+        server_discovery_port=config.server_discovery_port,
+        server_name=config.server_name,
     )
 
     try:
