@@ -47,6 +47,11 @@ class ServerConfig:
     nv_monitor_window_size: float = 1.0  # NV monitoring window (1 second)
     nv_monitor_threshold: int = 200  # NV requests/s before warning
 
+    # Internal limits
+    max_virtual_transforms: int = 50  # Maximum virtual transforms per client
+    pub_queue_maxsize: int = 10000  # PUB queue maximum size
+    delta_ring_size: int = 10000  # Delta ring buffer size for NV sync
+
 
 # TOML section to config field mapping
 _SECTION_MAPPING: dict[str, list[str]] = {
@@ -76,6 +81,11 @@ _SECTION_MAPPING: dict[str, list[str]] = {
         "nv_flush_interval",
         "nv_monitor_window_size",
         "nv_monitor_threshold",
+    ],
+    "limits": [
+        "max_virtual_transforms",
+        "pub_queue_maxsize",
+        "delta_ring_size",
     ],
 }
 
@@ -171,6 +181,13 @@ def validate_config(config: ServerConfig) -> list[str]:
     # NV timing validation (must be positive floats)
     nv_float_fields = ["nv_flush_interval", "nv_monitor_window_size"]
     for field_name in nv_float_fields:
+        value = getattr(config, field_name)
+        if value <= 0:
+            errors.append(f"{field_name} must be positive, got {value}")
+
+    # Internal limits validation (must be positive integers)
+    limits_fields = ["max_virtual_transforms", "pub_queue_maxsize", "delta_ring_size"]
+    for field_name in limits_fields:
         value = getattr(config, field_name)
         if value <= 0:
             errors.append(f"{field_name} must be positive, got {value}")
