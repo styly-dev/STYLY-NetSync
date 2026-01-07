@@ -177,8 +177,11 @@ jobs:
           
           echo "📝 Updating workflow description with current version..."
           
+          # Escape special characters in VERSION for sed
+          ESCAPED_VERSION=$(echo "$VERSION" | sed 's/[&/\]/\\&/g')
+          
           # Update the description line that contains "Current version:"
-          sed -i "s/description: 'Version number (Current version: [0-9]\+\.[0-9]\+\.[0-9]\+\(-[a-zA-Z0-9.-]\+\)\?)'/description: 'Version number (Current version: $VERSION)'/" "$WORKFLOW_FILE"
+          sed -i "s/description: 'Version number (Current version: [0-9]\+\.[0-9]\+\.[0-9]\+\(-[a-zA-Z0-9.-]\+\)\?)'/description: 'Version number (Current version: $ESCAPED_VERSION)'/" "$WORKFLOW_FILE"
           
           # Verify the update was successful
           if grep -q "description: 'Version number (Current version: $VERSION)'" "$WORKFLOW_FILE"; then
