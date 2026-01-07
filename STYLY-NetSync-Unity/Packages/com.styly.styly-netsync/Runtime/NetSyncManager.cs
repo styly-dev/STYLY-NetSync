@@ -966,6 +966,7 @@ namespace Styly.NetSync
                 DebugLog("StopNetworking completed.");
                 
                 // Cleanup avatars and presence
+                _avatarManager?.CleanupRemoteAvatars();
                 _humanPresenceManager?.CleanupAll();
                 
                 // Clear error state for next reconnect attempt
@@ -977,9 +978,13 @@ namespace Styly.NetSync
             }
         }
 
+        /// <summary>
+        /// Handles connection errors from both receive thread (via OnConnectionError callback)
+        /// and main thread (via send failures). Thread-safe: uses atomic handoff to main thread.
+        /// </summary>
         private void HandleConnectionError(string reason)
         {
-            // DO NOT execute teardown here (receive thread context)
+            // DO NOT execute teardown here - may be called from receive thread
             // Instead, mark pending for main thread processing
             
             // Copy exception context from ConnectionManager BEFORE setting flag

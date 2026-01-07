@@ -254,7 +254,10 @@ namespace Styly.NetSync
         public void ClearConnectionError()
         {
             _connectionError = false;
-            // Keep LastException and timestamp for diagnostics (not cleared)
+            // Clear exception reference to prevent memory retention
+            // (NetSyncManager has already copied it to _pendingConnectionException)
+            _lastException = null;
+            // Keep timestamp for basic diagnostics
         }
     }
 }
