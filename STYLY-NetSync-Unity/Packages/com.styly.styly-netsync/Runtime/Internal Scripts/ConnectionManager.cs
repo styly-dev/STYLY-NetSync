@@ -26,6 +26,8 @@ namespace Styly.NetSync
         public SubscriberSocket SubSocket => _subSocket;
         public bool IsConnected => _dealerSocket != null && _subSocket != null && !_connectionError;
         public bool IsConnectionError => _connectionError;
+        public Exception LastException { get; private set; }
+        public long LastExceptionAtUnixMs { get; private set; }
 
         public event Action<string> OnConnectionError;
         public event Action OnConnectionEstablished;
@@ -79,8 +81,11 @@ namespace Styly.NetSync
             _subSocket = null;
             _dealerSocket = null;
 
-            // Wait for receive thread to exit
-            WaitThreadExit(_receiveThread, 1000);
+            // Wait for receive thread to exit (unless we're on the receive thread)
+            if (Thread.CurrentThread != _receiveThread)
+            {
+                WaitThreadExit(_receiveThread, 1000);
+            }
             _receiveThread = null;
 
             // OS-specific cleanup
@@ -140,7 +145,23 @@ namespace Styly.NetSync
             {
                 if (!_shouldStop)
                 {
-                    Debug.LogError($"Network thread error: {ex.Message}");
+                    // Store exception details for diagnostics
+                    LastException = ex;
+                    LastExceptionAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    
+                    // Log detailed exception context
+                    var threadId = Thread.CurrentThread.ManagedThreadId;
+                    var endpoint = $"{serverAddress}:{dealerPort}/{subPort}";
+                    Debug.LogError($"[ConnectionManager] Network thread error. " +
+                                   $"Type={ex.GetType().Name} Message={ex.Message} " +
+                                   $"Endpoint={endpoint} ThreadId={threadId} " +
+                                   $"Time={LastExceptionAtUnixMs}");
+                    
+#if NETSYNC_DEBUG_CONNECTION
+                    // Verbose logging: include stack trace
+                    Debug.LogError($"[ConnectionManager] Stack trace: {ex.StackTrace}");
+#endif
+                    
                     _connectionError = true;
                     if (OnConnectionError != null)
                     {
@@ -213,6 +234,17 @@ namespace Styly.NetSync
         public void DebugLog(string msg)
         {
             if (_enableDebugLogs) { Debug.Log($"[ConnectionManager] {msg}"); }
+        }
+
+        /// <summary>
+        /// Clears the connection error state. Should be called after StopNetworking() 
+        /// and before attempting reconnection.
+        /// Thread-safe: must be called from main thread when receive thread is not running.
+        /// </summary>
+        public void ClearConnectionError()
+        {
+            _connectionError = false;
+            // Keep LastException and timestamp for diagnostics (not cleared)
         }
     }
 }
