@@ -9,6 +9,7 @@ on:
         required: false
         type: boolean
       version:
+        # NOTE: Update the current version in the description below when releasing a new version
         description: 'Version number (Current version: 0.7.1)'
         required: true
         type: string
