@@ -17,7 +17,27 @@ MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 # Transform data type identifiers (deprecated - kept for reference)
 
 # Maximum allowed virtual transforms to prevent memory issues
-MAX_VIRTUAL_TRANSFORMS = 50
+# This can be configured via set_max_virtual_transforms()
+_max_virtual_transforms = 50
+MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward compat
+
+
+def get_max_virtual_transforms() -> int:
+    """Get the current maximum virtual transforms limit."""
+    return _max_virtual_transforms
+
+
+def set_max_virtual_transforms(value: int) -> None:
+    """Set the maximum virtual transforms limit.
+
+    Args:
+        value: New limit (must be positive).
+    """
+    global _max_virtual_transforms, MAX_VIRTUAL_TRANSFORMS
+    if value <= 0:
+        raise ValueError("max_virtual_transforms must be positive")
+    _max_virtual_transforms = value
+    MAX_VIRTUAL_TRANSFORMS = value
 
 
 # Stealth mode detection utilities

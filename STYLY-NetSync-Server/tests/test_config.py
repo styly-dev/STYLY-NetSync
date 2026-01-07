@@ -91,6 +91,24 @@ class TestServerConfig:
         assert config.max_var_value_length == 2048
         assert config.nv_flush_interval == 0.1
 
+    def test_limits_default_values(self):
+        """Test that limits default values are set correctly."""
+        config = ServerConfig()
+        assert config.max_virtual_transforms == 50
+        assert config.pub_queue_maxsize == 10000
+        assert config.delta_ring_size == 10000
+
+    def test_limits_custom_values(self):
+        """Test that limits custom values override defaults."""
+        config = ServerConfig(
+            max_virtual_transforms=100,
+            pub_queue_maxsize=20000,
+            delta_ring_size=5000,
+        )
+        assert config.max_virtual_transforms == 100
+        assert config.pub_queue_maxsize == 20000
+        assert config.delta_ring_size == 5000
+
 
 class TestLoadConfigFromToml:
     """Tests for load_config_from_toml function."""
@@ -240,6 +258,20 @@ class TestFlattenTomlConfig:
         assert flat["nv_monitor_window_size"] == 2.0
         assert flat["nv_monitor_threshold"] == 300
 
+    def test_flatten_limits_section(self):
+        """Test flattening limits section."""
+        toml_data = {
+            "limits": {
+                "max_virtual_transforms": 100,
+                "pub_queue_maxsize": 20000,
+                "delta_ring_size": 5000,
+            }
+        }
+        flat = flatten_toml_config(toml_data)
+        assert flat["max_virtual_transforms"] == 100
+        assert flat["pub_queue_maxsize"] == 20000
+        assert flat["delta_ring_size"] == 5000
+
 
 class TestValidateConfig:
     """Tests for validate_config function."""
@@ -340,6 +372,28 @@ class TestValidateConfig:
             nv_flush_interval=0.001,
             nv_monitor_window_size=0.001,
             nv_monitor_threshold=1,
+        )
+        errors = validate_config(config)
+        assert errors == []
+
+    def test_invalid_max_virtual_transforms(self):
+        """Test that invalid max_virtual_transforms fails validation."""
+        config = ServerConfig(max_virtual_transforms=0)
+        errors = validate_config(config)
+        assert any("max_virtual_transforms" in e for e in errors)
+
+    def test_invalid_pub_queue_maxsize(self):
+        """Test that invalid pub_queue_maxsize fails validation."""
+        config = ServerConfig(pub_queue_maxsize=-1)
+        errors = validate_config(config)
+        assert any("pub_queue_maxsize" in e for e in errors)
+
+    def test_valid_limits_values(self):
+        """Test that valid limits values pass validation."""
+        config = ServerConfig(
+            max_virtual_transforms=1,
+            pub_queue_maxsize=1,
+            delta_ring_size=1,
         )
         errors = validate_config(config)
         assert errors == []
