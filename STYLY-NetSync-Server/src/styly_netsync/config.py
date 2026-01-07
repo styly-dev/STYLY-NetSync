@@ -38,6 +38,15 @@ class ServerConfig:
     main_loop_sleep: float = 0.02  # 50Hz main loop sleep
     poll_timeout: int = 100  # ZMQ poll timeout in ms
 
+    # Network Variable settings
+    max_global_vars: int = 100  # Maximum global variables per room
+    max_client_vars: int = 100  # Maximum client variables per client
+    max_var_name_length: int = 64  # Maximum variable name length in bytes
+    max_var_value_length: int = 1024  # Maximum variable value length in bytes
+    nv_flush_interval: float = 0.05  # NV flush cadence (50ms)
+    nv_monitor_window_size: float = 1.0  # NV monitoring window (1 second)
+    nv_monitor_threshold: int = 200  # NV requests/s before warning
+
 
 # TOML section to config field mapping
 _SECTION_MAPPING: dict[str, list[str]] = {
@@ -58,6 +67,15 @@ _SECTION_MAPPING: dict[str, list[str]] = {
         "status_log_interval",
         "main_loop_sleep",
         "poll_timeout",
+    ],
+    "network_variables": [
+        "max_global_vars",
+        "max_client_vars",
+        "max_var_name_length",
+        "max_var_value_length",
+        "nv_flush_interval",
+        "nv_monitor_window_size",
+        "nv_monitor_threshold",
     ],
 }
 
@@ -136,6 +154,26 @@ def validate_config(config: ServerConfig) -> list[str]:
     # poll_timeout must be positive integer
     if config.poll_timeout <= 0:
         errors.append(f"poll_timeout must be positive, got {config.poll_timeout}")
+
+    # Network Variable limits validation (must be positive integers)
+    nv_int_fields = [
+        "max_global_vars",
+        "max_client_vars",
+        "max_var_name_length",
+        "max_var_value_length",
+        "nv_monitor_threshold",
+    ]
+    for field_name in nv_int_fields:
+        value = getattr(config, field_name)
+        if value <= 0:
+            errors.append(f"{field_name} must be positive, got {value}")
+
+    # NV timing validation (must be positive floats)
+    nv_float_fields = ["nv_flush_interval", "nv_monitor_window_size"]
+    for field_name in nv_float_fields:
+        value = getattr(config, field_name)
+        if value <= 0:
+            errors.append(f"{field_name} must be positive, got {value}")
 
     return errors
 

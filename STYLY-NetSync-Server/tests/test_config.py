@@ -67,6 +67,30 @@ class TestServerConfig:
         assert config.client_timeout == 2.0
         assert config.poll_timeout == 200
 
+    def test_nv_default_values(self):
+        """Test that NV default values are set correctly."""
+        config = ServerConfig()
+        assert config.max_global_vars == 100
+        assert config.max_client_vars == 100
+        assert config.max_var_name_length == 64
+        assert config.max_var_value_length == 1024
+        assert config.nv_flush_interval == 0.05
+        assert config.nv_monitor_window_size == 1.0
+        assert config.nv_monitor_threshold == 200
+
+    def test_nv_custom_values(self):
+        """Test that NV custom values override defaults."""
+        config = ServerConfig(
+            max_global_vars=200,
+            max_client_vars=50,
+            max_var_value_length=2048,
+            nv_flush_interval=0.1,
+        )
+        assert config.max_global_vars == 200
+        assert config.max_client_vars == 50
+        assert config.max_var_value_length == 2048
+        assert config.nv_flush_interval == 0.1
+
 
 class TestLoadConfigFromToml:
     """Tests for load_config_from_toml function."""
@@ -194,6 +218,28 @@ class TestFlattenTomlConfig:
         assert flat["main_loop_sleep"] == 0.05
         assert flat["poll_timeout"] == 200
 
+    def test_flatten_network_variables_section(self):
+        """Test flattening network_variables section."""
+        toml_data = {
+            "network_variables": {
+                "max_global_vars": 200,
+                "max_client_vars": 50,
+                "max_var_name_length": 128,
+                "max_var_value_length": 2048,
+                "nv_flush_interval": 0.1,
+                "nv_monitor_window_size": 2.0,
+                "nv_monitor_threshold": 300,
+            }
+        }
+        flat = flatten_toml_config(toml_data)
+        assert flat["max_global_vars"] == 200
+        assert flat["max_client_vars"] == 50
+        assert flat["max_var_name_length"] == 128
+        assert flat["max_var_value_length"] == 2048
+        assert flat["nv_flush_interval"] == 0.1
+        assert flat["nv_monitor_window_size"] == 2.0
+        assert flat["nv_monitor_threshold"] == 300
+
 
 class TestValidateConfig:
     """Tests for validate_config function."""
@@ -268,6 +314,32 @@ class TestValidateConfig:
             status_log_interval=0.001,
             main_loop_sleep=0.001,
             poll_timeout=1,
+        )
+        errors = validate_config(config)
+        assert errors == []
+
+    def test_invalid_nv_max_global_vars(self):
+        """Test that invalid max_global_vars fails validation."""
+        config = ServerConfig(max_global_vars=0)
+        errors = validate_config(config)
+        assert any("max_global_vars" in e for e in errors)
+
+    def test_invalid_nv_flush_interval(self):
+        """Test that invalid nv_flush_interval fails validation."""
+        config = ServerConfig(nv_flush_interval=-0.1)
+        errors = validate_config(config)
+        assert any("nv_flush_interval" in e for e in errors)
+
+    def test_valid_nv_values(self):
+        """Test that valid NV values pass validation."""
+        config = ServerConfig(
+            max_global_vars=1,
+            max_client_vars=1,
+            max_var_name_length=1,
+            max_var_value_length=1,
+            nv_flush_interval=0.001,
+            nv_monitor_window_size=0.001,
+            nv_monitor_threshold=1,
         )
         errors = validate_config(config)
         assert errors == []
