@@ -64,12 +64,6 @@ namespace Styly.NetSync
         private static NetSyncManager _instance;
         public static NetSyncManager Instance => _instance;
 
-        /// <summary>
-        /// Indicates whether the PassthroughManager is currently in passthrough (MR) mode.
-        /// </summary>
-        public bool PassthroughMode => passthroughMode;
-        private bool passthroughMode;
-
 
 
         /// <summary>
