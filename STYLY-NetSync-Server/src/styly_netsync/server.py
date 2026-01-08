@@ -2017,6 +2017,10 @@ def main() -> None:
         retention=config.log_retention,
     )
 
+    # Log config file info after logging is configured
+    if args.config is not None:
+        logger.info(f"Loaded configuration from {args.config}")
+
     # Apply global configuration settings
     binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)
 
