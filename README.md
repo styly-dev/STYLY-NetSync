@@ -208,6 +208,19 @@ NetSyncManager.Instance.SwitchToMR(transitionDuration, syncOverNetwork);
 
 ```
 
+## For Maintainers
+
+### Testing with a Specific Branch
+
+Unity: Install package with git URL.
+`https://github.com/styly-dev/STYLY-NetSync.git?path=STYLY-NetSync-Unity/Packages/com.styly.styly-netsync#develop`
+
+Server:  
+`uvx --from "git+https://github.com/styly-dev/STYLY-NetSync@develop#subdirectory=STYLY-NetSync-Server" styly-netsync-server`
+
+### Release Workflow
+
+Use the [Release Workflow GitHub Action](https://github.com/styly-dev/STYLY-NetSync/actions/workflows/release-workflow.yml).
 
 ## Transport layer
 STYLY NetSync uses [ZeroMQ](https://zeromq.org/) as its transport layer  
