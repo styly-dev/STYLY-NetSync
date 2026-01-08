@@ -10,6 +10,7 @@ from styly_netsync.config import (
     ServerConfig,
     create_config_from_args,
     flatten_toml_config,
+    get_unknown_keys,
     load_config_from_toml,
     merge_cli_args,
     validate_config,
@@ -608,3 +609,52 @@ dealer_port = 99999
 
         assert len(exc_info.value.errors) > 0
         assert any("dealer_port" in e for e in exc_info.value.errors)
+
+
+class TestGetUnknownKeys:
+    """Tests for get_unknown_keys function."""
+
+    def test_no_unknown_keys(self):
+        """Test that valid config returns empty dict."""
+        toml_data = {
+            "network": {"dealer_port": 5555, "pub_port": 5556},
+            "timing": {"base_broadcast_interval": 0.1},
+        }
+        unknown = get_unknown_keys(toml_data)
+        assert unknown == {}
+
+    def test_unknown_key_in_known_section(self):
+        """Test detection of unknown key in a known section (typo)."""
+        toml_data = {
+            "logging": {
+                "log_levl_console": "DEBUG",  # Typo: should be log_level_console
+                "log_dir": "/var/log",
+            }
+        }
+        unknown = get_unknown_keys(toml_data)
+        assert "logging" in unknown
+        assert "log_levl_console" in unknown["logging"]
+
+    def test_unknown_section(self):
+        """Test detection of unknown section."""
+        toml_data = {
+            "network": {"dealer_port": 5555},
+            "unknownsection": {"some_key": "value"},
+        }
+        unknown = get_unknown_keys(toml_data)
+        assert "unknownsection" in unknown
+        assert "_unknown_section" in unknown["unknownsection"]
+
+    def test_multiple_unknown_keys(self):
+        """Test detection of multiple unknown keys."""
+        toml_data = {
+            "network": {
+                "dealer_port": 5555,
+                "unknown_key1": "value1",
+                "unknown_key2": "value2",
+            }
+        }
+        unknown = get_unknown_keys(toml_data)
+        assert "network" in unknown
+        assert "unknown_key1" in unknown["network"]
+        assert "unknown_key2" in unknown["network"]
