@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 from styly_netsync.config import (
+    ConfigurationError,
     ServerConfig,
+    create_config_from_args,
     flatten_toml_config,
     load_config_from_toml,
     merge_cli_args,
@@ -567,3 +569,42 @@ class TestMergeCliArgs:
         assert merged.log_json_console is True  # Preserved (store_true is special)
         assert merged.log_rotation == "1 day"
         assert merged.log_retention == "7 days"
+
+
+class TestConfigurationError:
+    """Tests for ConfigurationError exception."""
+
+    def test_configuration_error_stores_errors(self):
+        """Test that ConfigurationError stores the error list."""
+        errors = ["error1", "error2", "error3"]
+        exc = ConfigurationError(errors)
+        assert exc.errors == errors
+        assert "error1" in str(exc)
+        assert "error2" in str(exc)
+
+    def test_create_config_raises_configuration_error(self, tmp_path: Path):
+        """Test that create_config_from_args raises ConfigurationError on validation failure."""
+        # Create config with invalid port
+        toml_content = """
+[network]
+dealer_port = 99999
+"""
+        config_file = tmp_path / "invalid.toml"
+        config_file.write_text(toml_content)
+
+        args = argparse.Namespace(
+            config=config_file,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            create_config_from_args(args)
+
+        assert len(exc_info.value.errors) > 0
+        assert any("dealer_port" in e for e in exc_info.value.errors)

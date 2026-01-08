@@ -43,7 +43,7 @@ from loguru import logger
 from . import binary_serializer
 from . import network_utils
 from .logging_utils import configure_logging
-from .config import ServerConfig, create_config_from_args
+from .config import ConfigurationError, ServerConfig, create_config_from_args
 
 if TYPE_CHECKING:
     from uvicorn import Server
@@ -1996,6 +1996,12 @@ def main() -> None:
     except FileNotFoundError:
         # Basic error output before logging is configured
         print(f"ERROR: Configuration file not found: {args.config}")
+        return
+    except ConfigurationError as e:
+        # Validation errors - print each error clearly
+        print("ERROR: Configuration validation failed:")
+        for error in e.errors:
+            print(f"  - {error}")
         return
     except Exception as e:
         print(f"ERROR: Failed to load configuration: {e}")
