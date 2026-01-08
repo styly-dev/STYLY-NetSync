@@ -1983,7 +1983,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--log-level-console",
-        default="INFO",
+        default=None,
         help="Console log level (default: INFO)",
     )
 
