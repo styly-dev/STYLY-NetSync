@@ -9,7 +9,7 @@ on:
         required: false
         type: boolean
       version:
-        description: 'Version number (e.g., 1.0.0 or 1.0.0-beta.1)'
+        description: 'Version number (Current version: 0.7.1)'
         required: true
         type: string
 
@@ -170,6 +170,27 @@ jobs:
             } >> $GITHUB_ENV
           fi
 
+      - name: Update workflow file description
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          WORKFLOW_FILE=".github/workflows/release-workflow.yml"
+          
+          echo "📝 Updating workflow description with current version..."
+          
+          # Escape special characters in VERSION for sed
+          ESCAPED_VERSION=$(echo "$VERSION" | sed 's/[&/\]/\\&/g')
+          
+          # Update the description line that contains "Current version:"
+          sed -i "s/description: 'Version number (Current version: [0-9]\+\.[0-9]\+\.[0-9]\+\(-[a-zA-Z0-9.-]\+\)\?)'/description: 'Version number (Current version: $ESCAPED_VERSION)'/" "$WORKFLOW_FILE"
+          
+          # Verify the update was successful
+          if grep -q "description: 'Version number (Current version: $VERSION)'" "$WORKFLOW_FILE"; then
+            echo "✅ Updated workflow description to version $VERSION"
+          else
+            echo "❌ Failed to update workflow description"
+            exit 1
+          fi
+
       - name: Commit version changes
         run: |
           VERSION="${{ github.event.inputs.version }}"
@@ -178,6 +199,7 @@ jobs:
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt
           git add STYLY-NetSync-Server/pyproject.toml
+          git add .github/workflows/release-workflow.yml
 
           # Add updated .md files if any (filter blank lines to avoid empty pathspec)
           if [ -n "${UPDATED_MD_FILES}" ]; then
@@ -198,6 +220,7 @@ jobs:
           - Updated Unity package version in package.json
           - Updated Unity version.txt file for runtime version retrieval
           - Updated Python server version in pyproject.toml
+          - Updated release workflow description with current version
           - Updated version references in .md files (if any)"
 
           echo "✅ Committed version changes"
@@ -269,6 +292,7 @@ jobs:
               echo "| Version Update | ✅ | Updated Unity package.json to \`$VERSION\` |"
               echo "| Version Update | ✅ | Updated Unity version.txt to \`$VERSION\` |"
               echo "| Version Update | ✅ | Updated Python pyproject.toml to \`$VERSION\` |"
+              echo "| Version Update | ✅ | Updated workflow description to \`$VERSION\` |"
               echo "| Git Commit | ✅ | Committed changes to develop branch |"
               echo "| Branch Merge | ✅ | Fast-forward merged develop → main |"
               echo "| Release Draft | ✅ | Created draft release with tag \`$TAG_NAME\` |"
@@ -278,6 +302,7 @@ jobs:
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json\`"
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt\`"
               echo "- \`STYLY-NetSync-Server/pyproject.toml\`"
+              echo "- \`.github/workflows/release-workflow.yml\`"
               if [ -n "${UPDATED_MD_FILES}" ]; then
                 echo "$UPDATED_MD_FILES" | while read -r file; do
                   [ -n "$file" ] && echo "- \`$file\`"
