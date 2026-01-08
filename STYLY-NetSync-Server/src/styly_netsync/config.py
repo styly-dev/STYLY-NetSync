@@ -155,6 +155,41 @@ def flatten_toml_config(toml_data: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
+def get_unknown_keys(toml_data: dict[str, Any]) -> dict[str, list[str]]:
+    """Detect unknown sections and keys in TOML configuration.
+
+    Args:
+        toml_data: Parsed TOML data with nested sections.
+
+    Returns:
+        Dictionary mapping section names to lists of unknown keys.
+        Unknown sections are reported with key "_unknown_section".
+    """
+    unknown: dict[str, list[str]] = {}
+
+    for section, values in toml_data.items():
+        if not isinstance(values, dict):
+            # Top-level keys outside sections are not supported
+            if "_root" not in unknown:
+                unknown["_root"] = []
+            unknown["_root"].append(section)
+            continue
+
+        if section not in _SECTION_MAPPING:
+            # Unknown section
+            unknown[section] = ["_unknown_section"]
+        else:
+            # Check for unknown keys within known section
+            known_keys = set(_SECTION_MAPPING[section])
+            for key in values:
+                if key not in known_keys:
+                    if section not in unknown:
+                        unknown[section] = []
+                    unknown[section].append(key)
+
+    return unknown
+
+
 def validate_config(config: ServerConfig) -> list[str]:
     """Validate configuration values.
 
@@ -296,6 +331,18 @@ def create_config_from_args(
     if hasattr(args, "config") and args.config is not None:
         config_path = Path(args.config)
         toml_data = load_config_from_toml(config_path)
+
+        # Warn about unknown keys (possible typos)
+        unknown = get_unknown_keys(toml_data)
+        if unknown:
+            print(f"WARNING: Unknown keys in {config_path}:")
+            for section, keys in unknown.items():
+                if "_unknown_section" in keys:
+                    print(f"  - Unknown section: [{section}]")
+                else:
+                    for key in keys:
+                        print(f"  - [{section}] unknown key: {key}")
+
         flat_data = flatten_toml_config(toml_data)
 
         # Update config with TOML values
