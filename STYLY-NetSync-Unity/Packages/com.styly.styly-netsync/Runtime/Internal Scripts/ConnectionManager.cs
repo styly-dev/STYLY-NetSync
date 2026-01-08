@@ -1,6 +1,5 @@
 // ConnectionManager.cs - Handles network connection management
 using System;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -27,6 +26,7 @@ namespace Styly.NetSync
         private bool _connectionError;
         private ServerDiscoveryManager _discoveryManager;
         private string _currentRoomId;
+        private int _subDisconnectedFlag;
 
         public DealerSocket DealerSocket => _dealerSocket;
         public SubscriberSocket SubSocket => _subSocket;
@@ -97,8 +97,8 @@ namespace Styly.NetSync
         {
             try
             {
-                var lastReceiveTimer = Stopwatch.StartNew();
-                var subDisconnected = 0;
+                var lastReceiveTimer = System.Diagnostics.Stopwatch.StartNew();
+                _subDisconnectedFlag = 0;
                 var monitorEndpoint = string.Empty;
 
                 // Dealer (for sending)
@@ -123,7 +123,7 @@ namespace Styly.NetSync
 
                     DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
 
-                    var subMonitor = AttachSubMonitor(sub, ref subDisconnected, ref monitorEndpoint);
+                    var subMonitor = AttachSubMonitor(sub, ref monitorEndpoint);
 
                     // Notify connection established
                     if (OnConnectionEstablished != null)
@@ -133,9 +133,9 @@ namespace Styly.NetSync
 
                     while (!_shouldStop)
                     {
-                        if (Interlocked.CompareExchange(ref subDisconnected, 0, 0) == 1)
+                        if (Interlocked.CompareExchange(ref _subDisconnectedFlag, 0, 0) == 1)
                         {
-                            if (!TryReconnectSubscriber(ref sub, ref subMonitor, ref subDisconnected, ref monitorEndpoint, serverAddress, subPort, roomId, lastReceiveTimer))
+                            if (!TryReconnectSubscriber(ref sub, ref subMonitor, ref monitorEndpoint, serverAddress, subPort, roomId, lastReceiveTimer))
                             {
                                 NotifyConnectionError("SUB socket disconnected");
                                 break;
@@ -144,7 +144,7 @@ namespace Styly.NetSync
 
                         if (lastReceiveTimer.Elapsed >= SubReceiveTimeout)
                         {
-                            if (!TryReconnectSubscriber(ref sub, ref subMonitor, ref subDisconnected, ref monitorEndpoint, serverAddress, subPort, roomId, lastReceiveTimer))
+                            if (!TryReconnectSubscriber(ref sub, ref subMonitor, ref monitorEndpoint, serverAddress, subPort, roomId, lastReceiveTimer))
                             {
                                 NotifyConnectionError("SUB receive timeout");
                                 break;
@@ -217,13 +217,13 @@ namespace Styly.NetSync
             }
         }
 
-        private NetMQMonitor AttachSubMonitor(SubscriberSocket sub, ref int subDisconnected, ref string monitorEndpoint)
+        private NetMQMonitor AttachSubMonitor(SubscriberSocket sub, ref string monitorEndpoint)
         {
             monitorEndpoint = $"inproc://sub-monitor-{Guid.NewGuid():N}";
             var subMonitor = new NetMQMonitor(sub, monitorEndpoint, SocketEvents.Disconnected);
             subMonitor.Disconnected += (_, args) =>
             {
-                Interlocked.Exchange(ref subDisconnected, 1);
+                Interlocked.Exchange(ref _subDisconnectedFlag, 1);
                 DebugLog($"[Thread] SUB disconnected → {args.Address}");
             };
             subMonitor.Start();
@@ -233,12 +233,11 @@ namespace Styly.NetSync
         private bool TryReconnectSubscriber(
             ref SubscriberSocket sub,
             ref NetMQMonitor subMonitor,
-            ref int subDisconnected,
             ref string monitorEndpoint,
             string serverAddress,
             int subPort,
             string roomId,
-            Stopwatch lastReceiveTimer)
+            System.Diagnostics.Stopwatch lastReceiveTimer)
         {
             if (subMonitor != null)
             {
@@ -254,7 +253,7 @@ namespace Styly.NetSync
             }
 
             _subSocket = null;
-            Interlocked.Exchange(ref subDisconnected, 0);
+            Interlocked.Exchange(ref _subDisconnectedFlag, 0);
 
             for (var attempt = 1; attempt <= SubReconnectAttempts; attempt++)
             {
@@ -268,7 +267,7 @@ namespace Styly.NetSync
                 if (sub != null)
                 {
                     _subSocket = sub;
-                    subMonitor = AttachSubMonitor(sub, ref subDisconnected, ref monitorEndpoint);
+                    subMonitor = AttachSubMonitor(sub, ref monitorEndpoint);
                     lastReceiveTimer.Restart();
                     DebugLog($"[Thread] SUB reconnected → {serverAddress}:{subPort}");
                     return true;
