@@ -193,10 +193,6 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 
 ```
 
-### Others
-Currently no additional public methods are documented in this section.
-
-
 ## Transport layer
 STYLY NetSync uses [ZeroMQ](https://zeromq.org/) as its transport layer  
 – C# (Unity): [NetMQ](https://github.com/zeromq/netmq)  
