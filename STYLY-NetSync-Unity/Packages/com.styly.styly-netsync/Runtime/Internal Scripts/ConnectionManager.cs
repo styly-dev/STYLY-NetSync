@@ -24,7 +24,7 @@ namespace Styly.NetSync
         
         // Thread-safe exception state (written on receive thread, read on main thread)
         private volatile Exception _lastException;
-        private volatile long _lastExceptionAtUnixMs;
+        private long _lastExceptionAtUnixMs;
 
         public DealerSocket DealerSocket => _dealerSocket;
         public SubscriberSocket SubSocket => _subSocket;
@@ -33,7 +33,7 @@ namespace Styly.NetSync
         
         // Thread-safe accessors for exception state
         public Exception LastException => _lastException;
-        public long LastExceptionAtUnixMs => _lastExceptionAtUnixMs;
+        public long LastExceptionAtUnixMs => Volatile.Read(ref _lastExceptionAtUnixMs);
 
         public event Action<string> OnConnectionError;
         public event Action OnConnectionEstablished;
@@ -151,12 +151,12 @@ namespace Styly.NetSync
             {
                 if (!_shouldStop)
                 {
-                    // Store exception details for diagnostics (thread-safe with volatile fields)
+                    // Store exception details for diagnostics (thread-safe handoff to main thread)
                     var ex_local = ex;
                     var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     
                     // Write timestamp first, then exception (helps with ordering)
-                    _lastExceptionAtUnixMs = timestamp;
+                    Volatile.Write(ref _lastExceptionAtUnixMs, timestamp);
                     _lastException = ex_local;
                     
                     // Log detailed exception context

@@ -341,9 +341,9 @@ namespace Styly.NetSync
         
         /// <summary>
         /// Unix timestamp (milliseconds) when the last connection error occurred.
-        /// Written on receive thread, read on main thread. Volatile for visibility.
+        /// Written on receive thread, read on main thread. Stored via Interlocked for visibility.
         /// </summary>
-        private volatile long _pendingConnectionErrorAtUnixMs;
+        private long _pendingConnectionErrorAtUnixMs;
         
         /// <summary>
         /// Re-entrancy guard for ProcessPendingConnectionErrorOnMainThread.
@@ -995,7 +995,7 @@ namespace Styly.NetSync
                 var timestamp = _connectionManager.LastExceptionAtUnixMs;
                 var exception = _connectionManager.LastException;
                 
-                _pendingConnectionErrorAtUnixMs = timestamp;
+                System.Threading.Interlocked.Exchange(ref _pendingConnectionErrorAtUnixMs, timestamp);
                 _pendingConnectionException = exception;
             }
             
