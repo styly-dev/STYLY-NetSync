@@ -1,10 +1,12 @@
 // ConnectionManager.cs - Handles network connection management
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text;
 using NetMQ;
+using NetMQ.Monitoring;
 using NetMQ.Sockets;
 using UnityEngine;
 
@@ -12,6 +14,10 @@ namespace Styly.NetSync
 {
     internal class ConnectionManager
     {
+        private static readonly TimeSpan SubReceiveTimeout = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan SubReconnectDelay = TimeSpan.FromSeconds(1);
+        private const int SubReconnectAttempts = 3;
+
         private DealerSocket _dealerSocket;
         private SubscriberSocket _subSocket;
         private Thread _receiveThread;
@@ -91,6 +97,10 @@ namespace Styly.NetSync
         {
             try
             {
+                var lastReceiveTimer = Stopwatch.StartNew();
+                var subDisconnected = 0;
+                var monitorEndpoint = string.Empty;
+
                 // Dealer (for sending)
                 using var dealer = new DealerSocket();
                 dealer.Options.Linger = TimeSpan.Zero;
@@ -101,38 +111,69 @@ namespace Styly.NetSync
                 DebugLog($"[Thread] DEALER connected → {serverAddress}:{dealerPort}");
 
                 // Subscriber (for receiving)
-                using var sub = new SubscriberSocket();
-                sub.Options.Linger = TimeSpan.Zero;
-                sub.Options.ReceiveHighWatermark = 10;
-                sub.Connect($"{serverAddress}:{subPort}");
-                // Subscribe with topic. Using string here is one-time and acceptable.
-                // Note: NetMQ also offers byte[] overloads, but subscription happens once per connection.
-                sub.Subscribe(roomId);
-                _subSocket = sub;
-
-                DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
-
-                // Notify connection established
-                if (OnConnectionEstablished != null)
+                var sub = CreateSubscriber(serverAddress, subPort, roomId);
+                if (sub == null)
                 {
-                    OnConnectionEstablished.Invoke();
+                    NotifyConnectionError("Failed to create SUB socket");
+                    return;
                 }
-
-                while (!_shouldStop)
+                using (sub)
                 {
-                    // Receive two frames: [topic][payload]. Use string topic and direct comparison.
-                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
-                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
+                    _subSocket = sub;
 
-                    if (topic != roomId) { continue; }
+                    DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
 
-                    try
+                    var subMonitor = AttachSubMonitor(sub, ref subDisconnected, ref monitorEndpoint);
+
+                    // Notify connection established
+                    if (OnConnectionEstablished != null)
                     {
-                        _messageProcessor.ProcessIncomingMessage(payload);
+                        OnConnectionEstablished.Invoke();
                     }
-                    catch (Exception ex)
+
+                    while (!_shouldStop)
                     {
-                        Debug.LogError($"Binary parse error: {ex.Message}");
+                        if (Interlocked.CompareExchange(ref subDisconnected, 0, 0) == 1)
+                        {
+                            if (!TryReconnectSubscriber(ref sub, ref subMonitor, ref subDisconnected, ref monitorEndpoint, serverAddress, subPort, roomId, lastReceiveTimer))
+                            {
+                                NotifyConnectionError("SUB socket disconnected");
+                                break;
+                            }
+                        }
+
+                        if (lastReceiveTimer.Elapsed >= SubReceiveTimeout)
+                        {
+                            if (!TryReconnectSubscriber(ref sub, ref subMonitor, ref subDisconnected, ref monitorEndpoint, serverAddress, subPort, roomId, lastReceiveTimer))
+                            {
+                                NotifyConnectionError("SUB receive timeout");
+                                break;
+                            }
+                        }
+
+                        // Receive two frames: [topic][payload]. Use string topic and direct comparison.
+                        if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
+                        lastReceiveTimer.Restart();
+                        if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
+                        lastReceiveTimer.Restart();
+
+                        if (topic != roomId) { continue; }
+
+                        try
+                        {
+                            _messageProcessor.ProcessIncomingMessage(payload);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"Binary parse error: {ex.Message}");
+                        }
+                    }
+
+                    if (subMonitor != null)
+                    {
+                        subMonitor.Stop();
+                        subMonitor.Dispose();
+                        subMonitor = null;
                     }
                 }
             }
@@ -141,13 +182,102 @@ namespace Styly.NetSync
                 if (!_shouldStop)
                 {
                     Debug.LogError($"Network thread error: {ex.Message}");
-                    _connectionError = true;
-                    if (OnConnectionError != null)
-                    {
-                        OnConnectionError.Invoke(ex.Message);
-                    }
+                    NotifyConnectionError(ex.Message);
                 }
             }
+        }
+
+        private void NotifyConnectionError(string reason)
+        {
+            if (_connectionError) { return; }
+            _connectionError = true;
+            if (OnConnectionError != null)
+            {
+                OnConnectionError.Invoke(reason);
+            }
+        }
+
+        private static SubscriberSocket CreateSubscriber(string serverAddress, int subPort, string roomId)
+        {
+            try
+            {
+                var sub = new SubscriberSocket();
+                sub.Options.Linger = TimeSpan.Zero;
+                sub.Options.ReceiveHighWatermark = 10;
+                sub.Connect($"{serverAddress}:{subPort}");
+                // Subscribe with topic. Using string here is one-time and acceptable.
+                // Note: NetMQ also offers byte[] overloads, but subscription happens once per connection.
+                sub.Subscribe(roomId);
+                return sub;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to create SUB socket: {ex.Message}");
+                return null;
+            }
+        }
+
+        private NetMQMonitor AttachSubMonitor(SubscriberSocket sub, ref int subDisconnected, ref string monitorEndpoint)
+        {
+            monitorEndpoint = $"inproc://sub-monitor-{Guid.NewGuid():N}";
+            var subMonitor = new NetMQMonitor(sub, monitorEndpoint, SocketEvents.Disconnected);
+            subMonitor.Disconnected += (_, args) =>
+            {
+                Interlocked.Exchange(ref subDisconnected, 1);
+                DebugLog($"[Thread] SUB disconnected → {args.Address}");
+            };
+            subMonitor.Start();
+            return subMonitor;
+        }
+
+        private bool TryReconnectSubscriber(
+            ref SubscriberSocket sub,
+            ref NetMQMonitor subMonitor,
+            ref int subDisconnected,
+            ref string monitorEndpoint,
+            string serverAddress,
+            int subPort,
+            string roomId,
+            Stopwatch lastReceiveTimer)
+        {
+            if (subMonitor != null)
+            {
+                subMonitor.Stop();
+                subMonitor.Dispose();
+                subMonitor = null;
+            }
+
+            if (sub != null)
+            {
+                sub.Dispose();
+                sub = null;
+            }
+
+            _subSocket = null;
+            Interlocked.Exchange(ref subDisconnected, 0);
+
+            for (var attempt = 1; attempt <= SubReconnectAttempts; attempt++)
+            {
+                if (_shouldStop)
+                {
+                    return false;
+                }
+
+                DebugLog($"[Thread] Reconnecting SUB ({attempt}/{SubReconnectAttempts})...");
+                sub = CreateSubscriber(serverAddress, subPort, roomId);
+                if (sub != null)
+                {
+                    _subSocket = sub;
+                    subMonitor = AttachSubMonitor(sub, ref subDisconnected, ref monitorEndpoint);
+                    lastReceiveTimer.Restart();
+                    DebugLog($"[Thread] SUB reconnected → {serverAddress}:{subPort}");
+                    return true;
+                }
+
+                Thread.Sleep(SubReconnectDelay);
+            }
+
+            return false;
         }
 
         private static void WaitThreadExit(Thread t, int ms)
