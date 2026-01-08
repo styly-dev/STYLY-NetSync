@@ -13,6 +13,18 @@ from pathlib import Path
 from typing import Any
 
 
+class ConfigurationError(Exception):
+    """Raised when configuration validation fails.
+
+    Attributes:
+        errors: List of validation error messages.
+    """
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        super().__init__(f"Configuration validation failed: {'; '.join(errors)}")
+
+
 @dataclass
 class ServerConfig:
     """Server configuration with all settings.
@@ -276,10 +288,8 @@ def create_config_from_args(
     Raises:
         FileNotFoundError: If specified config file does not exist.
         tomllib.TOMLDecodeError: If config file has invalid TOML syntax.
-        SystemExit: If configuration validation fails.
+        ConfigurationError: If configuration validation fails.
     """
-    from loguru import logger
-
     config = ServerConfig()
 
     # Load from config file if specified
@@ -290,7 +300,6 @@ def create_config_from_args(
 
         # Update config with TOML values
         config = dataclass_replace(config, **flat_data)
-        logger.info(f"Loaded configuration from {config_path}")
 
     # Apply CLI overrides
     config = merge_cli_args(config, args)
@@ -298,8 +307,6 @@ def create_config_from_args(
     # Validate
     errors = validate_config(config)
     if errors:
-        for error in errors:
-            logger.error(f"Configuration error: {error}")
-        raise SystemExit(1)
+        raise ConfigurationError(errors)
 
     return config
