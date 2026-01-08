@@ -533,3 +533,37 @@ class TestMergeCliArgs:
         assert merged.log_json_console is True
         assert merged.log_rotation == "5 MB"
         assert merged.log_retention == "10 files"
+
+    def test_cli_none_values_preserve_config(self):
+        """Test that None CLI values don't override config file settings.
+
+        This is a regression test for the issue where argparse default="INFO"
+        caused log_level_console to always override the config file value.
+        """
+        config = ServerConfig(
+            log_dir="/var/log/app",
+            log_level_console="DEBUG",  # Set in config file
+            log_json_console=True,
+            log_rotation="1 day",
+            log_retention="7 days",
+        )
+
+        # Simulate CLI args when user didn't specify --log-level-console
+        # (argparse should now give None instead of "INFO")
+        args = argparse.Namespace(
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,  # Not specified
+            log_level_console=None,  # Not specified - should preserve config
+            log_json_console=False,  # store_true default
+            log_rotation=None,  # Not specified
+            log_retention=None,  # Not specified
+        )
+
+        merged = merge_cli_args(config, args)
+        # Config file values should be preserved when CLI args are None
+        assert merged.log_dir == "/var/log/app"
+        assert merged.log_level_console == "DEBUG"  # Preserved from config!
+        assert merged.log_json_console is True  # Preserved (store_true is special)
+        assert merged.log_rotation == "1 day"
+        assert merged.log_retention == "7 days"
