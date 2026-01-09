@@ -293,7 +293,8 @@ class NetSyncServer:
                                 self._sub_connection_count = max(0, self._sub_connection_count - 1)
                                 count = self._sub_connection_count
                             logger.info(f"SUB disconnected (total: {count})")
-                except zmq.ZMQError:
+                except zmq.ZMQError as e:
+                    logger.debug("PUB monitor ZMQError: %s", e)
                     break
         except Exception as e:
             logger.error(f"PUB monitor error: {e}")
@@ -369,6 +370,10 @@ class NetSyncServer:
             self._pub_ready.set()
             logger.error(f"Publisher error during startup/run: {e}")
         finally:
+            self._publisher_running = False
+            if self._pub_monitor_thread:
+                self._pub_monitor_thread.join(timeout=1.0)
+                self._pub_monitor_thread = None
             if self.pub is not None:
                 try:
                     self.pub.close()
