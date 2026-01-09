@@ -187,6 +187,12 @@ class NetSyncServer:
         self._pub_ready = threading.Event()  # signaled after successful bind
         self._publisher_exception = None  # bind/run errors are stored here
 
+        # PUB socket monitor for tracking SUB connections
+        self._pub_monitor = None
+        self._pub_monitor_thread = None
+        self._sub_connection_count = 0
+        self._sub_connection_lock = threading.Lock()
+
         # Latest-only coalescing buffer for high-rate topics (e.g., room transforms)
         self._coalesce_lock = threading.Lock()
         # topic_bytes -> message_bytes (keep only the most-recent per topic)
@@ -306,6 +312,43 @@ class NetSyncServer:
         except Exception as exc:
             logger.warning("Failed to raise RLIMIT_NOFILE: %s", exc)
 
+    def _pub_monitor_loop(self):
+        """Monitor PUB socket for SUB connection/disconnection events."""
+        from zmq.utils.monitor import recv_monitor_message
+        try:
+            while self._publisher_running and self._pub_monitor is not None:
+                try:
+                    # Poll with timeout to allow checking _publisher_running
+                    if self._pub_monitor.poll(100):
+                        msg = recv_monitor_message(self._pub_monitor)
+                        event = msg["event"]
+                        if event == zmq.EVENT_ACCEPTED:
+                            with self._sub_connection_lock:
+                                self._sub_connection_count += 1
+                                count = self._sub_connection_count
+                            logger.info(f"SUB connected (total: {count})")
+                        elif event == zmq.EVENT_DISCONNECTED:
+                            with self._sub_connection_lock:
+                                self._sub_connection_count = max(0, self._sub_connection_count - 1)
+                                count = self._sub_connection_count
+                            logger.info(f"SUB disconnected (total: {count})")
+                except zmq.ZMQError:
+                    break
+        except Exception as e:
+            logger.error(f"PUB monitor error: {e}")
+        finally:
+            if self._pub_monitor is not None:
+                try:
+                    self._pub_monitor.close()
+                except Exception:
+                    pass
+                self._pub_monitor = None
+
+    def _get_sub_connection_count(self) -> int:
+        """Get current number of connected SUB sockets."""
+        with self._sub_connection_lock:
+            return self._sub_connection_count
+
     def _publisher_loop(self):
         """The only place that owns/uses self.pub and performs ZMQ sends."""
         try:
@@ -316,6 +359,16 @@ class NetSyncServer:
             except Exception:
                 pass
             self.pub.bind(f"tcp://*:{self.pub_port}")
+
+            # Set up socket monitor for tracking SUB connections
+            self._pub_monitor = self.pub.get_monitor_socket(zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED)
+            self._pub_monitor_thread = threading.Thread(
+                target=self._pub_monitor_loop,
+                name="PubMonitor",
+                daemon=True
+            )
+            self._pub_monitor_thread.start()
+
             self._pub_ready.set()
 
             while self._publisher_running:
@@ -1309,8 +1362,9 @@ class NetSyncServer:
                 topic_bytes = room_id.encode("utf-8")
                 message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
                 self._enqueue_pub(topic_bytes, message_bytes)
+                sub_count = self._get_sub_connection_count()
                 logger.info(
-                    f"Broadcasted {len(mappings)} ID mappings to room {room_id}"
+                    f"Broadcasted {len(mappings)} ID mappings to room {room_id} (connected SUBs: {sub_count})"
                 )
 
     def _periodic_loop(self):
