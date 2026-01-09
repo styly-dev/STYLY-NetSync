@@ -212,7 +212,7 @@ NetSyncManager.Instance.SwitchToMR(transitionDuration, syncOverNetwork);
 
 ### Testing with a Specific Branch
 
-Unity: Install package with git URL.
+Unity: Install package with git URL.  
 `https://github.com/styly-dev/STYLY-NetSync.git?path=STYLY-NetSync-Unity/Packages/com.styly.styly-netsync#develop`
 
 Server:  
