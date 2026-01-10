@@ -324,6 +324,36 @@ namespace Styly.NetSync
         // Battery monitoring fields
         private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
         private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
+        
+        // Connection error handling fields (main-thread handoff for thread-safe error handling)
+        /// <summary>
+        /// Atomic flag for pending connection errors. 
+        /// Written by receive thread, consumed by main thread.
+        /// Values: 0=no pending error, 1=error pending
+        /// </summary>
+        private int _pendingConnectionError;
+        
+        /// <summary>
+        /// Exception instance from the last connection error.
+        /// Written on receive thread, read on main thread. Volatile for visibility.
+        /// </summary>
+        private volatile Exception _pendingConnectionException;
+        
+        /// <summary>
+        /// Unix timestamp (milliseconds) when the last connection error occurred.
+        /// Written on receive thread, read on main thread. Stored via Interlocked for visibility.
+        /// </summary>
+        private long _pendingConnectionErrorAtUnixMs;
+        
+        /// <summary>
+        /// Re-entrancy guard for ProcessPendingConnectionErrorOnMainThread.
+        /// Main-thread only, prevents concurrent error handling.
+        /// </summary>
+        private bool _isHandlingConnectionError;
+        
+        // Constants for atomic flag values
+        private const int PENDING_ERROR_NONE = 0;
+        private const int PENDING_ERROR_SET = 1;
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
@@ -466,6 +496,10 @@ namespace Styly.NetSync
             }
 
             HandleDiscovery();
+            
+            // Process pending connection errors BEFORE reconnection logic
+            ProcessPendingConnectionErrorOnMainThread();
+            
             HandleReconnection();
             ProcessMessages();
 
@@ -823,9 +857,12 @@ namespace Styly.NetSync
 
         private void HandleReconnection()
         {
-            if (_connectionManager.IsConnectionError && Time.time >= _reconnectAt)
+            // Use _reconnectAt instead of IsConnectionError to avoid race condition
+            // where ClearConnectionError() is called before this check runs
+            if (_reconnectAt > 0 && Time.time >= _reconnectAt)
             {
-                DebugLog($"Attempting reconnection to {_serverAddress}…");
+                _reconnectAt = 0; // Reset to prevent repeated attempts
+                DebugLog($"Attempting reconnection to {_serverAddress}...");
                 StartNetworking();
             }
         }
@@ -879,18 +916,97 @@ namespace Styly.NetSync
         #endregion ------------------------------------------------------------------------
 
         #region === Utility ===
+        /// <summary>
+        /// Processes pending connection errors on the main thread.
+        /// This method ensures deterministic cleanup and reconnection scheduling
+        /// without executing teardown on the receive thread.
+        /// </summary>
+        private void ProcessPendingConnectionErrorOnMainThread()
+        {
+            // Consume the pending flag atomically
+            if (System.Threading.Interlocked.Exchange(ref _pendingConnectionError, PENDING_ERROR_NONE) == PENDING_ERROR_NONE)
+            {
+                return; // No pending error
+            }
+            
+            // Re-entrancy guard: prevent concurrent execution
+            if (_isHandlingConnectionError)
+            {
+                return; // Already handling an error
+            }
+            
+            try
+            {
+                _isHandlingConnectionError = true;
+                
+                // Don't schedule reconnection if application is quitting
+                if (!Application.isPlaying)
+                {
+                    DebugLog("Application not playing - skipping reconnection schedule");
+                    return;
+                }
+                
+                // Schedule reconnection deterministically
+                _reconnectAt = Time.time + ReconnectDelay;
+                
+                // Log detailed context
+                string exType = _pendingConnectionException?.GetType().Name ?? "Unknown";
+                string exMsg = _pendingConnectionException?.Message ?? "No details";
+                DebugLog($"ConnectionError detected. Scheduling reconnect. " +
+                         $"now={Time.time:F2} reconnectAt={_reconnectAt:F2} " +
+                         $"exType={exType} exMsg={exMsg}");
+                
+                // Reset client state
+                _clientNo = 0;
+                _hasInvokedReady = false;
+                _shouldCheckReady = false;
+                _shouldSendHandshake = false;
+                _networkVariableManager?.ResetInitialSyncFlag();
+                
+                // Execute teardown (idempotent)
+                DebugLog("StopNetworking start. reason=ConnectionError");
+                StopNetworking();
+                DebugLog("StopNetworking completed.");
+                
+                // Cleanup avatars and presence
+                _avatarManager?.CleanupRemoteAvatars();
+                _humanPresenceManager?.CleanupAll();
+                
+                // Clear error state for next reconnect attempt
+                _connectionManager?.ClearConnectionError();
+            }
+            finally
+            {
+                _isHandlingConnectionError = false;
+            }
+        }
+
+        /// <summary>
+        /// Handles connection errors from both receive thread (via OnConnectionError callback)
+        /// and main thread (via send failures). Thread-safe: uses atomic handoff to main thread.
+        /// </summary>
         private void HandleConnectionError(string reason)
         {
-            if (_connectionManager.IsConnectionError) { return; }
-            Debug.LogError($"[NetSyncManager] {reason}");
-            _reconnectAt = Time.time + ReconnectDelay;
-            _clientNo = 0; // Reset client number
-            _hasInvokedReady = false; // Reset ready state
-            _shouldCheckReady = false; // Reset check flag
-            _shouldSendHandshake = false; // Reset handshake flag
-            _networkVariableManager?.ResetInitialSyncFlag(); // Reset network variable sync state
-            StopNetworking();
-            _humanPresenceManager?.CleanupAll();
+            // DO NOT execute teardown here - may be called from receive thread
+            // Instead, mark pending for main thread processing
+            
+            // Copy exception context from ConnectionManager BEFORE setting flag
+            // This ensures consistency between exception and timestamp
+            if (_connectionManager != null)
+            {
+                // Read volatile fields - they are written in order (timestamp first, then exception)
+                var timestamp = _connectionManager.LastExceptionAtUnixMs;
+                var exception = _connectionManager.LastException;
+                
+                System.Threading.Interlocked.Exchange(ref _pendingConnectionErrorAtUnixMs, timestamp);
+                _pendingConnectionException = exception;
+            }
+            
+            // Now set the pending flag (atomic operation ensures main thread sees the exception data)
+            System.Threading.Interlocked.Exchange(ref _pendingConnectionError, PENDING_ERROR_SET);
+            
+            // Log simple notification on receive thread (safe)
+            Debug.LogError($"[NetSyncManager] Connection error detected: {reason}");
         }
 
         private void DebugLog(string msg)

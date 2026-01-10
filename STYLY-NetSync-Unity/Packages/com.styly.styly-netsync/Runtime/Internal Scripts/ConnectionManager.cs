@@ -21,11 +21,19 @@ namespace Styly.NetSync
         private bool _connectionError;
         private ServerDiscoveryManager _discoveryManager;
         private string _currentRoomId;
+        
+        // Thread-safe exception state (written on receive thread, read on main thread)
+        private volatile Exception _lastException;
+        private long _lastExceptionAtUnixMs;
 
         public DealerSocket DealerSocket => _dealerSocket;
         public SubscriberSocket SubSocket => _subSocket;
         public bool IsConnected => _dealerSocket != null && _subSocket != null && !_connectionError;
         public bool IsConnectionError => _connectionError;
+        
+        // Thread-safe accessors for exception state
+        public Exception LastException => _lastException;
+        public long LastExceptionAtUnixMs => Volatile.Read(ref _lastExceptionAtUnixMs);
 
         public event Action<string> OnConnectionError;
         public event Action OnConnectionEstablished;
@@ -79,8 +87,11 @@ namespace Styly.NetSync
             _subSocket = null;
             _dealerSocket = null;
 
-            // Wait for receive thread to exit
-            WaitThreadExit(_receiveThread, 1000);
+            // Wait for receive thread to exit (unless we're on the receive thread)
+            if (Thread.CurrentThread != _receiveThread)
+            {
+                WaitThreadExit(_receiveThread, 1000);
+            }
             _receiveThread = null;
 
             // OS-specific cleanup
@@ -140,11 +151,31 @@ namespace Styly.NetSync
             {
                 if (!_shouldStop)
                 {
-                    Debug.LogError($"Network thread error: {ex.Message}");
+                    // Store exception details for diagnostics (thread-safe handoff to main thread)
+                    var ex_local = ex;
+                    var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    
+                    // Write timestamp first, then exception (helps with ordering)
+                    Volatile.Write(ref _lastExceptionAtUnixMs, timestamp);
+                    _lastException = ex_local;
+                    
+                    // Log detailed exception context
+                    var threadId = Thread.CurrentThread.ManagedThreadId;
+                    var endpoint = $"{serverAddress}:{dealerPort}/{subPort}";
+                    Debug.LogError($"[ConnectionManager] Network thread error. " +
+                                   $"Type={ex_local.GetType().Name} Message={ex_local.Message} " +
+                                   $"Endpoint={endpoint} ThreadId={threadId} " +
+                                   $"Time={timestamp}");
+                    
+#if NETSYNC_DEBUG_CONNECTION
+                    // Verbose logging: include stack trace
+                    Debug.LogError($"[ConnectionManager] Stack trace: {ex_local.StackTrace}");
+#endif
+                    
                     _connectionError = true;
                     if (OnConnectionError != null)
                     {
-                        OnConnectionError.Invoke(ex.Message);
+                        OnConnectionError.Invoke(ex_local.Message);
                     }
                 }
             }
@@ -213,6 +244,20 @@ namespace Styly.NetSync
         public void DebugLog(string msg)
         {
             if (_enableDebugLogs) { Debug.Log($"[ConnectionManager] {msg}"); }
+        }
+
+        /// <summary>
+        /// Clears the connection error state. Should be called after StopNetworking() 
+        /// and before attempting reconnection.
+        /// Thread-safe: must be called from main thread when receive thread is not running.
+        /// </summary>
+        public void ClearConnectionError()
+        {
+            _connectionError = false;
+            // Clear exception reference to prevent memory retention
+            // (NetSyncManager has already copied it to _pendingConnectionException)
+            _lastException = null;
+            // Keep timestamp for basic diagnostics
         }
     }
 }
