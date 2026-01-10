@@ -15,9 +15,12 @@ Architecture:
 """
 
 import argparse
+import atexit
 import logging
 import math
+import os
 import random
+import subprocess
 
 # The 'resource' module is POSIX-only (Linux/macOS). On Windows it is unavailable.
 # We make it optional and skip FD-limit checks when it's not present.
@@ -34,7 +37,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import zmq
 
@@ -493,6 +496,8 @@ class NetworkTransport:
         sub_port: int,
         room_id: str,
         enable_sub: bool = True,
+        socket_register: Callable[[zmq.Socket], None] | None = None,
+        socket_unregister: Callable[[zmq.Socket], None] | None = None,
     ):
         self.context = context
         self.server_addr = server_addr
@@ -503,14 +508,33 @@ class NetworkTransport:
         self.socket: zmq.Socket | None = None
         self.sub_socket: zmq.Socket | None = None
         self.logger = logging.getLogger(self.__class__.__name__)
+        self._socket_register = socket_register
+        self._socket_unregister = socket_unregister
+
+    def _register_socket(self, socket: zmq.Socket):
+        if self._socket_register:
+            try:
+                self._socket_register(socket)
+            except Exception:
+                pass
+
+    def _unregister_socket(self, socket: zmq.Socket):
+        if self._socket_unregister:
+            try:
+                self._socket_unregister(socket)
+            except Exception:
+                pass
 
     def connect(self) -> bool:
         """Establish connection to server (both DEALER and SUB)."""
         try:
             # DEALER for sending
             self.socket = self.context.socket(zmq.DEALER)
+            self._register_socket(self.socket)
             self.socket.setsockopt(zmq.LINGER, 0)
+            self.socket.setsockopt(zmq.IMMEDIATE, 1)
             self.socket.setsockopt(zmq.RCVTIMEO, 1000)
+            self.socket.setsockopt(zmq.SNDTIMEO, 1000)
 
             dealer_endpoint = f"{self.server_addr}:{self.dealer_port}"
             self.socket.connect(dealer_endpoint)
@@ -520,6 +544,7 @@ class NetworkTransport:
             if self.enable_sub:
                 try:
                     self.sub_socket = self.context.socket(zmq.SUB)
+                    self._register_socket(self.sub_socket)
                     self.sub_socket.setsockopt(zmq.LINGER, 0)
                     self.sub_socket.setsockopt(zmq.RCVTIMEO, 10)  # non-blocking-ish
                     sub_endpoint = f"{self.server_addr}:{self.sub_port}"
@@ -536,6 +561,7 @@ class NetworkTransport:
                     try:
                         if self.sub_socket:
                             self.sub_socket.close()
+                            self._unregister_socket(self.sub_socket)
                     except Exception:
                         pass
                     finally:
@@ -563,9 +589,13 @@ class NetworkTransport:
                 [
                     room_id.encode("utf-8"),
                     binary_data,
-                ]
+                ],
+                flags=zmq.NOBLOCK,
             )
             return True
+        except zmq.Again:
+            # Drop when socket is not ready to avoid blocking under congestion.
+            return False
         except Exception as e:
             self.logger.error(f"Failed to send transform: {e}")
             return False
@@ -590,9 +620,13 @@ class NetworkTransport:
                 [
                     room_id.encode("utf-8"),
                     binary_data,
-                ]
+                ],
+                flags=zmq.NOBLOCK,
             )
             return True
+        except zmq.Again:
+            # Drop when socket is not ready to avoid blocking under congestion.
+            return False
         except Exception as e:
             self.logger.error(f"Failed to send client variable: {e}")
             return False
@@ -659,10 +693,16 @@ class NetworkTransport:
     def disconnect(self):
         """Close connection to server."""
         if self.socket:
-            self.socket.close()
+            try:
+                self.socket.close()
+            finally:
+                self._unregister_socket(self.socket)
             self.socket = None
         if self.sub_socket:
-            self.sub_socket.close()
+            try:
+                self.sub_socket.close()
+            finally:
+                self._unregister_socket(self.sub_socket)
             self.sub_socket = None
 
 
@@ -675,7 +715,13 @@ class SharedSubscriber:
     """Single SUB socket that receives broadcasts and shares mappings."""
 
     def __init__(
-        self, context: zmq.Context, server_addr: str, sub_port: int, room_id: str
+        self,
+        context: zmq.Context,
+        server_addr: str,
+        sub_port: int,
+        room_id: str,
+        socket_register: Callable[[zmq.Socket], None] | None = None,
+        socket_unregister: Callable[[zmq.Socket], None] | None = None,
     ):
         self.context = context
         self.server_addr = server_addr
@@ -687,10 +733,27 @@ class SharedSubscriber:
         self._running = False
         self._lock = threading.Lock()
         self._device_to_client: dict[str, int] = {}
+        self._socket_register = socket_register
+        self._socket_unregister = socket_unregister
+
+    def _register_socket(self, socket: zmq.Socket):
+        if self._socket_register:
+            try:
+                self._socket_register(socket)
+            except Exception:
+                pass
+
+    def _unregister_socket(self, socket: zmq.Socket):
+        if self._socket_unregister:
+            try:
+                self._socket_unregister(socket)
+            except Exception:
+                pass
 
     def start(self) -> bool:
         try:
             self.socket = self.context.socket(zmq.SUB)
+            self._register_socket(self.socket)
             self.socket.setsockopt(zmq.LINGER, 0)
             self.socket.setsockopt(zmq.RCVTIMEO, 10)
             endpoint = f"{self.server_addr}:{self.sub_port}"
@@ -710,6 +773,7 @@ class SharedSubscriber:
             if self.socket is not None:
                 try:
                     self.socket.close()
+                    self._unregister_socket(self.socket)
                 except Exception:
                     pass
                 finally:
@@ -729,6 +793,8 @@ class SharedSubscriber:
                 self.socket.close()
             except Exception:
                 pass
+            finally:
+                self._unregister_socket(self.socket)
             self.socket = None
 
     def is_running(self) -> bool:
@@ -1069,7 +1135,7 @@ class ClientThreadPool:
             return False
 
         thread = threading.Thread(
-            target=client.run, args=(self.stop_event,), daemon=True
+            target=client.run, args=(self.stop_event,), daemon=False
         )
 
         try:
@@ -1206,6 +1272,63 @@ class ResourceManager:
             return False, f"Failed to raise FD limit: {e}"
 
     @staticmethod
+    def bump_fd_soft_limit(target: int, logger: logging.Logger):
+        """Best-effort bump of RLIMIT_NOFILE to target within hard limit."""
+        if not ResourceManager._has_resource():
+            logger.info(
+                "Skipping FD soft limit bump: 'resource' module not available on this platform."
+            )
+            return
+
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            new_soft = min(max(soft, target), hard)
+            if new_soft != soft:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+                logger.info(
+                    "Raised RLIMIT_NOFILE: %d -> %d (hard=%d)", soft, new_soft, hard
+                )
+        except Exception as exc:
+            logger.warning("Failed to raise RLIMIT_NOFILE: %s", exc)
+
+    @staticmethod
+    def cleanup_ipc_socket(server_addr: str, logger: logging.Logger):
+        """Remove stale ipc:// socket files if present."""
+        if not server_addr.startswith("ipc://"):
+            return
+
+        path = server_addr[len("ipc://") :]
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+                logger.info("Removed stale ipc socket: %s", path)
+        except Exception as exc:
+            logger.warning("Failed to remove ipc socket %s: %s", path, exc)
+
+    @staticmethod
+    def log_port_occupancy(server_addr: str, dealer_port: int, logger: logging.Logger):
+        """Log processes listening on the dealer port to surface conflicts early."""
+        if not server_addr.startswith("tcp://"):
+            return
+
+        try:
+            result = subprocess.run(
+                ["lsof", "-nP", f"-iTCP:{dealer_port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                logger.info(
+                    "Port %d is already in LISTEN state:\n%s",
+                    dealer_port,
+                    result.stdout,
+                )
+        except Exception as exc:
+            # Best-effort check only; log at debug to avoid noise when lsof is missing.
+            logger.debug("Port occupancy check failed: %s", exc)
+
+    @staticmethod
     def compute_max_clients_for_soft_limit(soft_limit: int) -> int:
         """Compute a conservative maximum client count for a given soft FD limit.
 
@@ -1223,8 +1346,20 @@ class ResourceManager:
     @staticmethod
     def setup_signal_handlers(handler):
         """Setup signal handlers for clean shutdown."""
-        signal.signal(signal.SIGINT, handler)
-        signal.signal(signal.SIGTERM, handler)
+        try:
+            signal.signal(signal.SIGINT, handler)
+        except Exception:
+            pass
+        if hasattr(signal, "SIGTERM"):
+            try:
+                signal.signal(signal.SIGTERM, handler)
+            except Exception:
+                pass
+        if hasattr(signal, "SIGBREAK"):
+            try:
+                signal.signal(signal.SIGBREAK, handler)
+            except Exception:
+                pass
 
 
 # ============================================================================
@@ -1259,19 +1394,81 @@ class ClientSimulator:
         self.simulate_battery = simulate_battery
         self.enable_receive = enable_receive
 
-        self.context = zmq.Context()
+        self.context = zmq.Context(io_threads=1)
         self.thread_pool = ClientThreadPool(num_clients)
         self.running = False
+        self._stop_requested = threading.Event()
+        self._stop_lock = threading.Lock()
+        self._stopped = False
         self.logger = logging.getLogger(self.__class__.__name__)
         self.shared_subscriber: SharedSubscriber | None = None
+        self._sockets: set[zmq.Socket] = set()
+        self._sockets_lock = threading.Lock()
+
+        # Startup preflight checks and cleanup
+        self._preflight_checks()
 
         # Setup signal handlers
         ResourceManager.setup_signal_handlers(self._signal_handler)
 
+        # Best-effort cleanup on interpreter exit
+        atexit.register(self._atexit_cleanup)
+
+    def _preflight_checks(self):
+        """Run startup checks to avoid stale resources and port conflicts."""
+        ResourceManager.bump_fd_soft_limit(
+            ResourceManager.DEFAULT_FD_LIMIT, self.logger
+        )
+        ResourceManager.cleanup_ipc_socket(self.server_addr, self.logger)
+        ResourceManager.log_port_occupancy(
+            self.server_addr, self.dealer_port, self.logger
+        )
+
+    def _register_socket(self, socket: zmq.Socket):
+        with self._sockets_lock:
+            self._sockets.add(socket)
+
+    def _unregister_socket(self, socket: zmq.Socket):
+        with self._sockets_lock:
+            self._sockets.discard(socket)
+
+    def _cleanup_tracked_sockets(self):
+        with self._sockets_lock:
+            for socket in list(self._sockets):
+                try:
+                    socket.close()
+                except Exception:
+                    pass
+            self._sockets.clear()
+
     def _signal_handler(self, signum, frame):
         """Handle interrupt signals."""
-        self.logger.info(f"\nReceived signal {signum}, stopping simulation...")
+        self.logger.info(f"\nReceived signal {signum}, requesting stop...")
+        self.request_stop()
         self.stop()
+
+    def request_stop(self):
+        """Request shutdown from non-blocking contexts (signal handlers, etc.)."""
+        self._stop_requested.set()
+        self.running = False
+
+    def _atexit_cleanup(self):
+        """Best-effort cleanup at process exit."""
+        try:
+            self.request_stop()
+            self.stop()
+        except Exception:
+            pass
+        finally:
+            try:
+                self._cleanup_tracked_sockets()
+            except Exception:
+                pass
+            try:
+                if not getattr(self.context, "closed", False):
+                    self.context.term()
+            except Exception:
+                pass
 
     def start(self):
         """Start the simulation."""
@@ -1339,7 +1536,12 @@ class ClientSimulator:
         # Start shared subscriber for ID mappings (single SUB for all clients)
         if not self.enable_receive:
             self.shared_subscriber = SharedSubscriber(
-                self.context, self.server_addr, self.sub_port, self.room_id
+                self.context,
+                self.server_addr,
+                self.sub_port,
+                self.room_id,
+                socket_register=self._register_socket,
+                socket_unregister=self._unregister_socket,
             )
             if not self.shared_subscriber.start():
                 self.logger.warning(
@@ -1381,6 +1583,8 @@ class ClientSimulator:
                 enable_sub=(
                     shared_sub is None or self.enable_receive
                 ),  # disable per-client SUB if shared is running and recv disabled
+                socket_register=self._register_socket,
+                socket_unregister=self._unregister_socket,
             )
 
             # Create client
@@ -1427,6 +1631,8 @@ class ClientSimulator:
         # Run until interrupted
         try:
             while self.running:
+                if self._stop_requested.is_set():
+                    break
                 active = self.thread_pool.get_active_count()
                 if active == 0:
                     self.logger.info("All clients stopped")
@@ -1439,8 +1645,10 @@ class ClientSimulator:
 
     def stop(self):
         """Stop the simulation."""
-        if not self.running:
-            return
+        with self._stop_lock:
+            if self._stopped:
+                return
+            self._stopped = True
 
         self.running = False
         self.logger.info("Stopping simulation...")
@@ -1455,9 +1663,16 @@ class ClientSimulator:
         except Exception as e:
             self.logger.error(f"Error stopping SharedSubscriber: {e}")
 
+        # Ensure every tracked socket is closed before terminating context
+        try:
+            self._cleanup_tracked_sockets()
+        except Exception as e:
+            self.logger.debug(f"Socket cleanup encountered an error: {e}")
+
         # Cleanup ZMQ context
         try:
-            self.context.term()
+            if not getattr(self.context, "closed", False):
+                self.context.term()
         except Exception as e:
             self.logger.error(f"Error terminating ZMQ context: {e}")
 
