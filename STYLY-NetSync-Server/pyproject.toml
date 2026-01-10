@@ -136,6 +136,10 @@ ignore_missing_imports = true
 module = "psutil.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "loguru.*"
+ignore_missing_imports = true
+
 # Pytest configuration
 [tool.pytest.ini_options]
 minversion = "7.0"
