@@ -857,9 +857,12 @@ namespace Styly.NetSync
 
         private void HandleReconnection()
         {
-            if (_connectionManager.IsConnectionError && Time.time >= _reconnectAt)
+            // Use _reconnectAt instead of IsConnectionError to avoid race condition
+            // where ClearConnectionError() is called before this check runs
+            if (_reconnectAt > 0 && Time.time >= _reconnectAt)
             {
-                DebugLog($"Attempting reconnection to {_serverAddress}…");
+                _reconnectAt = 0; // Reset to prevent repeated attempts
+                DebugLog($"Attempting reconnection to {_serverAddress}...");
                 StartNetworking();
             }
         }
