@@ -312,9 +312,37 @@ class NetSyncServer:
         except Exception as exc:
             logger.warning("Failed to raise RLIMIT_NOFILE: %s", exc)
 
+    def _get_fd_snapshot(self) -> tuple[int | None, int | None, int | None]:
+        """
+        Best-effort snapshot of:
+          - open_fds: current process open FD count
+          - soft/hard: RLIMIT_NOFILE
+        """
+        soft: int | None = None
+        hard: int | None = None
+        if resource is not None:
+            try:
+                soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            except Exception:
+                pass
+
+        open_fds: int | None = None
+        # macOS: /dev/fd is available. Linux often has it too.
+        try:
+            open_fds = len(os.listdir("/dev/fd"))
+        except Exception:
+            # fallback (Linux /proc)
+            try:
+                open_fds = len(os.listdir(f"/proc/{os.getpid()}/fd"))
+            except Exception:
+                pass
+
+        return open_fds, soft, hard
+
     def _pub_monitor_loop(self):
         """Monitor PUB socket for SUB connection/disconnection events."""
         from zmq.utils.monitor import recv_monitor_message
+
         try:
             while self._publisher_running and self._pub_monitor is not None:
                 try:
@@ -329,7 +357,9 @@ class NetSyncServer:
                             logger.info(f"SUB connected (total: {count})")
                         elif event == zmq.EVENT_DISCONNECTED:
                             with self._sub_connection_lock:
-                                self._sub_connection_count = max(0, self._sub_connection_count - 1)
+                                self._sub_connection_count = max(
+                                    0, self._sub_connection_count - 1
+                                )
                                 count = self._sub_connection_count
                             logger.info(f"SUB disconnected (total: {count})")
                 except zmq.ZMQError as e:
@@ -362,11 +392,11 @@ class NetSyncServer:
             self.pub.bind(f"tcp://*:{self.pub_port}")
 
             # Set up socket monitor for tracking SUB connections
-            self._pub_monitor = self.pub.get_monitor_socket(zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED)
+            self._pub_monitor = self.pub.get_monitor_socket(
+                zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED
+            )
             self._pub_monitor_thread = threading.Thread(
-                target=self._pub_monitor_loop,
-                name="PubMonitor",
-                daemon=True
+                target=self._pub_monitor_loop, name="PubMonitor", daemon=True
             )
             self._pub_monitor_thread.start()
 
@@ -1428,10 +1458,21 @@ class NetSyncServer:
                         1 for flag in self.room_dirty_flags.values() if flag
                     )
                     total_device_ids = len(self.device_id_last_seen)
+
+                    # Get FD information for status log
+                    open_fds, soft, _ = self._get_fd_snapshot()
+                    fd_part = ""
+                    if open_fds is not None:
+                        if soft is not None:
+                            fd_part = f", FD {open_fds}/{soft}"
+                        else:
+                            fd_part = f", FD {open_fds}"
+
                     logger.info(
                         f"Status: {len(self.rooms)} rooms, {normal_clients} normal clients, "
                         f"{stealth_clients} stealth clients, "
                         f"{dirty_rooms} dirty rooms, {total_device_ids} tracked device IDs"
+                        f"{fd_part}"
                     )
                     last_log = current_time
 
