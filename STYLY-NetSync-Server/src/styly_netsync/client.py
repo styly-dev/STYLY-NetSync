@@ -247,7 +247,7 @@ class net_sync_manager:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
 
-                if self._sub_socket in socks and self._sub_socket is not None:
+                if self._sub_socket is not None and self._sub_socket in socks:
                     message_parts = self._sub_socket.recv_multipart()
                     if len(message_parts) >= 2:
                         # room_id = message_parts[0].decode("utf-8")  # Not used currently
