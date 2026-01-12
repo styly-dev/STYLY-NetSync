@@ -152,9 +152,9 @@ class TestAllRunMethods:
             expect_help=False,
             timeout=3,
         )
-        assert success, (
-            f"Server with custom discovery port failed. stderr: {stderr or stdout}"
-        )
+        assert (
+            success
+        ), f"Server with custom discovery port failed. stderr: {stderr or stdout}"
 
 
 if __name__ == "__main__":
