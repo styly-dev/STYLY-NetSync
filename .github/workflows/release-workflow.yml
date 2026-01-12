@@ -9,7 +9,7 @@ on:
         required: false
         type: boolean
       version:
-        description: 'Version number (Current version: 0.7.1)'
+        description: 'Version number (e.g., 0.7.2).'
         required: true
         type: string
 
@@ -46,13 +46,25 @@ jobs:
           git fetch origin develop
           LOCAL_COMMIT=$(git rev-parse HEAD)
           REMOTE_COMMIT=$(git rev-parse origin/develop)
-          
+
           if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
             echo "❌ Error: develop branch is not up to date with origin/develop"
             echo "Please pull the latest changes from origin/develop before running this workflow"
             exit 1
           fi
           echo "✅ develop branch is up to date"
+
+      - name: Display current version
+        run: |
+          PACKAGE_FILE="STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json"
+          CURRENT_VERSION=$(jq -r '.version' "$PACKAGE_FILE")
+          echo "📦 Current version: $CURRENT_VERSION"
+          echo "🎯 Target version: ${{ github.event.inputs.version }}"
+          echo ""
+          echo "This workflow will update all version files from $CURRENT_VERSION to ${{ github.event.inputs.version }}"
+
+          # Save current version to environment variable for use in Summary
+          echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
 
       - name: Update Unity package.json version
         run: |
@@ -170,27 +182,6 @@ jobs:
             } >> $GITHUB_ENV
           fi
 
-      - name: Update workflow file description
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          WORKFLOW_FILE=".github/workflows/release-workflow.yml"
-          
-          echo "📝 Updating workflow description with current version..."
-          
-          # Escape special characters in VERSION for sed
-          ESCAPED_VERSION=$(echo "$VERSION" | sed 's/[&/\]/\\&/g')
-          
-          # Update the description line that contains "Current version:"
-          sed -i "s/description: 'Version number (Current version: [0-9]\+\.[0-9]\+\.[0-9]\+\(-[a-zA-Z0-9.-]\+\)\?)'/description: 'Version number (Current version: $ESCAPED_VERSION)'/" "$WORKFLOW_FILE"
-          
-          # Verify the update was successful
-          if grep -q "description: 'Version number (Current version: $VERSION)'" "$WORKFLOW_FILE"; then
-            echo "✅ Updated workflow description to version $VERSION"
-          else
-            echo "❌ Failed to update workflow description"
-            exit 1
-          fi
-
       - name: Commit version changes
         run: |
           VERSION="${{ github.event.inputs.version }}"
@@ -199,7 +190,6 @@ jobs:
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt
           git add STYLY-NetSync-Server/pyproject.toml
-          git add .github/workflows/release-workflow.yml
 
           # Add updated .md files if any (filter blank lines to avoid empty pathspec)
           if [ -n "${UPDATED_MD_FILES}" ]; then
@@ -220,7 +210,6 @@ jobs:
           - Updated Unity package version in package.json
           - Updated Unity version.txt file for runtime version retrieval
           - Updated Python server version in pyproject.toml
-          - Updated release workflow description with current version
           - Updated version references in .md files (if any)"
 
           echo "✅ Committed version changes"
@@ -285,6 +274,12 @@ jobs:
             if [ "${{ job.status }}" == "success" ]; then
               echo "## ✅ Status: Success"
               echo ""
+              echo "### 🔄 Version Change"
+              echo ""
+              echo "| From | To |"
+              echo "|------|-----|"
+              echo "| \`${CURRENT_VERSION}\` | \`$VERSION\` |"
+              echo ""
               echo "### 🎯 Completed Actions"
               echo ""
               echo "| Step | Status | Description |"
@@ -292,7 +287,6 @@ jobs:
               echo "| Version Update | ✅ | Updated Unity package.json to \`$VERSION\` |"
               echo "| Version Update | ✅ | Updated Unity version.txt to \`$VERSION\` |"
               echo "| Version Update | ✅ | Updated Python pyproject.toml to \`$VERSION\` |"
-              echo "| Version Update | ✅ | Updated workflow description to \`$VERSION\` |"
               echo "| Git Commit | ✅ | Committed changes to develop branch |"
               echo "| Branch Merge | ✅ | Fast-forward merged develop → main |"
               echo "| Release Draft | ✅ | Created draft release with tag \`$TAG_NAME\` |"
@@ -302,7 +296,6 @@ jobs:
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json\`"
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt\`"
               echo "- \`STYLY-NetSync-Server/pyproject.toml\`"
-              echo "- \`.github/workflows/release-workflow.yml\`"
               if [ -n "${UPDATED_MD_FILES}" ]; then
                 echo "$UPDATED_MD_FILES" | while read -r file; do
                   [ -n "$file" ] && echo "- \`$file\`"
