@@ -148,6 +148,7 @@ class NetSyncServer:
     ROUTER_BACKLOG = 512  # Accept queue depth for DEALER/ROUTER connections
     PUB_BACKLOG = 512  # Accept queue depth for SUB connections
     DEFAULT_FD_LIMIT = 4096
+    ID_MAPPING_DEBOUNCE_INTERVAL = 0.5  # Debounce ID mapping broadcasts (500ms)
 
     def __init__(
         self,
@@ -221,6 +222,14 @@ class NetSyncServer:
         self.device_id_last_seen: dict[str, float] = (
             {}
         )  # device_id -> last_seen_timestamp
+
+        # ID Mapping broadcast debouncing
+        self.room_id_mapping_dirty: dict[str, bool] = (
+            {}
+        )  # room_id -> needs ID mapping broadcast
+        self.room_last_id_mapping_broadcast: dict[str, float] = (
+            {}
+        )  # room_id -> last broadcast timestamp
 
         # Network Variables storage
         self.global_variables: dict[str, dict[str, Any]] = (
@@ -377,6 +386,11 @@ class NetSyncServer:
             try:
                 self.pub.setsockopt(zmq.BACKLOG, self.PUB_BACKLOG)
             except Exception:
+                pass
+            try:
+                self.pub.setsockopt(zmq.SNDHWM, 10000)
+            except Exception:
+                # Best effort; ignore if high-water mark option is unsupported
                 pass
             self.pub.bind(f"tcp://*:{self.pub_port}")
 
@@ -606,6 +620,11 @@ class NetSyncServer:
                 self.router.setsockopt(zmq.BACKLOG, self.ROUTER_BACKLOG)
             except Exception:
                 # Best effort; fall back to default backlog if unsupported
+                pass
+            try:
+                self.router.setsockopt(zmq.RCVHWM, 10000)
+            except Exception:
+                # Best effort; ignore if high-water mark option is unsupported
                 pass
             self.router.bind(f"tcp://*:{self.dealer_port}")
 
@@ -909,9 +928,12 @@ class NetSyncServer:
                 # Mark room as dirty since transform data has arrived
                 self.room_dirty_flags[room_id] = True
 
-        # Broadcast ID mappings and Network Variables when a new client joins (outside of lock)
+            # Mark room for debounced ID mapping broadcast when a new client joins
+            if is_new_client:
+                self.room_id_mapping_dirty[room_id] = True
+
+        # Sync network variables to new client (outside lock to avoid deadlocks)
         if is_new_client:
-            self._broadcast_id_mappings(room_id)
             self._sync_network_variables_to_new_client(room_id)
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]):
@@ -1275,6 +1297,27 @@ class NetSyncServer:
                     f"Broadcasted {len(mappings)} ID mappings to room {room_id} (connected SUBs: {sub_count})"
                 )
 
+    def _flush_debounced_id_mapping_broadcasts(self, current_time: float):
+        """Flush ID mapping broadcasts that have been debounced long enough."""
+        # Get list of rooms that need ID mapping broadcast and mark them as processed
+        rooms_to_broadcast: list[str] = []
+        with self._rooms_lock:
+            for room_id, is_dirty in list(self.room_id_mapping_dirty.items()):
+                if not is_dirty:
+                    continue
+                last_broadcast = self.room_last_id_mapping_broadcast.get(room_id, 0.0)
+                if current_time - last_broadcast >= self.ID_MAPPING_DEBOUNCE_INTERVAL:
+                    rooms_to_broadcast.append(room_id)
+
+            # Mark rooms as having been broadcast at this time
+            for room_id in rooms_to_broadcast:
+                self.room_id_mapping_dirty[room_id] = False
+                self.room_last_id_mapping_broadcast[room_id] = current_time
+
+        # Broadcast ID mappings for eligible rooms outside the lock
+        for room_id in rooms_to_broadcast:
+            self._broadcast_id_mappings(room_id)
+
     def _periodic_loop(self):
         """Combined broadcast and cleanup loop with adaptive rates"""
         last_broadcast_check = 0
@@ -1306,6 +1349,9 @@ class NetSyncServer:
                 if current_time - last_cleanup >= self.CLEANUP_INTERVAL:
                     self._cleanup_clients(current_time)
                     last_cleanup = current_time
+
+                # Debounced ID mapping broadcasts
+                self._flush_debounced_id_mapping_broadcasts(current_time)
 
                 # Clean up expired device ID mappings periodically
                 if current_time - last_device_id_cleanup >= DEVICE_ID_CLEANUP_INTERVAL:
@@ -1449,8 +1495,8 @@ class NetSyncServer:
                     # Mark room as dirty since clients were removed
                     self.room_dirty_flags[room_id] = True
 
-                    # Broadcast updated ID mappings after client removal
-                    self._broadcast_id_mappings(room_id)
+                    # Mark room for debounced ID mapping broadcast
+                    self.room_id_mapping_dirty[room_id] = True
 
                 # Mark empty rooms for removal
                 if not clients:
@@ -1472,6 +1518,12 @@ class NetSyncServer:
                         del self.room_device_id_to_client_no[room_id]
                     if room_id in self.room_client_no_to_device_id:
                         del self.room_client_no_to_device_id[room_id]
+
+                    # Clean up ID mapping debounce tracking
+                    if room_id in self.room_id_mapping_dirty:
+                        del self.room_id_mapping_dirty[room_id]
+                    if room_id in self.room_last_id_mapping_broadcast:
+                        del self.room_last_id_mapping_broadcast[room_id]
 
                     # Clean up NV-related structures
                     if room_id in self.global_variables:
