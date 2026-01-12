@@ -271,7 +271,7 @@ class TestClient:
                 if self.sub_socket in socks:
                     message_parts = self.sub_socket.recv_multipart()
                     if len(message_parts) >= 2:
-                        room_id = message_parts[0].decode("utf-8")
+                        _room_id = message_parts[0].decode("utf-8")  # noqa: F841
                         data = message_parts[1]
 
                         msg_type, msg_data, _ = deserialize(data)

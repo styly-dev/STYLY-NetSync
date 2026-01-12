@@ -21,7 +21,7 @@ if env_is_green.lower() == "true":
     print("## net_sync_manager client imports green ZeroMQ.")
     import zmq.green as zmq
 else:
-    import zmq
+    import zmq  # type: ignore[no-redef]
 
 from . import binary_serializer
 from .adapters import (
@@ -247,7 +247,7 @@ class net_sync_manager:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
 
-                if self._sub_socket in socks:
+                if self._sub_socket in socks and self._sub_socket is not None:
                     message_parts = self._sub_socket.recv_multipart()
                     if len(message_parts) >= 2:
                         # room_id = message_parts[0].decode("utf-8")  # Not used currently
@@ -662,6 +662,10 @@ class net_sync_manager:
         """UDP discovery loop."""
         while self._discovery_running:
             try:
+                # Check if socket is still valid
+                if self._discovery_socket is None:
+                    break
+
                 # Send discovery request
                 message = "STYLY-NETSYNC-DISCOVER"
                 self._discovery_socket.sendto(

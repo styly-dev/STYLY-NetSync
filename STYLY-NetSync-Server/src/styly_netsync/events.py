@@ -9,14 +9,14 @@ from typing import Any
 class EventHandler:
     """Simple event handler that manages callbacks."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._callbacks: list[Callable] = []
 
     def add_listener(self, callback: Callable) -> Callable[[], None]:
         """Add a callback listener. Returns unsubscribe function."""
         self._callbacks.append(callback)
 
-        def unsubscribe():
+        def unsubscribe() -> None:
             if callback in self._callbacks:
                 self._callbacks.remove(callback)
 

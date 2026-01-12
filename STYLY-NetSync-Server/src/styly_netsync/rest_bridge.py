@@ -3,12 +3,16 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, constr
+from pydantic import BaseModel, Field, StringConstraints
 
 from .client import net_sync_manager
+
+if TYPE_CHECKING:
+    import uvicorn
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +20,15 @@ MAX_NAME = 64
 MAX_VALUE = 1024
 MAX_CLIENT_VARS = 20
 
+# Constrained string types for variable names and values
+VarName = Annotated[str, StringConstraints(min_length=1, max_length=MAX_NAME)]
+VarValue = Annotated[str, StringConstraints(max_length=MAX_VALUE)]
+
 
 class UpsertBody(BaseModel):
     """Request body for client variable upsert."""
 
-    vars: dict[constr(min_length=1, max_length=MAX_NAME), constr(max_length=MAX_VALUE)] = Field(  # type: ignore[type-arg]
-        default_factory=dict
-    )
+    vars: dict[VarName, VarValue] = Field(default_factory=dict)
 
 
 class PreseedStore:

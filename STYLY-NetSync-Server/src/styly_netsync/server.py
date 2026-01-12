@@ -25,12 +25,18 @@ from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
 import struct
-from typing import Any, TYPE_CHECKING
+from types import ModuleType
+from typing import Any, TYPE_CHECKING, cast
 
+import zmq.sugar.socket
+
+resource: ModuleType | None
 try:
-    import resource
+    import resource as _resource
+
+    resource = _resource
 except Exception:
-    resource = None  # type: ignore[assignment]
+    resource = None
 
 import zmq
 from loguru import logger
@@ -98,7 +104,7 @@ def get_version() -> str:
                     data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
                     v = (data.get("project") or {}).get("version")
                     if v:
-                        return v
+                        return cast(str, v)
                 except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError):
                     # Continue to next fallback if TOML parsing fails
                     pass
@@ -123,7 +129,7 @@ def get_version() -> str:
                 data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
                 v = (data.get("project") or {}).get("version")
                 if v:
-                    return v
+                    return cast(str, v)
             except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError):
                 pass
             break
@@ -178,32 +184,36 @@ class NetSyncServer:
         self.enable_server_discovery = enable_server_discovery
         self.server_discovery_port = server_discovery_port
         self.server_name = server_name
-        self.server_discovery_socket = None
-        self.server_discovery_thread = None
+        self.server_discovery_socket: socket.socket | None = None
+        self.server_discovery_thread: threading.Thread | None = None
         self.server_discovery_running = False
 
         # TCP server discovery settings
-        self.tcp_server_discovery_socket = None
-        self.tcp_server_discovery_thread = None
+        self.tcp_server_discovery_socket: socket.socket | None = None
+        self.tcp_server_discovery_thread: threading.Thread | None = None
         self.tcp_server_discovery_running = False
 
         # Sockets
-        self.router = None
-        self.pub = None  # Will be created/owned by Publisher thread only
+        self.router: zmq.sugar.socket.Socket[bytes] | None = None
+        self.pub: zmq.sugar.socket.Socket[bytes] | None = (
+            None  # Will be created/owned by Publisher thread only
+        )
 
         # Publisher thread infrastructure
-        self._pub_queue_ctrl = Queue(maxsize=10000)  # tuneable
-        self._publisher_thread = None
+        self._pub_queue_ctrl: Queue[tuple[bytes | None, bytes | None]] = Queue(
+            maxsize=10000
+        )  # tuneable
+        self._publisher_thread: threading.Thread | None = None
         self._publisher_running = False
         self._pub_ready = threading.Event()  # signaled after successful bind
-        self._publisher_exception = None  # bind/run errors are stored here
+        self._publisher_exception: Exception | None = None  # bind/run errors stored
         self._transform_tokens = float(self.TRANSFORM_BUDGET_BYTES_PER_SEC)
         self._transform_last_refill = time.monotonic()
         self._transform_budget_lock = threading.Lock()
 
         # PUB socket monitor for tracking SUB connections
-        self._pub_monitor = None
-        self._pub_monitor_thread = None
+        self._pub_monitor: zmq.sugar.socket.Socket[bytes] | None = None
+        self._pub_monitor_thread: threading.Thread | None = None
         self._sub_connection_count = 0
         self._sub_connection_lock = threading.Lock()
 
@@ -283,8 +293,10 @@ class NetSyncServer:
 
         # Threading
         self.running = False
-        self.receive_thread = None
-        self.periodic_thread = None  # Combined broadcast + cleanup
+        self.receive_thread: threading.Thread | None = None
+        self.periodic_thread: threading.Thread | None = (
+            None  # Combined broadcast + cleanup
+        )
 
         # Performance configuration (now using constants)
         self.base_broadcast_interval = self.BASE_BROADCAST_INTERVAL
@@ -300,12 +312,12 @@ class NetSyncServer:
         self._rest_thread: threading.Thread | None = None
         self._rest_server: Server | None = None
 
-    def _increment_stat(self, stat_name: str, amount: int = 1):
+    def _increment_stat(self, stat_name: str, amount: int = 1) -> None:
         """Thread-safe increment of statistics"""
         with self._stats_lock:
             setattr(self, stat_name, getattr(self, stat_name) + amount)
 
-    def _bump_fd_soft_limit(self, target: int):
+    def _bump_fd_soft_limit(self, target: int) -> None:
         """Best-effort bump of RLIMIT_NOFILE for macOS/Linux."""
         if resource is None:
             logger.info(
@@ -352,16 +364,19 @@ class NetSyncServer:
 
         return open_fds, soft, hard
 
-    def _pub_monitor_loop(self):
+    def _pub_monitor_loop(self) -> None:
         """Monitor PUB socket for SUB connection/disconnection events."""
         from zmq.utils.monitor import recv_monitor_message
 
         try:
-            while self._publisher_running and self._pub_monitor is not None:
+            while self._publisher_running:
+                pub_monitor = self._pub_monitor
+                if pub_monitor is None:
+                    break
                 try:
                     # Poll with timeout to allow checking _publisher_running
-                    if self._pub_monitor.poll(100):
-                        msg = recv_monitor_message(self._pub_monitor)
+                    if pub_monitor.poll(100):
+                        msg = recv_monitor_message(pub_monitor)
                         event = msg["event"]
                         if event == zmq.EVENT_ACCEPTED:
                             with self._sub_connection_lock:
@@ -381,9 +396,10 @@ class NetSyncServer:
         except Exception as e:
             logger.error(f"PUB monitor error: {e}")
         finally:
-            if self._pub_monitor is not None:
+            pub_monitor = self._pub_monitor
+            if pub_monitor is not None:
                 try:
-                    self._pub_monitor.close()
+                    pub_monitor.close()
                 except Exception:
                     pass
                 self._pub_monitor = None
@@ -413,6 +429,10 @@ class NetSyncServer:
 
     def _try_send_transform(self) -> bool:
         """Send at most one coalesced transform message if budget allows."""
+        pub = self.pub
+        if pub is None:
+            return False
+
         self._refill_transform_tokens()
         with self._coalesce_lock:
             if not self._coalesce_latest:
@@ -429,7 +449,7 @@ class NetSyncServer:
             self._transform_tokens -= cost
 
         try:
-            self.pub.send_multipart([topic_bytes, message_bytes], flags=zmq.DONTWAIT)
+            pub.send_multipart([topic_bytes, message_bytes], flags=zmq.DONTWAIT)
             self._increment_stat("broadcast_count")
             with self._coalesce_lock:
                 # Remove only if the message is still the latest.
@@ -448,7 +468,7 @@ class NetSyncServer:
                 self._transform_tokens += cost
             return False
 
-    def _publisher_loop(self):
+    def _publisher_loop(self) -> None:
         """The only place that owns/uses self.pub and performs ZMQ sends."""
         try:
             # Create/bind PUB in this thread to avoid cross-thread use
@@ -527,7 +547,7 @@ class NetSyncServer:
                 self.pub = None
             logger.info("Publisher loop ended")
 
-    def _enqueue_pub(self, topic_bytes: bytes, message_bytes: bytes):
+    def _enqueue_pub(self, topic_bytes: bytes, message_bytes: bytes) -> None:
         """Thread-safe enqueue of a broadcast for reliable/low-rate messages (RPC/NV).
         Backpressure policy: drop the oldest item (ring buffer) to prefer newer updates.
         """
@@ -580,7 +600,7 @@ class NetSyncServer:
             )
             return client_no
 
-    def _initialize_room(self, room_id: str):
+    def _initialize_room(self, room_id: str) -> None:
         """Initialize all room-related data structures"""
         if room_id not in self.rooms:
             self.rooms[room_id] = {}
@@ -604,7 +624,9 @@ class NetSyncServer:
 
             logger.info(f"Created new room: {room_id}")
 
-    def _get_device_id_from_identity(self, client_identity: bytes, room_id: str) -> str:
+    def _get_device_id_from_identity(
+        self, client_identity: bytes, room_id: str
+    ) -> str | None:
         """Get device ID from client identity"""
         with self._rooms_lock:
             if room_id in self.rooms:
@@ -652,7 +674,7 @@ class NetSyncServer:
 
         return -1  # No reusable client number found
 
-    def _cleanup_expired_device_id_mappings(self, current_time):
+    def _cleanup_expired_device_id_mappings(self, current_time: float) -> None:
         """Clean up expired device ID to client number mappings"""
         with self._rooms_lock:
             expired_device_ids = []
@@ -682,7 +704,7 @@ class NetSyncServer:
                     f"Cleaned up {len(expired_device_ids)} expired device ID mappings"
                 )
 
-    def start(self, ip_addresses: list[str] | None = None):
+    def start(self, ip_addresses: list[str] | None = None) -> None:
         """Start the server"""
         try:
             # Raise FD soft limit early to avoid connection drops when many clients connect
@@ -794,7 +816,7 @@ class NetSyncServer:
             logger.error(traceback.format_exc())
             raise
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the server"""
         logger.info("Stopping server...")
         self.running = False
@@ -848,12 +870,14 @@ class NetSyncServer:
             f"Broadcasts sent: {self.broadcast_count}, Skipped broadcasts: {self.skipped_broadcasts}"
         )
 
-    def _receive_loop(self):
+    def _receive_loop(self) -> None:
         """Receive messages from clients"""
         while self.running:
             try:
                 # Check for incoming messages
-                if self.router.poll(self.POLL_TIMEOUT, zmq.POLLIN):
+                if self.router is not None and self.router.poll(
+                    self.POLL_TIMEOUT, zmq.POLLIN
+                ):
                     # Receive multipart message [identity, room_id, message]
                     parts = self.router.recv_multipart()
                     self._increment_stat("message_count")
@@ -872,6 +896,9 @@ class NetSyncServer:
                             msg_type, data, raw_payload = binary_serializer.deserialize(
                                 message_bytes
                             )
+                            if data is None:
+                                logger.warning("Received message with None data")
+                                continue
                             if msg_type == binary_serializer.MSG_CLIENT_TRANSFORM:
                                 self._handle_client_transform(
                                     client_identity, room_id, data, raw_payload
@@ -920,7 +947,9 @@ class NetSyncServer:
 
         logger.info("Receive loop ended")
 
-    def _process_message(self, client_identity: bytes, room_id: str, message: str):
+    def _process_message(
+        self, client_identity: bytes, room_id: str, message: str
+    ) -> None:
         """Process incoming client message"""
         try:
             msg_data = json.loads(message)
@@ -951,9 +980,13 @@ class NetSyncServer:
         room_id: str,
         data: dict[str, Any],
         raw_payload: bytes = b"",
-    ):
+    ) -> None:
         """Handle client transform update"""
-        device_id = data.get("deviceId")  # Receiving device ID from client
+        device_id_raw = data.get("deviceId")  # Receiving device ID from client
+        if device_id_raw is None or not isinstance(device_id_raw, str):
+            logger.warning("Received client transform with missing or invalid deviceId")
+            return
+        device_id: str = device_id_raw
         body_bytes = self._extract_transform_body(raw_payload)
 
         # Detect stealth mode using NaN handshake
@@ -1019,7 +1052,7 @@ class NetSyncServer:
             return b""
         return raw_payload[start:]
 
-    def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]):
+    def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]) -> None:
         """Send RPC to all clients in room except sender"""
         # Log RPC
         sender_client_no = rpc_data.get("senderClientNo", 0)
@@ -1036,7 +1069,7 @@ class NetSyncServer:
         # Send multipart [roomId, payload]
         self._enqueue_pub(topic_bytes, message_bytes)
 
-    def _monitor_nv_sliding_window(self, room_id: str):
+    def _monitor_nv_sliding_window(self, room_id: str) -> None:
         """Monitor NV request rate for logging only (no gating)"""
         current_time = time.monotonic()
         with self._rooms_lock:
@@ -1058,7 +1091,7 @@ class NetSyncServer:
                     f"High NV request rate in room {room_id}: {len(self.nv_monitor_window[room_id])} req/s"
                 )
 
-    def _buffer_global_var_set(self, room_id: str, data: dict[str, Any]):
+    def _buffer_global_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Buffer global variable set request for later processing"""
         sender_client_no = data.get("senderClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
@@ -1121,7 +1154,7 @@ class NetSyncServer:
             )
             return True
 
-    def _handle_global_var_set(self, room_id: str, data: dict[str, Any]):
+    def _handle_global_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Handle global variable set request (for backward compat - immediate apply+broadcast)"""
         sender_client_no = data.get("senderClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
@@ -1137,7 +1170,7 @@ class NetSyncServer:
             # Broadcast sync to all clients
             self._broadcast_global_var_sync(room_id)
 
-    def _buffer_client_var_set(self, room_id: str, data: dict[str, Any]):
+    def _buffer_client_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Buffer client variable set request for later processing"""
         sender_client_no = data.get("senderClientNo", 0)
         target_client_no = data.get("targetClientNo", 0)
@@ -1210,7 +1243,7 @@ class NetSyncServer:
             )
             return True
 
-    def _handle_client_var_set(self, room_id: str, data: dict[str, Any]):
+    def _handle_client_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Handle client variable set request (for backward compat - immediate apply+broadcast)"""
         sender_client_no = data.get("senderClientNo", 0)
         target_client_no = data.get("targetClientNo", 0)
@@ -1227,7 +1260,7 @@ class NetSyncServer:
             # Broadcast sync to all clients
             self._broadcast_client_var_sync(room_id)
 
-    def _broadcast_global_var_sync(self, room_id: str):
+    def _broadcast_global_var_sync(self, room_id: str) -> None:
         """Broadcast global variables sync to all clients in room"""
         with self._rooms_lock:
             if room_id not in self.global_variables:
@@ -1254,7 +1287,7 @@ class NetSyncServer:
                     f"Broadcasted {len(variables)} global variables to room {room_id}"
                 )
 
-    def _broadcast_client_var_sync(self, room_id: str):
+    def _broadcast_client_var_sync(self, room_id: str) -> None:
         """Broadcast client variables sync to all clients in room"""
         with self._rooms_lock:
             if room_id not in self.client_variables:
@@ -1285,7 +1318,7 @@ class NetSyncServer:
                     f"Broadcasted client variables for {len(client_variables)} clients to room {room_id}"
                 )
 
-    def _sync_network_variables_to_new_client(self, room_id: str):
+    def _sync_network_variables_to_new_client(self, room_id: str) -> None:
         """Send current Network Variables state to a newly connected client"""
         self._broadcast_global_var_sync(room_id)
         self._broadcast_client_var_sync(room_id)
@@ -1353,7 +1386,7 @@ class NetSyncServer:
         else:
             logger.debug(f"NV flush took {elapsed_ms:.2f} ms (room={room_id})")
 
-    def _broadcast_id_mappings(self, room_id: str):
+    def _broadcast_id_mappings(self, room_id: str) -> None:
         """Broadcast all device ID mappings for a room (including stealth clients with flag)"""
         with self._rooms_lock:
             if room_id not in self.room_device_id_to_client_no:
@@ -1380,7 +1413,7 @@ class NetSyncServer:
                     f"Broadcasted {len(mappings)} ID mappings to room {room_id} (connected SUBs: {sub_count})"
                 )
 
-    def _flush_debounced_id_mapping_broadcasts(self, current_time: float):
+    def _flush_debounced_id_mapping_broadcasts(self, current_time: float) -> None:
         """Flush ID mapping broadcasts that have been debounced long enough."""
         # Get list of rooms that need ID mapping broadcast and mark them as processed
         rooms_to_broadcast: list[str] = []
@@ -1401,11 +1434,11 @@ class NetSyncServer:
         for room_id in rooms_to_broadcast:
             self._broadcast_id_mappings(room_id)
 
-    def _periodic_loop(self):
+    def _periodic_loop(self) -> None:
         """Combined broadcast and cleanup loop with adaptive rates"""
-        last_broadcast_check = 0
-        last_cleanup = 0
-        last_device_id_cleanup = 0
+        last_broadcast_check: float = 0.0
+        last_cleanup: float = 0.0
+        last_device_id_cleanup: float = 0.0
         last_log = time.monotonic()
         DEVICE_ID_CLEANUP_INTERVAL = 60.0  # Clean up expired device IDs every minute
 
@@ -1482,7 +1515,7 @@ class NetSyncServer:
 
         logger.info("Periodic loop ended")
 
-    def _adaptive_broadcast_all_rooms(self, current_time):
+    def _adaptive_broadcast_all_rooms(self, current_time: float) -> None:
         """Broadcast room state with adaptive rates based on activity"""
         rooms_to_broadcast: list[
             tuple[str, list[tuple[int, dict[str, Any] | None, bytes]]]
@@ -1532,7 +1565,7 @@ class NetSyncServer:
         for room_id, client_snapshot in rooms_to_broadcast:
             self._broadcast_room(room_id, client_snapshot)
 
-    def _enqueue_pub_latest(self, topic_bytes: bytes, message_bytes: bytes):
+    def _enqueue_pub_latest(self, topic_bytes: bytes, message_bytes: bytes) -> None:
         """Latest-only coalescing enqueue for high-rate topics (e.g., room transforms)."""
         with self._coalesce_lock:
             # Prevent unbounded growth: drop oldest entry if buffer exceeds limit
@@ -1549,7 +1582,7 @@ class NetSyncServer:
         self,
         room_id: str,
         client_snapshot: list[tuple[int, dict[str, Any] | None, bytes]],
-    ):
+    ) -> None:
         """Broadcast a specific room's state from a snapshot."""
         message_bytes = self._serialize_room_transform(room_id, client_snapshot)
         if not message_bytes:
@@ -1590,7 +1623,7 @@ class NetSyncServer:
         struct.pack_into("<H", buffer, count_offset, count)
         return bytes(buffer)
 
-    def _cleanup_clients(self, current_time):
+    def _cleanup_clients(self, current_time: float) -> None:
         """Clean up disconnected clients with atomic operations to prevent memory leaks"""
         timeout = self.CLIENT_TIMEOUT
 
@@ -1672,7 +1705,7 @@ class NetSyncServer:
                     logger.error(f"Error during room cleanup for {room_id}: {e}")
                     # Continue with other rooms even if one fails
 
-    def _start_server_discovery(self):
+    def _start_server_discovery(self) -> None:
         """Start server discovery service to respond to client requests"""
         # Start UDP server discovery
         try:
@@ -1702,17 +1735,19 @@ class NetSyncServer:
         # Start TCP server discovery
         self._start_tcp_server_discovery()
 
-    def _stop_server_discovery(self):
+    def _stop_server_discovery(self) -> None:
         """Stop server discovery service"""
         # Stop UDP server discovery
         self.server_discovery_running = False
 
-        if self.server_discovery_socket:
-            self.server_discovery_socket.close()
+        udp_socket = self.server_discovery_socket
+        if udp_socket is not None:
+            udp_socket.close()
             self.server_discovery_socket = None
 
-        if self.server_discovery_thread:
-            self.server_discovery_thread.join(timeout=2)
+        udp_thread = self.server_discovery_thread
+        if udp_thread is not None:
+            udp_thread.join(timeout=2)
             self.server_discovery_thread = None
 
         # Stop TCP server discovery
@@ -1720,24 +1755,27 @@ class NetSyncServer:
 
         logger.info("Stopped discovery service")
 
-    def _server_discovery_loop(self):
+    def _server_discovery_loop(self) -> None:
         """UDP discovery service loop - responds to client discovery requests"""
         # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName
         response = (
             f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}"
         )
         response_bytes = response.encode("utf-8")
+        udp_socket = self.server_discovery_socket
+        if udp_socket is None:
+            return
 
         while self.server_discovery_running:
             try:
                 # Wait for client discovery request
-                data, client_addr = self.server_discovery_socket.recvfrom(1024)
+                data, client_addr = udp_socket.recvfrom(1024)
                 request = data.decode("utf-8")
 
                 # Validate request format
                 if request == "STYLY-NETSYNC-DISCOVER":
                     # Send response back to requesting client
-                    self.server_discovery_socket.sendto(response_bytes, client_addr)
+                    udp_socket.sendto(response_bytes, client_addr)
                     logger.debug(
                         f"Responded to UDP discovery request from {client_addr}"
                     )
@@ -1751,7 +1789,7 @@ class NetSyncServer:
                 ):  # Only log if we're still supposed to be running
                     logger.error(f"UDP discovery service error: {e}")
 
-    def _start_tcp_server_discovery(self):
+    def _start_tcp_server_discovery(self) -> None:
         """Start TCP-based server discovery service"""
         try:
             self.tcp_server_discovery_socket = socket.socket(
@@ -1778,30 +1816,35 @@ class NetSyncServer:
             logger.error(f"Failed to start TCP discovery service: {e}")
             self.tcp_server_discovery_running = False
 
-    def _stop_tcp_server_discovery(self):
+    def _stop_tcp_server_discovery(self) -> None:
         """Stop TCP-based server discovery service"""
         self.tcp_server_discovery_running = False
 
-        if self.tcp_server_discovery_socket:
-            self.tcp_server_discovery_socket.close()
+        tcp_socket = self.tcp_server_discovery_socket
+        if tcp_socket is not None:
+            tcp_socket.close()
             self.tcp_server_discovery_socket = None
 
-        if self.tcp_server_discovery_thread:
-            self.tcp_server_discovery_thread.join(timeout=2)
+        tcp_thread = self.tcp_server_discovery_thread
+        if tcp_thread is not None:
+            tcp_thread.join(timeout=2)
             self.tcp_server_discovery_thread = None
 
-    def _tcp_server_discovery_loop(self):
+    def _tcp_server_discovery_loop(self) -> None:
         """TCP discovery service loop - responds to client discovery requests"""
         # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName\n
         response = (
             f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}\n"
         )
         response_bytes = response.encode("utf-8")
+        tcp_socket = self.tcp_server_discovery_socket
+        if tcp_socket is None:
+            return
 
         while self.tcp_server_discovery_running:
             try:
                 # Accept incoming connection
-                client_socket, client_addr = self.tcp_server_discovery_socket.accept()
+                client_socket, client_addr = tcp_socket.accept()
                 client_socket.settimeout(2.0)  # Timeout for client operations
 
                 try:
@@ -1832,7 +1875,7 @@ class NetSyncServer:
                     logger.error(f"TCP discovery service error: {e}")
 
 
-def display_logo():
+def display_logo() -> None:
     logo = """
 CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3ilojilojilojilojilojilojilZcg4paI4paI4pWXICAg4paI4paI4pWXIOKWiOKWiOKVlyAgICAbWzM4OzU7MjE2bSAg4paI4paI4pWXICAg4paI4paI4pWXG1szOW0KG1szODs1OzIxNm0g4paI4paI4pWU4pWQ4pWQ4pWQ4pWQ4pWdIOKVmuKVkBtbMzg7NTsyMTBt4pWQ4paI4paI4pWU4pWQ4pWQ4pWdIOKVmuKWiOKWiOKVlyDilojilojilZTilZ0g4paI4paI4pWRICAgIBtbMzg7NTsyMTZtICDilZrilojilojilZcg4paI4paI4pWU4pWdG1szOW0KG1szODs1OzIxNm0g4paI4paI4paI4paI4paI4paI4paI4pWXICAgG1szODs1OzIxMG0g4paI4paI4pWRICAgICDilZrilojilojilojilojilZTilZ0gIOKWiOKWiOKVkSAgICAbWzM4OzU7MjE2bSAgIOKVmuKWiOKWiOKWiOKWiOKVlOKVnSAbWzM5bQobWzM4OzU7MjE2bSDilZrilZDilZDilZDilZDilojilojilZEgICAbWzM4OzU7MjEwbSDilojilojilZEgICAgICDilZrilojilojilZTilZ0gICDilojilojilZEgICAgG1szODs1OzIxNm0gICAg4pWa4paI4paI4pWU4pWdICAbWzM5bQobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZEgICAbWzM4OzU7MjEwbSDilojilojilZEgICAgICAg4paI4paI4pWRICAgIOKWiOKWiOKWiOKWiOKWiOKWiOKWiBtbMzg7NTsyMTZt4pWXICAgIOKWiOKWiOKVkSAgIBtbMzltChtbMzg7NTsyMTZtIOKVmuKVkOKVkOKVkOKVkOKVkOKVkOKVnSAgIBtbMzg7NTsyMTBtIOKVmuKVkOKVnSAgICAgICDilZrilZDilZ0gICAg4pWa4pWQ4pWQ4pWQ4pWQ4pWQ4pWQG1szODs1OzIxNm3ilZ0gICAg4pWa4pWQ4pWdICAgG1szOW0KChtbMzg7NTsyMTZtIOKWiOKWiOKWiOKVlyAgIOKWiOKWiOKVlyDilojilojilojilojilojilogbWzM4OzU7MjEwbeKWiOKVlyDilojilojilojilojilojilojilojilojilZcg4paI4paI4paI4paI4paI4paI4paI4pWXIOKWiOKWiOKVlyAgIOKWiOKWiOKVlyDilojilojilojilZcbWzM4OzU7MjE2bSAgIOKWiOKWiOKVlyAg4paI4paI4paI4paI4paI4paI4pWXG1szOW0KG1szODs1OzIxNm0g4paI4paI4paI4paI4pWXICDilojilojilZEg4paI4paI4pWU4pWQ4pWQ4pWQG1szODs1OzIxMG3ilZDilZ0g4pWa4pWQ4pWQ4paI4paI4pWU4pWQ4pWQ4pWdIOKWiOKWiOKVlOKVkOKVkOKVkOKVkOKVnSDilZrilojilojilZcg4paI4paI4pWU4pWdIOKWiOKWiOKWiOKWiBtbMzg7NTsyMTZt4pWXICDilojilojilZEg4paI4paI4pWU4pWQ4pWQ4pWQ4pWQ4pWdG1szOW0KG1szODs1OzIxNm0g4paI4paI4pWU4paI4paI4pWXIOKWiOKWiOKVkSDilojilojilojilojilojilZcbWzM4OzU7MjEwbSAgICAgIOKWiOKWiOKVkSAgICDilojilojilojilojilojilojilojilZcgIOKVmuKWiOKWiOKWiOKWiOKVlOKVnSAg4paI4paI4pWU4paIG1szODs1OzIxNm3ilojilZcg4paI4paI4pWRIOKWiOKWiOKVkSAgICAgG1szOW0KG1szODs1OzIxNm0g4paI4paI4pWR4pWa4paI4paI4pWX4paI4paI4pWRIOKWiOKWiOKVlOKVkOKVkOKVnRtbMzg7NTsyMTBtICAgICAg4paI4paI4pWRICAgIOKVmuKVkOKVkOKVkOKVkOKWiOKWiOKVkSAgIOKVmuKWiOKWiOKVlOKVnSAgIOKWiOKWiOKVkeKVmhtbMzg7NTsyMTZt4paI4paI4pWX4paI4paI4pWRIOKWiOKWiOKVkSAgICAgG1szOW0KG1szODs1OzIxNm0g4paI4paI4pWRIOKVmuKWiOKWiOKWiOKWiOKVkSDilojilojilojilojilojilogbWzM4OzU7MjEwbeKWiOKVlyAgICDilojilojilZEgICAg4paI4paI4paI4paI4paI4paI4paI4pWRICAgIOKWiOKWiOKVkSAgICDilojilojilZEgG1szODs1OzIxNm3ilZrilojilojilojilojilZEg4pWa4paI4paI4paI4paI4paI4paI4pWXG1szOW0KG1szODs1OzIxNm0g4pWa4pWQ4pWdICDilZrilZDilZDilZDilZ0g4pWa4pWQ4pWQ4pWQ4pWQ4pWQG1szODs1OzIxMG3ilZDilZ0gICAg4pWa4pWQ4pWdICAgIOKVmuKVkOKVkOKVkOKVkOKVkOKVkOKVnSAgICDilZrilZDilZ0gICAg4pWa4pWQ4pWdIBtbMzg7NTsyMTZtIOKVmuKVkOKVkOKVkOKVnSAg4pWa4pWQ4pWQ4pWQ4pWQ4pWQ4pWdG1szOW0KCgo=
 """.strip()
@@ -1840,7 +1883,7 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
     sys.stdout.flush()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
         "--no-server-discovery", action="store_true", help="Disable server discovery"

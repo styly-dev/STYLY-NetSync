@@ -422,7 +422,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
 
 def _deserialize_client_transform(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize client transform from binary data"""
-    result = {}
+    result: dict[str, Any] = {}
 
     # Device ID
     result["deviceId"], offset = _unpack_string(data, offset)
@@ -469,7 +469,7 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
 
 def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize room transform with client numbers only"""
-    result = {}
+    result: dict[str, Any] = {}
 
     # Room ID
     result["roomId"], offset = _unpack_string(data, offset)
@@ -518,7 +518,7 @@ def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
 
 def _deserialize_device_id_mapping(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize device ID mapping message"""
-    result = {"mappings": []}
+    result: dict[str, Any] = {"mappings": []}
 
     # Number of mappings
     count = struct.unpack("<H", data[offset : offset + 2])[0]
@@ -540,7 +540,7 @@ def _deserialize_device_id_mapping(data: bytes, offset: int) -> dict[str, Any]:
 
 def _deserialize_global_var_set(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize global variable set message"""
-    result = {}
+    result: dict[str, Any] = {}
 
     # Sender client number (2 bytes)
     result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
@@ -561,7 +561,7 @@ def _deserialize_global_var_set(data: bytes, offset: int) -> dict[str, Any]:
 
 def _deserialize_global_var_sync(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize global variable sync message"""
-    result = {"variables": []}
+    result: dict[str, Any] = {"variables": []}
 
     # Number of variables
     count = struct.unpack("<H", data[offset : offset + 2])[0]
@@ -583,7 +583,7 @@ def _deserialize_global_var_sync(data: bytes, offset: int) -> dict[str, Any]:
 
 def _deserialize_client_var_set(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize client variable set message"""
-    result = {}
+    result: dict[str, Any] = {}
 
     # Sender client number (2 bytes)
     result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
@@ -608,7 +608,7 @@ def _deserialize_client_var_set(data: bytes, offset: int) -> dict[str, Any]:
 
 def _deserialize_client_var_sync(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize client variable sync message"""
-    result = {"clientVariables": {}}
+    result: dict[str, Any] = {"clientVariables": {}}
 
     # Number of clients
     client_count = struct.unpack("<H", data[offset : offset + 2])[0]
