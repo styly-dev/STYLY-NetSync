@@ -390,6 +390,7 @@ class NetSyncServer:
             try:
                 self.pub.setsockopt(zmq.SNDHWM, 10000)
             except Exception:
+                # Best effort; ignore if high-water mark option is unsupported
                 pass
             self.pub.bind(f"tcp://*:{self.pub_port}")
 
@@ -623,6 +624,7 @@ class NetSyncServer:
             try:
                 self.router.setsockopt(zmq.RCVHWM, 10000)
             except Exception:
+                # Best effort; ignore if high-water mark option is unsupported
                 pass
             self.router.bind(f"tcp://*:{self.dealer_port}")
 
@@ -926,9 +928,12 @@ class NetSyncServer:
                 # Mark room as dirty since transform data has arrived
                 self.room_dirty_flags[room_id] = True
 
-        # Mark room for debounced ID mapping broadcast and sync NV when a new client joins
+            # Mark room for debounced ID mapping broadcast when a new client joins
+            if is_new_client:
+                self.room_id_mapping_dirty[room_id] = True
+
+        # Sync network variables to new client (outside lock to avoid deadlocks)
         if is_new_client:
-            self.room_id_mapping_dirty[room_id] = True
             self._sync_network_variables_to_new_client(room_id)
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]):
@@ -1294,20 +1299,24 @@ class NetSyncServer:
 
     def _flush_debounced_id_mapping_broadcasts(self, current_time: float):
         """Flush ID mapping broadcasts that have been debounced long enough."""
-        # Get list of rooms that need ID mapping broadcast
-        rooms_to_broadcast = []
-        for room_id, is_dirty in list(self.room_id_mapping_dirty.items()):
-            if not is_dirty:
-                continue
-            last_broadcast = self.room_last_id_mapping_broadcast.get(room_id, 0.0)
-            if current_time - last_broadcast >= self.ID_MAPPING_DEBOUNCE_INTERVAL:
-                rooms_to_broadcast.append(room_id)
+        # Get list of rooms that need ID mapping broadcast and mark them as processed
+        rooms_to_broadcast: list[str] = []
+        with self._rooms_lock:
+            for room_id, is_dirty in list(self.room_id_mapping_dirty.items()):
+                if not is_dirty:
+                    continue
+                last_broadcast = self.room_last_id_mapping_broadcast.get(room_id, 0.0)
+                if current_time - last_broadcast >= self.ID_MAPPING_DEBOUNCE_INTERVAL:
+                    rooms_to_broadcast.append(room_id)
 
-        # Broadcast ID mappings for eligible rooms
+            # Mark rooms as having been broadcast at this time
+            for room_id in rooms_to_broadcast:
+                self.room_id_mapping_dirty[room_id] = False
+                self.room_last_id_mapping_broadcast[room_id] = current_time
+
+        # Broadcast ID mappings for eligible rooms outside the lock
         for room_id in rooms_to_broadcast:
             self._broadcast_id_mappings(room_id)
-            self.room_id_mapping_dirty[room_id] = False
-            self.room_last_id_mapping_broadcast[room_id] = current_time
 
     def _periodic_loop(self):
         """Combined broadcast and cleanup loop with adaptive rates"""
