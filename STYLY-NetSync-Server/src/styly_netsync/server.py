@@ -25,6 +25,7 @@ import traceback
 from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
+import struct
 from typing import Any, TYPE_CHECKING
 
 try:
@@ -149,6 +150,9 @@ class NetSyncServer:
     PUB_BACKLOG = 512  # Accept queue depth for SUB connections
     DEFAULT_FD_LIMIT = 4096
     ID_MAPPING_DEBOUNCE_INTERVAL = 0.5  # Debounce ID mapping broadcasts (500ms)
+    CTRL_DRAIN_BATCH = 256
+    CTRL_BACKLOG_WATERMARK = 1000
+    TRANSFORM_BUDGET_BYTES_PER_SEC = 15_000_000
 
     def __init__(
         self,
@@ -180,11 +184,13 @@ class NetSyncServer:
         self.pub = None  # Will be created/owned by Publisher thread only
 
         # Publisher thread infrastructure
-        self._pub_queue = Queue(maxsize=10000)  # tuneable
+        self._pub_queue_ctrl = Queue(maxsize=10000)  # tuneable
         self._publisher_thread = None
         self._publisher_running = False
         self._pub_ready = threading.Event()  # signaled after successful bind
         self._publisher_exception = None  # bind/run errors are stored here
+        self._transform_tokens = float(self.TRANSFORM_BUDGET_BYTES_PER_SEC)
+        self._transform_last_refill = time.monotonic()
 
         # PUB socket monitor for tracking SUB connections
         self._pub_monitor = None
@@ -207,9 +213,9 @@ class NetSyncServer:
         self.room_last_broadcast: dict[str, float] = (
             {}
         )  # Track last broadcast time per room
-        self.client_binary_cache: dict[str, bytes] = (
+        self.client_transform_body_cache: dict[int, bytes] = (
             {}
-        )  # Cache client_no -> binary data
+        )  # Cache client_no -> body data (room transform without deviceId)
 
         # Client number management per room
         self.room_client_no_counters: dict[str, int] = {}  # room_id -> next_client_no
@@ -378,6 +384,52 @@ class NetSyncServer:
         with self._sub_connection_lock:
             return self._sub_connection_count
 
+    def _control_backlog_exceeded(self) -> bool:
+        """Return True when control queue backlog exceeds watermark."""
+        return self._pub_queue_ctrl.qsize() > self.CTRL_BACKLOG_WATERMARK
+
+    def _refill_transform_tokens(self) -> None:
+        now = time.monotonic()
+        elapsed = max(0.0, now - self._transform_last_refill)
+        if elapsed <= 0.0:
+            return
+        refill = elapsed * self.TRANSFORM_BUDGET_BYTES_PER_SEC
+        self._transform_tokens = min(
+            float(self.TRANSFORM_BUDGET_BYTES_PER_SEC),
+            self._transform_tokens + refill,
+        )
+        self._transform_last_refill = now
+
+    def _try_send_transform(self) -> bool:
+        """Send at most one coalesced transform message if budget allows."""
+        self._refill_transform_tokens()
+        with self._coalesce_lock:
+            if not self._coalesce_latest:
+                return False
+            topic_bytes, message_bytes = next(iter(self._coalesce_latest.items()))
+
+        sub_count = max(1, self._get_sub_connection_count())
+        cost = len(message_bytes) * sub_count
+        if self._transform_tokens < cost:
+            return False
+
+        try:
+            self.pub.send_multipart(
+                [topic_bytes, message_bytes], flags=zmq.DONTWAIT
+            )
+            self._increment_stat("broadcast_count")
+            self._transform_tokens -= cost
+            with self._coalesce_lock:
+                # Remove only if the message is still the latest.
+                if self._coalesce_latest.get(topic_bytes) == message_bytes:
+                    del self._coalesce_latest[topic_bytes]
+            return True
+        except zmq.Again:
+            return False
+        except Exception as exc:
+            logger.error(f"Publisher failed to send (transform): {exc}")
+            return False
+
     def _publisher_loop(self):
         """The only place that owns/uses self.pub and performs ZMQ sends."""
         try:
@@ -406,39 +458,38 @@ class NetSyncServer:
             self._pub_ready.set()
 
             while self._publisher_running:
-                # 1) Flush coalesced (latest-only) topics first
-                try:
-                    with self._coalesce_lock:
-                        coalesced_items = list(self._coalesce_latest.items())
-                        self._coalesce_latest.clear()
-                except Exception:
-                    coalesced_items = []
+                drained = 0
+                while drained < self.CTRL_DRAIN_BATCH:
+                    try:
+                        item = self._pub_queue_ctrl.get_nowait()
+                    except Empty:
+                        break
 
-                for topic_bytes, message_bytes in coalesced_items:
+                    # Sentinel for shutdown
+                    if not item or item[0] is None:
+                        self._publisher_running = False
+                        break
+
+                    topic_bytes, message_bytes = item
+
                     try:
                         self.pub.send_multipart([topic_bytes, message_bytes])
                         self._increment_stat("broadcast_count")
                     except Exception as e:
-                        logger.error(f"Publisher failed to send (coalesced): {e}")
+                        logger.error(f"Publisher failed to send: {e}")
 
-                # 2) Then handle normal queue (RPC / NV etc.)
-                try:
-                    item = self._pub_queue.get(timeout=0.05)
-                except Empty:
-                    continue
+                    drained += 1
 
-                # Sentinel for shutdown
-                if not item or item[0] is None:
+                if not self._publisher_running:
                     break
 
-                topic_bytes, message_bytes = item
+                if self._control_backlog_exceeded():
+                    time.sleep(0.001)
+                    continue
 
-                try:
-                    self.pub.send_multipart([topic_bytes, message_bytes])
-                    # Count only *actual* sends
-                    self._increment_stat("broadcast_count")
-                except Exception as e:
-                    logger.error(f"Publisher failed to send: {e}")
+                transform_sent = self._try_send_transform()
+                if drained == 0 and not transform_sent:
+                    time.sleep(0.001)
 
         except Exception as e:
             # On bind or loop failure, publish the exception and wake starters
@@ -463,15 +514,15 @@ class NetSyncServer:
         Backpressure policy: drop the oldest item (ring buffer) to prefer newer updates.
         """
         try:
-            self._pub_queue.put_nowait((topic_bytes, message_bytes))
+            self._pub_queue_ctrl.put_nowait((topic_bytes, message_bytes))
         except Full:
             # Ring-buffer behavior: remove oldest then enqueue latest
             try:
-                _ = self._pub_queue.get_nowait()
+                _ = self._pub_queue_ctrl.get_nowait()
             except Empty:
                 pass
             try:
-                self._pub_queue.put_nowait((topic_bytes, message_bytes))
+                self._pub_queue_ctrl.put_nowait((topic_bytes, message_bytes))
             except Full:
                 # If still full, count as skipped
                 self._increment_stat("skipped_broadcasts")
@@ -748,15 +799,15 @@ class NetSyncServer:
         # Stop Publisher thread
         self._publisher_running = False
         try:
-            self._pub_queue.put_nowait((None, None))  # sentinel
+            self._pub_queue_ctrl.put_nowait((None, None))  # sentinel
         except Full:
             # Best-effort to make room, then send sentinel
             try:
-                _ = self._pub_queue.get_nowait()
+                _ = self._pub_queue_ctrl.get_nowait()
             except Empty:
                 pass
             try:
-                self._pub_queue.put_nowait((None, None))
+                self._pub_queue_ctrl.put_nowait((None, None))
             except Full:
                 pass
         if self._publisher_thread:
@@ -879,6 +930,7 @@ class NetSyncServer:
     ):
         """Handle client transform update"""
         device_id = data.get("deviceId")  # Receiving device ID from client
+        body_bytes = self._extract_transform_body(raw_payload)
 
         # Detect stealth mode using NaN handshake
         is_stealth = binary_serializer._is_stealth_client(data)
@@ -906,10 +958,8 @@ class NetSyncServer:
                     "is_stealth": is_stealth,
                 }
                 self.room_dirty_flags[room_id] = True  # Mark room as dirty
-                # Cache the binary data if available
-                if raw_payload:
-                    # Store by client number for efficient broadcast
-                    self.client_binary_cache[client_no] = raw_payload
+                if body_bytes:
+                    self.client_transform_body_cache[client_no] = body_bytes
                 stealth_text = " (stealth mode)" if is_stealth else ""
                 logger.info(
                     f"New client {device_id[:8]}... (client number: {client_no}){stealth_text} joined room {room_id}"
@@ -921,9 +971,8 @@ class NetSyncServer:
                 self.rooms[room_id][device_id]["client_no"] = client_no
                 self.rooms[room_id][device_id]["is_stealth"] = is_stealth
 
-                # Update cached binary data if available
-                if raw_payload:
-                    self.client_binary_cache[client_no] = raw_payload
+                if body_bytes:
+                    self.client_transform_body_cache[client_no] = body_bytes
 
                 # Mark room as dirty since transform data has arrived
                 self.room_dirty_flags[room_id] = True
@@ -935,6 +984,16 @@ class NetSyncServer:
         # Sync network variables to new client (outside lock to avoid deadlocks)
         if is_new_client:
             self._sync_network_variables_to_new_client(room_id)
+
+    def _extract_transform_body(self, raw_payload: bytes) -> bytes:
+        """Extract the transform body without device ID from raw payload."""
+        if not raw_payload:
+            return b""
+        device_id_len = raw_payload[0]
+        start = 1 + device_id_len
+        if start >= len(raw_payload):
+            return b""
+        return raw_payload[start:]
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]):
         """Send RPC to all clients in room except sender"""
@@ -1332,9 +1391,7 @@ class NetSyncServer:
 
                 # Check for broadcasts at higher frequency but only broadcast when needed
                 if current_time - last_broadcast_check >= self.BROADCAST_CHECK_INTERVAL:
-                    self._adaptive_broadcast_all_rooms(current_time)
-
-                    # Flush Network Variables after other categories
+                    # Flush Network Variables before other categories
                     with self._rooms_lock:
                         rooms = list(self.rooms.keys())
                     for room_id in rooms:
@@ -1343,6 +1400,8 @@ class NetSyncServer:
                             self._flush_nv_drain(room_id)
                             self.room_last_nv_flush[room_id] = current_time
 
+                    if not self._control_backlog_exceeded():
+                        self._adaptive_broadcast_all_rooms(current_time)
                     last_broadcast_check = current_time
 
                 # Cleanup at regular intervals
@@ -1401,18 +1460,17 @@ class NetSyncServer:
 
     def _adaptive_broadcast_all_rooms(self, current_time):
         """Broadcast room state with adaptive rates based on activity"""
+        rooms_to_broadcast: list[
+            tuple[str, list[tuple[int, dict[str, Any] | None, bytes]]]
+        ] = []
+
         with self._rooms_lock:
-            rooms_copy = list(
-                self.rooms.items()
-            )  # Create copy to avoid holding lock too long
+            for room_id, clients in self.rooms.items():
+                if not clients:  # Skip empty rooms
+                    continue
 
-        for room_id, clients in rooms_copy:
-            if not clients:  # Skip empty rooms
-                continue
-
-            with self._rooms_lock:
                 # Check if room needs broadcasting
-                last_broadcast = self.room_last_broadcast.get(room_id, 0)
+                last_broadcast = self.room_last_broadcast.get(room_id, 0.0)
                 is_dirty = self.room_dirty_flags.get(room_id, False)
 
                 # Calculate time since last broadcast
@@ -1431,37 +1489,76 @@ class NetSyncServer:
                         should_broadcast = True
 
                 if should_broadcast:
-                    self._broadcast_room(room_id, clients)
+                    client_snapshot = []
+                    for client_data in clients.values():
+                        if client_data.get("is_stealth", False):
+                            continue
+                        client_no = client_data.get("client_no", 0)
+                        transform_data = client_data.get("transform_data")
+                        body_bytes = self.client_transform_body_cache.get(
+                            client_no, b""
+                        )
+                        client_snapshot.append(
+                            (client_no, transform_data, body_bytes)
+                        )
+                    rooms_to_broadcast.append((room_id, client_snapshot))
                     self.room_dirty_flags[room_id] = False  # Clear dirty flag
                     self.room_last_broadcast[room_id] = current_time
                 else:
                     self._increment_stat("skipped_broadcasts")
+
+        for room_id, client_snapshot in rooms_to_broadcast:
+            self._broadcast_room(room_id, client_snapshot)
 
     def _enqueue_pub_latest(self, topic_bytes: bytes, message_bytes: bytes):
         """Latest-only coalescing enqueue for high-rate topics (e.g., room transforms)."""
         with self._coalesce_lock:
             self._coalesce_latest[topic_bytes] = message_bytes
 
-    def _broadcast_room(self, room_id, clients):
-        """Broadcast a specific room's state"""
-        # Filter out stealth clients from broadcasts
-        client_transforms = [
-            client["transform_data"]
-            for client in clients.values()
-            if client["transform_data"] and not client.get("is_stealth", False)
-        ]
+    def _broadcast_room(
+        self,
+        room_id: str,
+        client_snapshot: list[tuple[int, dict[str, Any] | None, bytes]],
+    ):
+        """Broadcast a specific room's state from a snapshot."""
+        message_bytes = self._serialize_room_transform(room_id, client_snapshot)
+        if not message_bytes:
+            return
 
-        if client_transforms:
-            room_transform = {
-                "roomId": room_id,
-                "clients": client_transforms,
-            }
+        topic_bytes = room_id.encode("utf-8")
+        self._enqueue_pub_latest(topic_bytes, message_bytes)
 
-            # Send binary format with client numbers
-            topic_bytes = room_id.encode("utf-8")
-            message_bytes = binary_serializer.serialize_room_transform(room_transform)
-            # Transform is overwrite-only => keep only the latest per room/topic
-            self._enqueue_pub_latest(topic_bytes, message_bytes)
+    def _serialize_room_transform(
+        self,
+        room_id: str,
+        client_snapshot: list[tuple[int, dict[str, Any] | None, bytes]],
+    ) -> bytes | None:
+        if not client_snapshot:
+            return None
+
+        buffer = bytearray()
+        buffer.append(binary_serializer.MSG_ROOM_TRANSFORM)
+        binary_serializer._pack_string(buffer, room_id)
+        count_offset = len(buffer)
+        buffer.extend(b"\x00\x00")
+
+        count = 0
+        for client_no, transform_data, body_bytes in client_snapshot:
+            if body_bytes:
+                buffer.extend(struct.pack("<H", client_no))
+                buffer.extend(body_bytes)
+                count += 1
+                continue
+
+            if transform_data:
+                binary_serializer._serialize_client_data_short(buffer, transform_data)
+                count += 1
+
+        if count == 0:
+            return None
+
+        struct.pack_into("<H", buffer, count_offset, count)
+        return bytes(buffer)
 
     def _cleanup_clients(self, current_time):
         """Clean up disconnected clients with atomic operations to prevent memory leaks"""
@@ -1484,8 +1581,8 @@ class NetSyncServer:
                         client_no = clients[device_id].get("client_no")
                         del clients[device_id]
                         # Clean up binary cache by client number
-                        if client_no and client_no in self.client_binary_cache:
-                            del self.client_binary_cache[client_no]
+                        if client_no and client_no in self.client_transform_body_cache:
+                            del self.client_transform_body_cache[client_no]
                         # Note: We don't remove device ID->clientNo mapping here
                         # It will be cleaned up after DEVICE_ID_EXPIRY_TIME
                         logger.info(
