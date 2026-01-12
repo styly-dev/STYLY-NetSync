@@ -15,7 +15,6 @@ if sys.version_info < MIN_PY:
 import argparse
 import base64
 import json
-import logging
 import os
 import platform
 import socket
@@ -150,9 +149,16 @@ class NetSyncServer:
     PUB_BACKLOG = 512  # Accept queue depth for SUB connections
     DEFAULT_FD_LIMIT = 4096
     ID_MAPPING_DEBOUNCE_INTERVAL = 0.5  # Debounce ID mapping broadcasts (500ms)
+
+    # Control traffic priority settings:
+    # - CTRL_DRAIN_BATCH: Max control messages (RPC/NV) to drain per publisher loop
+    # - CTRL_BACKLOG_WATERMARK: Skip transform work when control queue exceeds this
+    # - TRANSFORM_BUDGET_BYTES_PER_SEC: Token bucket rate limit for transform broadcasts
+    # - BACKLOG_SLEEP_SEC: Sleep duration when control backlog is high (5ms)
     CTRL_DRAIN_BATCH = 256
-    CTRL_BACKLOG_WATERMARK = 1000
+    CTRL_BACKLOG_WATERMARK = 500
     TRANSFORM_BUDGET_BYTES_PER_SEC = 15_000_000
+    BACKLOG_SLEEP_SEC = 0.005
 
     def __init__(
         self,
@@ -191,6 +197,7 @@ class NetSyncServer:
         self._publisher_exception = None  # bind/run errors are stored here
         self._transform_tokens = float(self.TRANSFORM_BUDGET_BYTES_PER_SEC)
         self._transform_last_refill = time.monotonic()
+        self._transform_budget_lock = threading.Lock()
 
         # PUB socket monitor for tracking SUB connections
         self._pub_monitor = None
@@ -389,16 +396,18 @@ class NetSyncServer:
         return self._pub_queue_ctrl.qsize() > self.CTRL_BACKLOG_WATERMARK
 
     def _refill_transform_tokens(self) -> None:
+        """Refill token bucket for transform rate limiting (thread-safe)."""
         now = time.monotonic()
-        elapsed = max(0.0, now - self._transform_last_refill)
-        if elapsed <= 0.0:
-            return
-        refill = elapsed * self.TRANSFORM_BUDGET_BYTES_PER_SEC
-        self._transform_tokens = min(
-            float(self.TRANSFORM_BUDGET_BYTES_PER_SEC),
-            self._transform_tokens + refill,
-        )
-        self._transform_last_refill = now
+        with self._transform_budget_lock:
+            elapsed = now - self._transform_last_refill
+            if elapsed <= 0.0:
+                return
+            refill = elapsed * self.TRANSFORM_BUDGET_BYTES_PER_SEC
+            self._transform_tokens = min(
+                float(self.TRANSFORM_BUDGET_BYTES_PER_SEC),
+                self._transform_tokens + refill,
+            )
+            self._transform_last_refill = now
 
     def _try_send_transform(self) -> bool:
         """Send at most one coalesced transform message if budget allows."""
@@ -410,24 +419,31 @@ class NetSyncServer:
 
         sub_count = max(1, self._get_sub_connection_count())
         cost = len(message_bytes) * sub_count
-        if self._transform_tokens < cost:
-            return False
+
+        with self._transform_budget_lock:
+            if self._transform_tokens < cost:
+                return False
+            # Deduct tokens before sending (optimistic)
+            self._transform_tokens -= cost
 
         try:
-            self.pub.send_multipart(
-                [topic_bytes, message_bytes], flags=zmq.DONTWAIT
-            )
+            self.pub.send_multipart([topic_bytes, message_bytes], flags=zmq.DONTWAIT)
             self._increment_stat("broadcast_count")
-            self._transform_tokens -= cost
             with self._coalesce_lock:
                 # Remove only if the message is still the latest.
                 if self._coalesce_latest.get(topic_bytes) == message_bytes:
                     del self._coalesce_latest[topic_bytes]
             return True
         except zmq.Again:
+            # Refund tokens on failure
+            with self._transform_budget_lock:
+                self._transform_tokens += cost
             return False
         except Exception as exc:
             logger.error(f"Publisher failed to send (transform): {exc}")
+            # Refund tokens on failure
+            with self._transform_budget_lock:
+                self._transform_tokens += cost
             return False
 
     def _publisher_loop(self):
@@ -484,12 +500,12 @@ class NetSyncServer:
                     break
 
                 if self._control_backlog_exceeded():
-                    time.sleep(0.001)
+                    time.sleep(self.BACKLOG_SLEEP_SEC)
                     continue
 
                 transform_sent = self._try_send_transform()
                 if drained == 0 and not transform_sent:
-                    time.sleep(0.001)
+                    time.sleep(self.BACKLOG_SLEEP_SEC)
 
         except Exception as e:
             # On bind or loop failure, publish the exception and wake starters
@@ -1498,9 +1514,7 @@ class NetSyncServer:
                         body_bytes = self.client_transform_body_cache.get(
                             client_no, b""
                         )
-                        client_snapshot.append(
-                            (client_no, transform_data, body_bytes)
-                        )
+                        client_snapshot.append((client_no, transform_data, body_bytes))
                     rooms_to_broadcast.append((room_id, client_snapshot))
                     self.room_dirty_flags[room_id] = False  # Clear dirty flag
                     self.room_last_broadcast[room_id] = current_time
