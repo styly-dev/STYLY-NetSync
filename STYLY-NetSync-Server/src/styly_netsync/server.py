@@ -27,6 +27,11 @@ from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any, TYPE_CHECKING
 
+try:
+    import resource
+except Exception:
+    resource = None  # type: ignore[assignment]
+
 import zmq
 from loguru import logger
 from . import binary_serializer
@@ -140,6 +145,9 @@ class NetSyncServer:
         300.0  # 5 minutes - remove device ID mappings after this time
     )
     POLL_TIMEOUT = 100  # ZMQ poll timeout in ms
+    ROUTER_BACKLOG = 512  # Accept queue depth for DEALER/ROUTER connections
+    PUB_BACKLOG = 512  # Accept queue depth for SUB connections
+    DEFAULT_FD_LIMIT = 4096
 
     def __init__(
         self,
@@ -176,6 +184,12 @@ class NetSyncServer:
         self._publisher_running = False
         self._pub_ready = threading.Event()  # signaled after successful bind
         self._publisher_exception = None  # bind/run errors are stored here
+
+        # PUB socket monitor for tracking SUB connections
+        self._pub_monitor = None
+        self._pub_monitor_thread = None
+        self._sub_connection_count = 0
+        self._sub_connection_lock = threading.Lock()
 
         # Latest-only coalescing buffer for high-rate topics (e.g., room transforms)
         self._coalesce_lock = threading.Lock()
@@ -267,12 +281,114 @@ class NetSyncServer:
         with self._stats_lock:
             setattr(self, stat_name, getattr(self, stat_name) + amount)
 
+    def _bump_fd_soft_limit(self, target: int):
+        """Best-effort bump of RLIMIT_NOFILE for macOS/Linux."""
+        if resource is None:
+            logger.info(
+                "Skipping FD soft limit bump: 'resource' module not available on this platform."
+            )
+            return
+
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            new_soft = min(max(soft, target), hard)
+            if new_soft != soft:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (new_soft, hard))
+            else:
+                logger.info(
+                    "FD limits already sufficient (soft=%d, hard=%d)", soft, hard
+                )
+        except Exception as exc:
+            logger.warning("Failed to raise RLIMIT_NOFILE: %s", exc)
+
+    def _get_fd_snapshot(self) -> tuple[int | None, int | None, int | None]:
+        """
+        Best-effort snapshot of:
+          - open_fds: current process open FD count
+          - soft/hard: RLIMIT_NOFILE
+        """
+        soft: int | None = None
+        hard: int | None = None
+        if resource is not None:
+            try:
+                soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            except Exception:
+                pass
+
+        open_fds: int | None = None
+        # macOS: /dev/fd is available. Linux often has it too.
+        try:
+            open_fds = len(os.listdir("/dev/fd"))
+        except Exception:
+            # fallback (Linux /proc)
+            try:
+                open_fds = len(os.listdir(f"/proc/{os.getpid()}/fd"))
+            except Exception:
+                pass
+
+        return open_fds, soft, hard
+
+    def _pub_monitor_loop(self):
+        """Monitor PUB socket for SUB connection/disconnection events."""
+        from zmq.utils.monitor import recv_monitor_message
+
+        try:
+            while self._publisher_running and self._pub_monitor is not None:
+                try:
+                    # Poll with timeout to allow checking _publisher_running
+                    if self._pub_monitor.poll(100):
+                        msg = recv_monitor_message(self._pub_monitor)
+                        event = msg["event"]
+                        if event == zmq.EVENT_ACCEPTED:
+                            with self._sub_connection_lock:
+                                self._sub_connection_count += 1
+                                count = self._sub_connection_count
+                            logger.info(f"SUB connected (total: {count})")
+                        elif event == zmq.EVENT_DISCONNECTED:
+                            with self._sub_connection_lock:
+                                self._sub_connection_count = max(
+                                    0, self._sub_connection_count - 1
+                                )
+                                count = self._sub_connection_count
+                            logger.info(f"SUB disconnected (total: {count})")
+                except zmq.ZMQError as e:
+                    logger.debug("PUB monitor ZMQError: %s", e)
+                    break
+        except Exception as e:
+            logger.error(f"PUB monitor error: {e}")
+        finally:
+            if self._pub_monitor is not None:
+                try:
+                    self._pub_monitor.close()
+                except Exception:
+                    pass
+                self._pub_monitor = None
+
+    def _get_sub_connection_count(self) -> int:
+        """Get current number of connected SUB sockets."""
+        with self._sub_connection_lock:
+            return self._sub_connection_count
+
     def _publisher_loop(self):
         """The only place that owns/uses self.pub and performs ZMQ sends."""
         try:
             # Create/bind PUB in this thread to avoid cross-thread use
             self.pub = self.context.socket(zmq.PUB)
+            try:
+                self.pub.setsockopt(zmq.BACKLOG, self.PUB_BACKLOG)
+            except Exception:
+                pass
             self.pub.bind(f"tcp://*:{self.pub_port}")
+
+            # Set up socket monitor for tracking SUB connections
+            self._pub_monitor = self.pub.get_monitor_socket(
+                zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED
+            )
+            self._pub_monitor_thread = threading.Thread(
+                target=self._pub_monitor_loop, name="PubMonitor", daemon=True
+            )
+            self._pub_monitor_thread.start()
+
             self._pub_ready.set()
 
             while self._publisher_running:
@@ -316,6 +432,10 @@ class NetSyncServer:
             self._pub_ready.set()
             logger.error(f"Publisher error during startup/run: {e}")
         finally:
+            self._publisher_running = False
+            if self._pub_monitor_thread:
+                self._pub_monitor_thread.join(timeout=1.0)
+                self._pub_monitor_thread = None
             if self.pub is not None:
                 try:
                     self.pub.close()
@@ -476,8 +596,17 @@ class NetSyncServer:
     def start(self):
         """Start the server"""
         try:
+            # Raise FD soft limit early to avoid connection drops when many clients connect
+            self._bump_fd_soft_limit(self.DEFAULT_FD_LIMIT)
+
             # Setup ROUTER socket
             self.router = self.context.socket(zmq.ROUTER)
+            # Increase accept backlog to survive connection stampedes from simulators
+            try:
+                self.router.setsockopt(zmq.BACKLOG, self.ROUTER_BACKLOG)
+            except Exception:
+                # Best effort; fall back to default backlog if unsupported
+                pass
             self.router.bind(f"tcp://*:{self.dealer_port}")
 
             # Start Publisher thread (it creates/binds PUB)
@@ -1140,8 +1269,9 @@ class NetSyncServer:
                 topic_bytes = room_id.encode("utf-8")
                 message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
                 self._enqueue_pub(topic_bytes, message_bytes)
+                sub_count = self._get_sub_connection_count()
                 logger.info(
-                    f"Broadcasted {len(mappings)} ID mappings to room {room_id}"
+                    f"Broadcasted {len(mappings)} ID mappings to room {room_id} (connected SUBs: {sub_count})"
                 )
 
     def _periodic_loop(self):
@@ -1197,10 +1327,21 @@ class NetSyncServer:
                         1 for flag in self.room_dirty_flags.values() if flag
                     )
                     total_device_ids = len(self.device_id_last_seen)
+
+                    # Get FD information for status log
+                    open_fds, soft, _ = self._get_fd_snapshot()
+                    fd_part = ""
+                    if open_fds is not None:
+                        if soft is not None:
+                            fd_part = f", FD {open_fds}/{soft}"
+                        else:
+                            fd_part = f", FD {open_fds}"
+
                     logger.info(
                         f"Status: {len(self.rooms)} rooms, {normal_clients} normal clients, "
                         f"{stealth_clients} stealth clients, "
                         f"{dirty_rooms} dirty rooms, {total_device_ids} tracked device IDs"
+                        f"{fd_part}"
                     )
                     last_log = current_time
 
