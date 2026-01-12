@@ -535,6 +535,7 @@ class NetworkTransport:
             self.socket.setsockopt(zmq.IMMEDIATE, 1)
             self.socket.setsockopt(zmq.RCVTIMEO, 1000)
             self.socket.setsockopt(zmq.SNDTIMEO, 1000)
+            self.socket.setsockopt(zmq.SNDHWM, 10000)
 
             dealer_endpoint = f"{self.server_addr}:{self.dealer_port}"
             self.socket.connect(dealer_endpoint)
@@ -547,6 +548,7 @@ class NetworkTransport:
                     self._register_socket(self.sub_socket)
                     self.sub_socket.setsockopt(zmq.LINGER, 0)
                     self.sub_socket.setsockopt(zmq.RCVTIMEO, 10)  # non-blocking-ish
+                    self.sub_socket.setsockopt(zmq.RCVHWM, 10000)
                     sub_endpoint = f"{self.server_addr}:{self.sub_port}"
                     self.sub_socket.connect(sub_endpoint)
                     # Subscribe to room topic

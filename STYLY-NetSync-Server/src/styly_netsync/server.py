@@ -378,6 +378,10 @@ class NetSyncServer:
                 self.pub.setsockopt(zmq.BACKLOG, self.PUB_BACKLOG)
             except Exception:
                 pass
+            try:
+                self.pub.setsockopt(zmq.SNDHWM, 10000)
+            except Exception:
+                pass
             self.pub.bind(f"tcp://*:{self.pub_port}")
 
             # Set up socket monitor for tracking SUB connections
@@ -606,6 +610,10 @@ class NetSyncServer:
                 self.router.setsockopt(zmq.BACKLOG, self.ROUTER_BACKLOG)
             except Exception:
                 # Best effort; fall back to default backlog if unsupported
+                pass
+            try:
+                self.router.setsockopt(zmq.RCVHWM, 10000)
+            except Exception:
                 pass
             self.router.bind(f"tcp://*:{self.dealer_port}")
 
