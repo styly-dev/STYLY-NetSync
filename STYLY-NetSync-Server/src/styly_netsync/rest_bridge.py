@@ -250,7 +250,7 @@ def run_uvicorn_in_thread(
     import uvicorn
 
     config = uvicorn.Config(
-        app=app, host=host, port=port, log_level="info", lifespan="off"
+        app=app, host=host, port=port, log_level="warning", lifespan="off"
     )
     server = uvicorn.Server(config=config)
     thread = threading.Thread(target=server.run, daemon=True)
