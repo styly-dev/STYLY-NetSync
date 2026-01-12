@@ -1,9 +1,11 @@
 # logging_utils.py
-import sys
+from __future__ import annotations
+
 import logging
+import sys
 import threading
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +20,8 @@ LOG_ROTATION_SIZE_BYTES = 10 * 1024 * 1024
 LOG_ROTATION_MAX_AGE = timedelta(days=7)
 LOG_RETENTION_MAX_FILES = 20
 DEFAULT_LOG_FILENAME = "netsync-server.log"
-RotationRule = str | int | float | timedelta | Callable[[Any, Any], bool]
-RetentionRule = str | int | float | timedelta | Callable[[list[Any]], Any]
+RotationRule = str | int | time | timedelta | Callable[..., bool]
+RetentionRule = str | int | timedelta | Callable[[list[str]], None]
 
 
 class _RotationState:
@@ -56,6 +58,7 @@ class InterceptHandler(logging.Handler):
     """Redirect stdlib logging to loguru."""
 
     def emit(self, record: logging.LogRecord) -> None:
+        level: str | int
         try:
             level = logger.level(record.levelname).name
         except (ValueError, TypeError):
@@ -72,7 +75,7 @@ class InterceptHandler(logging.Handler):
         )
 
 
-def _resolve_log_path(file) -> Path:
+def _resolve_log_path(file: Any) -> Path:
     """Return a Path for the log file supporting loguru handles and Path objects."""
 
     if isinstance(file, Path):

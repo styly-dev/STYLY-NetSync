@@ -364,12 +364,9 @@ class RoomState:
     # ------------------------------------------------------------------
     def build_snapshot_payload(self) -> dict[str, Any]:
         version, count, crc32 = self.name_table.digest_tuple()
-        globals_payload = {
-            name_id: value for name_id, value in self.globals_by_id.items()
-        }
+        globals_payload = dict(self.globals_by_id)
         clients_payload = {
-            client_no: {name_id: value for name_id, value in scope.items()}
-            for client_no, scope in self.clients_by_no.items()
+            client_no: dict(scope) for client_no, scope in self.clients_by_no.items()
         }
         return {
             "type": SNAPSHOT_MESSAGE_TYPE,
@@ -430,4 +427,4 @@ class RoomState:
     def encode_payload(payload: dict[str, Any]) -> bytes:
         """Encode a payload dictionary using MessagePack."""
 
-        return msgpack.dumps(payload, use_bin_type=True)
+        return bytes(msgpack.dumps(payload, use_bin_type=True))

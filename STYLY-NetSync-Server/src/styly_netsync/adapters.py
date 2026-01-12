@@ -39,7 +39,7 @@ def transform_from_wire(data: dict[str, Any]) -> transform_data:
 
 def client_transform_to_wire(ct: client_transform_data) -> dict[str, Any]:
     """Convert snake_case client_transform to camelCase wire format."""
-    result = {}
+    result: dict[str, Any] = {}
 
     if ct.device_id is not None:
         result["deviceId"] = ct.device_id

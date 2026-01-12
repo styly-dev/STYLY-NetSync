@@ -33,11 +33,13 @@ import signal
 import sys
 import threading
 import time
+import types
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import zmq
 
@@ -290,7 +292,7 @@ class SpiralMovement(MovementStrategy):
 class MovementStrategyFactory:
     """Factory for creating movement strategies."""
 
-    _strategies = {
+    _strategies: dict[MovementPattern, type[MovementStrategy]] = {
         MovementPattern.CIRCLE: CircleMovement,
         MovementPattern.FIGURE8: Figure8Movement,
         MovementPattern.RANDOM_WALK: RandomWalkMovement,
@@ -506,19 +508,19 @@ class NetworkTransport:
         self.room_id = room_id
         self.enable_sub = enable_sub
         self.socket: zmq.Socket | None = None
-        self.sub_socket: zmq.Socket | None = None
+        self.sub_socket: zmq.Socket[Any] | None = None
         self.logger = logging.getLogger(self.__class__.__name__)
         self._socket_register = socket_register
         self._socket_unregister = socket_unregister
 
-    def _register_socket(self, socket: zmq.Socket):
+    def _register_socket(self, socket: zmq.Socket[Any]) -> None:
         if self._socket_register:
             try:
                 self._socket_register(socket)
             except Exception:
                 pass
 
-    def _unregister_socket(self, socket: zmq.Socket):
+    def _unregister_socket(self, socket: zmq.Socket[Any]) -> None:
         if self._socket_unregister:
             try:
                 self._socket_unregister(socket)
@@ -692,7 +694,7 @@ class NetworkTransport:
             # For other message types, drop and continue scanning
         return None
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """Close connection to server."""
         if self.socket:
             try:
@@ -718,19 +720,19 @@ class SharedSubscriber:
 
     def __init__(
         self,
-        context: zmq.Context,
+        context: zmq.Context[Any],
         server_addr: str,
         sub_port: int,
         room_id: str,
-        socket_register: Callable[[zmq.Socket], None] | None = None,
-        socket_unregister: Callable[[zmq.Socket], None] | None = None,
+        socket_register: Callable[[zmq.Socket[Any]], None] | None = None,
+        socket_unregister: Callable[[zmq.Socket[Any]], None] | None = None,
     ):
         self.context = context
         self.server_addr = server_addr
         self.sub_port = sub_port
         self.room_id = room_id
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.socket: zmq.Socket | None = None
+        self.socket: zmq.Socket[Any] | None = None
         self._thread: threading.Thread | None = None
         self._running = False
         self._lock = threading.Lock()
@@ -738,14 +740,14 @@ class SharedSubscriber:
         self._socket_register = socket_register
         self._socket_unregister = socket_unregister
 
-    def _register_socket(self, socket: zmq.Socket):
+    def _register_socket(self, socket: zmq.Socket[Any]) -> None:
         if self._socket_register:
             try:
                 self._socket_register(socket)
             except Exception:
                 pass
 
-    def _unregister_socket(self, socket: zmq.Socket):
+    def _unregister_socket(self, socket: zmq.Socket[Any]) -> None:
         if self._socket_unregister:
             try:
                 self._socket_unregister(socket)
@@ -783,7 +785,7 @@ class SharedSubscriber:
             self.logger.error(f"Failed to start SharedSubscriber: {e}")
             return False
 
-    def stop(self):
+    def stop(self) -> None:
         self._running = False
         if self._thread and self._thread.is_alive():
             try:
@@ -806,9 +808,11 @@ class SharedSubscriber:
         with self._lock:
             return self._device_to_client.get(device_id, 0)
 
-    def _loop(self):
+    def _loop(self) -> None:
         # Drain many messages each tick to avoid backlog
         while self._running:
+            if self.socket is None:
+                break
             drained_any = False
             for _ in range(200):  # aggressive drain
                 try:
@@ -912,7 +916,7 @@ class SimulatedClient:
             self.client_number = 0
             self.logger.info("Battery simulation disabled")
 
-    def run(self, stop_event: threading.Event):
+    def run(self, stop_event: threading.Event) -> None:
         """Run the client simulation loop."""
         if not self.transport.connect():
             self.logger.error("Failed to connect to server")
@@ -993,7 +997,7 @@ class SimulatedClient:
                 else:
                     self.logger.info("No broadcasts received")
 
-    def _update_battery(self, current_time: float):
+    def _update_battery(self, current_time: float) -> None:
         """Update battery level and send updates when needed."""
         # Update battery drain
         elapsed_since_battery_update = current_time - self.last_battery_update
@@ -1020,7 +1024,7 @@ class SimulatedClient:
                 self.logger.warning("Failed to send battery level update")
             self.last_battery_send = current_time
 
-    def _poll_broadcasts(self):
+    def _poll_broadcasts(self) -> None:
         """Update local client number from shared subscriber or fallback SUB."""
         # Prefer shared subscriber for scalability
         if self.shared_subscriber:
@@ -1085,7 +1089,9 @@ class SimulatedClient:
         # NOTE: Time budget may interrupt draining, but subsequent ticks will continue
         # processing messages. This prevents send loop starvation.
 
-    def _handle_broadcast_payload(self, msg_type: int, data: dict[str, Any] | None):
+    def _handle_broadcast_payload(
+        self, msg_type: int, data: dict[str, Any] | None
+    ) -> None:
         """Record broadcast metadata for receive-mode load tests."""
         if not self.recv_stats:
             return
@@ -1149,7 +1155,7 @@ class ClientThreadPool:
             self.logger.error(f"Failed to start client thread: {e}")
             return False
 
-    def stop_all(self, timeout: float = 2.0):
+    def stop_all(self, timeout: float = 2.0) -> None:
         """Stop all client threads."""
         self.logger.info("Stopping all client threads...")
         self.stop_event.set()
@@ -1274,7 +1280,7 @@ class ResourceManager:
             return False, f"Failed to raise FD limit: {e}"
 
     @staticmethod
-    def bump_fd_soft_limit(target: int, logger: logging.Logger):
+    def bump_fd_soft_limit(target: int, logger: logging.Logger) -> None:
         """Best-effort bump of RLIMIT_NOFILE to target within hard limit."""
         if not ResourceManager._has_resource():
             logger.info(
@@ -1294,7 +1300,7 @@ class ResourceManager:
             logger.warning("Failed to raise RLIMIT_NOFILE: %s", exc)
 
     @staticmethod
-    def cleanup_ipc_socket(server_addr: str, logger: logging.Logger):
+    def cleanup_ipc_socket(server_addr: str, logger: logging.Logger) -> None:
         """Remove stale ipc:// socket files if present."""
         if not server_addr.startswith("ipc://"):
             return
@@ -1308,7 +1314,9 @@ class ResourceManager:
             logger.warning("Failed to remove ipc socket %s: %s", path, exc)
 
     @staticmethod
-    def log_port_occupancy(server_addr: str, dealer_port: int, logger: logging.Logger):
+    def log_port_occupancy(
+        server_addr: str, dealer_port: int, logger: logging.Logger
+    ) -> None:
         """Log processes listening on the dealer port to surface conflicts early."""
         if not server_addr.startswith("tcp://"):
             return
@@ -1346,7 +1354,7 @@ class ResourceManager:
             return 0
 
     @staticmethod
-    def setup_signal_handlers(handler):
+    def setup_signal_handlers(handler: Callable[[int, Any], None]) -> None:
         """Setup signal handlers for clean shutdown."""
         try:
             signal.signal(signal.SIGINT, handler)
@@ -1404,7 +1412,7 @@ class ClientSimulator:
         self._stopped = False
         self.logger = logging.getLogger(self.__class__.__name__)
         self.shared_subscriber: SharedSubscriber | None = None
-        self._sockets: set[zmq.Socket] = set()
+        self._sockets: set[zmq.Socket[Any]] = set()
         self._sockets_lock = threading.Lock()
 
         # Startup preflight checks and cleanup
@@ -1416,7 +1424,7 @@ class ClientSimulator:
         # Best-effort cleanup on interpreter exit
         atexit.register(self._atexit_cleanup)
 
-    def _preflight_checks(self):
+    def _preflight_checks(self) -> None:
         """Run startup checks to avoid stale resources and port conflicts."""
         ResourceManager.bump_fd_soft_limit(
             ResourceManager.DEFAULT_FD_LIMIT, self.logger
@@ -1426,15 +1434,15 @@ class ClientSimulator:
             self.server_addr, self.dealer_port, self.logger
         )
 
-    def _register_socket(self, socket: zmq.Socket):
+    def _register_socket(self, socket: zmq.Socket[Any]) -> None:
         with self._sockets_lock:
             self._sockets.add(socket)
 
-    def _unregister_socket(self, socket: zmq.Socket):
+    def _unregister_socket(self, socket: zmq.Socket[Any]) -> None:
         with self._sockets_lock:
             self._sockets.discard(socket)
 
-    def _cleanup_tracked_sockets(self):
+    def _cleanup_tracked_sockets(self) -> None:
         with self._sockets_lock:
             for socket in list(self._sockets):
                 try:
@@ -1443,18 +1451,18 @@ class ClientSimulator:
                     pass
             self._sockets.clear()
 
-    def _signal_handler(self, signum, frame):
+    def _signal_handler(self, signum: int, frame: types.FrameType | None) -> None:
         """Handle interrupt signals."""
         self.logger.info(f"\nReceived signal {signum}, requesting stop...")
         self.request_stop()
         self.stop()
 
-    def request_stop(self):
+    def request_stop(self) -> None:
         """Request shutdown from non-blocking contexts (signal handlers, etc.)."""
         self._stop_requested.set()
         self.running = False
 
-    def _atexit_cleanup(self):
+    def _atexit_cleanup(self) -> None:
         """Best-effort cleanup at process exit."""
         try:
             self.request_stop()
@@ -1472,7 +1480,7 @@ class ClientSimulator:
             except Exception:
                 pass
 
-    def start(self):
+    def start(self) -> None:
         """Start the simulation."""
         self.running = True
 
@@ -1645,7 +1653,7 @@ class ClientSimulator:
         finally:
             self.stop()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the simulation."""
         with self._stop_lock:
             if self._stopped:
@@ -1686,7 +1694,7 @@ class ClientSimulator:
 # ============================================================================
 
 
-def main():
+def main() -> None:
     """Main entry point for the client simulator."""
     parser = argparse.ArgumentParser(
         description="STYLY NetSync Client Simulator - Load testing tool",
