@@ -473,6 +473,8 @@ class NetSyncServer:
         try:
             # Create/bind PUB in this thread to avoid cross-thread use
             self.pub = self.context.socket(zmq.PUB)
+            # Set LINGER=0 to prevent FD accumulation during rapid connect/disconnect
+            self.pub.setsockopt(zmq.LINGER, 0)
             try:
                 self.pub.setsockopt(zmq.BACKLOG, self.PUB_BACKLOG)
             except Exception:
@@ -488,6 +490,7 @@ class NetSyncServer:
             self._pub_monitor = self.pub.get_monitor_socket(
                 zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED
             )
+            self._pub_monitor.setsockopt(zmq.LINGER, 0)
             self._pub_monitor_thread = threading.Thread(
                 target=self._pub_monitor_loop, name="PubMonitor", daemon=True
             )
@@ -712,6 +715,8 @@ class NetSyncServer:
 
             # Setup ROUTER socket
             self.router = self.context.socket(zmq.ROUTER)
+            # Set LINGER=0 to prevent FD accumulation during rapid connect/disconnect
+            self.router.setsockopt(zmq.LINGER, 0)
             # Increase accept backlog to survive connection stampedes from simulators
             try:
                 self.router.setsockopt(zmq.BACKLOG, self.ROUTER_BACKLOG)
