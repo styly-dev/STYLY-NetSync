@@ -155,10 +155,12 @@ class NetSyncServer:
     # - CTRL_BACKLOG_WATERMARK: Skip transform work when control queue exceeds this
     # - TRANSFORM_BUDGET_BYTES_PER_SEC: Token bucket rate limit for transform broadcasts
     # - BACKLOG_SLEEP_SEC: Sleep duration when control backlog is high (5ms)
+    # - MAX_COALESCE_BUFFER_SIZE: Max rooms in coalesce buffer before dropping oldest
     CTRL_DRAIN_BATCH = 256
     CTRL_BACKLOG_WATERMARK = 500
     TRANSFORM_BUDGET_BYTES_PER_SEC = 15_000_000
     BACKLOG_SLEEP_SEC = 0.005
+    MAX_COALESCE_BUFFER_SIZE = 1000
 
     def __init__(
         self,
@@ -630,6 +632,9 @@ class NetSyncServer:
                 # Device ID has no last seen time, can reuse
                 del self.room_client_no_to_device_id[room_id][client_no]
                 del self.room_device_id_to_client_no[room_id][device_id]
+                # Clear stale cache entry to prevent broadcasting old transform
+                if client_no in self.client_transform_body_cache:
+                    del self.client_transform_body_cache[client_no]
                 return client_no
 
             if (
@@ -640,6 +645,9 @@ class NetSyncServer:
                 del self.room_client_no_to_device_id[room_id][client_no]
                 del self.room_device_id_to_client_no[room_id][device_id]
                 del self.device_id_last_seen[device_id]
+                # Clear stale cache entry to prevent broadcasting old transform
+                if client_no in self.client_transform_body_cache:
+                    del self.client_transform_body_cache[client_no]
                 return client_no
 
         return -1  # No reusable client number found
@@ -1527,6 +1535,14 @@ class NetSyncServer:
     def _enqueue_pub_latest(self, topic_bytes: bytes, message_bytes: bytes):
         """Latest-only coalescing enqueue for high-rate topics (e.g., room transforms)."""
         with self._coalesce_lock:
+            # Prevent unbounded growth: drop oldest entry if buffer exceeds limit
+            if (
+                topic_bytes not in self._coalesce_latest
+                and len(self._coalesce_latest) >= self.MAX_COALESCE_BUFFER_SIZE
+            ):
+                oldest_key = next(iter(self._coalesce_latest))
+                del self._coalesce_latest[oldest_key]
+                self._increment_stat("skipped_broadcasts")
             self._coalesce_latest[topic_bytes] = message_bytes
 
     def _broadcast_room(
