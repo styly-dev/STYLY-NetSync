@@ -43,8 +43,13 @@ OpenUPM: Required only when you add the package to your Unity project.
 
 ```shell
 # Windows
-winget install -e --id OpenJS.NodeJS.LTS
-winget install --id=astral-sh.uv  -e
+winget install -e --id OpenJS.NodeJS.LTS --source winget
+winget install -e --id astral-sh.uv --source winget
+npm install -g openupm-cli
+
+# Mac
+brew install node
+brew install uv
 npm install -g openupm-cli
 
 # Mac
