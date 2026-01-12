@@ -593,7 +593,7 @@ class NetSyncServer:
                     f"Cleaned up {len(expired_device_ids)} expired device ID mappings"
                 )
 
-    def start(self):
+    def start(self, ip_addresses: list[str] | None = None):
         """Start the server"""
         try:
             # Raise FD soft limit early to avoid connection drops when many clients connect
@@ -657,7 +657,8 @@ class NetSyncServer:
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
                     app, host="0.0.0.0", port=rest_port
                 )
-                logger.info(f"REST bridge started on http://0.0.0.0:{rest_port}")
+                display_ip = ip_addresses[0] if ip_addresses else "0.0.0.0"
+                logger.info(f"REST bridge started on http://{display_ip}:{rest_port}")
                 # Display logo after all initialization is complete
                 display_logo()
             except Exception as rest_exc:
@@ -1760,7 +1761,7 @@ def main():
     )
 
     try:
-        server.start()
+        server.start(ip_addresses=ip_addresses)
 
         logger.info("Server started successfully. Press Ctrl+C to stop.")
 
