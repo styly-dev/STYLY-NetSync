@@ -13,6 +13,7 @@
 # Python (root level)
 __pycache__/
 *.py[cod]
+*.py-e
 *.egg-info/
 
 # IDE
