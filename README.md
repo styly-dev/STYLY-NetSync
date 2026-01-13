@@ -58,13 +58,13 @@ brew install uv
 npm install -g openupm-cli
 ```
 
-### Add STYLY-NetSync to Unity project
+### Add / Update STYLY-NetSync to Unity project
 
 ```shell
 # Go to your unity project directory
 cd YOUR_UNITY_PROJECT_DIR
 
-# Add NetSync package with specific version
+# Add/Update NetSync package with specific version
 openupm add -f com.styly.styly-netsync@0.7.3
 ```
 
