@@ -43,15 +43,19 @@ from loguru import logger
 from . import binary_serializer
 from . import network_utils
 from .logging_utils import configure_logging
-from .config import ConfigurationError, ServerConfig, create_config_from_args
+from .config import (
+    ConfigurationError,
+    DefaultConfigError,
+    ServerConfig,
+    create_config_from_args,
+    load_default_config,
+)
 
 if TYPE_CHECKING:
     from uvicorn import Server
 
-DEFAULT_DEALER_PORT = 5555
-DEFAULT_PUB_PORT = 5556
-DEFAULT_SERVER_DISCOVERY_PORT = 9999
-DEFAULT_SERVER_NAME = "STYLY-NetSync-Server"
+# Note: Default values are defined in default.toml, not in code.
+# Use load_default_config() from config module to get defaults.
 
 
 def valid_port(value: str) -> int:
@@ -139,17 +143,8 @@ def get_version() -> str:
 
 
 class NetSyncServer:
-    # Default timing constants (can be overridden via config)
-    _DEFAULT_BASE_BROADCAST_INTERVAL = 0.1  # 10Hz base rate
-    _DEFAULT_IDLE_BROADCAST_INTERVAL = 0.5  # 2Hz when idle
-    _DEFAULT_DIRTY_THRESHOLD = 0.05  # 20Hz max rate when very active
-    _DEFAULT_BROADCAST_CHECK_INTERVAL = 0.05  # Check broadcasts every 50ms
-    _DEFAULT_CLEANUP_INTERVAL = 1.0  # Cleanup every 1 second
-    _DEFAULT_STATUS_LOG_INTERVAL = 10.0  # Log status every 10 seconds
-    _DEFAULT_MAIN_LOOP_SLEEP = 0.02  # 50Hz main loop sleep
-    _DEFAULT_CLIENT_TIMEOUT = 1.0  # 1 second timeout for client disconnect
-    _DEFAULT_DEVICE_ID_EXPIRY_TIME = 300.0  # 5 minutes - device ID mapping expiry
-    _DEFAULT_POLL_TIMEOUT = 100  # ZMQ poll timeout in ms
+    # Note: All default values are defined in default.toml, not in code.
+    # The BROADCAST_CHECK_INTERVAL is derived from dirty_threshold in config.
 
     # Non-configurable constants
     ROUTER_BACKLOG = 512  # Accept queue depth for DEALER/ROUTER connections
@@ -171,48 +166,55 @@ class NetSyncServer:
 
     def __init__(
         self,
-        dealer_port: int = DEFAULT_DEALER_PORT,
-        pub_port: int = DEFAULT_PUB_PORT,
-        enable_server_discovery: bool = True,
-        server_discovery_port: int = DEFAULT_SERVER_DISCOVERY_PORT,
-        server_name: str = DEFAULT_SERVER_NAME,
+        dealer_port: int | None = None,
+        pub_port: int | None = None,
+        enable_server_discovery: bool | None = None,
+        server_discovery_port: int | None = None,
+        server_name: str | None = None,
         config: ServerConfig | None = None,
     ):
-        self.dealer_port = dealer_port
-        self.pub_port = pub_port
-        self.context = zmq.Context()
+        # Load default config if not provided
+        if config is None:
+            config = load_default_config()
 
         # Store config for reference
         self._config = config
 
-        # Initialize timing settings from config or defaults
-        if config is not None:
-            self.BASE_BROADCAST_INTERVAL = config.base_broadcast_interval
-            self.IDLE_BROADCAST_INTERVAL = config.idle_broadcast_interval
-            self.DIRTY_THRESHOLD = config.dirty_threshold
-            self.BROADCAST_CHECK_INTERVAL = self._DEFAULT_BROADCAST_CHECK_INTERVAL
-            self.CLEANUP_INTERVAL = config.cleanup_interval
-            self.STATUS_LOG_INTERVAL = config.status_log_interval
-            self.MAIN_LOOP_SLEEP = config.main_loop_sleep
-            self.CLIENT_TIMEOUT = config.client_timeout
-            self.DEVICE_ID_EXPIRY_TIME = config.device_id_expiry_time
-            self.POLL_TIMEOUT = config.poll_timeout
-        else:
-            self.BASE_BROADCAST_INTERVAL = self._DEFAULT_BASE_BROADCAST_INTERVAL
-            self.IDLE_BROADCAST_INTERVAL = self._DEFAULT_IDLE_BROADCAST_INTERVAL
-            self.DIRTY_THRESHOLD = self._DEFAULT_DIRTY_THRESHOLD
-            self.BROADCAST_CHECK_INTERVAL = self._DEFAULT_BROADCAST_CHECK_INTERVAL
-            self.CLEANUP_INTERVAL = self._DEFAULT_CLEANUP_INTERVAL
-            self.STATUS_LOG_INTERVAL = self._DEFAULT_STATUS_LOG_INTERVAL
-            self.MAIN_LOOP_SLEEP = self._DEFAULT_MAIN_LOOP_SLEEP
-            self.CLIENT_TIMEOUT = self._DEFAULT_CLIENT_TIMEOUT
-            self.DEVICE_ID_EXPIRY_TIME = self._DEFAULT_DEVICE_ID_EXPIRY_TIME
-            self.POLL_TIMEOUT = self._DEFAULT_POLL_TIMEOUT
+        # Apply overrides from individual arguments (for backward compatibility)
+        self.dealer_port = (
+            dealer_port if dealer_port is not None else config.dealer_port
+        )
+        self.pub_port = pub_port if pub_port is not None else config.pub_port
+        self.context = zmq.Context()
 
-        # Server discovery settings
-        self.enable_server_discovery = enable_server_discovery
-        self.server_discovery_port = server_discovery_port
-        self.server_name = server_name
+        # Initialize timing settings from config
+        self.BASE_BROADCAST_INTERVAL = config.base_broadcast_interval
+        self.IDLE_BROADCAST_INTERVAL = config.idle_broadcast_interval
+        self.DIRTY_THRESHOLD = config.dirty_threshold
+        self.BROADCAST_CHECK_INTERVAL = (
+            config.dirty_threshold
+        )  # Same as dirty_threshold
+        self.CLEANUP_INTERVAL = config.cleanup_interval
+        self.STATUS_LOG_INTERVAL = config.status_log_interval
+        self.MAIN_LOOP_SLEEP = config.main_loop_sleep
+        self.CLIENT_TIMEOUT = config.client_timeout
+        self.DEVICE_ID_EXPIRY_TIME = config.device_id_expiry_time
+        self.POLL_TIMEOUT = config.poll_timeout
+
+        # Server discovery settings (with override support)
+        self.enable_server_discovery = (
+            enable_server_discovery
+            if enable_server_discovery is not None
+            else config.enable_server_discovery
+        )
+        self.server_discovery_port = (
+            server_discovery_port
+            if server_discovery_port is not None
+            else config.server_discovery_port
+        )
+        self.server_name = (
+            server_name if server_name is not None else config.server_name
+        )
         self.server_discovery_socket: socket.socket | None = None
         self.server_discovery_thread: threading.Thread | None = None
         self.server_discovery_running = False
@@ -229,9 +231,8 @@ class NetSyncServer:
         )
 
         # Publisher thread infrastructure
-        pub_queue_size = config.pub_queue_maxsize if config is not None else 10000
         self._pub_queue_ctrl: Queue[tuple[bytes | None, bytes | None]] = Queue(
-            maxsize=pub_queue_size
+            maxsize=config.pub_queue_maxsize
         )
         self._publisher_thread: threading.Thread | None = None
         self._publisher_running = False
@@ -302,33 +303,20 @@ class NetSyncServer:
             {}
         )  # room_id -> {(target_client_no, var_name): (sender_client_no, value, timestamp)}
 
-        # NV flush cadence configuration
-        if config is not None:
-            self.nv_flush_interval = config.nv_flush_interval
-        else:
-            self.nv_flush_interval = 0.05  # 50ms flush cadence
+        # NV flush cadence configuration (from config)
+        self.nv_flush_interval = config.nv_flush_interval
         self.room_last_nv_flush: dict[str, float] = {}  # room_id -> last_flush_time
 
         # NV monitoring window (sliding window for logging only)
         self.nv_monitor_window: dict[str, list] = {}  # room_id -> [timestamps]
-        if config is not None:
-            self.nv_monitor_window_size = config.nv_monitor_window_size
-            self.nv_monitor_threshold = config.nv_monitor_threshold
-        else:
-            self.nv_monitor_window_size = 1.0  # 1 second window
-            self.nv_monitor_threshold = 200  # Log warning if > 200 NV req/s
+        self.nv_monitor_window_size = config.nv_monitor_window_size
+        self.nv_monitor_threshold = config.nv_monitor_threshold
 
-        # Network Variables limits
-        if config is not None:
-            self.MAX_GLOBAL_VARS = config.max_global_vars
-            self.MAX_CLIENT_VARS = config.max_client_vars
-            self.MAX_VAR_NAME_LENGTH = config.max_var_name_length
-            self.MAX_VAR_VALUE_LENGTH = config.max_var_value_length
-        else:
-            self.MAX_GLOBAL_VARS = 100
-            self.MAX_CLIENT_VARS = 100
-            self.MAX_VAR_NAME_LENGTH = 64
-            self.MAX_VAR_VALUE_LENGTH = 1024
+        # Network Variables limits (from config)
+        self.MAX_GLOBAL_VARS = config.max_global_vars
+        self.MAX_CLIENT_VARS = config.max_client_vars
+        self.MAX_VAR_NAME_LENGTH = config.max_var_name_length
+        self.MAX_VAR_VALUE_LENGTH = config.max_var_value_length
 
         # Thread synchronization
         self._rooms_lock = threading.RLock()  # Reentrant lock for nested access
@@ -1934,10 +1922,10 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
 def main() -> None:
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
-        "--config",
+        "--user-config",
         type=Path,
         metavar="FILE",
-        help="Path to TOML configuration file",
+        help="Path to user TOML configuration file (overrides defaults)",
     )
     parser.add_argument(
         "--no-server-discovery", action="store_true", help="Disable server discovery"
@@ -1946,7 +1934,7 @@ def main() -> None:
         "--server-discovery-port",
         type=valid_port,
         metavar="PORT",
-        help=f"UDP port used for server discovery (default: {DEFAULT_SERVER_DISCOVERY_PORT})",
+        help="UDP port used for server discovery (see default.toml for default)",
     )
     parser.add_argument(
         "-V",
@@ -1993,19 +1981,23 @@ def main() -> None:
     # Note: Logging is configured after this to use config values
     try:
         config = create_config_from_args(args)
+    except DefaultConfigError as e:
+        # Fatal error: default.toml cannot be loaded
+        print(f"FATAL: {e}")
+        sys.exit(1)
     except FileNotFoundError:
-        # Basic error output before logging is configured
-        print(f"ERROR: Configuration file not found: {args.config}")
-        return
+        # User config file not found
+        print(f"ERROR: User configuration file not found: {args.user_config}")
+        sys.exit(1)
     except ConfigurationError as e:
         # Validation errors - print each error clearly
         print("ERROR: Configuration validation failed:")
         for error in e.errors:
             print(f"  - {error}")
-        return
+        sys.exit(1)
     except Exception as e:
         print(f"ERROR: Failed to load configuration: {e}")
-        return
+        sys.exit(1)
 
     # Configure logging with merged settings (config file + CLI overrides)
     log_dir = Path(config.log_dir) if config.log_dir else None
@@ -2018,8 +2010,8 @@ def main() -> None:
     )
 
     # Log config file info after logging is configured
-    if args.config is not None:
-        logger.info(f"Loaded configuration from {args.config}")
+    if args.user_config is not None:
+        logger.info(f"Loaded user configuration from {args.user_config}")
 
     # Apply global configuration settings
     binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)

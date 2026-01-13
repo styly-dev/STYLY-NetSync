@@ -1,133 +1,59 @@
-# STYLY NetSync Server Configuration File
+# STYLY NetSync Server User Configuration Example
 #
-# This file contains all configurable server settings.
-# Copy this file and modify as needed for your deployment.
+# This file demonstrates how to override default settings.
+# Only include the settings you want to change - all other values
+# will use defaults from the bundled default.toml.
 #
-# Configuration priority: CLI arguments > config file > defaults
+# Configuration priority: CLI arguments > user config > default config
 #
 # Usage:
-#   styly-netsync-server --config /path/to/config.toml
+#   styly-netsync-server --user-config /path/to/user.toml
 #
 
 # =============================================================================
-# Network Settings
+# Network Settings (example overrides)
 # =============================================================================
 [network]
-# ZeroMQ DEALER port for client-server communication
-dealer_port = 5555
+# Custom server name for discovery
+server_name = "My-Custom-Server"
 
-# ZeroMQ PUB port for server-to-client broadcasts
-pub_port = 5556
+# Use different ports if needed
+# dealer_port = 5555
+# pub_port = 5556
+# server_discovery_port = 9999
 
-# UDP port for server discovery service
-server_discovery_port = 9999
-
-# Server name announced via discovery service
-server_name = "STYLY-NetSync-Server"
-
-# Enable/disable UDP discovery service
-enable_server_discovery = true
+# Disable discovery service (can also use --no-server-discovery CLI flag)
+# enable_server_discovery = false
 
 # =============================================================================
-# Timing Settings
+# Timing Settings (example overrides)
 # =============================================================================
 [timing]
-# Base broadcast interval in seconds (10Hz default)
-# Lower values = higher update rate but more bandwidth
-base_broadcast_interval = 0.1
+# Higher broadcast rate for fast-paced experiences
+# base_broadcast_interval = 0.05  # 20Hz instead of 10Hz
 
-# Broadcast interval when server is idle (2Hz default)
-# Used when no clients are connected or no activity
-idle_broadcast_interval = 0.5
-
-# Minimum broadcast interval when clients are very active (20Hz max)
-# Prevents excessive broadcasts during high activity
-dirty_threshold = 0.05
-
-# Client disconnect timeout in seconds
-# Clients not responding within this time are considered disconnected
-client_timeout = 1.0
-
-# Cleanup interval in seconds for removing stale data
-cleanup_interval = 1.0
-
-# Device ID mapping expiry time in seconds (5 minutes default)
-# Mappings are removed after this time of inactivity
-device_id_expiry_time = 300.0
-
-# Status log interval in seconds
-# Server statistics are logged at this interval
-status_log_interval = 10.0
-
-# Main loop sleep interval in seconds (50Hz default)
-main_loop_sleep = 0.02
-
-# ZeroMQ poll timeout in milliseconds
-poll_timeout = 100
+# Longer client timeout for unreliable networks
+# client_timeout = 2.0  # 2 seconds instead of 1 second
 
 # =============================================================================
-# Network Variable Settings
+# Network Variable Settings (example overrides)
 # =============================================================================
-[network_variables]
-# Maximum global variables per room
-max_global_vars = 100
-
-# Maximum client variables per client
-max_client_vars = 100
-
-# Maximum variable name length in bytes
-max_var_name_length = 64
-
-# Maximum variable value length in bytes
-max_var_value_length = 1024
-
-# Network variable flush interval in seconds (50ms default)
-# How often pending NV changes are broadcast to clients
-nv_flush_interval = 0.05
-
-# NV monitoring window size in seconds
-# Window for counting NV requests to detect high traffic
-nv_monitor_window_size = 1.0
-
-# NV requests per second before warning
-# Warning logged when NV request rate exceeds this threshold
-nv_monitor_threshold = 200
+# [network_variables]
+# max_global_vars = 200  # More variables for complex experiences
 
 # =============================================================================
-# Internal Limits
-# =============================================================================
-[limits]
-# Maximum virtual transforms per client
-max_virtual_transforms = 50
-
-# PUB queue maximum size
-# Messages are dropped if queue exceeds this size
-pub_queue_maxsize = 10000
-
-# Delta ring buffer size for NV synchronization
-delta_ring_size = 10000
-
-# =============================================================================
-# Logging Settings
+# Logging Settings (example overrides)
 # =============================================================================
 [logging]
-# Directory for log files (empty string or omit for console-only logging)
-# When set, enables file logging with rotation
+# Enable file logging to a specific directory
 # log_dir = "/var/log/styly-netsync"
-log_dir = ""
 
-# Console log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-log_level_console = "INFO"
+# Use DEBUG level for development
+# log_level_console = "DEBUG"
 
-# Enable JSON format for console logs (useful for log aggregation)
-log_json_console = false
+# Enable JSON logs for log aggregation systems
+# log_json_console = true
 
-# Log rotation rule (loguru syntax)
-# Examples: "10 MB", "1 day", "12:00", "1 week"
-# When not set, uses internal default (10MB or 7 days)
-# log_rotation = "10 MB"
-
-# Log retention rule (loguru syntax)
-# Examples: "5", "1 week", "10 days"
-# When not set, uses internal default (keep newest 20 files)
-# log_retention = "20"
+# Custom rotation and retention
+# log_rotation = "100 MB"
+# log_retention = "30 days"

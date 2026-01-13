@@ -1,13 +1,16 @@
 """Configuration management for STYLY NetSync Server.
 
 This module provides TOML-based configuration support with CLI override capability.
+
+Configuration priority: CLI args > user config > default config
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.resources
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from dataclasses import replace as dataclass_replace
 from pathlib import Path
 from typing import Any
@@ -25,53 +28,62 @@ class ConfigurationError(Exception):
         super().__init__(f"Configuration validation failed: {'; '.join(errors)}")
 
 
+class DefaultConfigError(Exception):
+    """Raised when default configuration cannot be loaded.
+
+    This is a fatal error that prevents server startup.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"Failed to load default configuration: {message}")
+
+
 @dataclass
 class ServerConfig:
     """Server configuration with all settings.
 
-    Configuration priority: CLI args > config file > defaults
+    All fields are required. Default values are loaded from default.toml.
+    Configuration priority: CLI args > user config > default config
     """
 
     # Network settings
-    dealer_port: int = 5555
-    pub_port: int = 5556
-    server_discovery_port: int = 9999
-    server_name: str = "STYLY-NetSync-Server"
-    enable_server_discovery: bool = True
+    dealer_port: int
+    pub_port: int
+    server_discovery_port: int
+    server_name: str
+    enable_server_discovery: bool
 
     # Timing settings
-    base_broadcast_interval: float = 0.1  # 10Hz base rate
-    idle_broadcast_interval: float = 0.5  # 2Hz when idle
-    dirty_threshold: float = 0.05  # 20Hz max rate when very active
-    client_timeout: float = 1.0  # 1 second timeout for client disconnect
-    cleanup_interval: float = 1.0  # Cleanup every 1 second
-    device_id_expiry_time: float = 300.0  # 5 minutes for device ID mapping expiry
-    status_log_interval: float = 10.0  # Log status every 10 seconds
-    main_loop_sleep: float = 0.02  # 50Hz main loop sleep
-    poll_timeout: int = 100  # ZMQ poll timeout in ms
+    base_broadcast_interval: float
+    idle_broadcast_interval: float
+    dirty_threshold: float
+    client_timeout: float
+    cleanup_interval: float
+    device_id_expiry_time: float
+    status_log_interval: float
+    main_loop_sleep: float
+    poll_timeout: int
 
     # Network Variable settings
-    max_global_vars: int = 100  # Maximum global variables per room
-    max_client_vars: int = 100  # Maximum client variables per client
-    max_var_name_length: int = 64  # Maximum variable name length in bytes
-    max_var_value_length: int = 1024  # Maximum variable value length in bytes
-    nv_flush_interval: float = 0.05  # NV flush cadence (50ms)
-    nv_monitor_window_size: float = 1.0  # NV monitoring window (1 second)
-    nv_monitor_threshold: int = 200  # NV requests/s before warning
+    max_global_vars: int
+    max_client_vars: int
+    max_var_name_length: int
+    max_var_value_length: int
+    nv_flush_interval: float
+    nv_monitor_window_size: float
+    nv_monitor_threshold: int
 
     # Internal limits
-    max_virtual_transforms: int = 50  # Maximum virtual transforms per client
-    pub_queue_maxsize: int = 10000  # PUB queue maximum size
-    delta_ring_size: int = 10000  # Delta ring buffer size for NV sync
+    max_virtual_transforms: int
+    pub_queue_maxsize: int
+    delta_ring_size: int
 
     # Logging settings
-    log_dir: str | None = None  # Directory for log files (None = console only)
-    log_level_console: str = "INFO"  # Console log level
-    log_json_console: bool = False  # Output console logs as JSON
-    log_rotation: str | None = None  # Log rotation rule (loguru syntax); None = default
-    log_retention: str | None = (
-        None  # Log retention rule (loguru syntax); None = default
-    )
+    log_dir: str | None
+    log_level_console: str
+    log_json_console: bool
+    log_rotation: str | None
+    log_retention: str | None
 
 
 # TOML section to config field mapping
@@ -118,6 +130,30 @@ _SECTION_MAPPING: dict[str, list[str]] = {
 }
 
 
+def load_default_toml_data() -> dict[str, Any]:
+    """Load the default.toml data from the bundled package resource.
+
+    Returns:
+        Parsed TOML data as a dictionary.
+
+    Raises:
+        DefaultConfigError: If default.toml cannot be found or parsed.
+    """
+    try:
+        # Python 3.9+ approach using importlib.resources
+        files = importlib.resources.files("styly_netsync")
+        default_toml = files.joinpath("default.toml")
+        # Read the file content directly (works with zip archives too)
+        content = default_toml.read_bytes()
+        return tomllib.loads(content.decode("utf-8"))
+    except FileNotFoundError as e:
+        raise DefaultConfigError(f"default.toml not found in package: {e}") from e
+    except tomllib.TOMLDecodeError as e:
+        raise DefaultConfigError(f"Invalid TOML syntax in default.toml: {e}") from e
+    except Exception as e:
+        raise DefaultConfigError(f"Failed to read default.toml: {e}") from e
+
+
 def load_config_from_toml(path: Path) -> dict[str, Any]:
     """Load configuration from TOML file.
 
@@ -150,7 +186,12 @@ def flatten_toml_config(toml_data: dict[str, Any]) -> dict[str, Any]:
         if section in toml_data:
             for key in keys:
                 if key in toml_data[section]:
-                    flat[key] = toml_data[section][key]
+                    value = toml_data[section][key]
+                    # Convert empty strings to None for optional fields
+                    if key in ("log_dir", "log_rotation", "log_retention"):
+                        if value == "":
+                            value = None
+                    flat[key] = value
 
     return flat
 
@@ -266,6 +307,35 @@ def validate_config(config: ServerConfig) -> list[str]:
     return errors
 
 
+def load_default_config() -> ServerConfig:
+    """Load the default configuration from the bundled default.toml.
+
+    Returns:
+        ServerConfig instance with default values.
+
+    Raises:
+        DefaultConfigError: If default.toml cannot be loaded or is incomplete.
+    """
+    try:
+        toml_data = load_default_toml_data()
+        flat_data = flatten_toml_config(toml_data)
+
+        # Verify all required fields are present
+        config_fields = {f.name for f in fields(ServerConfig)}
+        missing = config_fields - set(flat_data.keys())
+        if missing:
+            raise DefaultConfigError(
+                f"Missing required fields in default.toml: {', '.join(sorted(missing))}"
+            )
+
+        return ServerConfig(**flat_data)
+    except DefaultConfigError:
+        # Re-raise DefaultConfigError as-is
+        raise
+    except TypeError as e:
+        raise DefaultConfigError(f"Invalid field types in default.toml: {e}") from e
+
+
 def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConfig:
     """Merge CLI arguments into config (CLI takes precedence).
 
@@ -312,30 +382,34 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
 def create_config_from_args(
     args: argparse.Namespace,
 ) -> ServerConfig:
-    """Create ServerConfig from CLI arguments, loading config file if specified.
+    """Create ServerConfig from CLI arguments with layered config loading.
+
+    Configuration priority: CLI args > user config > default config
 
     Args:
-        args: Parsed CLI arguments (must have 'config' attribute for config file path).
+        args: Parsed CLI arguments (may have 'user_config' attribute for user config path).
 
     Returns:
         Configured ServerConfig instance.
 
     Raises:
-        FileNotFoundError: If specified config file does not exist.
+        DefaultConfigError: If default.toml cannot be loaded (fatal).
+        FileNotFoundError: If specified user config file does not exist.
         tomllib.TOMLDecodeError: If config file has invalid TOML syntax.
         ConfigurationError: If configuration validation fails.
     """
-    config = ServerConfig()
+    # Step 1: Load default configuration (required)
+    config = load_default_config()
 
-    # Load from config file if specified
-    if hasattr(args, "config") and args.config is not None:
-        config_path = Path(args.config)
-        toml_data = load_config_from_toml(config_path)
+    # Step 2: Override with user config if specified
+    if hasattr(args, "user_config") and args.user_config is not None:
+        user_config_path = Path(args.user_config)
+        toml_data = load_config_from_toml(user_config_path)
 
         # Warn about unknown keys (possible typos)
         unknown = get_unknown_keys(toml_data)
         if unknown:
-            print(f"WARNING: Unknown keys in {config_path}:")
+            print(f"WARNING: Unknown keys in {user_config_path}:")
             for section, keys in unknown.items():
                 if "_unknown_section" in keys:
                     print(f"  - Unknown section: [{section}]")
@@ -345,13 +419,14 @@ def create_config_from_args(
 
         flat_data = flatten_toml_config(toml_data)
 
-        # Update config with TOML values
-        config = dataclass_replace(config, **flat_data)
+        # Apply user config overrides
+        if flat_data:
+            config = dataclass_replace(config, **flat_data)
 
-    # Apply CLI overrides
+    # Step 3: Apply CLI overrides (highest priority)
     config = merge_cli_args(config, args)
 
-    # Validate
+    # Step 4: Validate final configuration
     errors = validate_config(config)
     if errors:
         raise ConfigurationError(errors)

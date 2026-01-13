@@ -69,7 +69,7 @@ styly-netsync-simulator = "styly_netsync.client_simulator:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"styly_netsync" = ["py.typed"]
+"styly_netsync" = ["py.typed", "default.toml"]
 
 # Black code formatting
 [tool.black]

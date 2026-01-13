@@ -7,46 +7,42 @@ import pytest
 
 from styly_netsync.config import (
     ConfigurationError,
+    DefaultConfigError,
     ServerConfig,
     create_config_from_args,
     flatten_toml_config,
     get_unknown_keys,
     load_config_from_toml,
+    load_default_config,
     merge_cli_args,
     validate_config,
 )
 
 
-class TestServerConfig:
-    """Tests for ServerConfig dataclass."""
+@pytest.fixture
+def default_config() -> ServerConfig:
+    """Load default configuration for tests."""
+    return load_default_config()
 
-    def test_default_values(self):
-        """Test that default values are set correctly."""
-        config = ServerConfig()
+
+class TestLoadDefaultConfig:
+    """Tests for load_default_config function."""
+
+    def test_load_default_config_succeeds(self) -> None:
+        """Test that default configuration loads successfully."""
+        config = load_default_config()
+        assert isinstance(config, ServerConfig)
+
+    def test_default_config_has_all_fields(self) -> None:
+        """Test that default config has all expected fields."""
+        config = load_default_config()
+        # Network
         assert config.dealer_port == 5555
         assert config.pub_port == 5556
         assert config.server_discovery_port == 9999
         assert config.server_name == "STYLY-NetSync-Server"
         assert config.enable_server_discovery is True
-
-    def test_custom_values(self):
-        """Test that custom values override defaults."""
-        config = ServerConfig(
-            dealer_port=6666,
-            pub_port=6667,
-            server_discovery_port=8888,
-            server_name="Custom Server",
-            enable_server_discovery=False,
-        )
-        assert config.dealer_port == 6666
-        assert config.pub_port == 6667
-        assert config.server_discovery_port == 8888
-        assert config.server_name == "Custom Server"
-        assert config.enable_server_discovery is False
-
-    def test_timing_default_values(self):
-        """Test that timing default values are set correctly."""
-        config = ServerConfig()
+        # Timing
         assert config.base_broadcast_interval == 0.1
         assert config.idle_broadcast_interval == 0.5
         assert config.dirty_threshold == 0.05
@@ -56,23 +52,7 @@ class TestServerConfig:
         assert config.status_log_interval == 10.0
         assert config.main_loop_sleep == 0.02
         assert config.poll_timeout == 100
-
-    def test_timing_custom_values(self):
-        """Test that timing custom values override defaults."""
-        config = ServerConfig(
-            base_broadcast_interval=0.2,
-            idle_broadcast_interval=1.0,
-            client_timeout=2.0,
-            poll_timeout=200,
-        )
-        assert config.base_broadcast_interval == 0.2
-        assert config.idle_broadcast_interval == 1.0
-        assert config.client_timeout == 2.0
-        assert config.poll_timeout == 200
-
-    def test_nv_default_values(self):
-        """Test that NV default values are set correctly."""
-        config = ServerConfig()
+        # NV
         assert config.max_global_vars == 100
         assert config.max_client_vars == 100
         assert config.max_var_name_length == 64
@@ -80,67 +60,71 @@ class TestServerConfig:
         assert config.nv_flush_interval == 0.05
         assert config.nv_monitor_window_size == 1.0
         assert config.nv_monitor_threshold == 200
-
-    def test_nv_custom_values(self):
-        """Test that NV custom values override defaults."""
-        config = ServerConfig(
-            max_global_vars=200,
-            max_client_vars=50,
-            max_var_value_length=2048,
-            nv_flush_interval=0.1,
-        )
-        assert config.max_global_vars == 200
-        assert config.max_client_vars == 50
-        assert config.max_var_value_length == 2048
-        assert config.nv_flush_interval == 0.1
-
-    def test_limits_default_values(self):
-        """Test that limits default values are set correctly."""
-        config = ServerConfig()
+        # Limits
         assert config.max_virtual_transforms == 50
         assert config.pub_queue_maxsize == 10000
         assert config.delta_ring_size == 10000
-
-    def test_limits_custom_values(self):
-        """Test that limits custom values override defaults."""
-        config = ServerConfig(
-            max_virtual_transforms=100,
-            pub_queue_maxsize=20000,
-            delta_ring_size=5000,
-        )
-        assert config.max_virtual_transforms == 100
-        assert config.pub_queue_maxsize == 20000
-        assert config.delta_ring_size == 5000
-
-    def test_logging_default_values(self):
-        """Test that logging default values are set correctly."""
-        config = ServerConfig()
+        # Logging
         assert config.log_dir is None
         assert config.log_level_console == "INFO"
         assert config.log_json_console is False
-        assert config.log_rotation is None  # None = use internal default
-        assert config.log_retention is None  # None = use internal default
+        assert config.log_rotation is None
+        assert config.log_retention is None
 
-    def test_logging_custom_values(self):
-        """Test that logging custom values override defaults."""
+    def test_default_config_is_valid(self) -> None:
+        """Test that default configuration passes validation."""
+        config = load_default_config()
+        errors = validate_config(config)
+        assert errors == []
+
+
+class TestServerConfig:
+    """Tests for ServerConfig dataclass."""
+
+    def test_custom_values(self, default_config: ServerConfig) -> None:
+        """Test that custom values can be set."""
         config = ServerConfig(
-            log_dir="/var/log/netsync",
-            log_level_console="DEBUG",
-            log_json_console=True,
-            log_rotation="1 day",
-            log_retention="7 days",
+            dealer_port=6666,
+            pub_port=6667,
+            server_discovery_port=8888,
+            server_name="Custom Server",
+            enable_server_discovery=False,
+            base_broadcast_interval=default_config.base_broadcast_interval,
+            idle_broadcast_interval=default_config.idle_broadcast_interval,
+            dirty_threshold=default_config.dirty_threshold,
+            client_timeout=default_config.client_timeout,
+            cleanup_interval=default_config.cleanup_interval,
+            device_id_expiry_time=default_config.device_id_expiry_time,
+            status_log_interval=default_config.status_log_interval,
+            main_loop_sleep=default_config.main_loop_sleep,
+            poll_timeout=default_config.poll_timeout,
+            max_global_vars=default_config.max_global_vars,
+            max_client_vars=default_config.max_client_vars,
+            max_var_name_length=default_config.max_var_name_length,
+            max_var_value_length=default_config.max_var_value_length,
+            nv_flush_interval=default_config.nv_flush_interval,
+            nv_monitor_window_size=default_config.nv_monitor_window_size,
+            nv_monitor_threshold=default_config.nv_monitor_threshold,
+            max_virtual_transforms=default_config.max_virtual_transforms,
+            pub_queue_maxsize=default_config.pub_queue_maxsize,
+            delta_ring_size=default_config.delta_ring_size,
+            log_dir=default_config.log_dir,
+            log_level_console=default_config.log_level_console,
+            log_json_console=default_config.log_json_console,
+            log_rotation=default_config.log_rotation,
+            log_retention=default_config.log_retention,
         )
-        assert config.log_dir == "/var/log/netsync"
-        assert config.log_level_console == "DEBUG"
-        assert config.log_json_console is True
-        assert config.log_rotation == "1 day"
-        assert config.log_retention == "7 days"
+        assert config.dealer_port == 6666
+        assert config.pub_port == 6667
+        assert config.server_discovery_port == 8888
+        assert config.server_name == "Custom Server"
+        assert config.enable_server_discovery is False
 
 
 class TestLoadConfigFromToml:
     """Tests for load_config_from_toml function."""
 
-    def test_load_valid_toml(self, tmp_path: Path):
+    def test_load_valid_toml(self, tmp_path: Path) -> None:
         """Test loading a valid TOML file."""
         toml_content = """
 [network]
@@ -158,12 +142,12 @@ enable_server_discovery = false
         assert data["network"]["server_name"] == "Test Server"
         assert data["network"]["enable_server_discovery"] is False
 
-    def test_load_nonexistent_file(self, tmp_path: Path):
+    def test_load_nonexistent_file(self, tmp_path: Path) -> None:
         """Test that FileNotFoundError is raised for missing file."""
         with pytest.raises(FileNotFoundError):
             load_config_from_toml(tmp_path / "nonexistent.toml")
 
-    def test_load_invalid_toml(self, tmp_path: Path):
+    def test_load_invalid_toml(self, tmp_path: Path) -> None:
         """Test that TOMLDecodeError is raised for invalid TOML."""
         import tomllib
 
@@ -173,7 +157,7 @@ enable_server_discovery = false
         with pytest.raises(tomllib.TOMLDecodeError):
             load_config_from_toml(config_file)
 
-    def test_load_empty_toml(self, tmp_path: Path):
+    def test_load_empty_toml(self, tmp_path: Path) -> None:
         """Test loading an empty TOML file."""
         config_file = tmp_path / "empty.toml"
         config_file.write_text("")
@@ -185,7 +169,7 @@ enable_server_discovery = false
 class TestFlattenTomlConfig:
     """Tests for flatten_toml_config function."""
 
-    def test_flatten_network_section(self):
+    def test_flatten_network_section(self) -> None:
         """Test flattening network section."""
         toml_data = {
             "network": {
@@ -204,18 +188,18 @@ class TestFlattenTomlConfig:
         assert flat["server_name"] == "Test"
         assert flat["enable_server_discovery"] is True
 
-    def test_flatten_partial_config(self):
+    def test_flatten_partial_config(self) -> None:
         """Test flattening partial configuration."""
         toml_data = {"network": {"dealer_port": 6666}}
         flat = flatten_toml_config(toml_data)
         assert flat == {"dealer_port": 6666}
 
-    def test_flatten_empty_config(self):
+    def test_flatten_empty_config(self) -> None:
         """Test flattening empty configuration."""
         flat = flatten_toml_config({})
         assert flat == {}
 
-    def test_flatten_ignores_unknown_sections(self):
+    def test_flatten_ignores_unknown_sections(self) -> None:
         """Test that unknown sections are ignored."""
         toml_data = {
             "network": {"dealer_port": 5555},
@@ -225,7 +209,7 @@ class TestFlattenTomlConfig:
         assert "some_key" not in flat
         assert flat == {"dealer_port": 5555}
 
-    def test_flatten_ignores_unknown_keys(self):
+    def test_flatten_ignores_unknown_keys(self) -> None:
         """Test that unknown keys within known sections are ignored."""
         toml_data = {
             "network": {
@@ -237,7 +221,7 @@ class TestFlattenTomlConfig:
         assert "unknown_key" not in flat
         assert flat == {"dealer_port": 5555}
 
-    def test_flatten_timing_section(self):
+    def test_flatten_timing_section(self) -> None:
         """Test flattening timing section."""
         toml_data = {
             "timing": {
@@ -263,7 +247,7 @@ class TestFlattenTomlConfig:
         assert flat["main_loop_sleep"] == 0.05
         assert flat["poll_timeout"] == 200
 
-    def test_flatten_network_variables_section(self):
+    def test_flatten_network_variables_section(self) -> None:
         """Test flattening network_variables section."""
         toml_data = {
             "network_variables": {
@@ -285,7 +269,7 @@ class TestFlattenTomlConfig:
         assert flat["nv_monitor_window_size"] == 2.0
         assert flat["nv_monitor_threshold"] == 300
 
-    def test_flatten_limits_section(self):
+    def test_flatten_limits_section(self) -> None:
         """Test flattening limits section."""
         toml_data = {
             "limits": {
@@ -299,7 +283,7 @@ class TestFlattenTomlConfig:
         assert flat["pub_queue_maxsize"] == 20000
         assert flat["delta_ring_size"] == 5000
 
-    def test_flatten_logging_section(self):
+    def test_flatten_logging_section(self) -> None:
         """Test flattening logging section."""
         toml_data = {
             "logging": {
@@ -317,43 +301,67 @@ class TestFlattenTomlConfig:
         assert flat["log_rotation"] == "1 day"
         assert flat["log_retention"] == "7 days"
 
+    def test_flatten_empty_string_to_none(self) -> None:
+        """Test that empty strings are converted to None for optional fields."""
+        toml_data = {
+            "logging": {
+                "log_dir": "",
+                "log_rotation": "",
+                "log_retention": "",
+            }
+        }
+        flat = flatten_toml_config(toml_data)
+        assert flat["log_dir"] is None
+        assert flat["log_rotation"] is None
+        assert flat["log_retention"] is None
+
 
 class TestValidateConfig:
     """Tests for validate_config function."""
 
-    def test_valid_config(self):
+    def test_valid_config(self, default_config: ServerConfig) -> None:
         """Test that valid configuration passes validation."""
-        config = ServerConfig()
-        errors = validate_config(config)
+        errors = validate_config(default_config)
         assert errors == []
 
-    def test_invalid_dealer_port_too_low(self):
+    def test_invalid_dealer_port_too_low(self, default_config: ServerConfig) -> None:
         """Test that port 0 fails validation."""
-        config = ServerConfig(dealer_port=0)
+        from dataclasses import replace
+
+        config = replace(default_config, dealer_port=0)
         errors = validate_config(config)
         assert any("dealer_port" in e for e in errors)
 
-    def test_invalid_dealer_port_too_high(self):
+    def test_invalid_dealer_port_too_high(self, default_config: ServerConfig) -> None:
         """Test that port > 65535 fails validation."""
-        config = ServerConfig(dealer_port=70000)
+        from dataclasses import replace
+
+        config = replace(default_config, dealer_port=70000)
         errors = validate_config(config)
         assert any("dealer_port" in e for e in errors)
 
-    def test_invalid_pub_port(self):
+    def test_invalid_pub_port(self, default_config: ServerConfig) -> None:
         """Test that invalid pub_port fails validation."""
-        config = ServerConfig(pub_port=0)
+        from dataclasses import replace
+
+        config = replace(default_config, pub_port=0)
         errors = validate_config(config)
         assert any("pub_port" in e for e in errors)
 
-    def test_invalid_server_discovery_port(self):
+    def test_invalid_server_discovery_port(self, default_config: ServerConfig) -> None:
         """Test that invalid server_discovery_port fails validation."""
-        config = ServerConfig(server_discovery_port=99999)
+        from dataclasses import replace
+
+        config = replace(default_config, server_discovery_port=99999)
         errors = validate_config(config)
         assert any("server_discovery_port" in e for e in errors)
 
-    def test_valid_edge_ports(self):
+    def test_valid_edge_ports(self, default_config: ServerConfig) -> None:
         """Test that edge case ports (1 and 65535) are valid."""
-        config = ServerConfig(
+        from dataclasses import replace
+
+        config = replace(
+            default_config,
             dealer_port=1,
             pub_port=65535,
             server_discovery_port=1024,
@@ -361,27 +369,36 @@ class TestValidateConfig:
         errors = validate_config(config)
         assert errors == []
 
-    def test_invalid_timing_zero(self):
+    def test_invalid_timing_zero(self, default_config: ServerConfig) -> None:
         """Test that zero timing values fail validation."""
-        config = ServerConfig(base_broadcast_interval=0)
+        from dataclasses import replace
+
+        config = replace(default_config, base_broadcast_interval=0)
         errors = validate_config(config)
         assert any("base_broadcast_interval" in e for e in errors)
 
-    def test_invalid_timing_negative(self):
+    def test_invalid_timing_negative(self, default_config: ServerConfig) -> None:
         """Test that negative timing values fail validation."""
-        config = ServerConfig(client_timeout=-1.0)
+        from dataclasses import replace
+
+        config = replace(default_config, client_timeout=-1.0)
         errors = validate_config(config)
         assert any("client_timeout" in e for e in errors)
 
-    def test_invalid_poll_timeout(self):
+    def test_invalid_poll_timeout(self, default_config: ServerConfig) -> None:
         """Test that invalid poll_timeout fails validation."""
-        config = ServerConfig(poll_timeout=0)
+        from dataclasses import replace
+
+        config = replace(default_config, poll_timeout=0)
         errors = validate_config(config)
         assert any("poll_timeout" in e for e in errors)
 
-    def test_valid_timing_values(self):
+    def test_valid_timing_values(self, default_config: ServerConfig) -> None:
         """Test that valid timing values pass validation."""
-        config = ServerConfig(
+        from dataclasses import replace
+
+        config = replace(
+            default_config,
             base_broadcast_interval=0.001,
             idle_broadcast_interval=0.001,
             dirty_threshold=0.001,
@@ -395,21 +412,28 @@ class TestValidateConfig:
         errors = validate_config(config)
         assert errors == []
 
-    def test_invalid_nv_max_global_vars(self):
+    def test_invalid_nv_max_global_vars(self, default_config: ServerConfig) -> None:
         """Test that invalid max_global_vars fails validation."""
-        config = ServerConfig(max_global_vars=0)
+        from dataclasses import replace
+
+        config = replace(default_config, max_global_vars=0)
         errors = validate_config(config)
         assert any("max_global_vars" in e for e in errors)
 
-    def test_invalid_nv_flush_interval(self):
+    def test_invalid_nv_flush_interval(self, default_config: ServerConfig) -> None:
         """Test that invalid nv_flush_interval fails validation."""
-        config = ServerConfig(nv_flush_interval=-0.1)
+        from dataclasses import replace
+
+        config = replace(default_config, nv_flush_interval=-0.1)
         errors = validate_config(config)
         assert any("nv_flush_interval" in e for e in errors)
 
-    def test_valid_nv_values(self):
+    def test_valid_nv_values(self, default_config: ServerConfig) -> None:
         """Test that valid NV values pass validation."""
-        config = ServerConfig(
+        from dataclasses import replace
+
+        config = replace(
+            default_config,
             max_global_vars=1,
             max_client_vars=1,
             max_var_name_length=1,
@@ -421,21 +445,28 @@ class TestValidateConfig:
         errors = validate_config(config)
         assert errors == []
 
-    def test_invalid_max_virtual_transforms(self):
+    def test_invalid_max_virtual_transforms(self, default_config: ServerConfig) -> None:
         """Test that invalid max_virtual_transforms fails validation."""
-        config = ServerConfig(max_virtual_transforms=0)
+        from dataclasses import replace
+
+        config = replace(default_config, max_virtual_transforms=0)
         errors = validate_config(config)
         assert any("max_virtual_transforms" in e for e in errors)
 
-    def test_invalid_pub_queue_maxsize(self):
+    def test_invalid_pub_queue_maxsize(self, default_config: ServerConfig) -> None:
         """Test that invalid pub_queue_maxsize fails validation."""
-        config = ServerConfig(pub_queue_maxsize=-1)
+        from dataclasses import replace
+
+        config = replace(default_config, pub_queue_maxsize=-1)
         errors = validate_config(config)
         assert any("pub_queue_maxsize" in e for e in errors)
 
-    def test_valid_limits_values(self):
+    def test_valid_limits_values(self, default_config: ServerConfig) -> None:
         """Test that valid limits values pass validation."""
-        config = ServerConfig(
+        from dataclasses import replace
+
+        config = replace(
+            default_config,
             max_virtual_transforms=1,
             pub_queue_maxsize=1,
             delta_ring_size=1,
@@ -443,22 +474,28 @@ class TestValidateConfig:
         errors = validate_config(config)
         assert errors == []
 
-    def test_invalid_log_level(self):
+    def test_invalid_log_level(self, default_config: ServerConfig) -> None:
         """Test that invalid log_level_console fails validation."""
-        config = ServerConfig(log_level_console="INVALID")
+        from dataclasses import replace
+
+        config = replace(default_config, log_level_console="INVALID")
         errors = validate_config(config)
         assert any("log_level_console" in e for e in errors)
 
-    def test_valid_log_levels(self):
+    def test_valid_log_levels(self, default_config: ServerConfig) -> None:
         """Test that all valid log levels pass validation."""
+        from dataclasses import replace
+
         for level in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
-            config = ServerConfig(log_level_console=level)
+            config = replace(default_config, log_level_console=level)
             errors = validate_config(config)
             assert errors == [], f"Failed for log level: {level}"
 
-    def test_log_level_case_insensitive(self):
+    def test_log_level_case_insensitive(self, default_config: ServerConfig) -> None:
         """Test that log level validation is case insensitive."""
-        config = ServerConfig(log_level_console="debug")
+        from dataclasses import replace
+
+        config = replace(default_config, log_level_console="debug")
         errors = validate_config(config)
         assert errors == []
 
@@ -466,60 +503,49 @@ class TestValidateConfig:
 class TestMergeCliArgs:
     """Tests for merge_cli_args function."""
 
-    def test_cli_overrides_server_discovery_port(self):
+    def test_cli_overrides_server_discovery_port(
+        self, default_config: ServerConfig
+    ) -> None:
         """Test that CLI server_discovery_port overrides config."""
-        config = ServerConfig(server_discovery_port=9999)
-
         args = argparse.Namespace(
             server_discovery_port=8888,
             no_server_discovery=False,
         )
 
-        merged = merge_cli_args(config, args)
+        merged = merge_cli_args(default_config, args)
         assert merged.server_discovery_port == 8888
         # Original config unchanged
-        assert config.server_discovery_port == 9999
+        assert default_config.server_discovery_port == 9999
 
-    def test_no_server_discovery_flag(self):
+    def test_no_server_discovery_flag(self, default_config: ServerConfig) -> None:
         """Test that --no-server-discovery disables discovery."""
-        config = ServerConfig(enable_server_discovery=True)
-
         args = argparse.Namespace(
             server_discovery_port=None,
             no_server_discovery=True,
         )
 
-        merged = merge_cli_args(config, args)
+        merged = merge_cli_args(default_config, args)
         assert merged.enable_server_discovery is False
 
-    def test_none_values_dont_override(self):
+    def test_none_values_dont_override(self, default_config: ServerConfig) -> None:
         """Test that None CLI values don't override config."""
-        config = ServerConfig(server_discovery_port=9999)
-
         args = argparse.Namespace(
             server_discovery_port=None,
             no_server_discovery=False,
         )
 
-        merged = merge_cli_args(config, args)
+        merged = merge_cli_args(default_config, args)
         assert merged.server_discovery_port == 9999
 
-    def test_missing_attributes_handled(self):
+    def test_missing_attributes_handled(self, default_config: ServerConfig) -> None:
         """Test that missing CLI attributes are handled gracefully."""
-        config = ServerConfig()
         args = argparse.Namespace()  # Empty namespace
 
-        merged = merge_cli_args(config, args)
-        assert merged == config
+        merged = merge_cli_args(default_config, args)
+        assert merged == default_config
 
-    def test_cli_overrides_logging_settings(self):
+    def test_cli_overrides_logging_settings(self, default_config: ServerConfig) -> None:
         """Test that CLI logging settings override config."""
-        config = ServerConfig(
-            log_dir=None,
-            log_level_console="INFO",
-            log_json_console=False,
-        )
-
         args = argparse.Namespace(
             server_discovery_port=None,
             no_server_discovery=False,
@@ -530,44 +556,42 @@ class TestMergeCliArgs:
             log_retention="10 files",
         )
 
-        merged = merge_cli_args(config, args)
+        merged = merge_cli_args(default_config, args)
         assert merged.log_dir == "/tmp/logs"
         assert merged.log_level_console == "DEBUG"
         assert merged.log_json_console is True
         assert merged.log_rotation == "5 MB"
         assert merged.log_retention == "10 files"
 
-    def test_cli_none_values_preserve_config(self):
-        """Test that None CLI values don't override config file settings.
+    def test_cli_none_values_preserve_config(
+        self, default_config: ServerConfig
+    ) -> None:
+        """Test that None CLI values don't override config file settings."""
+        from dataclasses import replace
 
-        This is a regression test for the issue where argparse default="INFO"
-        caused log_level_console to always override the config file value.
-        """
-        config = ServerConfig(
+        config = replace(
+            default_config,
             log_dir="/var/log/app",
-            log_level_console="DEBUG",  # Set in config file
+            log_level_console="DEBUG",
             log_json_console=True,
             log_rotation="1 day",
             log_retention="7 days",
         )
 
-        # Simulate CLI args when user didn't specify --log-level-console
-        # (argparse should now give None instead of "INFO")
         args = argparse.Namespace(
             server_discovery_port=None,
             no_server_discovery=False,
-            log_dir=None,  # Not specified
-            log_level_console=None,  # Not specified - should preserve config
-            log_json_console=False,  # store_true default
-            log_rotation=None,  # Not specified
-            log_retention=None,  # Not specified
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
         )
 
         merged = merge_cli_args(config, args)
-        # Config file values should be preserved when CLI args are None
         assert merged.log_dir == "/var/log/app"
-        assert merged.log_level_console == "DEBUG"  # Preserved from config!
-        assert merged.log_json_console is True  # Preserved (store_true is special)
+        assert merged.log_level_console == "DEBUG"
+        assert merged.log_json_console is True
         assert merged.log_rotation == "1 day"
         assert merged.log_retention == "7 days"
 
@@ -575,7 +599,7 @@ class TestMergeCliArgs:
 class TestConfigurationError:
     """Tests for ConfigurationError exception."""
 
-    def test_configuration_error_stores_errors(self):
+    def test_configuration_error_stores_errors(self) -> None:
         """Test that ConfigurationError stores the error list."""
         errors = ["error1", "error2", "error3"]
         exc = ConfigurationError(errors)
@@ -583,7 +607,7 @@ class TestConfigurationError:
         assert "error1" in str(exc)
         assert "error2" in str(exc)
 
-    def test_create_config_raises_configuration_error(self, tmp_path: Path):
+    def test_create_config_raises_configuration_error(self, tmp_path: Path) -> None:
         """Test that create_config_from_args raises ConfigurationError on validation failure."""
         # Create config with invalid port
         toml_content = """
@@ -594,7 +618,7 @@ dealer_port = 99999
         config_file.write_text(toml_content)
 
         args = argparse.Namespace(
-            config=config_file,
+            user_config=config_file,
             server_discovery_port=None,
             no_server_discovery=False,
             log_dir=None,
@@ -611,10 +635,20 @@ dealer_port = 99999
         assert any("dealer_port" in e for e in exc_info.value.errors)
 
 
+class TestDefaultConfigError:
+    """Tests for DefaultConfigError exception."""
+
+    def test_default_config_error_message(self) -> None:
+        """Test that DefaultConfigError has proper message."""
+        exc = DefaultConfigError("test message")
+        assert "Failed to load default configuration" in str(exc)
+        assert "test message" in str(exc)
+
+
 class TestGetUnknownKeys:
     """Tests for get_unknown_keys function."""
 
-    def test_no_unknown_keys(self):
+    def test_no_unknown_keys(self) -> None:
         """Test that valid config returns empty dict."""
         toml_data = {
             "network": {"dealer_port": 5555, "pub_port": 5556},
@@ -623,7 +657,7 @@ class TestGetUnknownKeys:
         unknown = get_unknown_keys(toml_data)
         assert unknown == {}
 
-    def test_unknown_key_in_known_section(self):
+    def test_unknown_key_in_known_section(self) -> None:
         """Test detection of unknown key in a known section (typo)."""
         toml_data = {
             "logging": {
@@ -635,7 +669,7 @@ class TestGetUnknownKeys:
         assert "logging" in unknown
         assert "log_levl_console" in unknown["logging"]
 
-    def test_unknown_section(self):
+    def test_unknown_section(self) -> None:
         """Test detection of unknown section."""
         toml_data = {
             "network": {"dealer_port": 5555},
@@ -645,7 +679,7 @@ class TestGetUnknownKeys:
         assert "unknownsection" in unknown
         assert "_unknown_section" in unknown["unknownsection"]
 
-    def test_multiple_unknown_keys(self):
+    def test_multiple_unknown_keys(self) -> None:
         """Test detection of multiple unknown keys."""
         toml_data = {
             "network": {
@@ -658,3 +692,120 @@ class TestGetUnknownKeys:
         assert "network" in unknown
         assert "unknown_key1" in unknown["network"]
         assert "unknown_key2" in unknown["network"]
+
+
+class TestCreateConfigFromArgs:
+    """Tests for create_config_from_args function."""
+
+    def test_create_config_without_user_config(self) -> None:
+        """Test creating config without user config uses defaults."""
+        args = argparse.Namespace(
+            user_config=None,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config = create_config_from_args(args)
+        # Should match default config
+        assert config.dealer_port == 5555
+        assert config.pub_port == 5556
+
+    def test_user_config_overrides_default(self, tmp_path: Path) -> None:
+        """Test that user config overrides default config."""
+        toml_content = """
+[network]
+dealer_port = 7777
+server_name = "User Server"
+"""
+        config_file = tmp_path / "user.toml"
+        config_file.write_text(toml_content)
+
+        args = argparse.Namespace(
+            user_config=config_file,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config = create_config_from_args(args)
+        # User overrides
+        assert config.dealer_port == 7777
+        assert config.server_name == "User Server"
+        # Defaults preserved
+        assert config.pub_port == 5556
+
+    def test_cli_overrides_user_config(self, tmp_path: Path) -> None:
+        """Test that CLI args override user config."""
+        toml_content = """
+[network]
+server_discovery_port = 7777
+"""
+        config_file = tmp_path / "user.toml"
+        config_file.write_text(toml_content)
+
+        args = argparse.Namespace(
+            user_config=config_file,
+            server_discovery_port=8888,  # CLI override
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config = create_config_from_args(args)
+        # CLI takes precedence
+        assert config.server_discovery_port == 8888
+
+    def test_user_config_not_found(self, tmp_path: Path) -> None:
+        """Test that FileNotFoundError is raised when user config doesn't exist."""
+        args = argparse.Namespace(
+            user_config=tmp_path / "nonexistent.toml",
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        with pytest.raises(FileNotFoundError):
+            create_config_from_args(args)
+
+    def test_partial_user_config(self, tmp_path: Path) -> None:
+        """Test that partial user config works correctly."""
+        toml_content = """
+[timing]
+client_timeout = 5.0
+"""
+        config_file = tmp_path / "user.toml"
+        config_file.write_text(toml_content)
+
+        args = argparse.Namespace(
+            user_config=config_file,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config = create_config_from_args(args)
+        # User override
+        assert config.client_timeout == 5.0
+        # All other defaults preserved
+        assert config.dealer_port == 5555
+        assert config.base_broadcast_interval == 0.1
