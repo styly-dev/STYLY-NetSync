@@ -158,7 +158,7 @@ namespace Styly.NetSync
             {
                 // Queue for later when ready
                 _pendingOut.Enqueue((functionName, args, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0));
-                
+
                 // Check if queue is too large
                 while (_pendingOut.Count > _maxPendingRpc)
                 {
@@ -171,6 +171,84 @@ namespace Styly.NetSync
             }
 
             TrySendNow(roomId, functionName, args);
+        }
+
+        /// <summary>
+        /// Send RPC to specific client(s) by ClientNo.
+        /// </summary>
+        public void SendTo(int[] targetClientNos, string roomId, string functionName, string[] args)
+        {
+            if (targetClientNos == null || targetClientNos.Length == 0)
+            {
+                Debug.LogWarning("[NetSync/RPC] SendTo called with empty target list, ignoring.");
+                return;
+            }
+
+            if (!_netSyncManager.IsReady)
+            {
+                Debug.LogWarning($"[NetSync/RPC] SendTo '{functionName}' called before ready, dropping. Use Send() for queued delivery.");
+                return;
+            }
+
+            TrySendTargetedNow(targetClientNos, roomId, functionName, args);
+        }
+
+        private bool TrySendTargetedNow(int[] targetClientNos, string roomId, string functionName, string[] args)
+        {
+            if (_connectionManager.DealerSocket == null) { return false; }
+
+            // === Rate limit preflight (single global cap) ===
+            if (!TryConsumeQuota(out var retryAfter, out var count))
+            {
+                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+                if (now - _lastWarnAt >= _warnCooldown)
+                {
+                    Debug.LogWarning($"[NetSync/RPC] Rate limited: dropped targeted '{functionName}' (count={count}/{_rpcLimit} in {_windowSeconds:0.##}s). Retry in ~{retryAfter:0.##}s.");
+                    _lastWarnAt = now;
+                }
+                return false;
+            }
+
+            var rpcMsg = new RPCTargetedMessage
+            {
+                functionName = functionName,
+                argumentsJson = JsonConvert.SerializeObject(args),
+                senderClientNo = _netSyncManager.ClientNo,
+                targetClientNos = targetClientNos
+            };
+
+            // Estimate and ensure capacity
+            var required = EstimateRpcTargetedSize(rpcMsg);
+            _buf.EnsureCapacity(required);
+
+            // Serialize into pooled stream
+            _buf.Stream.Position = 0;
+            BinarySerializer.SerializeRPCTargetedMessageInto(_buf.Writer, rpcMsg);
+            _buf.Writer.Flush();
+
+            var length = (int)_buf.Stream.Position;
+
+            try
+            {
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    var payload = new byte[length];
+                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                    msg.Append(payload);
+                    return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                }
+                finally
+                {
+                    msg.Clear();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NetSync/RPC] Failed to send targeted RPC '{functionName}': {ex.Message}");
+                return false;
+            }
         }
 
         public void FlushPendingIfReady(string roomId)
@@ -228,6 +306,16 @@ namespace Styly.NetSync
             if (nameLen > 255) nameLen = 255; // capped by serializer
             var argsLen = msg != null && msg.argumentsJson != null ? Encoding.UTF8.GetByteCount(msg.argumentsJson) : 0;
             return 1 + 2 + 1 + nameLen + 2 + argsLen;
+        }
+
+        private static int EstimateRpcTargetedSize(RPCTargetedMessage msg)
+        {
+            var nameLen = msg != null && msg.functionName != null ? Encoding.UTF8.GetByteCount(msg.functionName) : 0;
+            if (nameLen > 255) nameLen = 255; // capped by serializer
+            var argsLen = msg != null && msg.argumentsJson != null ? Encoding.UTF8.GetByteCount(msg.argumentsJson) : 0;
+            var targetCount = msg != null && msg.targetClientNos != null ? msg.targetClientNos.Length : 0;
+            // 1 (type) + 2 (sender) + 2 (target count) + 2*N (targets) + 1 (name len) + nameLen + 2 (args len) + argsLen
+            return 1 + 2 + 2 + (2 * targetCount) + 1 + nameLen + 2 + argsLen;
         }
 
         /// <summary>

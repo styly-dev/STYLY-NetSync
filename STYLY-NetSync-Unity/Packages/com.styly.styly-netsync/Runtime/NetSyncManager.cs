@@ -142,6 +142,35 @@ namespace Styly.NetSync
             }
         }
 
+        /// <summary>
+        /// Send RPC to a specific client by ClientNo.
+        /// Unlike Rpc(), this sends directly to the target client only.
+        /// </summary>
+        /// <param name="targetClientNo">The client number to send to</param>
+        /// <param name="functionName">Name of the RPC function</param>
+        /// <param name="args">Arguments to pass (optional)</param>
+        public void RpcTo(int targetClientNo, string functionName, string[] args = null)
+        {
+            RpcTo(new[] { targetClientNo }, functionName, args);
+        }
+
+        /// <summary>
+        /// Send RPC to multiple specific clients by ClientNo.
+        /// Unlike Rpc(), this sends directly to the target clients only.
+        /// </summary>
+        /// <param name="targetClientNos">Array of client numbers to send to</param>
+        /// <param name="functionName">Name of the RPC function</param>
+        /// <param name="args">Arguments to pass (optional)</param>
+        public void RpcTo(int[] targetClientNos, string functionName, string[] args = null)
+        {
+            if (args == null) { args = Array.Empty<string>(); }
+
+            if (_rpcManager != null)
+            {
+                _rpcManager.SendTo(targetClientNos, _roomId, functionName, args);
+            }
+        }
+
         internal void Rpc_SystemRPC(string functionName, string[] args = null)
         {
             functionName = PrefixForSystem + functionName;

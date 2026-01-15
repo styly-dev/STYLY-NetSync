@@ -131,19 +131,37 @@ namespace Styly.NetSync
 
                 while (!_shouldStop)
                 {
-                    // Receive two frames: [topic][payload]. Use string topic and direct comparison.
-                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
-                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
-
-                    if (topic != roomId) { continue; }
-
-                    try
+                    // Poll SUB socket for broadcast messages (room transforms, broadcast RPC, etc.)
+                    if (sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(5), out var topic))
                     {
-                        _messageProcessor.ProcessIncomingMessage(payload);
+                        if (sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(5), out var payload))
+                        {
+                            if (topic == roomId)
+                            {
+                                try
+                                {
+                                    _messageProcessor.ProcessIncomingMessage(payload);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogError($"Binary parse error (SUB): {ex.Message}");
+                                }
+                            }
+                        }
                     }
-                    catch (Exception ex)
+
+                    // Poll DEALER socket for targeted messages (targeted RPC from server)
+                    // Server sends via ROUTER: [identity, empty, payload] → DEALER receives just payload
+                    if (dealer.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(5), out var dealerPayload))
                     {
-                        Debug.LogError($"Binary parse error: {ex.Message}");
+                        try
+                        {
+                            _messageProcessor.ProcessIncomingMessage(dealerPayload);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"Binary parse error (DEALER): {ex.Message}");
+                        }
                     }
                 }
             }

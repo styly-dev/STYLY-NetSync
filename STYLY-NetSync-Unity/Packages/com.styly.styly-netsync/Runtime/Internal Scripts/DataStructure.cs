@@ -78,6 +78,19 @@ namespace Styly.NetSync
         public string argumentsJson;
     }
 
+    // Targeted RPC message structure (for sending to specific clients)
+    [Serializable]
+    internal class RPCTargetedMessage
+    {
+        // Client number of the sender
+        public int senderClientNo;
+        // Target client numbers to receive this RPC
+        public int[] targetClientNos;
+        // Name of function to call
+        public string functionName;
+        // JSON-serialized function arguments array
+        public string argumentsJson;
+    }
 
     // Device ID mapping data
     [Serializable]
