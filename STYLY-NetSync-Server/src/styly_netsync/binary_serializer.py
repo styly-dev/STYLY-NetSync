@@ -13,6 +13,7 @@ MSG_GLOBAL_VAR_SET = 7  # Set global variable
 MSG_GLOBAL_VAR_SYNC = 8  # Sync global variables
 MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
+MSG_RPC_TARGETED = 11  # RPC to specific client(s) by ClientNo
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -251,6 +252,44 @@ def serialize_rpc_message(data: dict[str, Any]) -> bytes:
     return bytes(buffer)
 
 
+def serialize_rpc_targeted_message(data: dict[str, Any]) -> bytes:
+    """Serialize targeted RPC message with specific target client(s)
+
+    Args:
+        data: Dictionary with senderClientNo, targetClientNos, functionName, argumentsJson
+
+    Binary format:
+        [1 byte]  MSG_RPC_TARGETED (11)
+        [2 bytes] senderClientNo (ushort LE)
+        [2 bytes] targetCount (ushort LE)
+        [2 bytes * N] targetClientNos (ushort array LE)
+        [1 byte]  functionName length
+        [N bytes] functionName (UTF-8)
+        [2 bytes] argsJson length (ushort LE)
+        [N bytes] argsJson (UTF-8)
+    """
+    buffer = bytearray()
+
+    # Message type
+    buffer.append(MSG_RPC_TARGETED)
+
+    # Sender client number (2 bytes)
+    sender_client_no = data.get("senderClientNo", 0)
+    buffer.extend(struct.pack("<H", sender_client_no))
+
+    # Target client numbers
+    target_client_nos = data.get("targetClientNos", [])
+    buffer.extend(struct.pack("<H", len(target_client_nos)))
+    for target_no in target_client_nos:
+        buffer.extend(struct.pack("<H", target_no))
+
+    # Function name and arguments
+    _pack_string(buffer, data.get("functionName", ""))
+    _pack_string(buffer, data.get("argumentsJson", ""), use_ushort=True)
+
+    return bytes(buffer)
+
+
 def serialize_device_id_mapping(mappings: list[tuple[int, str, bool]]) -> bytes:
     """Serialize device ID mapping message
 
@@ -404,7 +443,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_CLIENT_VAR_SYNC:
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_RPC_TARGETED:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -432,6 +471,8 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_set(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_SYNC:
             return message_type, _deserialize_client_var_sync(data, offset), b""
+        elif message_type == MSG_RPC_TARGETED:
+            return message_type, _deserialize_rpc_targeted_message(data, offset), b""
         else:
             # Should not reach here due to validation above
             return message_type, None, b""
@@ -484,6 +525,32 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
 
     result["functionName"], offset = _unpack_string(data, offset)
     result["argumentsJson"], offset = _unpack_string(data, offset, use_ushort=True)
+    return result
+
+
+def _deserialize_rpc_targeted_message(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize targeted RPC message with target client numbers"""
+    result: dict[str, Any] = {}
+
+    # Sender client number (2 bytes)
+    result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    # Target client numbers
+    target_count = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    target_client_nos = []
+    for _ in range(target_count):
+        target_no = struct.unpack("<H", data[offset : offset + 2])[0]
+        offset += 2
+        target_client_nos.append(target_no)
+    result["targetClientNos"] = target_client_nos
+
+    # Function name and arguments
+    result["functionName"], offset = _unpack_string(data, offset)
+    result["argumentsJson"], offset = _unpack_string(data, offset, use_ushort=True)
+
     return result
 
 

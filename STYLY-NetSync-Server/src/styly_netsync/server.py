@@ -676,6 +676,38 @@ class NetSyncServer:
                 return self.room_device_id_to_client_no[room_id].get(device_id, 0)
         return 0
 
+    def _get_client_identity_by_client_no(
+        self, room_id: str, client_no: int
+    ) -> bytes | None:
+        """Get client identity (ZeroMQ ROUTER identity) for a given client number
+
+        Args:
+            room_id: The room ID
+            client_no: The client number to look up
+
+        Returns:
+            The client's ZeroMQ identity bytes, or None if not found
+        """
+        with self._rooms_lock:
+            # Look up device_id from client_no
+            if room_id not in self.room_client_no_to_device_id:
+                return None
+            device_id = self.room_client_no_to_device_id[room_id].get(client_no)
+            if device_id is None:
+                return None
+
+            # Look up identity from device_id
+            if room_id not in self.rooms:
+                return None
+            client_data = self.rooms[room_id].get(device_id)
+            if client_data is None:
+                return None
+
+            identity = client_data.get("identity")
+            if isinstance(identity, bytes):
+                return identity
+            return None
+
     def _find_reusable_client_no(self, room_id: str) -> int:
         """Find a client number that can be reused (from expired device IDs)"""
         current_time = time.monotonic()
@@ -953,6 +985,23 @@ class NetSyncServer:
                                     data["senderClientNo"] = sender_client_no
                                 # Send RPC to room excluding sender
                                 self._send_rpc_to_room(room_id, data)
+                            elif msg_type == binary_serializer.MSG_RPC_TARGETED:
+                                # Get sender's client number from client identity
+                                sender_device_id = self._get_device_id_from_identity(
+                                    client_identity, room_id
+                                )
+                                if sender_device_id:
+                                    sender_client_no = (
+                                        self._get_client_no_for_device_id(
+                                            room_id, sender_device_id
+                                        )
+                                    )
+                                    data["senderClientNo"] = sender_client_no
+                                # Send RPC to specific target clients
+                                target_client_nos = data.get("targetClientNos", [])
+                                self._send_rpc_to_clients(
+                                    room_id, data, target_client_nos
+                                )
                             # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
                             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
                                 # Buffer global variable set request (no rate limit drops)
@@ -1104,6 +1153,64 @@ class NetSyncServer:
 
         # Send multipart [roomId, payload]
         self._enqueue_pub(topic_bytes, message_bytes)
+
+    def _send_rpc_to_clients(
+        self, room_id: str, rpc_data: dict[str, Any], target_client_nos: list[int]
+    ) -> None:
+        """Send RPC directly to specific client(s) via ROUTER socket
+
+        Args:
+            room_id: The room ID
+            rpc_data: RPC data dict with senderClientNo, functionName, argumentsJson
+            target_client_nos: List of target client numbers to send to
+        """
+        if not target_client_nos:
+            logger.warning("RPC targeted: empty target list, dropping message")
+            return
+
+        sender_client_no = rpc_data.get("senderClientNo", 0)
+        function_name = rpc_data.get("functionName", "unknown")
+        args = rpc_data.get("argumentsJson", "")
+        logger.info(
+            f"RPC targeted: sender={sender_client_no}, targets={target_client_nos}, "
+            f"function={function_name}, args={args}, room={room_id}"
+        )
+
+        # Serialize the message once (reuse for all targets)
+        # For targeted RPC received by client, we send it as MSG_RPC_TARGETED
+        message_bytes = binary_serializer.serialize_rpc_targeted_message(
+            {
+                "senderClientNo": sender_client_no,
+                "targetClientNos": target_client_nos,
+                "functionName": rpc_data.get("functionName", ""),
+                "argumentsJson": rpc_data.get("argumentsJson", ""),
+            }
+        )
+
+        # Send to each target client via ROUTER socket
+        sent_count = 0
+        for target_client_no in target_client_nos:
+            identity = self._get_client_identity_by_client_no(room_id, target_client_no)
+            if identity is None:
+                logger.warning(
+                    f"RPC targeted: unknown client_no={target_client_no} in room={room_id}"
+                )
+                continue
+
+            try:
+                # ROUTER socket send format: [identity, empty_frame, payload]
+                if self.router is not None:
+                    self.router.send_multipart([identity, b"", message_bytes])
+                    sent_count += 1
+            except Exception as e:
+                logger.error(
+                    f"RPC targeted: failed to send to client_no={target_client_no}: {e}"
+                )
+
+        if sent_count == 0:
+            logger.warning(
+                f"RPC targeted: no valid targets found for targets={target_client_nos}"
+            )
 
     def _monitor_nv_sliding_window(self, room_id: str) -> None:
         """Monitor NV request rate for logging only (no gating)"""
