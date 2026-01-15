@@ -18,6 +18,7 @@ namespace Styly.NetSync
         public const byte MSG_GLOBAL_VAR_SYNC = 8;  // Sync global variables
         public const byte MSG_CLIENT_VAR_SET = 9;  // Set client variable
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
+        public const byte MSG_RPC_TARGETED = 11;  // RPC to specific client(s) by ClientNo
 
         // Transform data type identifiers (deprecated - kept for reference)
         // All transforms now use 6 floats for consistency
@@ -155,7 +156,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_CLIENT_VAR_SYNC)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_RPC_TARGETED)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -181,6 +182,9 @@ namespace Styly.NetSync
                     case MSG_CLIENT_VAR_SYNC:
                         // Client variables sync from server
                         return (messageType, DeserializeClientVarSync(reader));
+                    case MSG_RPC_TARGETED:
+                        // Targeted RPC to specific client(s)
+                        return (messageType, DeserializeRPCTargetedMessage(reader));
                     default:
                         // This should not happen due to validation above, but keep as safety
                         return (messageType, null);
@@ -297,6 +301,52 @@ namespace Styly.NetSync
             writer.Write(argsBytes);
         }
 
+        /// <summary>
+        /// Serialize a targeted RPC message into a new array.
+        /// </summary>
+        public static byte[] SerializeRPCTargetedMessage(RPCTargetedMessage msg)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            SerializeRPCTargetedMessageInto(writer, msg);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize a targeted RPC message into an existing BinaryWriter.
+        /// Binary format:
+        /// [1b] type | [2b] sender | [2b] count | [2b*N] targets | [1b+N] name | [2b+N] args
+        /// </summary>
+        public static void SerializeRPCTargetedMessageInto(BinaryWriter writer, RPCTargetedMessage msg)
+        {
+            // Message type
+            writer.Write(MSG_RPC_TARGETED);
+
+            // Sender client number (2 bytes)
+            writer.Write((ushort)msg.senderClientNo);
+
+            // Target client numbers
+            var targets = msg.targetClientNos ?? Array.Empty<int>();
+            writer.Write((ushort)targets.Length);
+            foreach (var target in targets)
+            {
+                writer.Write((ushort)target);
+            }
+
+            // Function name (length-prefixed byte)
+            var nameBytes = System.Text.Encoding.UTF8.GetBytes(msg.functionName ?? string.Empty);
+            if (nameBytes.Length > 255)
+            {
+                throw new ArgumentException("Function name is too long. Maximum length is 255 bytes.");
+            }
+            writer.Write((byte)nameBytes.Length);
+            writer.Write(nameBytes);
+
+            // Arguments JSON
+            var argsBytes = System.Text.Encoding.UTF8.GetBytes(msg.argumentsJson ?? string.Empty);
+            writer.Write((ushort)argsBytes.Length);
+            writer.Write(argsBytes);
+        }
 
         /// <summary>
         /// Serialize global variable set message
@@ -407,6 +457,38 @@ namespace Styly.NetSync
             };
         }
 
+        /// <summary>
+        /// Deserialize a targeted RPC message
+        /// </summary>
+        private static RPCTargetedMessage DeserializeRPCTargetedMessage(BinaryReader reader)
+        {
+            // Sender client number (2 bytes)
+            var senderClientNo = reader.ReadUInt16();
+
+            // Target client numbers
+            var targetCount = reader.ReadUInt16();
+            var targetClientNos = new int[targetCount];
+            for (int i = 0; i < targetCount; i++)
+            {
+                targetClientNos[i] = reader.ReadUInt16();
+            }
+
+            // Function name
+            var nameLen = reader.ReadByte();
+            var name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
+
+            // Arguments JSON
+            var argsLen = reader.ReadUInt16();
+            var argsJson = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(argsLen));
+
+            return new RPCTargetedMessage
+            {
+                senderClientNo = senderClientNo,
+                targetClientNos = targetClientNos,
+                functionName = name,
+                argumentsJson = argsJson
+            };
+        }
 
         /// <summary>
         /// Deserialize device ID mapping notification

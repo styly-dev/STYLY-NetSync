@@ -43,14 +43,19 @@ from loguru import logger
 from . import binary_serializer
 from . import network_utils
 from .logging_utils import configure_logging
+from .config import (
+    ConfigurationError,
+    DefaultConfigError,
+    ServerConfig,
+    create_config_from_args,
+    load_default_config,
+)
 
 if TYPE_CHECKING:
     from uvicorn import Server
 
-DEFAULT_DEALER_PORT = 5555
-DEFAULT_PUB_PORT = 5556
-DEFAULT_SERVER_DISCOVERY_PORT = 9999
-DEFAULT_SERVER_NAME = "STYLY-NetSync-Server"
+# Note: Default values are defined in default.toml, not in code.
+# Use load_default_config() from config module to get defaults.
 
 
 def valid_port(value: str) -> int:
@@ -138,19 +143,10 @@ def get_version() -> str:
 
 
 class NetSyncServer:
-    # Performance and timing constants
-    BASE_BROADCAST_INTERVAL = 0.1  # 10Hz base rate
-    IDLE_BROADCAST_INTERVAL = 0.5  # 2Hz when idle
-    DIRTY_THRESHOLD = 0.05  # 20Hz max rate when very active
-    BROADCAST_CHECK_INTERVAL = 0.05  # Check broadcasts every 50ms
-    CLEANUP_INTERVAL = 1.0  # Cleanup every 1 second
-    STATUS_LOG_INTERVAL = 10.0  # Log status every 10 seconds
-    MAIN_LOOP_SLEEP = 0.02  # 50Hz main loop sleep
-    CLIENT_TIMEOUT = 1.0  # 1 second timeout for client disconnect
-    DEVICE_ID_EXPIRY_TIME = (
-        300.0  # 5 minutes - remove device ID mappings after this time
-    )
-    POLL_TIMEOUT = 100  # ZMQ poll timeout in ms
+    # Note: All default values are defined in default.toml, not in code.
+    # The BROADCAST_CHECK_INTERVAL is derived from dirty_threshold in config.
+
+    # Non-configurable constants
     ROUTER_BACKLOG = 512  # Accept queue depth for DEALER/ROUTER connections
     PUB_BACKLOG = 512  # Accept queue depth for SUB connections
     DEFAULT_FD_LIMIT = 4096
@@ -170,20 +166,55 @@ class NetSyncServer:
 
     def __init__(
         self,
-        dealer_port: int = DEFAULT_DEALER_PORT,
-        pub_port: int = DEFAULT_PUB_PORT,
-        enable_server_discovery: bool = True,
-        server_discovery_port: int = DEFAULT_SERVER_DISCOVERY_PORT,
-        server_name: str = DEFAULT_SERVER_NAME,
+        dealer_port: int | None = None,
+        pub_port: int | None = None,
+        enable_server_discovery: bool | None = None,
+        server_discovery_port: int | None = None,
+        server_name: str | None = None,
+        config: ServerConfig | None = None,
     ):
-        self.dealer_port = dealer_port
-        self.pub_port = pub_port
+        # Load default config if not provided
+        if config is None:
+            config = load_default_config()
+
+        # Store config for reference
+        self._config = config
+
+        # Apply overrides from individual arguments (for backward compatibility)
+        self.dealer_port = (
+            dealer_port if dealer_port is not None else config.dealer_port
+        )
+        self.pub_port = pub_port if pub_port is not None else config.pub_port
         self.context = zmq.Context()
 
-        # Server discovery settings
-        self.enable_server_discovery = enable_server_discovery
-        self.server_discovery_port = server_discovery_port
-        self.server_name = server_name
+        # Initialize timing settings from config
+        self.BASE_BROADCAST_INTERVAL = config.base_broadcast_interval
+        self.IDLE_BROADCAST_INTERVAL = config.idle_broadcast_interval
+        self.DIRTY_THRESHOLD = config.dirty_threshold
+        self.BROADCAST_CHECK_INTERVAL = (
+            config.dirty_threshold
+        )  # Same as dirty_threshold
+        self.CLEANUP_INTERVAL = config.cleanup_interval
+        self.STATUS_LOG_INTERVAL = config.status_log_interval
+        self.MAIN_LOOP_SLEEP = config.main_loop_sleep
+        self.CLIENT_TIMEOUT = config.client_timeout
+        self.DEVICE_ID_EXPIRY_TIME = config.device_id_expiry_time
+        self.POLL_TIMEOUT = config.poll_timeout
+
+        # Server discovery settings (with override support)
+        self.enable_server_discovery = (
+            enable_server_discovery
+            if enable_server_discovery is not None
+            else config.enable_server_discovery
+        )
+        self.server_discovery_port = (
+            server_discovery_port
+            if server_discovery_port is not None
+            else config.server_discovery_port
+        )
+        self.server_name = (
+            server_name if server_name is not None else config.server_name
+        )
         self.server_discovery_socket: socket.socket | None = None
         self.server_discovery_thread: threading.Thread | None = None
         self.server_discovery_running = False
@@ -201,8 +232,8 @@ class NetSyncServer:
 
         # Publisher thread infrastructure
         self._pub_queue_ctrl: Queue[tuple[bytes | None, bytes | None]] = Queue(
-            maxsize=10000
-        )  # tuneable
+            maxsize=config.pub_queue_maxsize
+        )
         self._publisher_thread: threading.Thread | None = None
         self._publisher_running = False
         self._pub_ready = threading.Event()  # signaled after successful bind
@@ -272,20 +303,20 @@ class NetSyncServer:
             {}
         )  # room_id -> {(target_client_no, var_name): (sender_client_no, value, timestamp)}
 
-        # NV flush cadence configuration
-        self.nv_flush_interval = 0.05  # 50ms flush cadence
+        # NV flush cadence configuration (from config)
+        self.nv_flush_interval = config.nv_flush_interval
         self.room_last_nv_flush: dict[str, float] = {}  # room_id -> last_flush_time
 
-        # NV monitoring window (1s sliding window for logging only)
+        # NV monitoring window (sliding window for logging only)
         self.nv_monitor_window: dict[str, list] = {}  # room_id -> [timestamps]
-        self.nv_monitor_window_size = 1.0  # 1 second window
-        self.nv_monitor_threshold = 200  # Log warning if > 200 NV req/s
+        self.nv_monitor_window_size = config.nv_monitor_window_size
+        self.nv_monitor_threshold = config.nv_monitor_threshold
 
-        # Network Variables limits
-        self.MAX_GLOBAL_VARS = 100
-        self.MAX_CLIENT_VARS = 100
-        self.MAX_VAR_NAME_LENGTH = 64
-        self.MAX_VAR_VALUE_LENGTH = 1024
+        # Network Variables limits (from config)
+        self.MAX_GLOBAL_VARS = config.max_global_vars
+        self.MAX_CLIENT_VARS = config.max_client_vars
+        self.MAX_VAR_NAME_LENGTH = config.max_var_name_length
+        self.MAX_VAR_VALUE_LENGTH = config.max_var_value_length
 
         # Thread synchronization
         self._rooms_lock = threading.RLock()  # Reentrant lock for nested access
@@ -645,6 +676,38 @@ class NetSyncServer:
                 return self.room_device_id_to_client_no[room_id].get(device_id, 0)
         return 0
 
+    def _get_client_identity_by_client_no(
+        self, room_id: str, client_no: int
+    ) -> bytes | None:
+        """Get client identity (ZeroMQ ROUTER identity) for a given client number
+
+        Args:
+            room_id: The room ID
+            client_no: The client number to look up
+
+        Returns:
+            The client's ZeroMQ identity bytes, or None if not found
+        """
+        with self._rooms_lock:
+            # Look up device_id from client_no
+            if room_id not in self.room_client_no_to_device_id:
+                return None
+            device_id = self.room_client_no_to_device_id[room_id].get(client_no)
+            if device_id is None:
+                return None
+
+            # Look up identity from device_id
+            if room_id not in self.rooms:
+                return None
+            client_data = self.rooms[room_id].get(device_id)
+            if client_data is None:
+                return None
+
+            identity = client_data.get("identity")
+            if isinstance(identity, bytes):
+                return identity
+            return None
+
     def _find_reusable_client_no(self, room_id: str) -> int:
         """Find a client number that can be reused (from expired device IDs)"""
         current_time = time.monotonic()
@@ -913,15 +976,40 @@ class NetSyncServer:
                                 sender_device_id = self._get_device_id_from_identity(
                                     client_identity, room_id
                                 )
-                                if sender_device_id:
-                                    sender_client_no = (
-                                        self._get_client_no_for_device_id(
-                                            room_id, sender_device_id
-                                        )
+                                if not sender_device_id:
+                                    logger.warning(
+                                        f"RPC: sender verification failed, "
+                                        f"unknown identity in room={room_id}, "
+                                        "dropping message"
                                     )
-                                    data["senderClientNo"] = sender_client_no
+                                    continue
+                                sender_client_no = self._get_client_no_for_device_id(
+                                    room_id, sender_device_id
+                                )
+                                data["senderClientNo"] = sender_client_no
                                 # Send RPC to room excluding sender
                                 self._send_rpc_to_room(room_id, data)
+                            elif msg_type == binary_serializer.MSG_RPC_TARGETED:
+                                # Get sender's client number from client identity
+                                sender_device_id = self._get_device_id_from_identity(
+                                    client_identity, room_id
+                                )
+                                if not sender_device_id:
+                                    logger.warning(
+                                        f"RPC targeted: sender verification failed, "
+                                        f"unknown identity in room={room_id}, "
+                                        "dropping message"
+                                    )
+                                    continue
+                                sender_client_no = self._get_client_no_for_device_id(
+                                    room_id, sender_device_id
+                                )
+                                data["senderClientNo"] = sender_client_no
+                                # Send RPC to specific target clients
+                                target_client_nos = data.get("targetClientNos", [])
+                                self._send_rpc_to_clients(
+                                    room_id, data, target_client_nos
+                                )
                             # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
                             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
                                 # Buffer global variable set request (no rate limit drops)
@@ -1062,9 +1150,10 @@ class NetSyncServer:
         # Log RPC
         sender_client_no = rpc_data.get("senderClientNo", 0)
         function_name = rpc_data.get("functionName", "unknown")
-        args = rpc_data.get("args", [])
+        args = rpc_data.get("argumentsJson", "")
         logger.info(
-            f"RPC: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}"
+            f"RPC: sender={sender_client_no}, function={function_name}, "
+            f"args={args}, room={room_id}"
         )
 
         # Prepare topic and payload
@@ -1073,6 +1162,64 @@ class NetSyncServer:
 
         # Send multipart [roomId, payload]
         self._enqueue_pub(topic_bytes, message_bytes)
+
+    def _send_rpc_to_clients(
+        self, room_id: str, rpc_data: dict[str, Any], target_client_nos: list[int]
+    ) -> None:
+        """Send RPC directly to specific client(s) via ROUTER socket
+
+        Args:
+            room_id: The room ID
+            rpc_data: RPC data dict with senderClientNo, functionName, argumentsJson
+            target_client_nos: List of target client numbers to send to
+        """
+        if not target_client_nos:
+            logger.warning("RPC targeted: empty target list, dropping message")
+            return
+
+        sender_client_no = rpc_data.get("senderClientNo", 0)
+        function_name = rpc_data.get("functionName", "unknown")
+        args = rpc_data.get("argumentsJson", "")
+        logger.info(
+            f"RPC targeted: sender={sender_client_no}, targets={target_client_nos}, "
+            f"function={function_name}, args={args}, room={room_id}"
+        )
+
+        # Serialize the message once (reuse for all targets)
+        # For targeted RPC received by client, we send it as MSG_RPC_TARGETED
+        message_bytes = binary_serializer.serialize_rpc_targeted_message(
+            {
+                "senderClientNo": sender_client_no,
+                "targetClientNos": target_client_nos,
+                "functionName": rpc_data.get("functionName", ""),
+                "argumentsJson": rpc_data.get("argumentsJson", ""),
+            }
+        )
+
+        # Send to each target client via ROUTER socket
+        sent_count = 0
+        for target_client_no in target_client_nos:
+            identity = self._get_client_identity_by_client_no(room_id, target_client_no)
+            if identity is None:
+                logger.warning(
+                    f"RPC targeted: unknown client_no={target_client_no} in room={room_id}"
+                )
+                continue
+
+            try:
+                # ROUTER socket send format: [identity, empty_frame, payload]
+                if self.router is not None:
+                    self.router.send_multipart([identity, b"", message_bytes])
+                    sent_count += 1
+            except Exception as e:
+                logger.error(
+                    f"RPC targeted: failed to send to client_no={target_client_no}: {e}"
+                )
+
+        if sent_count == 0:
+            logger.warning(
+                f"RPC targeted: no valid targets found for targets={target_client_nos}"
+            )
 
     def _monitor_nv_sliding_window(self, room_id: str) -> None:
         """Monitor NV request rate for logging only (no gating)"""
@@ -1891,13 +2038,19 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
 def main() -> None:
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
+        "--user-config",
+        type=Path,
+        metavar="FILE",
+        help="Path to user TOML configuration file (overrides defaults)",
+    )
+    parser.add_argument(
         "--no-server-discovery", action="store_true", help="Disable server discovery"
     )
     parser.add_argument(
         "--server-discovery-port",
         type=valid_port,
         metavar="PORT",
-        help=f"UDP port used for server discovery (default: {DEFAULT_SERVER_DISCOVERY_PORT})",
+        help="UDP port used for server discovery (see default.toml for default)",
     )
     parser.add_argument(
         "-V",
@@ -1934,25 +2087,50 @@ def main() -> None:
     )
     parser.add_argument(
         "--log-level-console",
-        default="INFO",
+        default=None,
         help="Console log level (default: INFO)",
     )
 
     args = parser.parse_args()
 
+    # Load configuration from file and/or CLI args
+    # Note: Logging is configured after this to use config values
+    try:
+        config = create_config_from_args(args)
+    except DefaultConfigError as e:
+        # Fatal error: default.toml cannot be loaded
+        print(f"FATAL: {e}")
+        sys.exit(1)
+    except FileNotFoundError:
+        # User config file not found
+        print(f"ERROR: User configuration file not found: {args.user_config}")
+        sys.exit(1)
+    except ConfigurationError as e:
+        # Validation errors - print each error clearly
+        print("ERROR: Configuration validation failed:")
+        for error in e.errors:
+            print(f"  - {error}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Failed to load configuration: {e}")
+        sys.exit(1)
+
+    # Configure logging with merged settings (config file + CLI overrides)
+    log_dir = Path(config.log_dir) if config.log_dir else None
     configure_logging(
-        log_dir=args.log_dir,
-        console_level=args.log_level_console,
-        console_json=args.log_json_console,
-        rotation=args.log_rotation,
-        retention=args.log_retention,
+        log_dir=log_dir,
+        console_level=config.log_level_console,
+        console_json=config.log_json_console,
+        rotation=config.log_rotation,
+        retention=config.log_retention,
     )
 
-    # Set default values from module constants (previously from argparse)
-    dealer_port = DEFAULT_DEALER_PORT
-    pub_port = DEFAULT_PUB_PORT
-    server_discovery_port = DEFAULT_SERVER_DISCOVERY_PORT
-    server_name = DEFAULT_SERVER_NAME
+    # Log config file info after logging is configured
+    if args.user_config is not None:
+        logger.info(f"Loaded user configuration from {args.user_config}")
+
+    # Apply global configuration settings
+    binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)
 
     logger.info("=" * 80)
     logger.info("STYLY NetSync Server Starting")
@@ -1968,23 +2146,22 @@ def main() -> None:
     else:
         logger.info("  Server IP addresses: Unable to detect")
 
-    logger.info(f"  DEALER port: {dealer_port}")
-    logger.info(f"  PUB port: {pub_port}")
-    if not args.no_server_discovery:
-        if args.server_discovery_port is not None:
-            server_discovery_port = args.server_discovery_port
-        logger.info(f"  Server discovery port: {server_discovery_port}")
-        logger.info(f"  Server name: {server_name}")
+    logger.info(f"  DEALER port: {config.dealer_port}")
+    logger.info(f"  PUB port: {config.pub_port}")
+    if config.enable_server_discovery:
+        logger.info(f"  Server discovery port: {config.server_discovery_port}")
+        logger.info(f"  Server name: {config.server_name}")
     else:
         logger.info("  Discovery: Disabled")
     logger.info("=" * 80)
 
     server = NetSyncServer(
-        dealer_port=dealer_port,
-        pub_port=pub_port,
-        enable_server_discovery=not args.no_server_discovery,
-        server_discovery_port=server_discovery_port,
-        server_name=server_name,
+        dealer_port=config.dealer_port,
+        pub_port=config.pub_port,
+        enable_server_discovery=config.enable_server_discovery,
+        server_discovery_port=config.server_discovery_port,
+        server_name=config.server_name,
+        config=config,
     )
 
     try:

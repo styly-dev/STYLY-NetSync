@@ -13,11 +13,32 @@ MSG_GLOBAL_VAR_SET = 7  # Set global variable
 MSG_GLOBAL_VAR_SYNC = 8  # Sync global variables
 MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
+MSG_RPC_TARGETED = 11  # RPC to specific client(s) by ClientNo
 
 # Transform data type identifiers (deprecated - kept for reference)
 
 # Maximum allowed virtual transforms to prevent memory issues
-MAX_VIRTUAL_TRANSFORMS = 50
+# This can be configured via set_max_virtual_transforms()
+_max_virtual_transforms = 50
+MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward compat
+
+
+def get_max_virtual_transforms() -> int:
+    """Get the current maximum virtual transforms limit."""
+    return _max_virtual_transforms
+
+
+def set_max_virtual_transforms(value: int) -> None:
+    """Set the maximum virtual transforms limit.
+
+    Args:
+        value: New limit (must be positive).
+    """
+    global _max_virtual_transforms, MAX_VIRTUAL_TRANSFORMS
+    if value <= 0:
+        raise ValueError("max_virtual_transforms must be positive")
+    _max_virtual_transforms = value
+    MAX_VIRTUAL_TRANSFORMS = value
 
 
 # Stealth mode detection utilities
@@ -72,11 +93,28 @@ def _is_stealth_client(data: dict[str, Any]) -> bool:
 
 # Helper functions for common operations
 def _pack_string(buffer: bytearray, string: str, use_ushort: bool = False) -> None:
-    """Pack a string with length prefix into buffer"""
+    """Pack a string with length prefix into buffer
+
+    Args:
+        buffer: Buffer to append to
+        string: String to pack
+        use_ushort: If True, use 2-byte length (max 65535). If False, use 1-byte (max 255)
+
+    Raises:
+        ValueError: If string length exceeds maximum for the selected format
+    """
     string_bytes = string.encode("utf-8")
     if use_ushort:
+        if len(string_bytes) > 65535:
+            raise ValueError(
+                f"String is too long: {len(string_bytes)} bytes (max 65535 bytes)"
+            )
         buffer.extend(struct.pack("<H", len(string_bytes)))
     else:
+        if len(string_bytes) > 255:
+            raise ValueError(
+                f"String is too long: {len(string_bytes)} bytes (max 255 bytes)"
+            )
         buffer.append(len(string_bytes))
     buffer.extend(string_bytes)
 
@@ -228,6 +266,44 @@ def serialize_rpc_message(data: dict[str, Any]) -> bytes:
     """Serialize RPC message"""
     buffer = bytearray()
     _serialize_rpc_base(buffer, data, MSG_RPC)
+    return bytes(buffer)
+
+
+def serialize_rpc_targeted_message(data: dict[str, Any]) -> bytes:
+    """Serialize targeted RPC message with specific target client(s)
+
+    Args:
+        data: Dictionary with senderClientNo, targetClientNos, functionName, argumentsJson
+
+    Binary format:
+        [1 byte]  MSG_RPC_TARGETED (11)
+        [2 bytes] senderClientNo (ushort LE)
+        [2 bytes] targetCount (ushort LE)
+        [2 bytes * N] targetClientNos (ushort array LE)
+        [1 byte]  functionName length
+        [N bytes] functionName (UTF-8)
+        [2 bytes] argsJson length (ushort LE)
+        [N bytes] argsJson (UTF-8)
+    """
+    buffer = bytearray()
+
+    # Message type
+    buffer.append(MSG_RPC_TARGETED)
+
+    # Sender client number (2 bytes)
+    sender_client_no = data.get("senderClientNo", 0)
+    buffer.extend(struct.pack("<H", sender_client_no))
+
+    # Target client numbers
+    target_client_nos = data.get("targetClientNos", [])
+    buffer.extend(struct.pack("<H", len(target_client_nos)))
+    for target_no in target_client_nos:
+        buffer.extend(struct.pack("<H", target_no))
+
+    # Function name and arguments
+    _pack_string(buffer, data.get("functionName", ""))
+    _pack_string(buffer, data.get("argumentsJson", ""), use_ushort=True)
+
     return bytes(buffer)
 
 
@@ -384,7 +460,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_CLIENT_VAR_SYNC:
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_RPC_TARGETED:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -412,6 +488,8 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_set(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_SYNC:
             return message_type, _deserialize_client_var_sync(data, offset), b""
+        elif message_type == MSG_RPC_TARGETED:
+            return message_type, _deserialize_rpc_targeted_message(data, offset), b""
         else:
             # Should not reach here due to validation above
             return message_type, None, b""
@@ -464,6 +542,32 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
 
     result["functionName"], offset = _unpack_string(data, offset)
     result["argumentsJson"], offset = _unpack_string(data, offset, use_ushort=True)
+    return result
+
+
+def _deserialize_rpc_targeted_message(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize targeted RPC message with target client numbers"""
+    result: dict[str, Any] = {}
+
+    # Sender client number (2 bytes)
+    result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    # Target client numbers
+    target_count = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    target_client_nos = []
+    for _ in range(target_count):
+        target_no = struct.unpack("<H", data[offset : offset + 2])[0]
+        offset += 2
+        target_client_nos.append(target_no)
+    result["targetClientNos"] = target_client_nos
+
+    # Function name and arguments
+    result["functionName"], offset = _unpack_string(data, offset)
+    result["argumentsJson"], offset = _unpack_string(data, offset, use_ushort=True)
+
     return result
 
 

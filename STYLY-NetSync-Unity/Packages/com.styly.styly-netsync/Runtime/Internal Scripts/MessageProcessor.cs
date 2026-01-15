@@ -92,6 +92,18 @@ namespace Styly.NetSync
                         _messagesReceived++;
                         break;
 
+                    case BinarySerializer.MSG_RPC_TARGETED when data is RPCTargetedMessage rpcTargeted:
+                        // Targeted RPC: server already filtered to only send to us, but double-check
+                        // Note: For targeted RPC, the server sends via ROUTER→DEALER, so we receive it
+                        // directly without topic filtering.
+                        var targetedArgs = JsonConvert.DeserializeObject<string[]>(rpcTargeted.argumentsJson);
+                        _messageQueue.Enqueue(new NetworkMessage
+                        {
+                            type = "rpc",
+                            dataObj = new RpcMessageData { senderClientNo = rpcTargeted.senderClientNo, functionName = rpcTargeted.functionName, args = targetedArgs }
+                        });
+                        _messagesReceived++;
+                        break;
 
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
                         // Queue ID mappings for main thread processing (thread-safety fix)
