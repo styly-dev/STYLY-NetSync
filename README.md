@@ -160,7 +160,13 @@ using Styly.NetSync;
 // Broadcast to all clients in the room
 NetSyncManager.Instance.Rpc("FunctionName", new string[] { "arg1", "arg2" });
 
-// Receive RPCs
+// Send to a specific client by ClientNo (targeted RPC)
+NetSyncManager.Instance.RpcTo(targetClientNo, "FunctionName", new string[] { "arg1" });
+
+// Send to multiple specific clients
+NetSyncManager.Instance.RpcTo(new int[] { 2, 3, 5 }, "FunctionName", new string[] { "arg1" });
+
+// Receive RPCs (same handler for broadcast and targeted)
 NetSyncManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName, args) =>
 {
     Debug.Log($"RPC(senderClientNo): {senderClientNo}");

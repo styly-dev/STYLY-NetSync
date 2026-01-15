@@ -976,13 +976,17 @@ class NetSyncServer:
                                 sender_device_id = self._get_device_id_from_identity(
                                     client_identity, room_id
                                 )
-                                if sender_device_id:
-                                    sender_client_no = (
-                                        self._get_client_no_for_device_id(
-                                            room_id, sender_device_id
-                                        )
+                                if not sender_device_id:
+                                    logger.warning(
+                                        f"RPC: sender verification failed, "
+                                        f"unknown identity in room={room_id}, "
+                                        "dropping message"
                                     )
-                                    data["senderClientNo"] = sender_client_no
+                                    continue
+                                sender_client_no = self._get_client_no_for_device_id(
+                                    room_id, sender_device_id
+                                )
+                                data["senderClientNo"] = sender_client_no
                                 # Send RPC to room excluding sender
                                 self._send_rpc_to_room(room_id, data)
                             elif msg_type == binary_serializer.MSG_RPC_TARGETED:
@@ -990,13 +994,17 @@ class NetSyncServer:
                                 sender_device_id = self._get_device_id_from_identity(
                                     client_identity, room_id
                                 )
-                                if sender_device_id:
-                                    sender_client_no = (
-                                        self._get_client_no_for_device_id(
-                                            room_id, sender_device_id
-                                        )
+                                if not sender_device_id:
+                                    logger.warning(
+                                        f"RPC targeted: sender verification failed, "
+                                        f"unknown identity in room={room_id}, "
+                                        "dropping message"
                                     )
-                                    data["senderClientNo"] = sender_client_no
+                                    continue
+                                sender_client_no = self._get_client_no_for_device_id(
+                                    room_id, sender_device_id
+                                )
+                                data["senderClientNo"] = sender_client_no
                                 # Send RPC to specific target clients
                                 target_client_nos = data.get("targetClientNos", [])
                                 self._send_rpc_to_clients(
@@ -1142,9 +1150,10 @@ class NetSyncServer:
         # Log RPC
         sender_client_no = rpc_data.get("senderClientNo", 0)
         function_name = rpc_data.get("functionName", "unknown")
-        args = rpc_data.get("args", [])
+        args = rpc_data.get("argumentsJson", "")
         logger.info(
-            f"RPC: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}"
+            f"RPC: sender={sender_client_no}, function={function_name}, "
+            f"args={args}, room={room_id}"
         )
 
         # Prepare topic and payload

@@ -34,6 +34,8 @@ namespace Styly.NetSync
         private double _warnCooldown = 0.5;                  // min seconds between warnings
         // Outgoing RPC queue for pre-ready state
         private readonly ConcurrentQueue<(string fn, string[] args, double enqueuedAt)> _pendingOut = new ConcurrentQueue<(string fn, string[] args, double enqueuedAt)>();
+        // Outgoing targeted RPC queue for pre-ready state
+        private readonly ConcurrentQueue<(int[] targets, string fn, string[] args, double enqueuedAt)> _pendingTargetedOut = new ConcurrentQueue<(int[] targets, string fn, string[] args, double enqueuedAt)>();
         [SerializeField] private int _maxPendingRpc = 100;     // drop oldest beyond this
         [SerializeField] private double _rpcTtlSeconds = 5.0;  // drop when too old
         [SerializeField] private int _maxFlushPerFrame = 10;   // to avoid burst on first ready frame
@@ -186,7 +188,20 @@ namespace Styly.NetSync
 
             if (!_netSyncManager.IsReady)
             {
-                Debug.LogWarning($"[NetSync/RPC] SendTo '{functionName}' called before ready, dropping. Use Send() for queued delivery.");
+                // Queue for later when ready (same behavior as Send())
+                // Clone the array to avoid mutation issues
+                var targetsCopy = new int[targetClientNos.Length];
+                Array.Copy(targetClientNos, targetsCopy, targetClientNos.Length);
+                _pendingTargetedOut.Enqueue((targetsCopy, functionName, args, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0));
+
+                // Check if queue is too large
+                while (_pendingTargetedOut.Count > _maxPendingRpc)
+                {
+                    if (_pendingTargetedOut.TryDequeue(out var dropped))
+                    {
+                        Debug.LogWarning($"[NetSync/RPC] Pending targeted queue overflow: dropped '{dropped.fn}' (queue size exceeded {_maxPendingRpc})");
+                    }
+                }
                 return;
             }
 
@@ -255,6 +270,7 @@ namespace Styly.NetSync
         {
             if (!_netSyncManager.IsReady) return;
 
+            // Flush broadcast RPCs
             int sentThisFrame = 0;
             while (sentThisFrame < _maxFlushPerFrame && _pendingOut.TryPeek(out var item))
             {
@@ -273,6 +289,32 @@ namespace Styly.NetSync
                 {
                     _pendingOut.TryDequeue(out _);
                     sentThisFrame++;
+                    continue;
+                }
+
+                // If rate-limited, stop draining this frame (don't drop)
+                break;
+            }
+
+            // Flush targeted RPCs
+            int targetedSentThisFrame = 0;
+            while (targetedSentThisFrame < _maxFlushPerFrame && _pendingTargetedOut.TryPeek(out var targetedItem))
+            {
+                var (targets, fn, args, enqAt) = targetedItem;
+
+                // TTL check
+                if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 - enqAt > _rpcTtlSeconds)
+                {
+                    _pendingTargetedOut.TryDequeue(out _); // drop expired
+                    Debug.LogWarning($"[NetSync/RPC] Dropped expired pending targeted RPC '{fn}' (TTL {_rpcTtlSeconds}s exceeded)");
+                    continue;
+                }
+
+                // Try to send with rate limit
+                if (TrySendTargetedNow(targets, roomId, fn, args))
+                {
+                    _pendingTargetedOut.TryDequeue(out _);
+                    targetedSentThisFrame++;
                     continue;
                 }
 

@@ -93,11 +93,28 @@ def _is_stealth_client(data: dict[str, Any]) -> bool:
 
 # Helper functions for common operations
 def _pack_string(buffer: bytearray, string: str, use_ushort: bool = False) -> None:
-    """Pack a string with length prefix into buffer"""
+    """Pack a string with length prefix into buffer
+
+    Args:
+        buffer: Buffer to append to
+        string: String to pack
+        use_ushort: If True, use 2-byte length (max 65535). If False, use 1-byte (max 255)
+
+    Raises:
+        ValueError: If string length exceeds maximum for the selected format
+    """
     string_bytes = string.encode("utf-8")
     if use_ushort:
+        if len(string_bytes) > 65535:
+            raise ValueError(
+                f"String is too long: {len(string_bytes)} bytes (max 65535 bytes)"
+            )
         buffer.extend(struct.pack("<H", len(string_bytes)))
     else:
+        if len(string_bytes) > 255:
+            raise ValueError(
+                f"String is too long: {len(string_bytes)} bytes (max 255 bytes)"
+            )
         buffer.append(len(string_bytes))
     buffer.extend(string_bytes)
 
