@@ -474,6 +474,53 @@ class TestValidateConfig:
         errors = validate_config(config)
         assert errors == []
 
+    def test_dirty_threshold_exceeds_base_interval(
+        self, default_config: ServerConfig
+    ) -> None:
+        """Test that dirty_threshold > base_broadcast_interval fails validation."""
+        from dataclasses import replace
+
+        config = replace(
+            default_config,
+            base_broadcast_interval=0.1,
+            dirty_threshold=0.2,  # Should be <= base_broadcast_interval
+        )
+        errors = validate_config(config)
+        assert any(
+            "dirty_threshold" in e and "base_broadcast_interval" in e for e in errors
+        )
+
+    def test_base_interval_exceeds_idle_interval(
+        self, default_config: ServerConfig
+    ) -> None:
+        """Test that base_broadcast_interval > idle_broadcast_interval fails validation."""
+        from dataclasses import replace
+
+        config = replace(
+            default_config,
+            base_broadcast_interval=1.0,
+            idle_broadcast_interval=0.5,  # Should be >= base_broadcast_interval
+        )
+        errors = validate_config(config)
+        assert any(
+            "base_broadcast_interval" in e and "idle_broadcast_interval" in e
+            for e in errors
+        )
+
+    def test_valid_timing_relationships(self, default_config: ServerConfig) -> None:
+        """Test that valid timing relationships pass validation."""
+        from dataclasses import replace
+
+        # dirty_threshold <= base_broadcast_interval <= idle_broadcast_interval
+        config = replace(
+            default_config,
+            dirty_threshold=0.01,
+            base_broadcast_interval=0.05,
+            idle_broadcast_interval=0.5,
+        )
+        errors = validate_config(config)
+        assert errors == []
+
 
 class TestMergeCliArgs:
     """Tests for merge_cli_args function."""
@@ -592,7 +639,7 @@ dealer_port = 99999
         config_file.write_text(toml_content)
 
         args = argparse.Namespace(
-            user_config=config_file,
+            config=config_file,
             server_discovery_port=None,
             no_server_discovery=False,
             log_dir=None,
@@ -656,10 +703,10 @@ class TestGetUnknownKeys:
 class TestCreateConfigFromArgs:
     """Tests for create_config_from_args function."""
 
-    def test_create_config_without_user_config(self) -> None:
-        """Test creating config without user config uses defaults."""
+    def test_create_config_without_config_file(self) -> None:
+        """Test creating config without config file uses defaults."""
         args = argparse.Namespace(
-            user_config=None,
+            config=None,
             server_discovery_port=None,
             no_server_discovery=False,
             log_dir=None,
@@ -674,8 +721,8 @@ class TestCreateConfigFromArgs:
         assert config.dealer_port == 5555
         assert config.pub_port == 5556
 
-    def test_user_config_overrides_default(self, tmp_path: Path) -> None:
-        """Test that user config overrides default config."""
+    def test_config_file_overrides_default(self, tmp_path: Path) -> None:
+        """Test that config file overrides default config."""
         toml_content = """
 dealer_port = 7777
 server_name = "User Server"
@@ -684,7 +731,7 @@ server_name = "User Server"
         config_file.write_text(toml_content)
 
         args = argparse.Namespace(
-            user_config=config_file,
+            config=config_file,
             server_discovery_port=None,
             no_server_discovery=False,
             log_dir=None,
@@ -701,8 +748,8 @@ server_name = "User Server"
         # Defaults preserved
         assert config.pub_port == 5556
 
-    def test_cli_overrides_user_config(self, tmp_path: Path) -> None:
-        """Test that CLI args override user config."""
+    def test_cli_overrides_config_file(self, tmp_path: Path) -> None:
+        """Test that CLI args override config file."""
         toml_content = """
 server_discovery_port = 7777
 """
@@ -710,7 +757,7 @@ server_discovery_port = 7777
         config_file.write_text(toml_content)
 
         args = argparse.Namespace(
-            user_config=config_file,
+            config=config_file,
             server_discovery_port=8888,  # CLI override
             no_server_discovery=False,
             log_dir=None,
@@ -724,10 +771,10 @@ server_discovery_port = 7777
         # CLI takes precedence
         assert config.server_discovery_port == 8888
 
-    def test_user_config_not_found(self, tmp_path: Path) -> None:
-        """Test that FileNotFoundError is raised when user config doesn't exist."""
+    def test_config_file_not_found(self, tmp_path: Path) -> None:
+        """Test that FileNotFoundError is raised when config file doesn't exist."""
         args = argparse.Namespace(
-            user_config=tmp_path / "nonexistent.toml",
+            config=tmp_path / "nonexistent.toml",
             server_discovery_port=None,
             no_server_discovery=False,
             log_dir=None,
@@ -740,8 +787,8 @@ server_discovery_port = 7777
         with pytest.raises(FileNotFoundError):
             create_config_from_args(args)
 
-    def test_partial_user_config(self, tmp_path: Path) -> None:
-        """Test that partial user config works correctly."""
+    def test_partial_config_file(self, tmp_path: Path) -> None:
+        """Test that partial config file works correctly."""
         toml_content = """
 client_timeout = 5.0
 """
@@ -749,7 +796,7 @@ client_timeout = 5.0
         config_file.write_text(toml_content)
 
         args = argparse.Namespace(
-            user_config=config_file,
+            config=config_file,
             server_discovery_port=None,
             no_server_discovery=False,
             log_dir=None,
