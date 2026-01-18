@@ -5,10 +5,7 @@
 #
 # Configuration priority: CLI arguments > user config > default config
 
-# =============================================================================
 # Network Settings
-# =============================================================================
-[network]
 # ZeroMQ DEALER port for client-server communication
 dealer_port = 5555
 
@@ -24,10 +21,7 @@ server_name = "STYLY-NetSync-Server"
 # Enable/disable UDP discovery service
 enable_server_discovery = true
 
-# =============================================================================
 # Timing Settings
-# =============================================================================
-[timing]
 # Base broadcast interval in seconds (10Hz default)
 base_broadcast_interval = 0.1
 
@@ -55,10 +49,7 @@ main_loop_sleep = 0.02
 # ZeroMQ poll timeout in milliseconds
 poll_timeout = 100
 
-# =============================================================================
 # Network Variable Settings
-# =============================================================================
-[network_variables]
 # Maximum global variables per room
 max_global_vars = 100
 
@@ -80,10 +71,7 @@ nv_monitor_window_size = 1.0
 # NV requests per second before warning
 nv_monitor_threshold = 200
 
-# =============================================================================
 # Internal Limits
-# =============================================================================
-[limits]
 # Maximum virtual transforms per client
 max_virtual_transforms = 50
 
@@ -93,10 +81,7 @@ pub_queue_maxsize = 10000
 # Delta ring buffer size for NV synchronization
 delta_ring_size = 10000
 
-# =============================================================================
 # Logging Settings
-# =============================================================================
-[logging]
 # Directory for log files (empty string for console-only logging)
 log_dir = ""
 

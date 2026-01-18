@@ -86,47 +86,42 @@ class ServerConfig:
     log_retention: str | None
 
 
-# TOML section to config field mapping
-_SECTION_MAPPING: dict[str, list[str]] = {
-    "network": [
-        "dealer_port",
-        "pub_port",
-        "server_discovery_port",
-        "server_name",
-        "enable_server_discovery",
-    ],
-    "timing": [
-        "base_broadcast_interval",
-        "idle_broadcast_interval",
-        "dirty_threshold",
-        "client_timeout",
-        "cleanup_interval",
-        "device_id_expiry_time",
-        "status_log_interval",
-        "main_loop_sleep",
-        "poll_timeout",
-    ],
-    "network_variables": [
-        "max_global_vars",
-        "max_client_vars",
-        "max_var_name_length",
-        "max_var_value_length",
-        "nv_flush_interval",
-        "nv_monitor_window_size",
-        "nv_monitor_threshold",
-    ],
-    "limits": [
-        "max_virtual_transforms",
-        "pub_queue_maxsize",
-        "delta_ring_size",
-    ],
-    "logging": [
-        "log_dir",
-        "log_level_console",
-        "log_json_console",
-        "log_rotation",
-        "log_retention",
-    ],
+# Valid config keys (for unknown key detection)
+_VALID_KEYS: set[str] = {
+    # Network settings
+    "dealer_port",
+    "pub_port",
+    "server_discovery_port",
+    "server_name",
+    "enable_server_discovery",
+    # Timing settings
+    "base_broadcast_interval",
+    "idle_broadcast_interval",
+    "dirty_threshold",
+    "client_timeout",
+    "cleanup_interval",
+    "device_id_expiry_time",
+    "status_log_interval",
+    "main_loop_sleep",
+    "poll_timeout",
+    # Network Variable settings
+    "max_global_vars",
+    "max_client_vars",
+    "max_var_name_length",
+    "max_var_value_length",
+    "nv_flush_interval",
+    "nv_monitor_window_size",
+    "nv_monitor_threshold",
+    # Internal limits
+    "max_virtual_transforms",
+    "pub_queue_maxsize",
+    "delta_ring_size",
+    # Logging settings
+    "log_dir",
+    "log_level_console",
+    "log_json_console",
+    "log_rotation",
+    "log_retention",
 }
 
 
@@ -171,62 +166,42 @@ def load_config_from_toml(path: Path) -> dict[str, Any]:
         return tomllib.load(f)
 
 
-def flatten_toml_config(toml_data: dict[str, Any]) -> dict[str, Any]:
-    """Flatten nested TOML sections into a flat dictionary.
+def process_toml_config(toml_data: dict[str, Any]) -> dict[str, Any]:
+    """Process TOML config data into ServerConfig-compatible dictionary.
 
     Args:
-        toml_data: Parsed TOML data with nested sections.
+        toml_data: Parsed TOML data (flat structure).
 
     Returns:
-        Flat dictionary with config field names as keys.
+        Dictionary with config field names as keys.
     """
-    flat: dict[str, Any] = {}
+    result: dict[str, Any] = {}
 
-    for section, keys in _SECTION_MAPPING.items():
-        if section in toml_data:
-            for key in keys:
-                if key in toml_data[section]:
-                    value = toml_data[section][key]
-                    # Convert empty strings to None for optional fields
-                    if key in ("log_dir", "log_rotation", "log_retention"):
-                        if value == "":
-                            value = None
-                    flat[key] = value
+    for key, value in toml_data.items():
+        if key in _VALID_KEYS:
+            # Convert empty strings to None for optional fields
+            if key in ("log_dir", "log_rotation", "log_retention"):
+                if value == "":
+                    value = None
+            result[key] = value
 
-    return flat
+    return result
 
 
-def get_unknown_keys(toml_data: dict[str, Any]) -> dict[str, list[str]]:
-    """Detect unknown sections and keys in TOML configuration.
+def get_unknown_keys(toml_data: dict[str, Any]) -> list[str]:
+    """Detect unknown keys in TOML configuration.
 
     Args:
-        toml_data: Parsed TOML data with nested sections.
+        toml_data: Parsed TOML data (flat structure).
 
     Returns:
-        Dictionary mapping section names to lists of unknown keys.
-        Unknown sections are reported with key "_unknown_section".
+        List of unknown key names.
     """
-    unknown: dict[str, list[str]] = {}
+    unknown: list[str] = []
 
-    for section, values in toml_data.items():
-        if not isinstance(values, dict):
-            # Top-level keys outside sections are not supported
-            if "_root" not in unknown:
-                unknown["_root"] = []
-            unknown["_root"].append(section)
-            continue
-
-        if section not in _SECTION_MAPPING:
-            # Unknown section
-            unknown[section] = ["_unknown_section"]
-        else:
-            # Check for unknown keys within known section
-            known_keys = set(_SECTION_MAPPING[section])
-            for key in values:
-                if key not in known_keys:
-                    if section not in unknown:
-                        unknown[section] = []
-                    unknown[section].append(key)
+    for key in toml_data:
+        if key not in _VALID_KEYS:
+            unknown.append(key)
 
     return unknown
 
@@ -318,17 +293,17 @@ def load_default_config() -> ServerConfig:
     """
     try:
         toml_data = load_default_toml_data()
-        flat_data = flatten_toml_config(toml_data)
+        config_data = process_toml_config(toml_data)
 
         # Verify all required fields are present
         config_fields = {f.name for f in fields(ServerConfig)}
-        missing = config_fields - set(flat_data.keys())
+        missing = config_fields - set(config_data.keys())
         if missing:
             raise DefaultConfigError(
                 f"Missing required fields in default.toml: {', '.join(sorted(missing))}"
             )
 
-        return ServerConfig(**flat_data)
+        return ServerConfig(**config_data)
     except DefaultConfigError:
         # Re-raise DefaultConfigError as-is
         raise
@@ -410,18 +385,14 @@ def create_config_from_args(
         unknown = get_unknown_keys(toml_data)
         if unknown:
             print(f"WARNING: Unknown keys in {user_config_path}:")
-            for section, keys in unknown.items():
-                if "_unknown_section" in keys:
-                    print(f"  - Unknown section: [{section}]")
-                else:
-                    for key in keys:
-                        print(f"  - [{section}] unknown key: {key}")
+            for key in unknown:
+                print(f"  - {key}")
 
-        flat_data = flatten_toml_config(toml_data)
+        config_data = process_toml_config(toml_data)
 
         # Apply user config overrides
-        if flat_data:
-            config = dataclass_replace(config, **flat_data)
+        if config_data:
+            config = dataclass_replace(config, **config_data)
 
     # Step 3: Apply CLI overrides (highest priority)
     config = merge_cli_args(config, args)

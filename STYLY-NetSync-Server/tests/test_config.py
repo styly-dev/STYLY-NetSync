@@ -10,11 +10,11 @@ from styly_netsync.config import (
     DefaultConfigError,
     ServerConfig,
     create_config_from_args,
-    flatten_toml_config,
     get_unknown_keys,
     load_config_from_toml,
     load_default_config,
     merge_cli_args,
+    process_toml_config,
     validate_config,
 )
 
@@ -127,7 +127,6 @@ class TestLoadConfigFromToml:
     def test_load_valid_toml(self, tmp_path: Path) -> None:
         """Test loading a valid TOML file."""
         toml_content = """
-[network]
 dealer_port = 7777
 pub_port = 7778
 server_name = "Test Server"
@@ -137,10 +136,10 @@ enable_server_discovery = false
         config_file.write_text(toml_content)
 
         data = load_config_from_toml(config_file)
-        assert data["network"]["dealer_port"] == 7777
-        assert data["network"]["pub_port"] == 7778
-        assert data["network"]["server_name"] == "Test Server"
-        assert data["network"]["enable_server_discovery"] is False
+        assert data["dealer_port"] == 7777
+        assert data["pub_port"] == 7778
+        assert data["server_name"] == "Test Server"
+        assert data["enable_server_discovery"] is False
 
     def test_load_nonexistent_file(self, tmp_path: Path) -> None:
         """Test that FileNotFoundError is raised for missing file."""
@@ -166,154 +165,130 @@ enable_server_discovery = false
         assert data == {}
 
 
-class TestFlattenTomlConfig:
-    """Tests for flatten_toml_config function."""
+class TestProcessTomlConfig:
+    """Tests for process_toml_config function."""
 
-    def test_flatten_network_section(self) -> None:
-        """Test flattening network section."""
+    def test_process_network_keys(self) -> None:
+        """Test processing network keys."""
         toml_data = {
-            "network": {
-                "dealer_port": 5555,
-                "pub_port": 5556,
-                "server_discovery_port": 9999,
-                "server_name": "Test",
-                "enable_server_discovery": True,
-            }
+            "dealer_port": 5555,
+            "pub_port": 5556,
+            "server_discovery_port": 9999,
+            "server_name": "Test",
+            "enable_server_discovery": True,
         }
 
-        flat = flatten_toml_config(toml_data)
-        assert flat["dealer_port"] == 5555
-        assert flat["pub_port"] == 5556
-        assert flat["server_discovery_port"] == 9999
-        assert flat["server_name"] == "Test"
-        assert flat["enable_server_discovery"] is True
+        result = process_toml_config(toml_data)
+        assert result["dealer_port"] == 5555
+        assert result["pub_port"] == 5556
+        assert result["server_discovery_port"] == 9999
+        assert result["server_name"] == "Test"
+        assert result["enable_server_discovery"] is True
 
-    def test_flatten_partial_config(self) -> None:
-        """Test flattening partial configuration."""
-        toml_data = {"network": {"dealer_port": 6666}}
-        flat = flatten_toml_config(toml_data)
-        assert flat == {"dealer_port": 6666}
+    def test_process_partial_config(self) -> None:
+        """Test processing partial configuration."""
+        toml_data = {"dealer_port": 6666}
+        result = process_toml_config(toml_data)
+        assert result == {"dealer_port": 6666}
 
-    def test_flatten_empty_config(self) -> None:
-        """Test flattening empty configuration."""
-        flat = flatten_toml_config({})
-        assert flat == {}
+    def test_process_empty_config(self) -> None:
+        """Test processing empty configuration."""
+        result = process_toml_config({})
+        assert result == {}
 
-    def test_flatten_ignores_unknown_sections(self) -> None:
-        """Test that unknown sections are ignored."""
+    def test_process_ignores_unknown_keys(self) -> None:
+        """Test that unknown keys are ignored."""
         toml_data = {
-            "network": {"dealer_port": 5555},
-            "unknown_section": {"some_key": "some_value"},
+            "dealer_port": 5555,
+            "unknown_key": "unknown_value",
         }
-        flat = flatten_toml_config(toml_data)
-        assert "some_key" not in flat
-        assert flat == {"dealer_port": 5555}
+        result = process_toml_config(toml_data)
+        assert "unknown_key" not in result
+        assert result == {"dealer_port": 5555}
 
-    def test_flatten_ignores_unknown_keys(self) -> None:
-        """Test that unknown keys within known sections are ignored."""
+    def test_process_timing_keys(self) -> None:
+        """Test processing timing keys."""
         toml_data = {
-            "network": {
-                "dealer_port": 5555,
-                "unknown_key": "unknown_value",
-            }
+            "base_broadcast_interval": 0.2,
+            "idle_broadcast_interval": 1.0,
+            "dirty_threshold": 0.1,
+            "client_timeout": 2.0,
+            "cleanup_interval": 2.0,
+            "device_id_expiry_time": 600.0,
+            "status_log_interval": 20.0,
+            "main_loop_sleep": 0.05,
+            "poll_timeout": 200,
         }
-        flat = flatten_toml_config(toml_data)
-        assert "unknown_key" not in flat
-        assert flat == {"dealer_port": 5555}
+        result = process_toml_config(toml_data)
+        assert result["base_broadcast_interval"] == 0.2
+        assert result["idle_broadcast_interval"] == 1.0
+        assert result["dirty_threshold"] == 0.1
+        assert result["client_timeout"] == 2.0
+        assert result["cleanup_interval"] == 2.0
+        assert result["device_id_expiry_time"] == 600.0
+        assert result["status_log_interval"] == 20.0
+        assert result["main_loop_sleep"] == 0.05
+        assert result["poll_timeout"] == 200
 
-    def test_flatten_timing_section(self) -> None:
-        """Test flattening timing section."""
+    def test_process_network_variables_keys(self) -> None:
+        """Test processing network_variables keys."""
         toml_data = {
-            "timing": {
-                "base_broadcast_interval": 0.2,
-                "idle_broadcast_interval": 1.0,
-                "dirty_threshold": 0.1,
-                "client_timeout": 2.0,
-                "cleanup_interval": 2.0,
-                "device_id_expiry_time": 600.0,
-                "status_log_interval": 20.0,
-                "main_loop_sleep": 0.05,
-                "poll_timeout": 200,
-            }
+            "max_global_vars": 200,
+            "max_client_vars": 50,
+            "max_var_name_length": 128,
+            "max_var_value_length": 2048,
+            "nv_flush_interval": 0.1,
+            "nv_monitor_window_size": 2.0,
+            "nv_monitor_threshold": 300,
         }
-        flat = flatten_toml_config(toml_data)
-        assert flat["base_broadcast_interval"] == 0.2
-        assert flat["idle_broadcast_interval"] == 1.0
-        assert flat["dirty_threshold"] == 0.1
-        assert flat["client_timeout"] == 2.0
-        assert flat["cleanup_interval"] == 2.0
-        assert flat["device_id_expiry_time"] == 600.0
-        assert flat["status_log_interval"] == 20.0
-        assert flat["main_loop_sleep"] == 0.05
-        assert flat["poll_timeout"] == 200
+        result = process_toml_config(toml_data)
+        assert result["max_global_vars"] == 200
+        assert result["max_client_vars"] == 50
+        assert result["max_var_name_length"] == 128
+        assert result["max_var_value_length"] == 2048
+        assert result["nv_flush_interval"] == 0.1
+        assert result["nv_monitor_window_size"] == 2.0
+        assert result["nv_monitor_threshold"] == 300
 
-    def test_flatten_network_variables_section(self) -> None:
-        """Test flattening network_variables section."""
+    def test_process_limits_keys(self) -> None:
+        """Test processing limits keys."""
         toml_data = {
-            "network_variables": {
-                "max_global_vars": 200,
-                "max_client_vars": 50,
-                "max_var_name_length": 128,
-                "max_var_value_length": 2048,
-                "nv_flush_interval": 0.1,
-                "nv_monitor_window_size": 2.0,
-                "nv_monitor_threshold": 300,
-            }
+            "max_virtual_transforms": 100,
+            "pub_queue_maxsize": 20000,
+            "delta_ring_size": 5000,
         }
-        flat = flatten_toml_config(toml_data)
-        assert flat["max_global_vars"] == 200
-        assert flat["max_client_vars"] == 50
-        assert flat["max_var_name_length"] == 128
-        assert flat["max_var_value_length"] == 2048
-        assert flat["nv_flush_interval"] == 0.1
-        assert flat["nv_monitor_window_size"] == 2.0
-        assert flat["nv_monitor_threshold"] == 300
+        result = process_toml_config(toml_data)
+        assert result["max_virtual_transforms"] == 100
+        assert result["pub_queue_maxsize"] == 20000
+        assert result["delta_ring_size"] == 5000
 
-    def test_flatten_limits_section(self) -> None:
-        """Test flattening limits section."""
+    def test_process_logging_keys(self) -> None:
+        """Test processing logging keys."""
         toml_data = {
-            "limits": {
-                "max_virtual_transforms": 100,
-                "pub_queue_maxsize": 20000,
-                "delta_ring_size": 5000,
-            }
+            "log_dir": "/var/log/netsync",
+            "log_level_console": "DEBUG",
+            "log_json_console": True,
+            "log_rotation": "1 day",
+            "log_retention": "7 days",
         }
-        flat = flatten_toml_config(toml_data)
-        assert flat["max_virtual_transforms"] == 100
-        assert flat["pub_queue_maxsize"] == 20000
-        assert flat["delta_ring_size"] == 5000
+        result = process_toml_config(toml_data)
+        assert result["log_dir"] == "/var/log/netsync"
+        assert result["log_level_console"] == "DEBUG"
+        assert result["log_json_console"] is True
+        assert result["log_rotation"] == "1 day"
+        assert result["log_retention"] == "7 days"
 
-    def test_flatten_logging_section(self) -> None:
-        """Test flattening logging section."""
-        toml_data = {
-            "logging": {
-                "log_dir": "/var/log/netsync",
-                "log_level_console": "DEBUG",
-                "log_json_console": True,
-                "log_rotation": "1 day",
-                "log_retention": "7 days",
-            }
-        }
-        flat = flatten_toml_config(toml_data)
-        assert flat["log_dir"] == "/var/log/netsync"
-        assert flat["log_level_console"] == "DEBUG"
-        assert flat["log_json_console"] is True
-        assert flat["log_rotation"] == "1 day"
-        assert flat["log_retention"] == "7 days"
-
-    def test_flatten_empty_string_to_none(self) -> None:
+    def test_process_empty_string_to_none(self) -> None:
         """Test that empty strings are converted to None for optional fields."""
         toml_data = {
-            "logging": {
-                "log_dir": "",
-                "log_rotation": "",
-                "log_retention": "",
-            }
+            "log_dir": "",
+            "log_rotation": "",
+            "log_retention": "",
         }
-        flat = flatten_toml_config(toml_data)
-        assert flat["log_dir"] is None
-        assert flat["log_rotation"] is None
-        assert flat["log_retention"] is None
+        result = process_toml_config(toml_data)
+        assert result["log_dir"] is None
+        assert result["log_rotation"] is None
+        assert result["log_retention"] is None
 
 
 class TestValidateConfig:
@@ -611,7 +586,6 @@ class TestConfigurationError:
         """Test that create_config_from_args raises ConfigurationError on validation failure."""
         # Create config with invalid port
         toml_content = """
-[network]
 dealer_port = 99999
 """
         config_file = tmp_path / "invalid.toml"
@@ -649,49 +623,34 @@ class TestGetUnknownKeys:
     """Tests for get_unknown_keys function."""
 
     def test_no_unknown_keys(self) -> None:
-        """Test that valid config returns empty dict."""
+        """Test that valid config returns empty list."""
         toml_data = {
-            "network": {"dealer_port": 5555, "pub_port": 5556},
-            "timing": {"base_broadcast_interval": 0.1},
+            "dealer_port": 5555,
+            "pub_port": 5556,
+            "base_broadcast_interval": 0.1,
         }
         unknown = get_unknown_keys(toml_data)
-        assert unknown == {}
+        assert unknown == []
 
-    def test_unknown_key_in_known_section(self) -> None:
-        """Test detection of unknown key in a known section (typo)."""
+    def test_unknown_key(self) -> None:
+        """Test detection of unknown key (typo)."""
         toml_data = {
-            "logging": {
-                "log_levl_console": "DEBUG",  # Typo: should be log_level_console
-                "log_dir": "/var/log",
-            }
+            "log_levl_console": "DEBUG",  # Typo: should be log_level_console
+            "log_dir": "/var/log",
         }
         unknown = get_unknown_keys(toml_data)
-        assert "logging" in unknown
-        assert "log_levl_console" in unknown["logging"]
-
-    def test_unknown_section(self) -> None:
-        """Test detection of unknown section."""
-        toml_data = {
-            "network": {"dealer_port": 5555},
-            "unknownsection": {"some_key": "value"},
-        }
-        unknown = get_unknown_keys(toml_data)
-        assert "unknownsection" in unknown
-        assert "_unknown_section" in unknown["unknownsection"]
+        assert "log_levl_console" in unknown
 
     def test_multiple_unknown_keys(self) -> None:
         """Test detection of multiple unknown keys."""
         toml_data = {
-            "network": {
-                "dealer_port": 5555,
-                "unknown_key1": "value1",
-                "unknown_key2": "value2",
-            }
+            "dealer_port": 5555,
+            "unknown_key1": "value1",
+            "unknown_key2": "value2",
         }
         unknown = get_unknown_keys(toml_data)
-        assert "network" in unknown
-        assert "unknown_key1" in unknown["network"]
-        assert "unknown_key2" in unknown["network"]
+        assert "unknown_key1" in unknown
+        assert "unknown_key2" in unknown
 
 
 class TestCreateConfigFromArgs:
@@ -718,7 +677,6 @@ class TestCreateConfigFromArgs:
     def test_user_config_overrides_default(self, tmp_path: Path) -> None:
         """Test that user config overrides default config."""
         toml_content = """
-[network]
 dealer_port = 7777
 server_name = "User Server"
 """
@@ -746,7 +704,6 @@ server_name = "User Server"
     def test_cli_overrides_user_config(self, tmp_path: Path) -> None:
         """Test that CLI args override user config."""
         toml_content = """
-[network]
 server_discovery_port = 7777
 """
         config_file = tmp_path / "user.toml"
@@ -786,7 +743,6 @@ server_discovery_port = 7777
     def test_partial_user_config(self, tmp_path: Path) -> None:
         """Test that partial user config works correctly."""
         toml_content = """
-[timing]
 client_timeout = 5.0
 """
         config_file = tmp_path / "user.toml"

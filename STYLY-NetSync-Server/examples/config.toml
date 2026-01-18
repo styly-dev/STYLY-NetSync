@@ -10,10 +10,7 @@
 #   styly-netsync-server --user-config /path/to/user.toml
 #
 
-# =============================================================================
 # Network Settings (example overrides)
-# =============================================================================
-[network]
 # Custom server name for discovery
 server_name = "My-Custom-Server"
 
@@ -25,26 +22,17 @@ server_name = "My-Custom-Server"
 # Disable discovery service (can also use --no-server-discovery CLI flag)
 # enable_server_discovery = false
 
-# =============================================================================
 # Timing Settings (example overrides)
-# =============================================================================
-[timing]
 # Higher broadcast rate for fast-paced experiences
 # base_broadcast_interval = 0.05  # 20Hz instead of 10Hz
 
 # Longer client timeout for unreliable networks
 # client_timeout = 2.0  # 2 seconds instead of 1 second
 
-# =============================================================================
 # Network Variable Settings (example overrides)
-# =============================================================================
-# [network_variables]
 # max_global_vars = 200  # More variables for complex experiences
 
-# =============================================================================
 # Logging Settings (example overrides)
-# =============================================================================
-[logging]
 # Enable file logging to a specific directory
 # log_dir = "/var/log/styly-netsync"
 
