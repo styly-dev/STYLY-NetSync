@@ -1,0 +1,105 @@
+# STYLY NetSync Server Default Configuration
+#
+# This file contains all default values for the server.
+# DO NOT MODIFY this file directly.
+#
+# To customize settings:
+#   1. Copy this file to create your own config file
+#   2. Only include the settings you want to change (delete the rest)
+#   3. Run the server with: styly-netsync-server --config /path/to/my-config.toml
+#
+# Configuration priority: CLI arguments > user config > default config
+
+# Network Settings
+# ZeroMQ DEALER port for client-server communication
+dealer_port = 5555
+
+# ZeroMQ PUB port for server-to-client broadcasts
+pub_port = 5556
+
+# UDP port for server discovery service
+server_discovery_port = 9999
+
+# Server name announced via discovery service
+server_name = "STYLY-NetSync-Server"
+
+# Enable/disable UDP discovery service
+enable_server_discovery = true
+
+# Timing Settings
+# Base broadcast interval in seconds (10Hz default)
+base_broadcast_interval = 0.1
+
+# Broadcast interval when server is idle (2Hz default)
+idle_broadcast_interval = 0.5
+
+# Minimum broadcast interval when clients are very active (20Hz max)
+dirty_threshold = 0.05
+
+# Client disconnect timeout in seconds
+client_timeout = 1.0
+
+# Cleanup interval in seconds for removing stale data
+cleanup_interval = 1.0
+
+# Device ID mapping expiry time in seconds (5 minutes default)
+device_id_expiry_time = 300.0
+
+# Status log interval in seconds
+status_log_interval = 10.0
+
+# Main loop sleep interval in seconds (50Hz default)
+main_loop_sleep = 0.02
+
+# ZeroMQ poll timeout in milliseconds
+poll_timeout = 100
+
+# Network Variable Settings
+# Maximum global variables per room
+max_global_vars = 100
+
+# Maximum client variables per client
+max_client_vars = 100
+
+# Maximum variable name length in bytes
+max_var_name_length = 64
+
+# Maximum variable value length in bytes
+max_var_value_length = 1024
+
+# Network variable flush interval in seconds (50ms default)
+nv_flush_interval = 0.05
+
+# NV monitoring window size in seconds
+nv_monitor_window_size = 1.0
+
+# NV requests per second before warning
+nv_monitor_threshold = 200
+
+# Internal Limits
+# Maximum virtual transforms per client
+max_virtual_transforms = 50
+
+# PUB queue maximum size
+pub_queue_maxsize = 10000
+
+# Delta ring buffer size for NV synchronization
+delta_ring_size = 10000
+
+# Logging Settings
+# Directory for log files (empty string for console-only logging)
+log_dir = ""
+
+# Console log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level_console = "INFO"
+
+# Enable JSON format for console logs
+log_json_console = false
+
+# Log rotation rule (loguru syntax)
+# Empty string means use internal default (10MB or 7 days)
+log_rotation = ""
+
+# Log retention rule (loguru syntax)
+# Empty string means use internal default (keep newest 20 files)
+log_retention = ""
