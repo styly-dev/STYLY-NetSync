@@ -23,3 +23,6 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+
+.gemini/
+gha-creds-*.json
