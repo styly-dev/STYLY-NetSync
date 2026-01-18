@@ -11,10 +11,10 @@
 
 #### Open Dev Container
 
-Click the `><` icon in the bottom-left corner of the window.  
-(Or press `Cmd + Shift + P`) and select `Dev Containers: Reopen in Container`. 
+Click the `><` icon in the bottom-left corner of the window.
+(Or press `Cmd + Shift + P`) and select `Dev Containers: Reopen in Container`.
 
-### Option B: 
+### Option B:
 
 #### Prerequisites
 
@@ -38,6 +38,32 @@ styly-netsync-simulator --clients 50
 
 # Custom server and room
 styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
+```
+
+## Configuration
+
+The server uses TOML configuration files. Default values are bundled in `src/styly_netsync/default.toml`.
+
+To customize settings:
+
+1. Get the default config file:
+   - From local clone: `cp src/styly_netsync/default.toml my-config.toml`
+   - Or download from GitHub: [default.toml](https://github.com/psychic-vr-lab/STYLY-NetSync/blob/main/STYLY-NetSync-Server/src/styly_netsync/default.toml)
+
+2. Edit `my-config.toml` and keep only the settings you want to change (delete the rest)
+
+3. Run the server with your config file:
+   ```bash
+   styly-netsync-server --config my-config.toml
+   ```
+
+Configuration priority: CLI arguments > user config > default config
+
+Example minimal config:
+```toml
+# Only override what you need
+server_name = "My-Custom-Server"
+base_broadcast_interval = 0.05  # 20Hz instead of 10Hz
 ```
 
 ## Logging
