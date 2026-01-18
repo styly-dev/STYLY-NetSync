@@ -1,7 +1,12 @@
 # STYLY NetSync Server Default Configuration
 #
 # This file contains all default values for the server.
-# DO NOT MODIFY this file - use a user config file to override values.
+# DO NOT MODIFY this file directly.
+#
+# To customize settings:
+#   1. Copy this file to create your own config file
+#   2. Only include the settings you want to change (delete the rest)
+#   3. Run the server with: styly-netsync-server --config /path/to/my-config.toml
 #
 # Configuration priority: CLI arguments > user config > default config
 
