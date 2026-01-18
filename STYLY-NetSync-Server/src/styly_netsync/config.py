@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.resources
+import sys
 import tomllib
 from dataclasses import dataclass, fields
 from dataclasses import replace as dataclass_replace
@@ -240,6 +241,18 @@ def validate_config(config: ServerConfig) -> list[str]:
         if value <= 0:
             errors.append(f"{field_name} must be positive, got {value}")
 
+    # Cross-field validation for timing values
+    if config.dirty_threshold > config.base_broadcast_interval:
+        errors.append(
+            f"dirty_threshold ({config.dirty_threshold}) should be <= "
+            f"base_broadcast_interval ({config.base_broadcast_interval})"
+        )
+    if config.base_broadcast_interval > config.idle_broadcast_interval:
+        errors.append(
+            f"base_broadcast_interval ({config.base_broadcast_interval}) should be <= "
+            f"idle_broadcast_interval ({config.idle_broadcast_interval})"
+        )
+
     # poll_timeout must be positive integer
     if config.poll_timeout <= 0:
         errors.append(f"poll_timeout must be positive, got {config.poll_timeout}")
@@ -362,7 +375,7 @@ def create_config_from_args(
     Configuration priority: CLI args > user config > default config
 
     Args:
-        args: Parsed CLI arguments (may have 'user_config' attribute for user config path).
+        args: Parsed CLI arguments (may have 'config' attribute for user config path).
 
     Returns:
         Configured ServerConfig instance.
@@ -377,16 +390,17 @@ def create_config_from_args(
     config = load_default_config()
 
     # Step 2: Override with user config if specified
-    if hasattr(args, "user_config") and args.user_config is not None:
-        user_config_path = Path(args.user_config)
+    if hasattr(args, "config") and args.config is not None:
+        user_config_path = Path(args.config)
         toml_data = load_config_from_toml(user_config_path)
 
         # Warn about unknown keys (possible typos)
+        # Using stderr since logging is not configured yet
         unknown = get_unknown_keys(toml_data)
         if unknown:
-            print(f"WARNING: Unknown keys in {user_config_path}:")
+            print(f"WARNING: Unknown keys in {user_config_path}:", file=sys.stderr)
             for key in unknown:
-                print(f"  - {key}")
+                print(f"  - {key}", file=sys.stderr)
 
         config_data = process_toml_config(toml_data)
 

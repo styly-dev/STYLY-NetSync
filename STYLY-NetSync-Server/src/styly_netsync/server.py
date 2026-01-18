@@ -1922,7 +1922,7 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
 def main() -> None:
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
-        "--user-config",
+        "--config",
         type=Path,
         metavar="FILE",
         help="Path to user TOML configuration file (overrides defaults)",
@@ -1987,7 +1987,7 @@ def main() -> None:
         sys.exit(1)
     except FileNotFoundError:
         # User config file not found
-        print(f"ERROR: User configuration file not found: {args.user_config}")
+        print(f"ERROR: User configuration file not found: {args.config}")
         sys.exit(1)
     except ConfigurationError as e:
         # Validation errors - print each error clearly
@@ -2010,8 +2010,8 @@ def main() -> None:
     )
 
     # Log config file info after logging is configured
-    if args.user_config is not None:
-        logger.info(f"Loaded user configuration from {args.user_config}")
+    if args.config is not None:
+        logger.info(f"Loaded user configuration from {args.config}")
 
     # Apply global configuration settings
     binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)

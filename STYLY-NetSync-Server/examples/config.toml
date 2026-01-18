@@ -7,7 +7,7 @@
 # Configuration priority: CLI arguments > user config > default config
 #
 # Usage:
-#   styly-netsync-server --user-config /path/to/user.toml
+#   styly-netsync-server --config /path/to/config.toml
 #
 
 # Network Settings (example overrides)
