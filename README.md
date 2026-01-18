@@ -24,7 +24,7 @@ STYLY NetSync includes an easy-to-integrate Unity package and a lightweight Pyth
 
 ### Main features
 - Avatar Transform Synchronization
-- RPC (Remote Procedure Call) 
+- RPC (Remote Procedure Call)
 - Network Variable
 
 ### Other features
@@ -38,8 +38,8 @@ Some features are provided via dependent package STYLY XR Rig.
 
 ### Prerequisites
 
-uv/uvx: Required to start the server.  
-OpenUPM: Required only when you add the package to your Unity project.  
+uv/uvx: Required to start the server.
+OpenUPM: Required only when you add the package to your Unity project.
 
 ```shell
 # Windows
@@ -117,9 +117,9 @@ The uvx command automatically downloads the package, creates an isolated virtual
 - _clientNo - Shows the numeric client number assigned by the server.
 - _serverAddress - Server IP or hostname; leave empty to auto-discover on the local network.
 - _roomId - Identifier of the current room to join.
-- _localAvatarPrefab - Prefab used for the local user’s avatar.
-- _remoteAvatarPrefab - Prefab used for remote users’avatars.
-- _humanPresencePrefab - Prefab shown at each remote user’s physical position (used for “human presence” visualization).
+- _localAvatarPrefab - Prefab used for the local user's avatar.
+- _remoteAvatarPrefab - Prefab used for remote users'avatars.
+- _humanPresencePrefab - Prefab shown at each remote user's physical position (used for "human presence" visualization).
       </td>
     </tr>
     <tr>
@@ -193,10 +193,26 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 
 ```
 
+### Others
+```csharp
+
+// Switch pass through mode with an optional transition duration in seconds and sync over network frag.
+float transitionDuration = 1.0;
+bool syncOverNetwork = true;
+
+// Switch to VR mode
+NetSyncManager.Instance.SwitchToVR(transitionDuration, syncOverNetwork);
+
+// Switch to MR mode (Pass through mode)
+NetSyncManager.Instance.SwitchToMR(transitionDuration, syncOverNetwork);
+
+```
+
+
 ## Transport layer
-STYLY NetSync uses [ZeroMQ](https://zeromq.org/) as its transport layer  
-– C# (Unity): [NetMQ](https://github.com/zeromq/netmq)  
-– Python (server): [pyzmq](https://github.com/zeromq/pyzmq)  
+STYLY NetSync uses [ZeroMQ](https://zeromq.org/) as its transport layer
+– C# (Unity): [NetMQ](https://github.com/zeromq/netmq)
+– Python (server): [pyzmq](https://github.com/zeromq/pyzmq)
 
 ## License
 This repository contains multiple sub-projects, each with its own license file. All sub-projects are licensed under the Apache License, Version 2.0.
