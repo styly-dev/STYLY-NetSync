@@ -63,7 +63,7 @@ Example minimal config:
 ```toml
 # Only override what you need
 server_name = "My-Custom-Server"
-base_broadcast_interval = 0.05  # 20Hz instead of 10Hz
+dirty_threshold = 0.025  # 40Hz instead of 20Hz
 ```
 
 ## Logging

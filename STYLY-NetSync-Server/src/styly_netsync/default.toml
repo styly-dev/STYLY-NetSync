@@ -27,9 +27,6 @@ server_name = "STYLY-NetSync-Server"
 enable_server_discovery = true
 
 # Timing Settings
-# Base broadcast interval in seconds (10Hz default)
-base_broadcast_interval = 0.1
-
 # Broadcast interval when server is idle (2Hz default)
 idle_broadcast_interval = 0.5
 

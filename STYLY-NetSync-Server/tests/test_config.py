@@ -43,7 +43,6 @@ class TestLoadDefaultConfig:
         assert config.server_name == "STYLY-NetSync-Server"
         assert config.enable_server_discovery is True
         # Timing
-        assert config.base_broadcast_interval == 0.1
         assert config.idle_broadcast_interval == 0.5
         assert config.dirty_threshold == 0.05
         assert config.client_timeout == 1.0
@@ -89,7 +88,6 @@ class TestServerConfig:
             server_discovery_port=8888,
             server_name="Custom Server",
             enable_server_discovery=False,
-            base_broadcast_interval=default_config.base_broadcast_interval,
             idle_broadcast_interval=default_config.idle_broadcast_interval,
             dirty_threshold=default_config.dirty_threshold,
             client_timeout=default_config.client_timeout,
@@ -209,7 +207,6 @@ class TestProcessTomlConfig:
     def test_process_timing_keys(self) -> None:
         """Test processing timing keys."""
         toml_data = {
-            "base_broadcast_interval": 0.2,
             "idle_broadcast_interval": 1.0,
             "dirty_threshold": 0.1,
             "client_timeout": 2.0,
@@ -220,7 +217,6 @@ class TestProcessTomlConfig:
             "poll_timeout": 200,
         }
         result = process_toml_config(toml_data)
-        assert result["base_broadcast_interval"] == 0.2
         assert result["idle_broadcast_interval"] == 1.0
         assert result["dirty_threshold"] == 0.1
         assert result["client_timeout"] == 2.0
@@ -348,9 +344,9 @@ class TestValidateConfig:
         """Test that zero timing values fail validation."""
         from dataclasses import replace
 
-        config = replace(default_config, base_broadcast_interval=0)
+        config = replace(default_config, idle_broadcast_interval=0)
         errors = validate_config(config)
-        assert any("base_broadcast_interval" in e for e in errors)
+        assert any("idle_broadcast_interval" in e for e in errors)
 
     def test_invalid_timing_negative(self, default_config: ServerConfig) -> None:
         """Test that negative timing values fail validation."""
@@ -374,7 +370,6 @@ class TestValidateConfig:
 
         config = replace(
             default_config,
-            base_broadcast_interval=0.001,
             idle_broadcast_interval=0.001,
             dirty_threshold=0.001,
             client_timeout=0.001,
@@ -474,48 +469,30 @@ class TestValidateConfig:
         errors = validate_config(config)
         assert errors == []
 
-    def test_dirty_threshold_exceeds_base_interval(
+    def test_dirty_threshold_exceeds_idle_interval(
         self, default_config: ServerConfig
     ) -> None:
-        """Test that dirty_threshold > base_broadcast_interval fails validation."""
+        """Test that dirty_threshold > idle_broadcast_interval fails validation."""
         from dataclasses import replace
 
         config = replace(
             default_config,
-            base_broadcast_interval=0.1,
-            dirty_threshold=0.2,  # Should be <= base_broadcast_interval
+            idle_broadcast_interval=0.1,
+            dirty_threshold=0.2,  # Should be <= idle_broadcast_interval
         )
         errors = validate_config(config)
         assert any(
-            "dirty_threshold" in e and "base_broadcast_interval" in e for e in errors
-        )
-
-    def test_base_interval_exceeds_idle_interval(
-        self, default_config: ServerConfig
-    ) -> None:
-        """Test that base_broadcast_interval > idle_broadcast_interval fails validation."""
-        from dataclasses import replace
-
-        config = replace(
-            default_config,
-            base_broadcast_interval=1.0,
-            idle_broadcast_interval=0.5,  # Should be >= base_broadcast_interval
-        )
-        errors = validate_config(config)
-        assert any(
-            "base_broadcast_interval" in e and "idle_broadcast_interval" in e
-            for e in errors
+            "dirty_threshold" in e and "idle_broadcast_interval" in e for e in errors
         )
 
     def test_valid_timing_relationships(self, default_config: ServerConfig) -> None:
         """Test that valid timing relationships pass validation."""
         from dataclasses import replace
 
-        # dirty_threshold <= base_broadcast_interval <= idle_broadcast_interval
+        # dirty_threshold <= idle_broadcast_interval
         config = replace(
             default_config,
             dirty_threshold=0.01,
-            base_broadcast_interval=0.05,
             idle_broadcast_interval=0.5,
         )
         errors = validate_config(config)
@@ -674,7 +651,7 @@ class TestGetUnknownKeys:
         toml_data = {
             "dealer_port": 5555,
             "pub_port": 5556,
-            "base_broadcast_interval": 0.1,
+            "idle_broadcast_interval": 0.5,
         }
         unknown = get_unknown_keys(toml_data)
         assert unknown == []
@@ -811,4 +788,4 @@ client_timeout = 5.0
         assert config.client_timeout == 5.0
         # All other defaults preserved
         assert config.dealer_port == 5555
-        assert config.base_broadcast_interval == 0.1
+        assert config.idle_broadcast_interval == 0.5

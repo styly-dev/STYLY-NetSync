@@ -55,7 +55,6 @@ class ServerConfig:
     enable_server_discovery: bool
 
     # Timing settings
-    base_broadcast_interval: float
     idle_broadcast_interval: float
     dirty_threshold: float
     client_timeout: float
@@ -96,7 +95,6 @@ _VALID_KEYS: set[str] = {
     "server_name",
     "enable_server_discovery",
     # Timing settings
-    "base_broadcast_interval",
     "idle_broadcast_interval",
     "dirty_threshold",
     "client_timeout",
@@ -227,7 +225,6 @@ def validate_config(config: ServerConfig) -> list[str]:
 
     # Timing validation (must be positive)
     timing_fields = [
-        "base_broadcast_interval",
         "idle_broadcast_interval",
         "dirty_threshold",
         "client_timeout",
@@ -242,14 +239,9 @@ def validate_config(config: ServerConfig) -> list[str]:
             errors.append(f"{field_name} must be positive, got {value}")
 
     # Cross-field validation for timing values
-    if config.dirty_threshold > config.base_broadcast_interval:
+    if config.dirty_threshold > config.idle_broadcast_interval:
         errors.append(
             f"dirty_threshold ({config.dirty_threshold}) should be <= "
-            f"base_broadcast_interval ({config.base_broadcast_interval})"
-        )
-    if config.base_broadcast_interval > config.idle_broadcast_interval:
-        errors.append(
-            f"base_broadcast_interval ({config.base_broadcast_interval}) should be <= "
             f"idle_broadcast_interval ({config.idle_broadcast_interval})"
         )
 

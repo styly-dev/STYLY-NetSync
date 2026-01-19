@@ -188,7 +188,6 @@ class NetSyncServer:
         self.context = zmq.Context()
 
         # Initialize timing settings from config
-        self.BASE_BROADCAST_INTERVAL = config.base_broadcast_interval
         self.IDLE_BROADCAST_INTERVAL = config.idle_broadcast_interval
         self.DIRTY_THRESHOLD = config.dirty_threshold
         self.BROADCAST_CHECK_INTERVAL = (
@@ -330,7 +329,6 @@ class NetSyncServer:
         )
 
         # Performance configuration (now using constants)
-        self.base_broadcast_interval = self.BASE_BROADCAST_INTERVAL
         self.idle_broadcast_interval = self.IDLE_BROADCAST_INTERVAL
         self.dirty_threshold = self.DIRTY_THRESHOLD
 
