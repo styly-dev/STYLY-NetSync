@@ -41,7 +41,7 @@ namespace Styly.NetSync
         public UnityEvent OnReady;
 
         // Advanced Options (drawn by NetSyncManagerEditor in a foldout)
-        [SerializeField, Range(1, 120), Tooltip("Transform sync frequency in Hz (sends per second). Higher values provide smoother movement but increase network traffic.")]
+        [SerializeField, Range(1, 60), Tooltip("Transform sync frequency in Hz (sends per second). Higher values provide smoother movement but increase network traffic.")]
         private float _transformSendRate = 10f;
         [Tooltip("UDP port used for server discovery.")]
         [SerializeField, Min(1)] private int _serverDiscoveryPort = 9999;
@@ -314,7 +314,7 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Transform sync frequency in Hz (sends per second). Valid range: 1-120.
+        /// Transform sync frequency in Hz (sends per second). Valid range: 1-60.
         /// Higher values provide smoother movement but increase network traffic.
         /// </summary>
         public float TransformSendRate
@@ -322,7 +322,7 @@ namespace Styly.NetSync
             get => _transformSendRate;
             set
             {
-                _transformSendRate = Mathf.Clamp(value, 1f, 120f);
+                _transformSendRate = Mathf.Clamp(value, 1f, 60f);
                 if (_transformSyncManager != null)
                 {
                     _transformSyncManager.SendRate = _transformSendRate;
