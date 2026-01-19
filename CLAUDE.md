@@ -9,6 +9,14 @@ STYLY-NetSync is a Unity multiplayer framework for Location-Based Entertainment 
 - **STYLY-NetSync-Server/**: Python server using ZeroMQ for networking
 - **STYLY-NetSync-Unity/**: Unity package with client implementation
 
+## XR-Specific Design Considerations
+
+STYLY-NetSync is designed exclusively for XR (VR/MR/AR) applications. This has important implications:
+
+- **Continuous Transform Updates**: Unlike traditional games where characters move only with controller input, XR applications track users' head and hand positions continuously. Transform data (Position/Rotation) changes every frame.
+- **Always-Active Synchronization**: The server's adaptive broadcasting system assumes rooms are always "dirty" (have new transform data) when clients are connected, since XR tracking never stops.
+- **Bandwidth Planning**: Network bandwidth requirements should account for constant data flow, not intermittent bursts.
+
 ## Development Commands
 
 ### Python Server (STYLY-NetSync-Server/)
