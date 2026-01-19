@@ -64,62 +64,6 @@ namespace Styly.NetSync
         private static NetSyncManager _instance;
         public static NetSyncManager Instance => _instance;
 
-        /// <summary>
-        /// Indicates whether the PassthroughManager is currently in passthrough (MR) mode.
-        /// </summary>
-        public bool PassthroughMode => passthroughMode;
-        private bool passthroughMode;
-
-        /// <summary>
-        /// Switches to VR mode with an optional transition duration.
-        /// </summary>
-        /// <param name="transitionDuration"></param>
-        public void SwitchToVR(float transitionDuration = 1, bool syncOverNetwork = true)
-        {
-            if (syncOverNetwork)
-            {
-                Rpc_SystemRPC("SwitchToVR", new[] { transitionDuration.ToString() });
-            }
-            else
-            {
-                SwitchToVR_Internal(transitionDuration);
-            }
-        }
-
-        /// <summary>
-        /// Switches to MR (passthrough) mode with an optional transition duration.
-        /// </summary>
-        /// <param name="transitionDuration"></param>
-        public void SwitchToMR(float transitionDuration = 1, bool syncOverNetwork = true)
-        {
-            if (syncOverNetwork)
-            {
-                Rpc_SystemRPC("SwitchToMR", new[] { transitionDuration.ToString() });
-            }
-            else
-            {
-                SwitchToMR_Internal(transitionDuration);
-            }
-        }
-
-        private void SwitchToVR_Internal(float transitionDuration = 1)
-        {
-            if (stylyXrRig != null)
-            {
-                stylyXrRig.SwitchToVR(transitionDuration);
-                passthroughMode = false;
-            }
-        }
-
-        private void SwitchToMR_Internal(float transitionDuration = 1)
-        {
-            if (stylyXrRig != null)
-            {
-                stylyXrRig.SwitchToMR(transitionDuration);
-                passthroughMode = true;
-            }
-        }
-
 
 
         /// <summary>
@@ -694,26 +638,6 @@ namespace Styly.NetSync
             // Handle known system RPCs
             switch (functionName)
             {
-                case "SwitchToVR":
-                    {
-                        float duration = 1f;
-                        if (args.Length > 0 && float.TryParse(args[0], out var parsedDuration))
-                        {
-                            duration = parsedDuration;
-                        }
-                        SwitchToVR_Internal(duration);
-                        break;
-                    }
-                case "SwitchToMR":
-                    {
-                        float duration = 1f;
-                        if (args.Length > 0 && float.TryParse(args[0], out var parsedDuration))
-                        {
-                            duration = parsedDuration;
-                        }
-                        SwitchToMR_Internal(duration);
-                        break;
-                    }
                 default:
                     DebugLog($"Unknown system RPC received: {functionName}");
                     break;
