@@ -26,9 +26,6 @@ namespace Styly.NetSync
         [SerializeField] private GameObject _remoteAvatarPrefab;
         [SerializeField, Tooltip("Prefab shown at each remote user's physical position")] private GameObject _humanPresencePrefab;
 
-        // [Header("Transform Sync Settings"), Range(1, 120)]
-        private float _sendRate = 10f;
-
         // [Header("Debug Settings")]
         private bool _enableDebugLogs = true;
         private bool _logTransformDetail = false;
@@ -43,9 +40,11 @@ namespace Styly.NetSync
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
         public UnityEvent OnReady;
 
-        // Advanced options
+        // Advanced Options (drawn by NetSyncManagerEditor in a foldout)
+        [SerializeField, Range(1, 120), Tooltip("Transform sync frequency in Hz (sends per second). Higher values provide smoother movement but increase network traffic.")]
+        private float _transformSendRate = 10f;
         [Tooltip("UDP port used for server discovery.")]
-        [Min(1)] public int ServerDiscoveryPort = 9999;
+        [SerializeField, Min(1)] private int _serverDiscoveryPort = 9999;
         [Tooltip("Enable synchronization of battery levels across devices.")]
         [SerializeField] private bool _syncBatteryLevel = true;
         private bool _enableDiscovery = true;
@@ -190,7 +189,7 @@ namespace Styly.NetSync
 
         /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
-        /// This performs a hard reconnection, clearing all room-scoped state and 
+        /// This performs a hard reconnection, clearing all room-scoped state and
         /// re-establishing connection with the new room subscription.
         /// </summary>
         /// <param name="newRoomId">The new room ID to connect to</param>
@@ -268,33 +267,33 @@ namespace Styly.NetSync
         // Battery monitoring fields
         private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
         private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
-        
+
         // Connection error handling fields (main-thread handoff for thread-safe error handling)
         /// <summary>
-        /// Atomic flag for pending connection errors. 
+        /// Atomic flag for pending connection errors.
         /// Written by receive thread, consumed by main thread.
         /// Values: 0=no pending error, 1=error pending
         /// </summary>
         private int _pendingConnectionError;
-        
+
         /// <summary>
         /// Exception instance from the last connection error.
         /// Written on receive thread, read on main thread. Volatile for visibility.
         /// </summary>
         private volatile Exception _pendingConnectionException;
-        
+
         /// <summary>
         /// Unix timestamp (milliseconds) when the last connection error occurred.
         /// Written on receive thread, read on main thread. Stored via Interlocked for visibility.
         /// </summary>
         private long _pendingConnectionErrorAtUnixMs;
-        
+
         /// <summary>
         /// Re-entrancy guard for ProcessPendingConnectionErrorOnMainThread.
         /// Main-thread only, prevents concurrent error handling.
         /// </summary>
         private bool _isHandlingConnectionError;
-        
+
         // Constants for atomic flag values
         private const int PENDING_ERROR_NONE = 0;
         private const int PENDING_ERROR_SET = 1;
@@ -304,6 +303,32 @@ namespace Styly.NetSync
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
         public string RoomId => _roomId;
+
+        /// <summary>
+        /// UDP port used for server discovery.
+        /// </summary>
+        public int ServerDiscoveryPort
+        {
+            get => _serverDiscoveryPort;
+            set => _serverDiscoveryPort = value;
+        }
+
+        /// <summary>
+        /// Transform sync frequency in Hz (sends per second). Valid range: 1-120.
+        /// Higher values provide smoother movement but increase network traffic.
+        /// </summary>
+        public float TransformSendRate
+        {
+            get => _transformSendRate;
+            set
+            {
+                _transformSendRate = Mathf.Clamp(value, 1f, 120f);
+                if (_transformSyncManager != null)
+                {
+                    _transformSyncManager.SendRate = _transformSendRate;
+                }
+            }
+        }
         internal ConnectionManager ConnectionManager => _connectionManager;
         internal AvatarManager AvatarManager => _avatarManager;
         internal RPCManager RPCManager => _rpcManager;
@@ -440,10 +465,10 @@ namespace Styly.NetSync
             }
 
             HandleDiscovery();
-            
+
             // Process pending connection errors BEFORE reconnection logic
             ProcessPendingConnectionErrorOnMainThread();
-            
+
             HandleReconnection();
             ProcessMessages();
 
@@ -492,14 +517,14 @@ namespace Styly.NetSync
 #else
             // Try to get Unity's device unique identifier on actual devices
             string deviceId = SystemInfo.deviceUniqueIdentifier;
-            
+
             // Check if the device ID is valid
             if (!string.IsNullOrEmpty(deviceId) && deviceId != SystemInfo.unsupportedIdentifier)
             {
                 DebugLog($"Using SystemInfo.deviceUniqueIdentifier: {deviceId}");
                 return deviceId;
             }
-            
+
             // Fallback to GUID if SystemInfo.deviceUniqueIdentifier is not available
             var fallbackGuid = Guid.NewGuid().ToString();
             DebugLog($"SystemInfo.deviceUniqueIdentifier not available, using generated GUID: {fallbackGuid}");
@@ -517,7 +542,7 @@ namespace Styly.NetSync
             _connectionManager = new ConnectionManager(this, _messageProcessor, _enableDebugLogs, _logNetworkTraffic);
             _avatarManager = new AvatarManager(_enableDebugLogs);
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
-            _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _sendRate);
+            _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _transformSendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
             _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
@@ -852,50 +877,50 @@ namespace Styly.NetSync
             {
                 return; // No pending error
             }
-            
+
             // Re-entrancy guard: prevent concurrent execution
             if (_isHandlingConnectionError)
             {
                 return; // Already handling an error
             }
-            
+
             try
             {
                 _isHandlingConnectionError = true;
-                
+
                 // Don't schedule reconnection if application is quitting
                 if (!Application.isPlaying)
                 {
                     DebugLog("Application not playing - skipping reconnection schedule");
                     return;
                 }
-                
+
                 // Schedule reconnection deterministically
                 _reconnectAt = Time.time + ReconnectDelay;
-                
+
                 // Log detailed context
                 string exType = _pendingConnectionException?.GetType().Name ?? "Unknown";
                 string exMsg = _pendingConnectionException?.Message ?? "No details";
                 DebugLog($"ConnectionError detected. Scheduling reconnect. " +
                          $"now={Time.time:F2} reconnectAt={_reconnectAt:F2} " +
                          $"exType={exType} exMsg={exMsg}");
-                
+
                 // Reset client state
                 _clientNo = 0;
                 _hasInvokedReady = false;
                 _shouldCheckReady = false;
                 _shouldSendHandshake = false;
                 _networkVariableManager?.ResetInitialSyncFlag();
-                
+
                 // Execute teardown (idempotent)
                 DebugLog("StopNetworking start. reason=ConnectionError");
                 StopNetworking();
                 DebugLog("StopNetworking completed.");
-                
+
                 // Cleanup avatars and presence
                 _avatarManager?.CleanupRemoteAvatars();
                 _humanPresenceManager?.CleanupAll();
-                
+
                 // Clear error state for next reconnect attempt
                 _connectionManager?.ClearConnectionError();
             }
@@ -913,7 +938,7 @@ namespace Styly.NetSync
         {
             // DO NOT execute teardown here - may be called from receive thread
             // Instead, mark pending for main thread processing
-            
+
             // Copy exception context from ConnectionManager BEFORE setting flag
             // This ensures consistency between exception and timestamp
             if (_connectionManager != null)
@@ -921,14 +946,14 @@ namespace Styly.NetSync
                 // Read volatile fields - they are written in order (timestamp first, then exception)
                 var timestamp = _connectionManager.LastExceptionAtUnixMs;
                 var exception = _connectionManager.LastException;
-                
+
                 System.Threading.Interlocked.Exchange(ref _pendingConnectionErrorAtUnixMs, timestamp);
                 _pendingConnectionException = exception;
             }
-            
+
             // Now set the pending flag (atomic operation ensures main thread sees the exception data)
             System.Threading.Interlocked.Exchange(ref _pendingConnectionError, PENDING_ERROR_SET);
-            
+
             // Log simple notification on receive thread (safe)
             Debug.LogError($"[NetSyncManager] Connection error detected: {reason}");
         }

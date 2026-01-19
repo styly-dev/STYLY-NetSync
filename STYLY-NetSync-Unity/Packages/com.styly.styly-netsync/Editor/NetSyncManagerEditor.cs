@@ -14,7 +14,8 @@ namespace Styly.NetSync.Editor
         private double _lastRepaint;
         private static readonly string[] AdvancedPropertyOrder =
         {
-            "ServerDiscoveryPort",
+            "_transformSendRate",
+            "_serverDiscoveryPort",
             "_syncBatteryLevel"
         };
         private static readonly HashSet<string> AdvancedProperties = new HashSet<string>(AdvancedPropertyOrder);
@@ -61,11 +62,11 @@ namespace Styly.NetSync.Editor
             }
 
             DrawAdvancedSection(advancedPropertyPaths);
-            
+
             DrawGlobalVariablesSection();
 
             serializedObject.ApplyModifiedProperties();
-            
+
             // Throttle inspector repaint during Play mode to reduce CPU usage.
             // Repaint only once every ~0.2 seconds on Layout events.
             if (Application.isPlaying && Event.current.type == EventType.Layout)
@@ -104,7 +105,15 @@ namespace Styly.NetSync.Editor
                         var property = serializedObject.FindProperty(propertyName);
                         if (property != null)
                         {
-                            EditorGUILayout.PropertyField(property, true);
+                            // Custom label for transform send rate
+                            if (propertyName == "_transformSendRate")
+                            {
+                                EditorGUILayout.PropertyField(property, new GUIContent("Transform Send Rate (Hz)", property.tooltip), true);
+                            }
+                            else
+                            {
+                                EditorGUILayout.PropertyField(property, true);
+                            }
                         }
                     }
 
@@ -121,18 +130,18 @@ namespace Styly.NetSync.Editor
             {
                 return;
             }
-            
+
             EditorGUILayout.Space();
-            
+
             // Global Network Variables section
             _showGlobalVariables = EditorGUILayout.BeginFoldoutHeaderGroup(_showGlobalVariables, "Global Network Variables");
             if (_showGlobalVariables)
             {
                 EditorGUI.indentLevel++;
-                
+
                 // Get global variables from NetSyncManager instance
                 var globalVars = NetSyncManager.Instance != null ? NetSyncManager.Instance.GetAllGlobalVariables() : null;
-                
+
                 if (globalVars == null || globalVars.Count == 0)
                 {
                     EditorGUILayout.HelpBox("No global variables set", MessageType.Info);
@@ -140,14 +149,14 @@ namespace Styly.NetSync.Editor
                 else
                 {
                     EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-                    
+
                     foreach (var kvp in globalVars)
                     {
                         EditorGUILayout.BeginHorizontal();
-                        
+
                         // Key
                         EditorGUILayout.LabelField(kvp.Key, GUILayout.Width(150));
-                        
+
                         // Value
                         if (kvp.Value.Length > 50)
                         {
@@ -161,13 +170,13 @@ namespace Styly.NetSync.Editor
                             EditorGUILayout.LabelField(kvp.Value, EditorStyles.wordWrappedLabel);
                             EditorGUILayout.EndHorizontal();
                         }
-                        
+
                         EditorGUILayout.Space(2);
                     }
-                    
+
                     EditorGUILayout.EndVertical();
                 }
-                
+
                 EditorGUI.indentLevel--;
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
