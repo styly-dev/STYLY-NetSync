@@ -30,8 +30,10 @@ enable_server_discovery = true
 # Broadcast interval when server is idle (2Hz default)
 idle_broadcast_interval = 0.5
 
-# Minimum broadcast interval when clients are very active (20Hz max)
-dirty_threshold = 0.05
+# Transform broadcast frequency in Hz (broadcasts per second)
+# Valid range: 1-60. Higher values provide smoother sync but increase bandwidth.
+# Default matches Unity NetSyncManager's _transformSendRate default.
+transform_broadcast_rate = 10
 
 # Client disconnect timeout in seconds
 client_timeout = 1.0

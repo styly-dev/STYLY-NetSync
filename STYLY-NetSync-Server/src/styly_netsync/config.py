@@ -56,7 +56,7 @@ class ServerConfig:
 
     # Timing settings
     idle_broadcast_interval: float
-    dirty_threshold: float
+    transform_broadcast_rate: int
     client_timeout: float
     cleanup_interval: float
     device_id_expiry_time: float
@@ -96,7 +96,7 @@ _VALID_KEYS: set[str] = {
     "enable_server_discovery",
     # Timing settings
     "idle_broadcast_interval",
-    "dirty_threshold",
+    "transform_broadcast_rate",
     "client_timeout",
     "cleanup_interval",
     "device_id_expiry_time",
@@ -226,7 +226,6 @@ def validate_config(config: ServerConfig) -> list[str]:
     # Timing validation (must be positive)
     timing_fields = [
         "idle_broadcast_interval",
-        "dirty_threshold",
         "client_timeout",
         "cleanup_interval",
         "device_id_expiry_time",
@@ -238,12 +237,22 @@ def validate_config(config: ServerConfig) -> list[str]:
         if value <= 0:
             errors.append(f"{field_name} must be positive, got {value}")
 
-    # Cross-field validation for timing values
-    if config.dirty_threshold > config.idle_broadcast_interval:
+    # Transform broadcast rate validation (1-60 Hz range)
+    if not 1 <= config.transform_broadcast_rate <= 60:
         errors.append(
-            f"dirty_threshold ({config.dirty_threshold}) should be <= "
-            f"idle_broadcast_interval ({config.idle_broadcast_interval})"
+            f"transform_broadcast_rate must be between 1 and 60 Hz, "
+            f"got {config.transform_broadcast_rate}"
         )
+    else:
+        # Cross-field validation for timing values (only if rate is in valid range)
+        # Convert transform_broadcast_rate (Hz) to interval (seconds) for comparison
+        broadcast_interval = 1.0 / config.transform_broadcast_rate
+        if broadcast_interval > config.idle_broadcast_interval:
+            errors.append(
+                f"transform_broadcast_rate ({config.transform_broadcast_rate} Hz = "
+                f"{broadcast_interval:.3f}s interval) results in slower broadcast than "
+                f"idle_broadcast_interval ({config.idle_broadcast_interval}s)"
+            )
 
     # poll_timeout must be positive integer
     if config.poll_timeout <= 0:

@@ -44,7 +44,7 @@ class TestLoadDefaultConfig:
         assert config.enable_server_discovery is True
         # Timing
         assert config.idle_broadcast_interval == 0.5
-        assert config.dirty_threshold == 0.05
+        assert config.transform_broadcast_rate == 10
         assert config.client_timeout == 1.0
         assert config.cleanup_interval == 1.0
         assert config.device_id_expiry_time == 300.0
@@ -89,7 +89,7 @@ class TestServerConfig:
             server_name="Custom Server",
             enable_server_discovery=False,
             idle_broadcast_interval=default_config.idle_broadcast_interval,
-            dirty_threshold=default_config.dirty_threshold,
+            transform_broadcast_rate=default_config.transform_broadcast_rate,
             client_timeout=default_config.client_timeout,
             cleanup_interval=default_config.cleanup_interval,
             device_id_expiry_time=default_config.device_id_expiry_time,
@@ -208,7 +208,7 @@ class TestProcessTomlConfig:
         """Test processing timing keys."""
         toml_data = {
             "idle_broadcast_interval": 1.0,
-            "dirty_threshold": 0.1,
+            "transform_broadcast_rate": 30,
             "client_timeout": 2.0,
             "cleanup_interval": 2.0,
             "device_id_expiry_time": 600.0,
@@ -218,7 +218,7 @@ class TestProcessTomlConfig:
         }
         result = process_toml_config(toml_data)
         assert result["idle_broadcast_interval"] == 1.0
-        assert result["dirty_threshold"] == 0.1
+        assert result["transform_broadcast_rate"] == 30
         assert result["client_timeout"] == 2.0
         assert result["cleanup_interval"] == 2.0
         assert result["device_id_expiry_time"] == 600.0
@@ -368,10 +368,12 @@ class TestValidateConfig:
         """Test that valid timing values pass validation."""
         from dataclasses import replace
 
+        # Note: idle_broadcast_interval must be >= broadcast interval (1/transform_broadcast_rate)
+        # With transform_broadcast_rate=60 Hz, broadcast interval is ~0.0167s
         config = replace(
             default_config,
-            idle_broadcast_interval=0.001,
-            dirty_threshold=0.001,
+            idle_broadcast_interval=0.02,  # Must be >= 1/60 (0.0167s)
+            transform_broadcast_rate=60,
             client_timeout=0.001,
             cleanup_interval=0.001,
             device_id_expiry_time=0.001,
@@ -469,30 +471,48 @@ class TestValidateConfig:
         errors = validate_config(config)
         assert errors == []
 
-    def test_dirty_threshold_exceeds_idle_interval(
+    def test_transform_broadcast_rate_too_slow(
         self, default_config: ServerConfig
     ) -> None:
-        """Test that dirty_threshold > idle_broadcast_interval fails validation."""
+        """Test that transform_broadcast_rate resulting in slower interval fails."""
         from dataclasses import replace
 
+        # 1 Hz = 1.0s interval, which exceeds idle_broadcast_interval (0.1s)
         config = replace(
             default_config,
             idle_broadcast_interval=0.1,
-            dirty_threshold=0.2,  # Should be <= idle_broadcast_interval
+            transform_broadcast_rate=1,  # 1 Hz = 1.0s interval
         )
         errors = validate_config(config)
         assert any(
-            "dirty_threshold" in e and "idle_broadcast_interval" in e for e in errors
+            "transform_broadcast_rate" in e and "idle_broadcast_interval" in e
+            for e in errors
         )
+
+    def test_transform_broadcast_rate_out_of_range(
+        self, default_config: ServerConfig
+    ) -> None:
+        """Test that transform_broadcast_rate outside 1-60 Hz range fails."""
+        from dataclasses import replace
+
+        # Test below range
+        config = replace(default_config, transform_broadcast_rate=0)
+        errors = validate_config(config)
+        assert any("transform_broadcast_rate" in e and "1 and 60" in e for e in errors)
+
+        # Test above range
+        config = replace(default_config, transform_broadcast_rate=100)
+        errors = validate_config(config)
+        assert any("transform_broadcast_rate" in e and "1 and 60" in e for e in errors)
 
     def test_valid_timing_relationships(self, default_config: ServerConfig) -> None:
         """Test that valid timing relationships pass validation."""
         from dataclasses import replace
 
-        # dirty_threshold <= idle_broadcast_interval
+        # 60 Hz = 0.0167s interval, which is <= idle_broadcast_interval (0.5s)
         config = replace(
             default_config,
-            dirty_threshold=0.01,
+            transform_broadcast_rate=60,
             idle_broadcast_interval=0.5,
         )
         errors = validate_config(config)
