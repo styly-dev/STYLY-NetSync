@@ -144,7 +144,7 @@ def get_version() -> str:
 
 class NetSyncServer:
     # Note: All default values are defined in default.toml, not in code.
-    # The BROADCAST_CHECK_INTERVAL is derived from dirty_threshold in config.
+    # The BROADCAST_CHECK_INTERVAL is derived from transform_broadcast_rate in config.
 
     # Non-configurable constants
     ROUTER_BACKLOG = 512  # Accept queue depth for DEALER/ROUTER connections
@@ -188,12 +188,11 @@ class NetSyncServer:
         self.context = zmq.Context()
 
         # Initialize timing settings from config
-        self.BASE_BROADCAST_INTERVAL = config.base_broadcast_interval
         self.IDLE_BROADCAST_INTERVAL = config.idle_broadcast_interval
-        self.DIRTY_THRESHOLD = config.dirty_threshold
-        self.BROADCAST_CHECK_INTERVAL = (
-            config.dirty_threshold
-        )  # Same as dirty_threshold
+        # Convert transform_broadcast_rate (Hz) to interval (seconds)
+        broadcast_interval = 1.0 / config.transform_broadcast_rate
+        self.DIRTY_THRESHOLD = broadcast_interval
+        self.BROADCAST_CHECK_INTERVAL = broadcast_interval
         self.CLEANUP_INTERVAL = config.cleanup_interval
         self.STATUS_LOG_INTERVAL = config.status_log_interval
         self.MAIN_LOOP_SLEEP = config.main_loop_sleep
@@ -330,7 +329,6 @@ class NetSyncServer:
         )
 
         # Performance configuration (now using constants)
-        self.base_broadcast_interval = self.BASE_BROADCAST_INTERVAL
         self.idle_broadcast_interval = self.IDLE_BROADCAST_INTERVAL
         self.dirty_threshold = self.DIRTY_THRESHOLD
 

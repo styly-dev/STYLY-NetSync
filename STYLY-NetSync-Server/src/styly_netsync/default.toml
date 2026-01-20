@@ -27,17 +27,16 @@ server_name = "STYLY-NetSync-Server"
 enable_server_discovery = true
 
 # Timing Settings
-# Base broadcast interval in seconds (10Hz default)
-base_broadcast_interval = 0.1
+# Broadcast interval when server is idle (0.5Hz default)
+idle_broadcast_interval = 2.0
 
-# Broadcast interval when server is idle (2Hz default)
-idle_broadcast_interval = 0.5
-
-# Minimum broadcast interval when clients are very active (20Hz max)
-dirty_threshold = 0.05
+# Transform broadcast frequency in Hz (broadcasts per second)
+# Valid range: 0.5-60. Higher values provide smoother sync but increase bandwidth.
+# Default matches Unity NetSyncManager's _transformSendRate default.
+transform_broadcast_rate = 10
 
 # Client disconnect timeout in seconds
-client_timeout = 1.0
+client_timeout = 2.5
 
 # Cleanup interval in seconds for removing stale data
 cleanup_interval = 1.0
