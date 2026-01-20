@@ -43,7 +43,7 @@ class TestLoadDefaultConfig:
         assert config.server_name == "STYLY-NetSync-Server"
         assert config.enable_server_discovery is True
         # Timing
-        assert config.idle_broadcast_interval == 0.5
+        assert config.idle_broadcast_interval == 2.0
         assert config.transform_broadcast_rate == 10
         assert config.client_timeout == 2.5
         assert config.cleanup_interval == 1.0
@@ -509,11 +509,11 @@ class TestValidateConfig:
         """Test that valid timing relationships pass validation."""
         from dataclasses import replace
 
-        # 60 Hz = 0.0167s interval, which is <= idle_broadcast_interval (0.5s)
+        # 60 Hz = 0.0167s interval, which is <= idle_broadcast_interval (2.0s)
         config = replace(
             default_config,
             transform_broadcast_rate=60,
-            idle_broadcast_interval=0.5,
+            idle_broadcast_interval=2.0,
         )
         errors = validate_config(config)
         assert errors == []
@@ -671,7 +671,7 @@ class TestGetUnknownKeys:
         toml_data = {
             "dealer_port": 5555,
             "pub_port": 5556,
-            "idle_broadcast_interval": 0.5,
+            "idle_broadcast_interval": 2.0,
         }
         unknown = get_unknown_keys(toml_data)
         assert unknown == []
@@ -808,4 +808,4 @@ client_timeout = 5.0
         assert config.client_timeout == 5.0
         # All other defaults preserved
         assert config.dealer_port == 5555
-        assert config.idle_broadcast_interval == 0.5
+        assert config.idle_broadcast_interval == 2.0

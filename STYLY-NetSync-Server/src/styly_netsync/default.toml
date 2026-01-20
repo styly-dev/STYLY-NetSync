@@ -27,8 +27,8 @@ server_name = "STYLY-NetSync-Server"
 enable_server_discovery = true
 
 # Timing Settings
-# Broadcast interval when server is idle (2Hz default)
-idle_broadcast_interval = 0.5
+# Broadcast interval when server is idle (0.5Hz default)
+idle_broadcast_interval = 2.0
 
 # Transform broadcast frequency in Hz (broadcasts per second)
 # Valid range: 0.5-60. Higher values provide smoother sync but increase bandwidth.
