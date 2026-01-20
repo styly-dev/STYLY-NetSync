@@ -879,7 +879,7 @@ client_timeout = 5.0
 
         config, overrides = create_config_from_args(args)
         assert len(overrides) == 4
-        
+
         # Check that all overrides are tracked
         override_keys = {o.key for o in overrides}
         assert "dealer_port" in override_keys

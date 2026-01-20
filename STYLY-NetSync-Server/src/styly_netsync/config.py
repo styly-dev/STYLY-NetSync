@@ -429,7 +429,7 @@ def create_config_from_args(
                 default_value = getattr(default_config, key)
                 if default_value != new_value:
                     overrides.append(ConfigOverride(key, default_value, new_value))
-            
+
             config = dataclass_replace(config, **config_data)
 
     # Step 3: Apply CLI overrides (highest priority)
