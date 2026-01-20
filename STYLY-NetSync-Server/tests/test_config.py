@@ -45,7 +45,7 @@ class TestLoadDefaultConfig:
         # Timing
         assert config.idle_broadcast_interval == 0.5
         assert config.transform_broadcast_rate == 10
-        assert config.client_timeout == 1.0
+        assert config.client_timeout == 2.5
         assert config.cleanup_interval == 1.0
         assert config.device_id_expiry_time == 300.0
         assert config.status_log_interval == 10.0
@@ -492,18 +492,18 @@ class TestValidateConfig:
     def test_transform_broadcast_rate_out_of_range(
         self, default_config: ServerConfig
     ) -> None:
-        """Test that transform_broadcast_rate outside 1-60 Hz range fails."""
+        """Test that transform_broadcast_rate outside 0.5-60 Hz range fails."""
         from dataclasses import replace
 
         # Test below range
         config = replace(default_config, transform_broadcast_rate=0)
         errors = validate_config(config)
-        assert any("transform_broadcast_rate" in e and "1 and 60" in e for e in errors)
+        assert any("transform_broadcast_rate" in e and "0.5 and 60" in e for e in errors)
 
         # Test above range
         config = replace(default_config, transform_broadcast_rate=100)
         errors = validate_config(config)
-        assert any("transform_broadcast_rate" in e and "1 and 60" in e for e in errors)
+        assert any("transform_broadcast_rate" in e and "0.5 and 60" in e for e in errors)
 
     def test_valid_timing_relationships(self, default_config: ServerConfig) -> None:
         """Test that valid timing relationships pass validation."""

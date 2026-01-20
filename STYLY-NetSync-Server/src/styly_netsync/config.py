@@ -237,10 +237,10 @@ def validate_config(config: ServerConfig) -> list[str]:
         if value <= 0:
             errors.append(f"{field_name} must be positive, got {value}")
 
-    # Transform broadcast rate validation (1-60 Hz range)
-    if not 1 <= config.transform_broadcast_rate <= 60:
+    # Transform broadcast rate validation (0.5-60 Hz range)
+    if not 0.5 <= config.transform_broadcast_rate <= 60:
         errors.append(
-            f"transform_broadcast_rate must be between 1 and 60 Hz, "
+            f"transform_broadcast_rate must be between 0.5 and 60 Hz, "
             f"got {config.transform_broadcast_rate}"
         )
     else:
