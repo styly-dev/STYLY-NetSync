@@ -423,10 +423,9 @@ def create_config_from_args(
 
         # Apply user config overrides
         if config_data:
-            # Track what values are being overridden
-            default_config = load_default_config()
+            # Track what values are being overridden (compare with existing config)
             for key, new_value in config_data.items():
-                default_value = getattr(default_config, key)
+                default_value = getattr(config, key)
                 if default_value != new_value:
                     overrides.append(ConfigOverride(key, default_value, new_value))
 
