@@ -713,7 +713,7 @@ class TestCreateConfigFromArgs:
             log_retention=None,
         )
 
-        config = create_config_from_args(args)
+        config, _ = create_config_from_args(args)
         # Should match default config
         assert config.dealer_port == 5555
         assert config.pub_port == 5556
@@ -738,7 +738,7 @@ server_name = "User Server"
             log_retention=None,
         )
 
-        config = create_config_from_args(args)
+        config, _ = create_config_from_args(args)
         # User overrides
         assert config.dealer_port == 7777
         assert config.server_name == "User Server"
@@ -764,7 +764,7 @@ server_discovery_port = 7777
             log_retention=None,
         )
 
-        config = create_config_from_args(args)
+        config, _ = create_config_from_args(args)
         # CLI takes precedence
         assert config.server_discovery_port == 8888
 
@@ -803,9 +803,128 @@ client_timeout = 5.0
             log_retention=None,
         )
 
-        config = create_config_from_args(args)
+        config, _ = create_config_from_args(args)
         # User override
         assert config.client_timeout == 5.0
         # All other defaults preserved
         assert config.dealer_port == 5555
         assert config.idle_broadcast_interval == 2.0
+
+
+class TestConfigOverrides:
+    """Tests for config override tracking."""
+
+    def test_no_config_file_no_overrides(self) -> None:
+        """Test that no overrides are tracked when using default config."""
+        args = argparse.Namespace(
+            config=None,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config, overrides = create_config_from_args(args)
+        assert overrides == []
+
+    def test_single_override_tracked(self, tmp_path: Path) -> None:
+        """Test that a single override is tracked correctly."""
+        toml_content = """
+dealer_port = 7777
+"""
+        config_file = tmp_path / "user.toml"
+        config_file.write_text(toml_content)
+
+        args = argparse.Namespace(
+            config=config_file,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config, overrides = create_config_from_args(args)
+        assert len(overrides) == 1
+        assert overrides[0].key == "dealer_port"
+        assert overrides[0].default_value == 5555
+        assert overrides[0].new_value == 7777
+
+    def test_multiple_overrides_tracked(self, tmp_path: Path) -> None:
+        """Test that multiple overrides are tracked correctly."""
+        toml_content = """
+dealer_port = 7777
+pub_port = 7778
+server_name = "Custom Server"
+client_timeout = 5.0
+"""
+        config_file = tmp_path / "user.toml"
+        config_file.write_text(toml_content)
+
+        args = argparse.Namespace(
+            config=config_file,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config, overrides = create_config_from_args(args)
+        assert len(overrides) == 4
+        
+        # Check that all overrides are tracked
+        override_keys = {o.key for o in overrides}
+        assert "dealer_port" in override_keys
+        assert "pub_port" in override_keys
+        assert "server_name" in override_keys
+        assert "client_timeout" in override_keys
+
+    def test_same_value_not_tracked(self, tmp_path: Path) -> None:
+        """Test that setting same value as default is not tracked as override."""
+        toml_content = """
+dealer_port = 5555
+"""
+        config_file = tmp_path / "user.toml"
+        config_file.write_text(toml_content)
+
+        args = argparse.Namespace(
+            config=config_file,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config, overrides = create_config_from_args(args)
+        # No overrides since value matches default
+        assert len(overrides) == 0
+
+    def test_empty_config_file_no_overrides(self, tmp_path: Path) -> None:
+        """Test that empty config file results in no overrides."""
+        config_file = tmp_path / "empty.toml"
+        config_file.write_text("")
+
+        args = argparse.Namespace(
+            config=config_file,
+            server_discovery_port=None,
+            no_server_discovery=False,
+            log_dir=None,
+            log_level_console=None,
+            log_json_console=False,
+            log_rotation=None,
+            log_retention=None,
+        )
+
+        config, overrides = create_config_from_args(args)
+        assert overrides == []
