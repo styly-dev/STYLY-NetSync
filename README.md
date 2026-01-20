@@ -65,7 +65,7 @@ npm install -g openupm-cli
 cd YOUR_UNITY_PROJECT_DIR
 
 # Add/Update NetSync package with specific version
-openupm add -f com.styly.styly-netsync@0.7.3
+openupm add -f com.styly.styly-netsync@0.7.4
 ```
 
 ## Setup
@@ -76,10 +76,10 @@ openupm add -f com.styly.styly-netsync@0.7.3
 ```shell
 # Start NetSync server
 # Use the same version of the Unity package
-uvx styly-netsync-server@0.7.3
+uvx styly-netsync-server@0.7.4
 
 # [Optional] Start client simulator
-uvx --from styly-netsync-server@0.7.3 styly-netsync-simulator --clients 10
+uvx --from styly-netsync-server@0.7.4 styly-netsync-simulator --clients 10
 ```
 The uvx command automatically downloads the package, creates an isolated virtual environment, installs dependencies, and runs the python server program.
 
