@@ -14,7 +14,7 @@ import tomllib
 from dataclasses import dataclass, fields
 from dataclasses import replace as dataclass_replace
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 
 class ConfigurationError(Exception):
@@ -37,6 +37,20 @@ class DefaultConfigError(Exception):
 
     def __init__(self, message: str) -> None:
         super().__init__(f"Failed to load default configuration: {message}")
+
+
+class ConfigOverride(NamedTuple):
+    """Represents a configuration value override.
+
+    Attributes:
+        key: The configuration field name.
+        default_value: The default value from default.toml.
+        new_value: The new value from user config or CLI.
+    """
+
+    key: str
+    default_value: Any
+    new_value: Any
 
 
 @dataclass
@@ -370,7 +384,7 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
 
 def create_config_from_args(
     args: argparse.Namespace,
-) -> ServerConfig:
+) -> tuple[ServerConfig, list[ConfigOverride]]:
     """Create ServerConfig from CLI arguments with layered config loading.
 
     Configuration priority: CLI args > user config > default config
@@ -379,7 +393,8 @@ def create_config_from_args(
         args: Parsed CLI arguments (may have 'config' attribute for user config path).
 
     Returns:
-        Configured ServerConfig instance.
+        Tuple of (ServerConfig instance, list of ConfigOverride).
+        The overrides list contains all values from user config that differ from defaults.
 
     Raises:
         DefaultConfigError: If default.toml cannot be loaded (fatal).
@@ -389,6 +404,7 @@ def create_config_from_args(
     """
     # Step 1: Load default configuration (required)
     config = load_default_config()
+    overrides: list[ConfigOverride] = []
 
     # Step 2: Override with user config if specified
     if hasattr(args, "config") and args.config is not None:
@@ -407,6 +423,12 @@ def create_config_from_args(
 
         # Apply user config overrides
         if config_data:
+            # Track what values are being overridden (compare with existing config)
+            for key, new_value in config_data.items():
+                default_value = getattr(config, key)
+                if default_value != new_value:
+                    overrides.append(ConfigOverride(key, default_value, new_value))
+
             config = dataclass_replace(config, **config_data)
 
     # Step 3: Apply CLI overrides (highest priority)
@@ -417,4 +439,4 @@ def create_config_from_args(
     if errors:
         raise ConfigurationError(errors)
 
-    return config
+    return config, overrides

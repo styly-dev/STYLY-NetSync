@@ -1978,7 +1978,7 @@ def main() -> None:
     # Load configuration from file and/or CLI args
     # Note: Logging is configured after this to use config values
     try:
-        config = create_config_from_args(args)
+        config, config_overrides = create_config_from_args(args)
     except DefaultConfigError as e:
         # Fatal error: default.toml cannot be loaded
         print(f"FATAL: {e}")
@@ -2010,6 +2010,10 @@ def main() -> None:
     # Log config file info after logging is configured
     if args.config is not None:
         logger.info(f"Loaded user configuration from {args.config}")
+        if config_overrides:
+            logger.info("Configuration overrides from user config:")
+            for override in config_overrides:
+                logger.info(f"  {override.key}: {override.default_value} -> {override.new_value}")
 
     # Apply global configuration settings
     binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)
