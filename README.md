@@ -55,11 +55,6 @@ npm install -g openupm-cli
 brew install node
 brew install uv
 npm install -g openupm-cli
-
-# Mac
-brew install node
-brew install uv
-npm install -g openupm-cli
 ```
 
 ### Add / Update STYLY-NetSync to Unity project
