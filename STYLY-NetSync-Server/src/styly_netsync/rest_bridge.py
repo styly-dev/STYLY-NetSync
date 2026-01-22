@@ -68,6 +68,22 @@ class PreseedStore:
                     result[device_id] = dict(variables)
             return result
 
+    def clear_room(self, room_id: str) -> None:
+        """Remove all stored variables for a given room."""
+        with self._lock:
+            keys_to_remove = [
+                key for key in self._data if key[0] == room_id
+            ]
+            for key in keys_to_remove:
+                del self._data[key]
+
+    def clear_device(self, room_id: str, device_id: str) -> None:
+        """Remove all stored variables for a specific device in a room."""
+        with self._lock:
+            key = (room_id, device_id)
+            if key in self._data:
+                del self._data[key]
+
 
 store = PreseedStore()
 
@@ -175,7 +191,15 @@ class RoomBridge:
 
     def flush_all_known_mappings(self) -> None:
         """Flush queued variables for devices whose client numbers are known."""
+        # Only flush if we're connected and the room has clients
+        # This prevents recreating empty rooms when clients disconnect
+        if not self._manager.client_no or self._manager.client_no == 0:
+            return
+
         pending = store.all_for_room(self.room_id)
+        if not pending:
+            return
+
         for device_id, kvs in pending.items():
             client_no = self.get_client_no(device_id)
             if client_no:
@@ -203,6 +227,14 @@ class BridgeManager:
                 bridge.start()
                 self._bridges[room_id] = bridge
             return bridge
+
+    def cleanup_room(self, room_id: str) -> None:
+        """Stop and remove a bridge for a room, and clear stored variables."""
+        with self._lock:
+            bridge = self._bridges.pop(room_id, None)
+            if bridge:
+                bridge.stop()
+        store.clear_room(room_id)
 
 
 def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
@@ -245,6 +277,18 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
             "mapping": {"clientNo": client_no},
             "result": {name: {"state": state} for name, state in statuses.items()},
         }
+
+    @app.delete("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
+    def clear_device_variables(room_id: str, device_id: str) -> dict[str, str]:
+        """Clear all stored variables for a specific device in a room."""
+        store.clear_device(room_id, device_id)
+        return {"status": "ok", "roomId": room_id, "deviceId": device_id}
+
+    @app.delete("/v1/rooms/{room_id}/client-variables")
+    def clear_room_variables(room_id: str) -> dict[str, str]:
+        """Clear all stored variables and stop the bridge for a room."""
+        manager.cleanup_room(room_id)
+        return {"status": "ok", "roomId": room_id}
 
     return app
 
