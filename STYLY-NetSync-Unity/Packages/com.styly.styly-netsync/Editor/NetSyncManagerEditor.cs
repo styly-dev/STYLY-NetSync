@@ -10,8 +10,6 @@ namespace Styly.NetSync.Editor
     {
         private static bool showAdvanced;
         private bool _showGlobalVariables = true;
-        // Timestamp of the last inspector repaint. Used to throttle repaint calls in play mode.
-        private double _lastRepaint;
         private static readonly string[] AdvancedPropertyOrder =
         {
             "_transformSendRate",
@@ -19,6 +17,11 @@ namespace Styly.NetSync.Editor
             "_syncBatteryLevel"
         };
         private static readonly HashSet<string> AdvancedProperties = new HashSet<string>(AdvancedPropertyOrder);
+
+        public override bool RequiresConstantRepaint()
+        {
+            return Application.isPlaying;
+        }
 
         public override void OnInspectorGUI()
         {
@@ -66,18 +69,6 @@ namespace Styly.NetSync.Editor
             DrawGlobalVariablesSection();
 
             serializedObject.ApplyModifiedProperties();
-
-            // Throttle inspector repaint during Play mode to reduce CPU usage.
-            // Repaint only once every ~0.2 seconds on Layout events.
-            if (Application.isPlaying && Event.current.type == EventType.Layout)
-            {
-                double now = EditorApplication.timeSinceStartup;
-                if (now - _lastRepaint > 0.2d)
-                {
-                    Repaint();
-                    _lastRepaint = now;
-                }
-            }
         }
 
         private void DrawAdvancedSection(List<string> advancedPropertyPaths)
