@@ -16,6 +16,9 @@ __pycache__/
 *.py-e
 *.egg-info/
 
+# Editor backup files
+*.md-e
+
 # IDE
 .idea/
 
