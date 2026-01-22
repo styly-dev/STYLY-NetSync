@@ -528,6 +528,26 @@ class NetSyncServer:
             self._pub_ready.set()
 
             while self._publisher_running:
+                # Step 1: Flush ALL coalesced transforms first (v0.7.2 batch style)
+                # This ensures transform data is sent in batches rather than one-at-a-time
+                with self._coalesce_lock:
+                    coalesced_items = list(self._coalesce_latest.items())
+                    self._coalesce_latest.clear()
+
+                transforms_sent = 0
+                for topic_bytes, message_bytes in coalesced_items:
+                    try:
+                        self.pub.send_multipart(
+                            [topic_bytes, message_bytes], flags=zmq.DONTWAIT
+                        )
+                        self._increment_stat("broadcast_count")
+                        transforms_sent += 1
+                    except zmq.Again:
+                        pass  # Skip if send would block
+                    except Exception as e:
+                        logger.error(f"Publisher failed to send (transform): {e}")
+
+                # Step 2: Drain control queue (RPC/NV messages)
                 drained = 0
                 while drained < self.CTRL_DRAIN_BATCH:
                     try:
@@ -540,25 +560,26 @@ class NetSyncServer:
                         self._publisher_running = False
                         break
 
-                    topic_bytes, message_bytes = item
+                    ctrl_topic_bytes, ctrl_message_bytes = item
 
                     try:
-                        self.pub.send_multipart([topic_bytes, message_bytes])
+                        # Use DONTWAIT to prevent blocking on control sends
+                        self.pub.send_multipart(
+                            [ctrl_topic_bytes, ctrl_message_bytes], flags=zmq.DONTWAIT
+                        )
                         self._increment_stat("broadcast_count")
+                    except zmq.Again:
+                        pass  # Skip if send would block
                     except Exception as e:
-                        logger.error(f"Publisher failed to send: {e}")
+                        logger.error(f"Publisher failed to send (control): {e}")
 
                     drained += 1
 
                 if not self._publisher_running:
                     break
 
-                if self._control_backlog_exceeded():
-                    time.sleep(self.BACKLOG_SLEEP_SEC)
-                    continue
-
-                transform_sent = self._try_send_transform()
-                if drained == 0 and not transform_sent:
+                # Step 3: Sleep only if nothing was done this iteration
+                if transforms_sent == 0 and drained == 0:
                     time.sleep(self.BACKLOG_SLEEP_SEC)
 
         except Exception as e:
@@ -2013,7 +2034,9 @@ def main() -> None:
         if config_overrides:
             logger.info("Configuration overrides from user config:")
             for override in config_overrides:
-                logger.info(f"  {override.key}: {override.default_value} -> {override.new_value}")
+                logger.info(
+                    f"  {override.key}: {override.default_value} -> {override.new_value}"
+                )
 
     # Apply global configuration settings
     binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)
