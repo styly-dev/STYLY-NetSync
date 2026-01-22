@@ -20,6 +20,10 @@ STYLY NetSync includes an easy-to-integrate Unity package and a lightweight Pyth
 - **Super lightweight** — low CPU / memory footprint; optimized network traffic for stable performance on local networks.
 - **Optimized for LBE** — syncs virtual and physical transforms and offers Human Presence (collision avoidance).
 
+<img width="600" height="331" alt="STYLY-NetSync_1200" src="_images/Infographics/Overview.jpg" />
+<img width="600" height="331" alt="STYLY-NetSync_1200" src="_images/Infographics/TransformSync.jpg" />
+<img width="600" height="331" alt="STYLY-NetSync_1200" src="_images/Infographics/RpcNetworkVariables.jpg" />
+
 ## Features
 
 ### Main features
