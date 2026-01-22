@@ -174,6 +174,8 @@ NetSyncManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName,
 ```
 
 ### Network Variable
+All variable values are strings for simplicity.
+
 ```csharp
 // Set global variable (shared across all clients in room)
 NetSyncManager.Instance.SetGlobalVariable("gameState", "playing");
