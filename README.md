@@ -155,6 +155,8 @@ using Styly.NetSync;
 
 
 ### RPC
+All RPC arguments are strings for simplicity.
+
 ```csharp
 // Broadcast to all clients in the room
 NetSyncManager.Instance.Rpc("FunctionName", new string[] { "arg1", "arg2" });

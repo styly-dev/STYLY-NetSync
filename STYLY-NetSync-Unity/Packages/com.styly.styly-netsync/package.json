@@ -17,5 +17,11 @@
     "email": "info@styly.inc",
     "url": "https://styly.inc/"
   },
-  "samples": []
+  "samples": [
+    {
+      "displayName": "Simple Demo Samples",
+      "description": "Contains simple demo scenes and scripts for STYLY NetSync",
+      "path": "Samples~/SimpleDemos"
+    }
+  ]
 }
