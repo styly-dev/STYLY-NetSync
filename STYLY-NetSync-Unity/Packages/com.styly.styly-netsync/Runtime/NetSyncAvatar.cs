@@ -31,8 +31,8 @@ namespace Styly.NetSync
         // Reference to NetSyncManager
         private NetSyncManager _netSyncManager;
 
-        // Smoothing helper for remote avatars (shared with Human Presence)
-        private readonly NetSyncTransformSmoother _smoother = new NetSyncTransformSmoother(0.1f);
+        // Transform applier for remote avatars (applies targets directly without smoothing)
+        private readonly NetSyncTransformSmoother _smoother = new NetSyncTransformSmoother();
 
         // Events
         [Header("Network Variable Events")]
@@ -159,7 +159,7 @@ namespace Styly.NetSync
 
             if (!IsLocalAvatar)
             {
-                _smoother.Update(Time.deltaTime);
+                _smoother.Update();
             }
 
             // Reflect physical transform (local pose) only for the local avatar.

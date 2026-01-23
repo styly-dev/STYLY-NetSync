@@ -91,7 +91,7 @@ namespace Styly.NetSync
         /// </summary>
         public void UpdateTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
         {
-            // Update smoother target; smoothing is applied in Tick()
+            // Update transform target; applied directly in Tick()
             if (_smootherByClient.TryGetValue(clientNo, out var smoother))
             {
                 if (smoother != null)
@@ -121,9 +121,9 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Per-frame update called from NetSyncManager.Update() to progress interpolation.
+        /// Per-frame update called from NetSyncManager.Update() to apply transforms.
         /// </summary>
-        public void Tick(float deltaTime)
+        public void Tick()
         {
             if (_smootherByClient.Count == 0) { return; }
             foreach (var kv in _smootherByClient)
@@ -131,7 +131,7 @@ namespace Styly.NetSync
                 var smoother = kv.Value;
                 if (smoother != null)
                 {
-                    smoother.Update(deltaTime);
+                    smoother.Update();
                 }
             }
         }

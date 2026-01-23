@@ -5,16 +5,15 @@ using UnityEngine;
 namespace Styly.NetSync
 {
     /// <summary>
-    /// General-purpose transform smoother used for both Remote Avatar and Human Presence.
+    /// Transform applier used for both Remote Avatar and Human Presence.
     /// - Supports multiple tracked transforms with individual coordinate spaces (World/Local).
-    /// - Targets are updated when network packets arrive; interpolation happens in Update.
+    /// - Targets are updated when network packets arrive and applied directly in Update (no interpolation).
     /// - For the first packet, values are applied immediately to avoid snapping from the origin.
     ///
     /// NOTE: Do not use null propagation with UnityEngine.Object. All Unity API calls are on main thread.
     /// </summary>
     internal class NetSyncTransformSmoother
     {
-        private const float DefaultPacketInterval = 0.1f;
         public enum SpaceMode { World, Local }
 
         private class Entry
@@ -35,9 +34,6 @@ namespace Styly.NetSync
             }
         }
 
-        // Interpolation time constant derived from expected packet interval
-        private readonly float _packetInterval;
-
         // Tracked entries in a fixed order for avatar usage
         private Entry _physical;     // Local space
         private Entry _head;         // World space
@@ -50,9 +46,8 @@ namespace Styly.NetSync
 
         private bool _initialized;
 
-        public NetSyncTransformSmoother(float packetIntervalSeconds = DefaultPacketInterval)
+        public NetSyncTransformSmoother()
         {
-            _packetInterval = packetIntervalSeconds <= 0f ? DefaultPacketInterval : packetIntervalSeconds;
             _initialized = false;
         }
 
@@ -166,7 +161,7 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Update the single-target smoother from a world/local pose.
+        /// Update the single-target transform from a world/local pose.
         /// </summary>
         public void SetSingleTarget(Vector3 position, Vector3 eulerRotation)
         {
@@ -241,35 +236,33 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Interpolates all configured transforms towards their targets.
+        /// Applies all configured transforms directly to their targets (no interpolation).
         /// </summary>
-        public void Update(float deltaTime)
+        public void Update()
         {
-            float t = GetInterpolationFactor(deltaTime);
-
-            // Avatar mode entries
+            // Avatar mode entries - apply directly without interpolation
             if (_physical != null && _physical.Transform != null && _physical.HasTarget)
             {
-                _physical.Transform.localPosition = Vector3.Lerp(_physical.Transform.localPosition, _physical.TargetPosition, t);
-                _physical.Transform.localRotation = Quaternion.Slerp(_physical.Transform.localRotation, _physical.TargetRotation, t);
+                _physical.Transform.localPosition = _physical.TargetPosition;
+                _physical.Transform.localRotation = _physical.TargetRotation;
             }
 
             if (_head != null && _head.Transform != null && _head.HasTarget)
             {
-                _head.Transform.position = Vector3.Lerp(_head.Transform.position, _head.TargetPosition, t);
-                _head.Transform.rotation = Quaternion.Slerp(_head.Transform.rotation, _head.TargetRotation, t);
+                _head.Transform.position = _head.TargetPosition;
+                _head.Transform.rotation = _head.TargetRotation;
             }
 
             if (_rightHand != null && _rightHand.Transform != null && _rightHand.HasTarget)
             {
-                _rightHand.Transform.position = Vector3.Lerp(_rightHand.Transform.position, _rightHand.TargetPosition, t);
-                _rightHand.Transform.rotation = Quaternion.Slerp(_rightHand.Transform.rotation, _rightHand.TargetRotation, t);
+                _rightHand.Transform.position = _rightHand.TargetPosition;
+                _rightHand.Transform.rotation = _rightHand.TargetRotation;
             }
 
             if (_leftHand != null && _leftHand.Transform != null && _leftHand.HasTarget)
             {
-                _leftHand.Transform.position = Vector3.Lerp(_leftHand.Transform.position, _leftHand.TargetPosition, t);
-                _leftHand.Transform.rotation = Quaternion.Slerp(_leftHand.Transform.rotation, _leftHand.TargetRotation, t);
+                _leftHand.Transform.position = _leftHand.TargetPosition;
+                _leftHand.Transform.rotation = _leftHand.TargetRotation;
             }
 
             if (_virtuals != null)
@@ -279,8 +272,8 @@ namespace Styly.NetSync
                 {
                     Entry entry = _virtuals[i];
                     if (entry == null || entry.Transform == null || !entry.HasTarget) { continue; }
-                    entry.Transform.position = Vector3.Lerp(entry.Transform.position, entry.TargetPosition, t);
-                    entry.Transform.rotation = Quaternion.Slerp(entry.Transform.rotation, entry.TargetRotation, t);
+                    entry.Transform.position = entry.TargetPosition;
+                    entry.Transform.rotation = entry.TargetRotation;
                 }
             }
 
@@ -289,25 +282,15 @@ namespace Styly.NetSync
             {
                 if (_single.Space == SpaceMode.World)
                 {
-                    _single.Transform.position = Vector3.Lerp(_single.Transform.position, _single.TargetPosition, t);
-                    _single.Transform.rotation = Quaternion.Slerp(_single.Transform.rotation, _single.TargetRotation, t);
+                    _single.Transform.position = _single.TargetPosition;
+                    _single.Transform.rotation = _single.TargetRotation;
                 }
                 else
                 {
-                    _single.Transform.localPosition = Vector3.Lerp(_single.Transform.localPosition, _single.TargetPosition, t);
-                    _single.Transform.localRotation = Quaternion.Slerp(_single.Transform.localRotation, _single.TargetRotation, t);
+                    _single.Transform.localPosition = _single.TargetPosition;
+                    _single.Transform.localRotation = _single.TargetRotation;
                 }
             }
-        }
-
-        /// <summary>
-        /// Computes interpolation factor from delta time and configured packet interval.
-        /// Returns 0 when delta time is non-positive.
-        /// </summary>
-        private float GetInterpolationFactor(float deltaTime)
-        {
-            if (deltaTime <= 0f) { return 0f; }
-            return Mathf.Clamp01(deltaTime / _packetInterval);
         }
     }
 }
