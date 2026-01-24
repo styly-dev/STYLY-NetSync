@@ -31,8 +31,8 @@ namespace Styly.NetSync
         // Reference to NetSyncManager
         private NetSyncManager _netSyncManager;
 
-        // Transform applier for remote avatars (applies targets directly without smoothing)
-        private readonly NetSyncTransformSmoother _smoother = new NetSyncTransformSmoother();
+        // Transform applier for remote avatars (applies targets directly)
+        private readonly NetSyncTransformApplier _transformApplier = new NetSyncTransformApplier();
 
         // Events
         [Header("Network Variable Events")]
@@ -128,7 +128,7 @@ namespace Styly.NetSync
 
             // Do not drive the same Transform in both local (physical) and world (head) spaces.
             // Passing null for physical avoids conflicting updates on _head.
-            _smoother.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
+            _transformApplier.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
@@ -143,7 +143,7 @@ namespace Styly.NetSync
             _netSyncManager = manager;
 
             // For remote avatars, avoid double-driving _head (physical/local vs head/world).
-            _smoother.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
+            _transformApplier.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
@@ -159,7 +159,7 @@ namespace Styly.NetSync
 
             if (!IsLocalAvatar)
             {
-                _smoother.Update();
+                _transformApplier.Update();
             }
 
             // Reflect physical transform (local pose) only for the local avatar.
@@ -236,7 +236,7 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar) { return; }
 
-            _smoother.SetTargets(data);
+            _transformApplier.SetTargets(data);
 
             PhysicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
             PhysicalRotation = data.physical != null ? data.physical.GetRotation() : Vector3.zero;

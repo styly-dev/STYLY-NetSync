@@ -1,4 +1,4 @@
-// NetSyncTransformSmoother.cs
+// NetSyncTransformApplier.cs
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -12,7 +12,7 @@ namespace Styly.NetSync
     ///
     /// NOTE: Do not use null propagation with UnityEngine.Object. All Unity API calls are on main thread.
     /// </summary>
-    internal class NetSyncTransformSmoother
+    internal class NetSyncTransformApplier
     {
         public enum SpaceMode { World, Local }
 
@@ -46,7 +46,7 @@ namespace Styly.NetSync
 
         private bool _initialized;
 
-        public NetSyncTransformSmoother()
+        public NetSyncTransformApplier()
         {
             _initialized = false;
         }
