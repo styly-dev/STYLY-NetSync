@@ -5,35 +5,50 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    // Simple transform data structure (position + rotation euler angles)
+    [Flags]
+    internal enum PoseFlags : byte
+    {
+        None = 0,
+        IsStealth = 1 << 0,
+        PhysicalValid = 1 << 1,
+        HeadValid = 1 << 2,
+        RightValid = 1 << 3,
+        LeftValid = 1 << 4,
+        VirtualsValid = 1 << 5
+    }
+
+    // Pose data structure (position + rotation quaternion)
     [Serializable]
     internal class TransformData
     {
-        public float posX;
-        public float posY;
-        public float posZ;
-        public float rotX;
-        public float rotY;
-        public float rotZ;
+        public Vector3 position;
+        public Quaternion rotation;
 
         public TransformData()
         {
-            posX = posY = posZ = 0;
-            rotX = rotY = rotZ = 0;
+            position = Vector3.zero;
+            rotation = Quaternion.identity;
         }
 
-        public TransformData(Vector3 pos, Vector3 rot)
+        public TransformData(Vector3 pos, Quaternion rot)
         {
-            posX = pos.x;
-            posY = pos.y;
-            posZ = pos.z;
-            rotX = rot.x;
-            rotY = rot.y;
-            rotZ = rot.z;
+            position = pos;
+            rotation = rot;
         }
 
-        public Vector3 GetPosition() => new Vector3(posX, posY, posZ);
-        public Vector3 GetRotation() => new Vector3(rotX, rotY, rotZ);
+        public Vector3 GetPosition() => position;
+
+        /// <summary>
+        /// Returns normalized rotation, guarding against zero quaternion.
+        /// </summary>
+        public Quaternion GetRotation()
+        {
+            if (rotation.x == 0f && rotation.y == 0f && rotation.z == 0f && rotation.w == 0f)
+            {
+                return Quaternion.identity;
+            }
+            return Quaternion.Normalize(rotation);
+        }
     }
 
     // Client transform data using unified structure
@@ -42,6 +57,9 @@ namespace Styly.NetSync
     {
         public string deviceId;
         public int clientNo;  // Client number assigned by server (0 if not assigned)
+        public double poseTime;
+        public ushort poseSeq;
+        public PoseFlags flags;
         public TransformData physical;
         public TransformData head;
         public TransformData rightHand;
@@ -54,6 +72,7 @@ namespace Styly.NetSync
     internal class RoomTransformData
     {
         public string roomId;
+        public double broadcastTime;
         public List<ClientTransformData> clients;
     }
 

@@ -70,7 +70,7 @@ namespace Styly.NetSync
 
                 switch (msgType)
                 {
-                    case BinarySerializer.MSG_ROOM_TRANSFORM when data is RoomTransformData room:
+                    case BinarySerializer.MSG_ROOM_POSE_V2 when data is RoomTransformData room:
                         // Drop-old strategy: keep only the latest few room updates.
                         // NOTE: We use a dedicated queue so we never discard non-room messages.
                         while (_roomTransformQueue.Count >= MaxRoomTransformUpdatesQueueSize)
@@ -279,6 +279,12 @@ namespace Styly.NetSync
 
             try
             {
+                if (netSyncManager != null)
+                {
+                    // Use high-resolution clock for accurate jitter estimation
+                    netSyncManager.TimeEstimator.OnRoomBroadcast(room.broadcastTime, NetSyncClock.NowSeconds());
+                }
+
                 // Reuse scratch set for alive client tracking
                 var alive = _scratchAlive;
                 alive.Clear();
@@ -310,7 +316,7 @@ namespace Styly.NetSync
                     {
                         var localPos = physical.GetPosition();
                         var localRot = physical.GetRotation();
-                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, localPos, localRot);
+                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, localPos, localRot, c.poseTime, c.poseSeq);
                     }
                 }
 

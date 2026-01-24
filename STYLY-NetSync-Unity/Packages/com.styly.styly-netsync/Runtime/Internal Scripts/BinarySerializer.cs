@@ -7,6 +7,8 @@ namespace Styly.NetSync
 {
     internal static class BinarySerializer
     {
+        public const byte PROTOCOL_VERSION = 2;
+
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
         public const byte MSG_ROOM_TRANSFORM = 2;  // Room transform with short IDs only
@@ -18,25 +20,28 @@ namespace Styly.NetSync
         public const byte MSG_GLOBAL_VAR_SYNC = 8;  // Sync global variables
         public const byte MSG_CLIENT_VAR_SET = 9;  // Set client variable
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
+        public const byte MSG_CLIENT_POSE_V2 = 11;  // Client pose (quaternion + timestamps)
+        public const byte MSG_ROOM_POSE_V2 = 12;  // Room pose snapshot (quaternion + timestamps)
 
         // Transform data type identifiers (deprecated - kept for reference)
         // All transforms now use 6 floats for consistency
         #region === Serialization ===
 
-        // Helper to write TransformData as 6 floats
+        // Helper to write TransformData as 7 floats (pos + quaternion)
         private static void WriteTransformData(BinaryWriter writer, TransformData data)
         {
             if (data == null)
             {
-                for (int i = 0; i < 6; i++) writer.Write(0f);
+                for (int i = 0; i < 7; i++) writer.Write(0f);
                 return;
             }
-            writer.Write(data.posX);
-            writer.Write(data.posY);
-            writer.Write(data.posZ);
-            writer.Write(data.rotX);
-            writer.Write(data.rotY);
-            writer.Write(data.rotZ);
+            writer.Write(data.position.x);
+            writer.Write(data.position.y);
+            writer.Write(data.position.z);
+            writer.Write(data.rotation.x);
+            writer.Write(data.rotation.y);
+            writer.Write(data.rotation.z);
+            writer.Write(data.rotation.w);
         }
 
         /// <summary>
@@ -60,16 +65,21 @@ namespace Styly.NetSync
         public static void SerializeClientTransformInto(BinaryWriter writer, ClientTransformData data)
         {
             // Message type
-            writer.Write(MSG_CLIENT_TRANSFORM);
+            writer.Write(MSG_CLIENT_POSE_V2);
+
+            // Protocol version
+            writer.Write(PROTOCOL_VERSION);
 
             // Device ID (as UTF8 bytes with length prefix)
             var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data.deviceId ?? "");
             writer.Write((byte)deviceIdBytes.Length);
             writer.Write(deviceIdBytes);
 
-            // Note: Client number is not sent by client, only assigned by server
+            // Pose sequence and flags
+            writer.Write(data.poseSeq);
+            writer.Write((byte)data.flags);
 
-            // Physical transform (now full 6 floats)
+            // Physical transform (pos + quaternion)
             WriteTransformData(writer, data.physical);
 
             // Head transform
@@ -120,18 +130,22 @@ namespace Styly.NetSync
         public static void SerializeStealthHandshakeInto(BinaryWriter writer, string deviceId)
         {
             // Message type
-            writer.Write(MSG_CLIENT_TRANSFORM);
+            writer.Write(MSG_CLIENT_POSE_V2);
+
+            // Protocol version
+            writer.Write(PROTOCOL_VERSION);
 
             // Device ID (as UTF8 bytes with length prefix)
             var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
             writer.Write((byte)deviceIdBytes.Length);
             writer.Write(deviceIdBytes);
 
-            // Physical, Head, Right, Left — write 4 * 6 NaN floats in a single loop
-            for (int i = 0; i < 24; i++)
-            {
-                writer.Write(float.NaN);
-            }
+            // Pose sequence and flags (stealth, invalid poses)
+            writer.Write((ushort)0);
+            writer.Write((byte)PoseFlags.IsStealth);
+
+            // Physical, Head, Right, Left — write 4 * 7 zeroed floats
+            for (int i = 0; i < 28; i++) { writer.Write(0f); }
 
             // No virtual transforms for stealth handshake
             writer.Write((byte)0);
@@ -155,7 +169,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_CLIENT_VAR_SYNC)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE_V2)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -166,7 +180,7 @@ namespace Styly.NetSync
                 {
                     // case MSG_CLIENT_TRANSFORM:
                     //     return (messageType, DeserializeClientTransform(reader));
-                    case MSG_ROOM_TRANSFORM:
+                    case MSG_ROOM_POSE_V2:
                         return (messageType, DeserializeRoomTransform(reader));
                     case MSG_RPC:
                         // RPC message
@@ -189,16 +203,17 @@ namespace Styly.NetSync
         }
 
 
-        // Helper to read TransformData as 6 floats
+        // Helper to read TransformData as 7 floats (pos + quaternion)
         private static TransformData ReadTransformData(BinaryReader reader)
         {
             var data = new TransformData();
-            data.posX = reader.ReadSingle();
-            data.posY = reader.ReadSingle();
-            data.posZ = reader.ReadSingle();
-            data.rotX = reader.ReadSingle();
-            data.rotY = reader.ReadSingle();
-            data.rotZ = reader.ReadSingle();
+            data.position.x = reader.ReadSingle();
+            data.position.y = reader.ReadSingle();
+            data.position.z = reader.ReadSingle();
+            data.rotation.x = reader.ReadSingle();
+            data.rotation.y = reader.ReadSingle();
+            data.rotation.z = reader.ReadSingle();
+            data.rotation.w = reader.ReadSingle();
             return data;
         }
 
@@ -206,9 +221,15 @@ namespace Styly.NetSync
         {
             var data = new RoomTransformData();
 
+            // Protocol version
+            _ = reader.ReadByte();
+
             // Room ID
             var roomIdLength = reader.ReadByte();
             data.roomId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(roomIdLength));
+
+            // Broadcast time (server monotonic seconds)
+            data.broadcastTime = reader.ReadDouble();
 
             // Number of clients
             var clientCount = reader.ReadUInt16();
@@ -222,10 +243,17 @@ namespace Styly.NetSync
                 // Client number (2 bytes)
                 client.clientNo = reader.ReadUInt16();
 
-                // Note: Device ID is NOT sent in MSG_ROOM_TRANSFORM
+                // Pose time (server monotonic seconds)
+                client.poseTime = reader.ReadDouble();
+
+                // Pose sequence and flags
+                client.poseSeq = reader.ReadUInt16();
+                client.flags = (PoseFlags)reader.ReadByte();
+
+                // Note: Device ID is NOT sent in MSG_ROOM_POSE_V2
                 // Device ID will be resolved from client number using mapping table
 
-                // Physical transform (now full 6 floats)
+                // Physical transform (pos + quaternion)
                 client.physical = ReadTransformData(reader);
 
                 // Head transform

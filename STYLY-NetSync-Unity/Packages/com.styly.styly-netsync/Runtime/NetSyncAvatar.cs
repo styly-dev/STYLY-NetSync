@@ -15,7 +15,7 @@ namespace Styly.NetSync
 
         [Header("Physical Transform Data")]
         [ReadOnly] public Vector3 PhysicalPosition;
-        [ReadOnly] public Vector3 PhysicalRotation;
+        [ReadOnly] public Quaternion PhysicalRotation;
 
         [Header("Body Parts")]
         public Transform _head;
@@ -33,6 +33,7 @@ namespace Styly.NetSync
 
         // Transform applier for remote avatars (applies targets directly)
         private readonly NetSyncTransformApplier _transformApplier = new NetSyncTransformApplier();
+        private readonly NetSyncSmoothingSettings _smoothingSettings = new NetSyncSmoothingSettings();
 
         // Events
         [Header("Network Variable Events")]
@@ -84,10 +85,10 @@ namespace Styly.NetSync
         }
 
         // Copy values into a cached TransformData without allocating.
-        private static void Fill(TransformData td, Vector3 pos, Vector3 rot)
+        private static void Fill(TransformData td, Vector3 pos, Quaternion rot)
         {
-            td.posX = pos.x; td.posY = pos.y; td.posZ = pos.z;
-            td.rotX = rot.x; td.rotY = rot.y; td.rotZ = rot.z;
+            td.position = pos;
+            td.rotation = rot;
         }
 
         void Start()
@@ -128,7 +129,15 @@ namespace Styly.NetSync
 
             // Do not drive the same Transform in both local (physical) and world (head) spaces.
             // Passing null for physical avoids conflicting updates on _head.
-            _transformApplier.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
+            _transformApplier.InitializeForAvatar(
+                null,
+                _head,
+                _rightHand,
+                _leftHand,
+                _virtualTransforms,
+                _netSyncManager != null ? _netSyncManager.TimeEstimator : null,
+                _smoothingSettings,
+                _netSyncManager != null ? _netSyncManager.TransformSendRate : 10f);
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
@@ -143,7 +152,15 @@ namespace Styly.NetSync
             _netSyncManager = manager;
 
             // For remote avatars, avoid double-driving _head (physical/local vs head/world).
-            _transformApplier.InitializeForAvatar(null, _head, _rightHand, _leftHand, _virtualTransforms);
+            _transformApplier.InitializeForAvatar(
+                null,
+                _head,
+                _rightHand,
+                _leftHand,
+                _virtualTransforms,
+                _netSyncManager != null ? _netSyncManager.TimeEstimator : null,
+                _smoothingSettings,
+                _netSyncManager != null ? _netSyncManager.TransformSendRate : 10f);
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
@@ -159,7 +176,8 @@ namespace Styly.NetSync
 
             if (!IsLocalAvatar)
             {
-                _transformApplier.Update();
+                // Use high-resolution clock for consistent time estimation
+                _transformApplier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
             }
 
             // Reflect physical transform (local pose) only for the local avatar.
@@ -167,7 +185,7 @@ namespace Styly.NetSync
             if (IsLocalAvatar && _head != null)
             {
                 PhysicalPosition = _head.localPosition + _netSyncManager._physicalOffsetPosition;
-                PhysicalRotation = _head.localEulerAngles + _netSyncManager._physicalOffsetRotation;
+                PhysicalRotation = _head.localRotation * Quaternion.Euler(_netSyncManager._physicalOffsetRotation);
             }
         }
 
@@ -179,6 +197,7 @@ namespace Styly.NetSync
 
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
+            _tx.flags = BuildPoseFlags();
 
             Fill(
                     _txPhysical,
@@ -189,17 +208,17 @@ namespace Styly.NetSync
             // World space transforms.
             Fill(_txHead,
                 _head != null ? _head.position : Vector3.zero,
-                _head != null ? _head.eulerAngles : Vector3.zero);
+                _head != null ? _head.rotation : Quaternion.identity);
             _tx.head = _txHead;
 
             Fill(_txRight,
                 _rightHand != null ? _rightHand.position : Vector3.zero,
-                _rightHand != null ? _rightHand.eulerAngles : Vector3.zero);
+                _rightHand != null ? _rightHand.rotation : Quaternion.identity);
             _tx.rightHand = _txRight;
 
             Fill(_txLeft,
                 _leftHand != null ? _leftHand.position : Vector3.zero,
-                _leftHand != null ? _leftHand.eulerAngles : Vector3.zero);
+                _leftHand != null ? _leftHand.rotation : Quaternion.identity);
             _tx.leftHand = _txLeft;
 
             // Virtuals: reuse pre-allocated TransformData instances.
@@ -212,7 +231,7 @@ namespace Styly.NetSync
                     Fill(
                         td,
                         t != null ? t.position : Vector3.zero,
-                        t != null ? t.eulerAngles : Vector3.zero);
+                        t != null ? t.rotation : Quaternion.identity);
                 }
             }
             // If _virtualTransforms is null, make sure list is empty to avoid serializing stale entries.
@@ -236,10 +255,10 @@ namespace Styly.NetSync
         {
             if (IsLocalAvatar) { return; }
 
-            _transformApplier.SetTargets(data);
+            _transformApplier.AddSnapshot(data);
 
             PhysicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
-            PhysicalRotation = data.physical != null ? data.physical.GetRotation() : Vector3.zero;
+            PhysicalRotation = data.physical != null ? data.physical.GetRotation() : Quaternion.identity;
 
             // Update client number for remote avatars
             _clientNo = data.clientNo;
@@ -251,7 +270,7 @@ namespace Styly.NetSync
             if (transform == null) return new TransformData();
             return new TransformData(
                 transform.position,
-                transform.eulerAngles
+                transform.rotation
             );
         }
 
@@ -262,7 +281,7 @@ namespace Styly.NetSync
             if (transform == null) return new TransformData();
             return new TransformData(
                 transform.localPosition,
-                transform.localEulerAngles
+                transform.localRotation
             );
         }
 
@@ -272,6 +291,26 @@ namespace Styly.NetSync
             var result = new List<TransformData>(transforms.Length);
             foreach (var t in transforms) result.Add(GetWorldTransform(t));
             return result;
+        }
+
+        private PoseFlags BuildPoseFlags()
+        {
+            var flags = PoseFlags.None;
+            if (_netSyncManager != null && _netSyncManager.IsStealthMode)
+            {
+                flags |= PoseFlags.IsStealth;
+                return flags;
+            }
+
+            if (_head != null) { flags |= PoseFlags.HeadValid; }
+            if (_rightHand != null) { flags |= PoseFlags.RightValid; }
+            if (_leftHand != null) { flags |= PoseFlags.LeftValid; }
+            if (true) { flags |= PoseFlags.PhysicalValid; }
+            if (_virtualTransforms != null && _virtualTransforms.Length > 0)
+            {
+                flags |= PoseFlags.VirtualsValid;
+            }
+            return flags;
         }
 
         // Handle client variable changes from NetSyncManager
