@@ -176,7 +176,8 @@ namespace Styly.NetSync
 
             if (!IsLocalAvatar)
             {
-                _transformApplier.Tick(Time.deltaTime, Time.realtimeSinceStartupAsDouble);
+                // Use high-resolution clock for consistent time estimation
+                _transformApplier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
             }
 
             // Reflect physical transform (local pose) only for the local avatar.

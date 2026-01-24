@@ -137,7 +137,8 @@ namespace Styly.NetSync
                 var applier = kv.Value;
                 if (applier != null)
                 {
-                    applier.Tick(Time.deltaTime, Time.realtimeSinceStartupAsDouble);
+                    // Use high-resolution clock for consistent time estimation
+                    applier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
                 }
             }
         }

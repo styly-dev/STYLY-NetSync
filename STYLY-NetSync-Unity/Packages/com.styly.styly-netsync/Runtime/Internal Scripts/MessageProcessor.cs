@@ -281,7 +281,8 @@ namespace Styly.NetSync
             {
                 if (netSyncManager != null)
                 {
-                    netSyncManager.TimeEstimator.OnRoomBroadcast(room.broadcastTime, Time.realtimeSinceStartupAsDouble);
+                    // Use high-resolution clock for accurate jitter estimation
+                    netSyncManager.TimeEstimator.OnRoomBroadcast(room.broadcastTime, NetSyncClock.NowSeconds());
                 }
 
                 // Reuse scratch set for alive client tracking

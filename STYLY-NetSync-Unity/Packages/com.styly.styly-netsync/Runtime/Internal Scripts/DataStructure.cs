@@ -37,7 +37,18 @@ namespace Styly.NetSync
         }
 
         public Vector3 GetPosition() => position;
-        public Quaternion GetRotation() => rotation;
+
+        /// <summary>
+        /// Returns normalized rotation, guarding against zero quaternion.
+        /// </summary>
+        public Quaternion GetRotation()
+        {
+            if (rotation.x == 0f && rotation.y == 0f && rotation.z == 0f && rotation.w == 0f)
+            {
+                return Quaternion.identity;
+            }
+            return Quaternion.Normalize(rotation);
+        }
     }
 
     // Client transform data using unified structure

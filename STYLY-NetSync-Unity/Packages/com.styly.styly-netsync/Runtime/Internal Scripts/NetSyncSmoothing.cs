@@ -1,9 +1,27 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using UnityEngine;
 
 namespace Styly.NetSync
 {
+    /// <summary>
+    /// High-resolution clock using Stopwatch for accurate timing.
+    /// Provides better precision than Unity's realtimeSinceStartup for network jitter estimation.
+    /// </summary>
+    internal static class NetSyncClock
+    {
+        private static readonly double TickToSeconds = 1.0 / Stopwatch.Frequency;
+
+        /// <summary>
+        /// Returns the current time in seconds with high precision.
+        /// </summary>
+        public static double NowSeconds()
+        {
+            return Stopwatch.GetTimestamp() * TickToSeconds;
+        }
+    }
+
     internal struct PoseSampleData
     {
         public Vector3 Position;
