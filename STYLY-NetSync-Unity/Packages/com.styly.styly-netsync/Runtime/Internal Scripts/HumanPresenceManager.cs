@@ -17,6 +17,7 @@ namespace Styly.NetSync
         private readonly Dictionary<int, NetSyncTransformApplier> _applierByClient = new Dictionary<int, NetSyncTransformApplier>();
         private readonly NetSyncManager _netSyncManager;
         private readonly bool _enableDebugLogs;
+        private readonly NetSyncSmoothingSettings _smoothingSettings = new NetSyncSmoothingSettings();
 
         public HumanPresenceManager(NetSyncManager netSyncManager, bool enableDebugLogs)
         {
@@ -59,7 +60,12 @@ namespace Styly.NetSync
                 _presenceByClient[clientNo] = go;
                 // Create and configure transform applier for this instance (world space)
                 var applier = new NetSyncTransformApplier();
-                applier.InitializeForSingle(go.transform, NetSyncTransformApplier.SpaceMode.World);
+                applier.InitializeForSingle(
+                    go.transform,
+                    NetSyncTransformApplier.SpaceMode.World,
+                    _netSyncManager != null ? _netSyncManager.TimeEstimator : null,
+                    _smoothingSettings,
+                    _netSyncManager != null ? _netSyncManager.TransformSendRate : 10f);
                 _applierByClient[clientNo] = applier;
                 DebugLog($"Spawned Human Presence for client {clientNo}");
             }
@@ -89,14 +95,14 @@ namespace Styly.NetSync
         /// <summary>
         /// Update transform for a remote client's presence.
         /// </summary>
-        public void UpdateTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
+        public void UpdateTransform(int clientNo, Vector3 position, Quaternion rotation, double poseTime, ushort poseSeq)
         {
             // Update transform target; applied directly in Tick()
             if (_applierByClient.TryGetValue(clientNo, out var applier))
             {
                 if (applier != null)
                 {
-                    applier.SetSingleTarget(position, eulerRotation);
+                    applier.AddSingleSnapshot(poseTime, poseSeq, position, rotation);
                 }
             }
         }
@@ -131,7 +137,7 @@ namespace Styly.NetSync
                 var applier = kv.Value;
                 if (applier != null)
                 {
-                    applier.Update();
+                    applier.Tick(Time.deltaTime, Time.realtimeSinceStartupAsDouble);
                 }
             }
         }

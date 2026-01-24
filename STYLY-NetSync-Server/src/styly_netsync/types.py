@@ -17,6 +17,7 @@ class transform_data:
     rot_x: float = 0.0
     rot_y: float = 0.0
     rot_z: float = 0.0
+    rot_w: float = 1.0
     is_local_space: bool = False
 
 
@@ -26,6 +27,9 @@ class client_transform_data:
 
     client_no: int | None = None
     device_id: str | None = None
+    pose_time: float | None = None
+    pose_seq: int | None = None
+    flags: int | None = None
     physical: transform_data | None = None
     head: transform_data | None = None
     right_hand: transform_data | None = None

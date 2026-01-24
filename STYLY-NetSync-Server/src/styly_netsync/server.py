@@ -933,7 +933,7 @@ class NetSyncServer:
                             if data is None:
                                 logger.warning("Received message with None data")
                                 continue
-                            if msg_type == binary_serializer.MSG_CLIENT_TRANSFORM:
+                            if msg_type == binary_serializer.MSG_CLIENT_POSE_V2:
                                 self._handle_client_transform(
                                     client_identity, room_id, data, raw_payload
                                 )
@@ -1023,7 +1023,7 @@ class NetSyncServer:
         device_id: str = device_id_raw
         body_bytes = self._extract_transform_body(raw_payload)
 
-        # Detect stealth mode using NaN handshake
+        # Detect stealth mode using flags
         is_stealth = binary_serializer._is_stealth_client(data)
 
         # Get or assign client number for this device ID
@@ -1078,13 +1078,7 @@ class NetSyncServer:
 
     def _extract_transform_body(self, raw_payload: bytes) -> bytes:
         """Extract the transform body without device ID from raw payload."""
-        if not raw_payload:
-            return b""
-        device_id_len = raw_payload[0]
-        start = 1 + device_id_len
-        if start >= len(raw_payload):
-            return b""
-        return raw_payload[start:]
+        return raw_payload or b""
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]) -> None:
         """Send RPC to all clients in room except sender"""
@@ -1586,10 +1580,13 @@ class NetSyncServer:
                             continue
                         client_no = client_data.get("client_no", 0)
                         transform_data = client_data.get("transform_data")
+                        pose_time = client_data.get("last_update", 0.0)
                         body_bytes = self.client_transform_body_cache.get(
                             client_no, b""
                         )
-                        client_snapshot.append((client_no, transform_data, body_bytes))
+                        client_snapshot.append(
+                            (client_no, pose_time, transform_data, body_bytes)
+                        )
                     rooms_to_broadcast.append((room_id, client_snapshot))
                     self.room_dirty_flags[room_id] = False  # Clear dirty flag
                     self.room_last_broadcast[room_id] = current_time
@@ -1615,7 +1612,7 @@ class NetSyncServer:
     def _broadcast_room(
         self,
         room_id: str,
-        client_snapshot: list[tuple[int, dict[str, Any] | None, bytes]],
+        client_snapshot: list[tuple[int, float, dict[str, Any] | None, bytes]],
     ) -> None:
         """Broadcast a specific room's state from a snapshot."""
         message_bytes = self._serialize_room_transform(room_id, client_snapshot)
@@ -1628,26 +1625,30 @@ class NetSyncServer:
     def _serialize_room_transform(
         self,
         room_id: str,
-        client_snapshot: list[tuple[int, dict[str, Any] | None, bytes]],
+        client_snapshot: list[tuple[int, float, dict[str, Any] | None, bytes]],
     ) -> bytes | None:
         if not client_snapshot:
             return None
 
         buffer = bytearray()
-        buffer.append(binary_serializer.MSG_ROOM_TRANSFORM)
+        buffer.append(binary_serializer.MSG_ROOM_POSE_V2)
+        buffer.append(binary_serializer.PROTOCOL_VERSION)
         binary_serializer._pack_string(buffer, room_id)
+        buffer.extend(struct.pack("<d", time.monotonic()))
         count_offset = len(buffer)
         buffer.extend(b"\x00\x00")
 
         count = 0
-        for client_no, transform_data, body_bytes in client_snapshot:
+        for client_no, pose_time, transform_data, body_bytes in client_snapshot:
             if body_bytes:
                 buffer.extend(struct.pack("<H", client_no))
+                buffer.extend(struct.pack("<d", pose_time))
                 buffer.extend(body_bytes)
                 count += 1
                 continue
 
             if transform_data:
+                transform_data["poseTime"] = pose_time
                 binary_serializer._serialize_client_data_short(buffer, transform_data)
                 count += 1
 

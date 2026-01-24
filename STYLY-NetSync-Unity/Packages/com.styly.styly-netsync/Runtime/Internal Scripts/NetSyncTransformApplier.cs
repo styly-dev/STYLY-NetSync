@@ -1,295 +1,267 @@
 // NetSyncTransformApplier.cs
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
 namespace Styly.NetSync
 {
     /// <summary>
-    /// Transform applier used for both Remote Avatar and Human Presence.
-    /// - Supports multiple tracked transforms with individual coordinate spaces (World/Local).
-    /// - Targets are updated when network packets arrive and applied directly in Update (no interpolation).
-    /// - For the first packet, values are applied immediately to avoid snapping from the origin.
-    ///
-    /// NOTE: Do not use null propagation with UnityEngine.Object. All Unity API calls are on main thread.
+    /// Transform applier with snapshot interpolation, bounded extrapolation, and adaptive smoothing.
     /// </summary>
     internal class NetSyncTransformApplier
     {
         public enum SpaceMode { World, Local }
 
-        private class Entry
+        private struct TransformBinding
         {
             public Transform Transform;
             public SpaceMode Space;
-            public Vector3 TargetPosition;
-            public Quaternion TargetRotation;
-            public bool HasTarget;
 
-            public Entry(Transform t, SpaceMode space)
+            public TransformBinding(Transform transform, SpaceMode space)
             {
-                Transform = t;
+                Transform = transform;
                 Space = space;
-                TargetPosition = Vector3.zero;
-                TargetRotation = Quaternion.identity;
-                HasTarget = false;
             }
         }
 
-        // Tracked entries in a fixed order for avatar usage
-        private Entry _physical;     // Local space
-        private Entry _head;         // World space
-        private Entry _rightHand;    // World space
-        private Entry _leftHand;     // World space
-        private readonly List<Entry> _virtuals = new List<Entry>(8);
+        private NetSyncTimeEstimator _timeEstimator;
+        private NetSyncSmoothingSettings _settings;
+        private readonly SendIntervalEstimator _intervalEstimator = new SendIntervalEstimator();
+        private double _configuredSendIntervalSeconds = 0.1;
 
-        // Single-target mode (Human Presence)
-        private Entry _single;
+        private PoseChannel _physical;
+        private PoseChannel _head;
+        private PoseChannel _rightHand;
+        private PoseChannel _leftHand;
+        private readonly List<PoseChannel> _virtuals = new List<PoseChannel>(8);
 
-        private bool _initialized;
+        private TransformBinding _physicalBinding;
+        private TransformBinding _headBinding;
+        private TransformBinding _rightBinding;
+        private TransformBinding _leftBinding;
+        private readonly List<TransformBinding> _virtualBindings = new List<TransformBinding>(8);
 
-        public NetSyncTransformApplier()
-        {
-            _initialized = false;
-        }
+        private PoseChannel _singleChannel;
+        private TransformBinding _singleBinding;
 
-        /// <summary>
-        /// Configure entries for Remote Avatar usage.
-        /// </summary>
         public void InitializeForAvatar(
             Transform physical,
             Transform head,
             Transform rightHand,
             Transform leftHand,
-            Transform[] virtuals)
+            Transform[] virtuals,
+            NetSyncTimeEstimator timeEstimator,
+            NetSyncSmoothingSettings settings,
+            float sendRateHz)
         {
-            _single = null;
+            _timeEstimator = timeEstimator;
+            _settings = settings ?? new NetSyncSmoothingSettings();
+            _configuredSendIntervalSeconds = 1.0 / Math.Max(1e-6, sendRateHz);
 
-            _physical = physical != null ? new Entry(physical, SpaceMode.Local) : null;
-            _head = head != null ? new Entry(head, SpaceMode.World) : null;
-            _rightHand = rightHand != null ? new Entry(rightHand, SpaceMode.World) : null;
-            _leftHand = leftHand != null ? new Entry(leftHand, SpaceMode.World) : null;
+            _physical = new PoseChannel(_settings.Physical);
+            _head = new PoseChannel(_settings.Head);
+            _rightHand = new PoseChannel(_settings.Right);
+            _leftHand = new PoseChannel(_settings.Left);
+
+            _physicalBinding = new TransformBinding(physical, SpaceMode.Local);
+            _headBinding = new TransformBinding(head, SpaceMode.World);
+            _rightBinding = new TransformBinding(rightHand, SpaceMode.World);
+            _leftBinding = new TransformBinding(leftHand, SpaceMode.World);
 
             _virtuals.Clear();
+            _virtualBindings.Clear();
             if (virtuals != null)
             {
                 for (int i = 0; i < virtuals.Length; i++)
                 {
-                    Transform t = virtuals[i];
-                    if (t != null)
-                    {
-                        _virtuals.Add(new Entry(t, SpaceMode.World));
-                    }
-                    else
-                    {
-                        _virtuals.Add(null);
-                    }
+                    _virtuals.Add(new PoseChannel(_settings.Virtual));
+                    _virtualBindings.Add(new TransformBinding(virtuals[i], SpaceMode.World));
                 }
             }
 
-            _initialized = false;
+            _singleChannel = null;
+            _intervalEstimator.Reset();
         }
 
-        /// <summary>
-        /// Configure a single transform for Human Presence usage.
-        /// </summary>
-        public void InitializeForSingle(Transform transform, SpaceMode space)
+        public void InitializeForSingle(
+            Transform transform,
+            SpaceMode space,
+            NetSyncTimeEstimator timeEstimator,
+            NetSyncSmoothingSettings settings,
+            float sendRateHz)
         {
+            _timeEstimator = timeEstimator;
+            _settings = settings ?? new NetSyncSmoothingSettings();
+            _configuredSendIntervalSeconds = 1.0 / Math.Max(1e-6, sendRateHz);
+
+            _singleChannel = new PoseChannel(_settings.Physical);
+            _singleBinding = new TransformBinding(transform, space);
+
             _physical = null;
             _head = null;
             _rightHand = null;
             _leftHand = null;
             _virtuals.Clear();
+            _virtualBindings.Clear();
 
-            _single = transform != null ? new Entry(transform, space) : null;
-            _initialized = false;
+            _intervalEstimator.Reset();
         }
 
-        /// <summary>
-        /// Update avatar targets from a network packet.
-        /// </summary>
-        public void SetTargets(ClientTransformData data)
+        public void AddSnapshot(ClientTransformData data)
         {
-            if (data == null) { return; }
-
-            // First update: apply immediately to avoid jump from origin
-            if (!_initialized)
-            {
-                ApplyImmediate(data);
-                _initialized = true;
-            }
-
-            if (data.physical != null && _physical != null && _physical.Transform != null)
-            {
-                _physical.TargetPosition = data.physical.GetPosition();
-                _physical.TargetRotation = Quaternion.Euler(data.physical.GetRotation());
-                _physical.HasTarget = true;
-            }
-
-            if (data.head != null && _head != null && _head.Transform != null)
-            {
-                _head.TargetPosition = data.head.GetPosition();
-                _head.TargetRotation = Quaternion.Euler(data.head.GetRotation());
-                _head.HasTarget = true;
-            }
-
-            if (data.rightHand != null && _rightHand != null && _rightHand.Transform != null)
-            {
-                _rightHand.TargetPosition = data.rightHand.GetPosition();
-                _rightHand.TargetRotation = Quaternion.Euler(data.rightHand.GetRotation());
-                _rightHand.HasTarget = true;
-            }
-
-            if (data.leftHand != null && _leftHand != null && _leftHand.Transform != null)
-            {
-                _leftHand.TargetPosition = data.leftHand.GetPosition();
-                _leftHand.TargetRotation = Quaternion.Euler(data.leftHand.GetRotation());
-                _leftHand.HasTarget = true;
-            }
-
-            if (data.virtuals != null && _virtuals != null)
-            {
-                int count = data.virtuals.Count < _virtuals.Count ? data.virtuals.Count : _virtuals.Count;
-                for (int i = 0; i < count; i++)
-                {
-                    Entry entry = _virtuals[i];
-                    TransformData td = data.virtuals[i];
-                    if (entry == null || entry.Transform == null || td == null) { continue; }
-                    entry.TargetPosition = td.GetPosition();
-                    entry.TargetRotation = Quaternion.Euler(td.GetRotation());
-                    entry.HasTarget = true;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Update the single-target transform from a world/local pose.
-        /// </summary>
-        public void SetSingleTarget(Vector3 position, Vector3 eulerRotation)
-        {
-            if (_single == null || _single.Transform == null)
+            if (data == null || _timeEstimator == null)
             {
                 return;
             }
 
-            if (!_initialized)
+            if ((data.flags & PoseFlags.IsStealth) != 0)
             {
-                if (_single.Space == SpaceMode.World)
-                {
-                    _single.Transform.position = position;
-                    _single.Transform.rotation = Quaternion.Euler(eulerRotation);
-                }
-                else
-                {
-                    _single.Transform.localPosition = position;
-                    _single.Transform.localRotation = Quaternion.Euler(eulerRotation);
-                }
-                _initialized = true;
+                Clear();
+                return;
             }
 
-            _single.TargetPosition = position;
-            _single.TargetRotation = Quaternion.Euler(eulerRotation);
-            _single.HasTarget = true;
-        }
+            _intervalEstimator.OnPoseTime(data.poseTime);
 
-        /// <summary>
-        /// Apply transforms immediately on first update (avatar mode).
-        /// </summary>
-        private void ApplyImmediate(ClientTransformData data)
-        {
-            if (data == null) { return; }
-
-            if (_physical != null && _physical.Transform != null && data.physical != null)
+            if ((data.flags & PoseFlags.PhysicalValid) != 0 && data.physical != null)
             {
-                _physical.Transform.localPosition = data.physical.GetPosition();
-                _physical.Transform.localRotation = Quaternion.Euler(data.physical.GetRotation());
+                _physical.AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(data.physical.position, data.physical.rotation));
+            }
+            else
+            {
+                _physical.Clear();
             }
 
-            if (_head != null && _head.Transform != null && data.head != null)
+            if ((data.flags & PoseFlags.HeadValid) != 0 && data.head != null)
             {
-                _head.Transform.position = data.head.GetPosition();
-                _head.Transform.rotation = Quaternion.Euler(data.head.GetRotation());
+                _head.AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(data.head.position, data.head.rotation));
+            }
+            else
+            {
+                _head.Clear();
             }
 
-            if (_rightHand != null && _rightHand.Transform != null && data.rightHand != null)
+            if ((data.flags & PoseFlags.RightValid) != 0 && data.rightHand != null)
             {
-                _rightHand.Transform.position = data.rightHand.GetPosition();
-                _rightHand.Transform.rotation = Quaternion.Euler(data.rightHand.GetRotation());
+                _rightHand.AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(data.rightHand.position, data.rightHand.rotation));
+            }
+            else
+            {
+                _rightHand.Clear();
             }
 
-            if (_leftHand != null && _leftHand.Transform != null && data.leftHand != null)
+            if ((data.flags & PoseFlags.LeftValid) != 0 && data.leftHand != null)
             {
-                _leftHand.Transform.position = data.leftHand.GetPosition();
-                _leftHand.Transform.rotation = Quaternion.Euler(data.leftHand.GetRotation());
+                _leftHand.AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(data.leftHand.position, data.leftHand.rotation));
+            }
+            else
+            {
+                _leftHand.Clear();
             }
 
-            if (data.virtuals != null && _virtuals != null)
+            if ((data.flags & PoseFlags.VirtualsValid) != 0 && data.virtuals != null)
             {
-                int count = data.virtuals.Count < _virtuals.Count ? data.virtuals.Count : _virtuals.Count;
+                var count = Math.Min(data.virtuals.Count, _virtuals.Count);
                 for (int i = 0; i < count; i++)
                 {
-                    Entry entry = _virtuals[i];
-                    TransformData td = data.virtuals[i];
-                    if (entry == null || entry.Transform == null || td == null) { continue; }
-                    entry.Transform.position = td.GetPosition();
-                    entry.Transform.rotation = Quaternion.Euler(td.GetRotation());
+                    var td = data.virtuals[i];
+                    if (td == null) { continue; }
+                    _virtuals[i].AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(td.position, td.rotation));
+                }
+            }
+            else
+            {
+                for (int i = 0; i < _virtuals.Count; i++)
+                {
+                    _virtuals[i].Clear();
                 }
             }
         }
 
-        /// <summary>
-        /// Applies all configured transforms directly to their targets (no interpolation).
-        /// </summary>
-        public void Update()
+        public void AddSingleSnapshot(double poseTime, ushort poseSeq, Vector3 position, Quaternion rotation)
         {
-            // Avatar mode entries - apply directly without interpolation
-            if (_physical != null && _physical.Transform != null && _physical.HasTarget)
+            if (_singleChannel == null)
             {
-                _physical.Transform.localPosition = _physical.TargetPosition;
-                _physical.Transform.localRotation = _physical.TargetRotation;
+                return;
             }
 
-            if (_head != null && _head.Transform != null && _head.HasTarget)
+            _intervalEstimator.OnPoseTime(poseTime);
+            _singleChannel.AddSnapshot(poseTime, poseSeq, new PoseSampleData(position, rotation));
+        }
+
+        public void Clear()
+        {
+            _physical?.Clear();
+            _head?.Clear();
+            _rightHand?.Clear();
+            _leftHand?.Clear();
+            _singleChannel?.Clear();
+            for (int i = 0; i < _virtuals.Count; i++)
             {
-                _head.Transform.position = _head.TargetPosition;
-                _head.Transform.rotation = _head.TargetRotation;
+                _virtuals[i].Clear();
+            }
+        }
+
+        public void Tick(float deltaTime, double localNow)
+        {
+            if (_timeEstimator == null)
+            {
+                return;
             }
 
-            if (_rightHand != null && _rightHand.Transform != null && _rightHand.HasTarget)
+            var serverNow = _timeEstimator.EstimateServerNow(localNow);
+            var sendInterval = _intervalEstimator.EstimatedIntervalSeconds(_configuredSendIntervalSeconds);
+            var bufferMul = _timeEstimator.ComputeDynamicBufferMultiplier(
+                sendInterval,
+                _settings.BaseBufferMultiplier,
+                _settings.DynamicBuffer,
+                _settings.DynamicTolerance,
+                _settings.MinBufferMultiplier,
+                _settings.MaxBufferMultiplier);
+            var renderServerTime = serverNow - (bufferMul * sendInterval);
+
+            if (_singleChannel != null)
             {
-                _rightHand.Transform.position = _rightHand.TargetPosition;
-                _rightHand.Transform.rotation = _rightHand.TargetRotation;
+                var pose = _singleChannel.Tick(renderServerTime, deltaTime);
+                ApplyBinding(_singleBinding, pose);
+                return;
             }
 
-            if (_leftHand != null && _leftHand.Transform != null && _leftHand.HasTarget)
+            if (_physical != null)
             {
-                _leftHand.Transform.position = _leftHand.TargetPosition;
-                _leftHand.Transform.rotation = _leftHand.TargetRotation;
+                ApplyBinding(_physicalBinding, _physical.Tick(renderServerTime, deltaTime));
+            }
+            if (_head != null)
+            {
+                ApplyBinding(_headBinding, _head.Tick(renderServerTime, deltaTime));
+            }
+            if (_rightHand != null)
+            {
+                ApplyBinding(_rightBinding, _rightHand.Tick(renderServerTime, deltaTime));
+            }
+            if (_leftHand != null)
+            {
+                ApplyBinding(_leftBinding, _leftHand.Tick(renderServerTime, deltaTime));
             }
 
-            if (_virtuals != null)
+            for (int i = 0; i < _virtuals.Count && i < _virtualBindings.Count; i++)
             {
-                int count = _virtuals.Count;
-                for (int i = 0; i < count; i++)
-                {
-                    Entry entry = _virtuals[i];
-                    if (entry == null || entry.Transform == null || !entry.HasTarget) { continue; }
-                    entry.Transform.position = entry.TargetPosition;
-                    entry.Transform.rotation = entry.TargetRotation;
-                }
+                ApplyBinding(_virtualBindings[i], _virtuals[i].Tick(renderServerTime, deltaTime));
             }
+        }
 
-            // Single-target mode
-            if (_single != null && _single.Transform != null && _single.HasTarget)
+        private static void ApplyBinding(in TransformBinding binding, in PoseSampleData pose)
+        {
+            if (binding.Transform == null) return;
+
+            if (binding.Space == SpaceMode.World)
             {
-                if (_single.Space == SpaceMode.World)
-                {
-                    _single.Transform.position = _single.TargetPosition;
-                    _single.Transform.rotation = _single.TargetRotation;
-                }
-                else
-                {
-                    _single.Transform.localPosition = _single.TargetPosition;
-                    _single.Transform.localRotation = _single.TargetRotation;
-                }
+                binding.Transform.position = pose.Position;
+                binding.Transform.rotation = pose.Rotation;
+            }
+            else
+            {
+                binding.Transform.localPosition = pose.Position;
+                binding.Transform.localRotation = pose.Rotation;
             }
         }
     }
