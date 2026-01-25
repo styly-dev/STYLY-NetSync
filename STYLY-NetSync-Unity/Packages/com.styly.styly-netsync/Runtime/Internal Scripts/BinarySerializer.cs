@@ -416,6 +416,11 @@ namespace Styly.NetSync
             var data = new DeviceIdMappingData();
             data.mappings = new List<DeviceIdMapping>();
 
+            // Server version (3 bytes: major, minor, patch)
+            data.serverVersionMajor = reader.ReadByte();
+            data.serverVersionMinor = reader.ReadByte();
+            data.serverVersionPatch = reader.ReadByte();
+
             // Number of mappings
             var count = reader.ReadUInt16();
 

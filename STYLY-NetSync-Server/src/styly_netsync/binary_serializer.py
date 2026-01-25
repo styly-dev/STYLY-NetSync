@@ -251,16 +251,46 @@ def serialize_rpc_message(data: dict[str, Any]) -> bytes:
     return bytes(buffer)
 
 
-def serialize_device_id_mapping(mappings: list[tuple[int, str, bool]]) -> bytes:
+def parse_version(version_str: str) -> tuple[int, int, int]:
+    """Parse semantic version string into (major, minor, patch) tuple.
+
+    Args:
+        version_str: Version string like "0.7.5" or "1.2.3-beta"
+
+    Returns:
+        Tuple of (major, minor, patch) integers. Returns (0, 0, 0) for invalid input.
+    """
+    try:
+        # Remove any suffix like "-beta", "-rc1", etc.
+        base_version = version_str.split("-")[0].split("+")[0]
+        parts = base_version.split(".")
+        major = int(parts[0]) if len(parts) > 0 else 0
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        patch = int(parts[2]) if len(parts) > 2 else 0
+        # Clamp to 0-255 range for single byte storage
+        return (min(major, 255), min(minor, 255), min(patch, 255))
+    except (ValueError, IndexError):
+        return (0, 0, 0)
+
+
+def serialize_device_id_mapping(
+    mappings: list[tuple[int, str, bool]], version: tuple[int, int, int] = (0, 0, 0)
+) -> bytes:
     """Serialize device ID mapping message
 
     Args:
         mappings: List of (client_no, device_id, is_stealth) tuples
+        version: Server version as (major, minor, patch) tuple
     """
     buffer = bytearray()
 
     # Message type
     buffer.append(MSG_DEVICE_ID_MAPPING)
+
+    # Server version (3 bytes: major, minor, patch)
+    buffer.append(version[0] & 0xFF)
+    buffer.append(version[1] & 0xFF)
+    buffer.append(version[2] & 0xFF)
 
     # Number of mappings
     buffer.extend(struct.pack("<H", len(mappings)))

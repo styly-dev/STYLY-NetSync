@@ -92,6 +92,9 @@ namespace Styly.NetSync
     [Serializable]
     internal class DeviceIdMappingData
     {
+        public int serverVersionMajor;
+        public int serverVersionMinor;
+        public int serverVersionPatch;
         public List<DeviceIdMapping> mappings;
     }
 }
