@@ -130,6 +130,116 @@ namespace Styly.NetSync
             }
         }
 
+        /// <summary>
+        /// Send a heartbeat message to keep the client alive on the server.
+        /// This is independent of transform flow and prevents false timeouts
+        /// under bandwidth pressure.
+        /// </summary>
+        internal bool SendHeartbeat(string roomId, int clientNo)
+        {
+            if (_connectionManager.DealerSocket == null)
+                return false;
+
+            try
+            {
+                // Heartbeat size: 1 (type) + 1 (deviceIdLen) + deviceId + 2 (clientNo) + 8 (timestamp)
+                var required = EstimateHeartbeatSize(_deviceId);
+                _buf.EnsureCapacity(required);
+
+                _buf.Stream.Position = 0;
+                var timestamp = NetSyncClock.NowSeconds();
+                BinarySerializer.SerializeHeartbeatInto(_buf.Writer, _deviceId, clientNo, timestamp);
+                _buf.Writer.Flush();
+
+                var length = (int)_buf.Stream.Position;
+
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    var payload = new byte[length];
+                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                    msg.Append(payload);
+
+                    return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                }
+                finally
+                {
+                    msg.Clear();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SendHeartbeat: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Estimate byte size for heartbeat payload.
+        /// </summary>
+        private static int EstimateHeartbeatSize(string deviceId)
+        {
+            var deviceIdBytes = deviceId != null ? Encoding.UTF8.GetByteCount(deviceId) : 0;
+            if (deviceIdBytes > 255) deviceIdBytes = 255;
+            // 1 (type) + 1 (deviceIdLen) + deviceId + 2 (clientNo) + 8 (timestamp)
+            return 1 + 1 + deviceIdBytes + 2 + 8;
+        }
+
+        /// <summary>
+        /// Send an RPC acknowledgment to the server for reliable RPC delivery.
+        /// </summary>
+        internal bool SendRpcAck(string roomId, ulong rpcId, string deviceId)
+        {
+            if (_connectionManager.DealerSocket == null)
+                return false;
+
+            try
+            {
+                // RPC ACK size: 1 (type) + 8 (rpcId) + 1 (deviceIdLen) + deviceId + 8 (timestamp)
+                var required = EstimateRpcAckSize(deviceId);
+                _buf.EnsureCapacity(required);
+
+                _buf.Stream.Position = 0;
+                var timestamp = NetSyncClock.NowSeconds();
+                BinarySerializer.SerializeRPCAckInto(_buf.Writer, rpcId, deviceId, timestamp);
+                _buf.Writer.Flush();
+
+                var length = (int)_buf.Stream.Position;
+
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    var payload = new byte[length];
+                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                    msg.Append(payload);
+
+                    return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                }
+                finally
+                {
+                    msg.Clear();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"SendRpcAck: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Estimate byte size for RPC ACK payload.
+        /// </summary>
+        private static int EstimateRpcAckSize(string deviceId)
+        {
+            var deviceIdBytes = deviceId != null ? Encoding.UTF8.GetByteCount(deviceId) : 0;
+            if (deviceIdBytes > 255) deviceIdBytes = 255;
+            // 1 (type) + 8 (rpcId) + 1 (deviceIdLen) + deviceId + 8 (timestamp)
+            return 1 + 8 + 1 + deviceIdBytes + 8;
+        }
+
         public void IncrementMessagesSent()
         {
             _messagesSent++;

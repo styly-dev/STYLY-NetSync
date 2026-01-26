@@ -64,6 +64,8 @@ class ServerConfig:
     # Network settings
     dealer_port: int
     pub_port: int
+    transform_pub_port: int  # PUB port for transform broadcasts (0 = use pub_port)
+    state_pub_port: int  # PUB port for state broadcasts (0 = use pub_port)
     server_discovery_port: int
     server_name: str
     enable_server_discovery: bool
@@ -92,6 +94,12 @@ class ServerConfig:
     pub_queue_maxsize: int
     delta_ring_size: int
 
+    # Reliable RPC settings
+    rpc_retry_initial_ms: int
+    rpc_retry_max_ms: int
+    rpc_retry_max_attempts: int
+    rpc_outbox_max_per_client: int
+
     # Logging settings
     log_dir: str | None
     log_level_console: str
@@ -105,6 +113,8 @@ _VALID_KEYS: set[str] = {
     # Network settings
     "dealer_port",
     "pub_port",
+    "transform_pub_port",
+    "state_pub_port",
     "server_discovery_port",
     "server_name",
     "enable_server_discovery",
@@ -129,6 +139,11 @@ _VALID_KEYS: set[str] = {
     "max_virtual_transforms",
     "pub_queue_maxsize",
     "delta_ring_size",
+    # Reliable RPC settings
+    "rpc_retry_initial_ms",
+    "rpc_retry_max_ms",
+    "rpc_retry_max_attempts",
+    "rpc_outbox_max_per_client",
     # Logging settings
     "log_dir",
     "log_level_console",
@@ -236,6 +251,13 @@ def validate_config(config: ServerConfig) -> list[str]:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
             errors.append(f"{field_name} must be between 1 and 65535, got {port}")
+
+    # Optional port validation (0 or 1-65535)
+    optional_port_fields = ["transform_pub_port", "state_pub_port"]
+    for field_name in optional_port_fields:
+        port = getattr(config, field_name)
+        if port != 0 and not 1 <= port <= 65535:
+            errors.append(f"{field_name} must be 0 or between 1 and 65535, got {port}")
 
     # Timing validation (must be positive)
     timing_fields = [

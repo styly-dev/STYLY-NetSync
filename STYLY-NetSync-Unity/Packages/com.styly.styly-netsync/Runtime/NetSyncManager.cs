@@ -262,6 +262,8 @@ namespace Styly.NetSync
         private string _discoveredServer;
         private int _discoveredDealerPort;
         private int _discoveredSubPort;
+        private int _discoveredTransformSubPort;  // For dual SUB mode
+        private int _discoveredStateSubPort;  // For dual SUB mode
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
         private const float DiscoveryRetryDelay = 5f; // Retry discovery every 5 seconds after failure
@@ -274,6 +276,10 @@ namespace Styly.NetSync
         // Battery monitoring fields
         private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
         private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
+
+        // Heartbeat fields for liveness (independent of transform flow)
+        private const float HeartbeatInterval = 0.5f; // Send heartbeat every 0.5 seconds
+        private float _lastHeartbeatTime = 0.0f; // Last time we sent a heartbeat
 
         // Connection error handling fields (main-thread handoff for thread-safe error handling)
         /// <summary>
@@ -485,6 +491,7 @@ namespace Styly.NetSync
             if (!_roomSwitching)
             {
                 SendTransformUpdates();
+                SendHeartbeat();
 
                 // Process Network Variables debounced updates
                 _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
@@ -728,11 +735,13 @@ namespace Styly.NetSync
             _shouldCheckReady = true;
         }
 
-        private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
+        private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort, int transformSubPort, int stateSubPort)
         {
             _discoveredServer = serverAddress;
             _discoveredDealerPort = dealerPort;
             _discoveredSubPort = subPort;
+            _discoveredTransformSubPort = transformSubPort;
+            _discoveredStateSubPort = stateSubPort;
 
             // Update the server address for future connections
             // Remove tcp:// prefix (discovery always returns with tcp://)
@@ -740,7 +749,14 @@ namespace Styly.NetSync
             _dealerPort = dealerPort;
             _subPort = subPort;
 
-            DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+            if (transformSubPort > 0 && stateSubPort > 0)
+            {
+                DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, transform:{transformSubPort}, state:{stateSubPort})");
+            }
+            else
+            {
+                DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+            }
         }
         #endregion ------------------------------------------------------------------------
 
@@ -756,7 +772,8 @@ namespace Styly.NetSync
 
             // Add tcp:// prefix
             string fullAddress = $"tcp://{_serverAddress}";
-            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId);
+            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId,
+                _discoveredTransformSubPort, _discoveredStateSubPort);
         }
 
         private void StopNetworking()
@@ -855,6 +872,34 @@ namespace Styly.NetSync
                 }
                 _transformSyncManager.UpdateLastSendTime(Time.time);
             }
+        }
+
+        /// <summary>
+        /// Send heartbeat to keep the client alive on the server independently of transform flow.
+        /// This prevents false timeouts under bandwidth pressure.
+        /// </summary>
+        private void SendHeartbeat()
+        {
+            if (!_connectionManager.IsConnected || _connectionManager.IsConnectionError)
+                return;
+
+            if (Time.time - _lastHeartbeatTime >= HeartbeatInterval)
+            {
+                _transformSyncManager.SendHeartbeat(_roomId, _clientNo);
+                _lastHeartbeatTime = Time.time;
+            }
+        }
+
+        /// <summary>
+        /// Send RPC acknowledgment to server for reliable RPC delivery.
+        /// Called internally by MessageProcessor when processing RPC_DELIVERY messages.
+        /// </summary>
+        internal void SendRpcAck(ulong rpcId)
+        {
+            if (!_connectionManager.IsConnected || _connectionManager.IsConnectionError)
+                return;
+
+            _transformSyncManager.SendRpcAck(_roomId, rpcId, _deviceId);
         }
 
         private void LogStatistics()

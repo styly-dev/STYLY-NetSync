@@ -40,7 +40,12 @@ namespace Styly.NetSync
         public int MaxParallelConnections { get; set; } = 20; // Scan up to 20 IPs concurrently
         public int TcpConnectionTimeoutMs { get; set; } = 300; // Reduced timeout for faster scanning
 
-        public event Action<string, int, int> OnServerDiscovered;
+        /// <summary>
+        /// Event fired when a server is discovered.
+        /// Parameters: (serverAddress, dealerPort, subPort, transformSubPort, stateSubPort)
+        /// transformSubPort and stateSubPort will be 0 if the server is in legacy single-PUB mode.
+        /// </summary>
+        public event Action<string, int, int, int, int> OnServerDiscovered;
 
         public ServerDiscoveryManager(bool enableDebugLogs)
         {
@@ -494,25 +499,44 @@ namespace Styly.NetSync
         {
             try
             {
-                var message = Encoding.UTF8.GetString(data);
+                var message = Encoding.UTF8.GetString(data).Trim();
                 var parts = message.Split('|');
 
                 if (parts.Length >= 3 && parts[0] == "STYLY-NETSYNC")
                 {
                     var dealerPort = int.Parse(parts[1]);
                     var subPort = int.Parse(parts[2]);
-                    var serverName = parts.Length >= 4 ? parts[3] : "Unknown Server";
+                    var serverName = parts.Length >= 4 ? parts[3].Trim() : "Unknown Server";
+
+                    // Parse dual PUB ports if present (v2 format)
+                    // Format v2: STYLY-NETSYNC|dealerPort|pubPort|serverName|transformPubPort|statePubPort
+                    int transformSubPort = 0;
+                    int stateSubPort = 0;
+                    if (parts.Length >= 6)
+                    {
+                        int.TryParse(parts[4].Trim(), out transformSubPort);
+                        int.TryParse(parts[5].Trim(), out stateSubPort);
+                    }
 
                     var serverAddress = $"tcp://{sender.Address}";
 
                     // Cache the discovered server IP for future connections
                     QueueCacheServerIp(sender.Address.ToString());
 
-                    DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+                    if (transformSubPort > 0 && stateSubPort > 0)
+                    {
+                        DebugLog($"Discovered server '{serverName}' at {serverAddress} " +
+                                 $"(dealer:{dealerPort}, transform:{transformSubPort}, state:{stateSubPort})");
+                    }
+                    else
+                    {
+                        DebugLog($"Discovered server '{serverName}' at {serverAddress} " +
+                                 $"(dealer:{dealerPort}, sub:{subPort})");
+                    }
 
                     if (OnServerDiscovered != null)
                     {
-                        OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort);
+                        OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort, transformSubPort, stateSubPort);
                     }
 
                     // Stop sending more discovery requests once we found a server

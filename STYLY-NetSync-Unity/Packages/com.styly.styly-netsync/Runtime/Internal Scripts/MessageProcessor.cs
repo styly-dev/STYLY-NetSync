@@ -33,6 +33,11 @@ namespace Styly.NetSync
         private readonly HashSet<int> _scratchAlive = new HashSet<int>();
         private readonly List<int> _scratchToDisconnect = new List<int>(32);
 
+        // RPC deduplication - track recently seen RPC IDs to prevent double execution
+        private const int MAX_SEEN_RPC_IDS = 1000;
+        private readonly HashSet<ulong> _seenRpcIds = new HashSet<ulong>();
+        private readonly Queue<ulong> _seenRpcIdOrder = new Queue<ulong>();
+
         public int MessagesReceived => _messagesReceived;
         public event System.Action<int> OnLocalClientNoAssigned;
 
@@ -127,6 +132,12 @@ namespace Styly.NetSync
                         // Client variable sync data received
                         break;
 
+                    case BinarySerializer.MSG_RPC_DELIVERY when data is RPCDeliveryMessage rpcDelivery:
+                        // Reliable RPC delivery from server - queue for processing and ACK
+                        _messageQueue.Enqueue(new NetworkMessage { type = "rpc_delivery", dataObj = rpcDelivery });
+                        _messagesReceived++;
+                        break;
+
                     default:
                         if (_logNetworkTraffic) { Debug.LogWarning($"Unhandled type: {msgType}"); }
                         break;
@@ -218,6 +229,17 @@ namespace Styly.NetSync
                         else
                         {
                             Debug.LogError("[MessageProcessor] id_mapping without valid dataObj (unexpected)");
+                        }
+                        break;
+
+                    case "rpc_delivery":
+                        if (msg.dataObj is RPCDeliveryMessage rpcDeliveryMsg)
+                        {
+                            ProcessRpcDelivery(rpcDeliveryMsg, rpcManager, netSyncManager);
+                        }
+                        else
+                        {
+                            Debug.LogError("[MessageProcessor] rpc_delivery without valid dataObj (unexpected)");
                         }
                         break;
                 }
@@ -375,6 +397,50 @@ namespace Styly.NetSync
             public int senderClientNo { get; set; }
             public string functionName { get; set; }
             public string[] args { get; set; }
+        }
+
+        /// <summary>
+        /// Process reliable RPC delivery from server.
+        /// Handles deduplication (exactly-once execution) and sends ACK.
+        /// </summary>
+        private void ProcessRpcDelivery(RPCDeliveryMessage rpcDelivery, RPCManager rpcManager, NetSyncManager netSyncManager)
+        {
+            var rpcId = rpcDelivery.rpcId;
+
+            // Always send ACK (even for duplicates) to stop server retries
+            if (netSyncManager != null)
+            {
+                netSyncManager.SendRpcAck(rpcId);
+            }
+
+            // Check for duplicate (deduplication)
+            if (_seenRpcIds.Contains(rpcId))
+            {
+                // Duplicate - already processed, skip execution
+                return;
+            }
+
+            // Mark as seen
+            _seenRpcIds.Add(rpcId);
+            _seenRpcIdOrder.Enqueue(rpcId);
+
+            // Evict oldest if over limit
+            while (_seenRpcIdOrder.Count > MAX_SEEN_RPC_IDS)
+            {
+                var oldest = _seenRpcIdOrder.Dequeue();
+                _seenRpcIds.Remove(oldest);
+            }
+
+            // Parse arguments and enqueue RPC for execution
+            try
+            {
+                var args = JsonConvert.DeserializeObject<string[]>(rpcDelivery.argumentsJson);
+                rpcManager.EnqueueRPC(rpcDelivery.senderClientNo, rpcDelivery.functionName, args);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[MessageProcessor] Failed to parse RPC delivery args: {ex.Message}");
+            }
         }
 
         private void ProcessIdMappings(DeviceIdMappingData mappingData)

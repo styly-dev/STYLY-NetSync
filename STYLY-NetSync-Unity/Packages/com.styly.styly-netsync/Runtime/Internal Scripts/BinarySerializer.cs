@@ -22,6 +22,9 @@ namespace Styly.NetSync
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
         public const byte MSG_CLIENT_POSE_V2 = 11;  // Client pose (quaternion + timestamps)
         public const byte MSG_ROOM_POSE_V2 = 12;  // Room pose snapshot (quaternion + timestamps)
+        public const byte MSG_HEARTBEAT = 13;  // Client heartbeat for liveness
+        public const byte MSG_RPC_DELIVERY = 14;  // Reliable RPC delivery from server to client
+        public const byte MSG_RPC_ACK = 15;  // RPC acknowledgment from client to server
 
         // Transform data type identifiers (deprecated - kept for reference)
         // All transforms now use 6 floats for consistency
@@ -169,7 +172,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE_V2)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_RPC_ACK)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -195,6 +198,9 @@ namespace Styly.NetSync
                     case MSG_CLIENT_VAR_SYNC:
                         // Client variables sync from server
                         return (messageType, DeserializeClientVarSync(reader));
+                    case MSG_RPC_DELIVERY:
+                        // Reliable RPC delivery from server
+                        return (messageType, DeserializeRPCDelivery(reader));
                     default:
                         // This should not happen due to validation above, but keep as safety
                         return (messageType, null);
@@ -551,6 +557,100 @@ namespace Styly.NetSync
 
             data["clientVariables"] = clientVariables;
             return data;
+        }
+
+        #endregion
+
+        #region === Heartbeat ===
+
+        /// <summary>
+        /// Serialize heartbeat message into a new array.
+        /// </summary>
+        public static byte[] SerializeHeartbeat(string deviceId, int clientNo, double timestamp)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            SerializeHeartbeatInto(writer, deviceId, clientNo, timestamp);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize heartbeat message into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeHeartbeatInto(BinaryWriter writer, string deviceId, int clientNo, double timestamp)
+        {
+            // Message type
+            writer.Write(MSG_HEARTBEAT);
+
+            // Device ID (as UTF8 bytes with length prefix)
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+
+            // Client number (2 bytes)
+            writer.Write((ushort)clientNo);
+
+            // Timestamp (8 bytes double)
+            writer.Write(timestamp);
+        }
+
+        #endregion
+
+        #region === Reliable RPC ===
+
+        /// <summary>
+        /// Deserialize RPC delivery message from server.
+        /// </summary>
+        private static RPCDeliveryMessage DeserializeRPCDelivery(BinaryReader reader)
+        {
+            var msg = new RPCDeliveryMessage();
+
+            // RPC ID (8 bytes uint64)
+            msg.rpcId = reader.ReadUInt64();
+
+            // Sender client number (2 bytes)
+            msg.senderClientNo = reader.ReadUInt16();
+
+            // Function name
+            var nameLen = reader.ReadByte();
+            msg.functionName = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
+
+            // Arguments JSON
+            var argsLen = reader.ReadUInt16();
+            msg.argumentsJson = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(argsLen));
+
+            return msg;
+        }
+
+        /// <summary>
+        /// Serialize RPC acknowledgment message.
+        /// </summary>
+        public static byte[] SerializeRPCAck(ulong rpcId, string deviceId, double timestamp)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            SerializeRPCAckInto(writer, rpcId, deviceId, timestamp);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize RPC acknowledgment message into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeRPCAckInto(BinaryWriter writer, ulong rpcId, string deviceId, double timestamp)
+        {
+            // Message type
+            writer.Write(MSG_RPC_ACK);
+
+            // RPC ID (8 bytes uint64)
+            writer.Write(rpcId);
+
+            // Device ID (as UTF8 bytes with length prefix)
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+
+            // Timestamp (8 bytes double)
+            writer.Write(timestamp);
         }
 
         #endregion

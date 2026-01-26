@@ -116,4 +116,18 @@ namespace Styly.NetSync
         public int serverVersionPatch;
         public List<DeviceIdMapping> mappings;
     }
+
+    // Reliable RPC delivery message from server
+    [Serializable]
+    internal class RPCDeliveryMessage
+    {
+        // Unique RPC ID for deduplication and ACK
+        public ulong rpcId;
+        // Client number of the sender
+        public int senderClientNo;
+        // Name of function to call
+        public string functionName;
+        // JSON-serialized function arguments array
+        public string argumentsJson;
+    }
 }

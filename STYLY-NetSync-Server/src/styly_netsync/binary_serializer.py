@@ -18,6 +18,9 @@ MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 MSG_CLIENT_POSE_V2 = 11
 MSG_ROOM_POSE_V2 = 12
+MSG_HEARTBEAT = 13  # Client heartbeat for liveness
+MSG_RPC_DELIVERY = 14  # Reliable RPC delivery from server to client
+MSG_RPC_ACK = 15  # RPC acknowledgment from client to server
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -397,7 +400,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_ROOM_POSE_V2:
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_RPC_ACK:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -426,6 +429,12 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_set(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_SYNC:
             return message_type, _deserialize_client_var_sync(data, offset), b""
+        elif message_type == MSG_HEARTBEAT:
+            return message_type, _deserialize_heartbeat(data, offset), b""
+        elif message_type == MSG_RPC_DELIVERY:
+            return message_type, _deserialize_rpc_delivery(data, offset), b""
+        elif message_type == MSG_RPC_ACK:
+            return message_type, _deserialize_rpc_ack(data, offset), b""
         else:
             # Should not reach here due to validation above
             return message_type, None, b""
@@ -679,5 +688,144 @@ def _deserialize_client_var_sync(data: bytes, offset: int) -> dict[str, Any]:
             variables.append(var)
 
         result["clientVariables"][str(client_no)] = variables
+
+    return result
+
+
+# ============================================================================
+# Heartbeat messages (for client liveness independent of transform flow)
+# ============================================================================
+
+
+def serialize_heartbeat(data: dict[str, Any]) -> bytes:
+    """Serialize heartbeat message.
+
+    Args:
+        data: Dictionary with deviceId, clientNo (optional), timestamp
+    """
+    buffer = bytearray()
+
+    # Message type
+    buffer.append(MSG_HEARTBEAT)
+
+    # Device ID
+    _pack_string(buffer, data.get("deviceId", ""))
+
+    # Client number (2 bytes) - 0 if not yet assigned
+    buffer.extend(struct.pack("<H", data.get("clientNo", 0)))
+
+    # Timestamp (8 bytes double)
+    buffer.extend(struct.pack("<d", data.get("timestamp", 0.0)))
+
+    return bytes(buffer)
+
+
+def _deserialize_heartbeat(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize heartbeat message"""
+    result: dict[str, Any] = {}
+
+    # Device ID
+    result["deviceId"], offset = _unpack_string(data, offset)
+
+    # Client number (2 bytes)
+    result["clientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    # Timestamp (8 bytes double)
+    result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
+    offset += 8
+
+    return result
+
+
+# ============================================================================
+# Reliable RPC delivery and acknowledgment
+# ============================================================================
+
+
+def serialize_rpc_delivery(data: dict[str, Any]) -> bytes:
+    """Serialize RPC delivery message (server to client).
+
+    Args:
+        data: Dictionary with rpcId, senderClientNo, functionName, argumentsJson
+    """
+    buffer = bytearray()
+
+    # Message type
+    buffer.append(MSG_RPC_DELIVERY)
+
+    # RPC ID (8 bytes uint64)
+    buffer.extend(struct.pack("<Q", data.get("rpcId", 0)))
+
+    # Sender client number (2 bytes)
+    buffer.extend(struct.pack("<H", data.get("senderClientNo", 0)))
+
+    # Function name
+    _pack_string(buffer, data.get("functionName", ""))
+
+    # Arguments JSON
+    _pack_string(buffer, data.get("argumentsJson", ""), use_ushort=True)
+
+    return bytes(buffer)
+
+
+def _deserialize_rpc_delivery(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize RPC delivery message"""
+    result: dict[str, Any] = {}
+
+    # RPC ID (8 bytes uint64)
+    result["rpcId"] = struct.unpack("<Q", data[offset : offset + 8])[0]
+    offset += 8
+
+    # Sender client number (2 bytes)
+    result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    # Function name
+    result["functionName"], offset = _unpack_string(data, offset)
+
+    # Arguments JSON
+    result["argumentsJson"], offset = _unpack_string(data, offset, use_ushort=True)
+
+    return result
+
+
+def serialize_rpc_ack(data: dict[str, Any]) -> bytes:
+    """Serialize RPC acknowledgment message (client to server).
+
+    Args:
+        data: Dictionary with rpcId, deviceId, timestamp
+    """
+    buffer = bytearray()
+
+    # Message type
+    buffer.append(MSG_RPC_ACK)
+
+    # RPC ID (8 bytes uint64)
+    buffer.extend(struct.pack("<Q", data.get("rpcId", 0)))
+
+    # Device ID
+    _pack_string(buffer, data.get("deviceId", ""))
+
+    # Timestamp (8 bytes double)
+    buffer.extend(struct.pack("<d", data.get("timestamp", 0.0)))
+
+    return bytes(buffer)
+
+
+def _deserialize_rpc_ack(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize RPC acknowledgment message"""
+    result: dict[str, Any] = {}
+
+    # RPC ID (8 bytes uint64)
+    result["rpcId"] = struct.unpack("<Q", data[offset : offset + 8])[0]
+    offset += 8
+
+    # Device ID
+    result["deviceId"], offset = _unpack_string(data, offset)
+
+    # Timestamp (8 bytes double)
+    result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
+    offset += 8
 
     return result

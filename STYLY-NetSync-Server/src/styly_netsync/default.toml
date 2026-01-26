@@ -14,8 +14,16 @@
 # ZeroMQ DEALER port for client-server communication
 dealer_port = 5555
 
-# ZeroMQ PUB port for server-to-client broadcasts
+# ZeroMQ PUB port for server-to-client broadcasts (legacy, used if transform_pub_port/state_pub_port are not set)
 pub_port = 5556
+
+# ZeroMQ PUB port for transform broadcasts (lossy, latest-only)
+# Set to 0 to use legacy single pub_port mode
+transform_pub_port = 5557
+
+# ZeroMQ PUB port for state broadcasts (NV sync, device ID mapping)
+# Set to 0 to use legacy single pub_port mode
+state_pub_port = 5558
 
 # UDP port for server discovery service
 server_discovery_port = 9999
@@ -84,6 +92,19 @@ pub_queue_maxsize = 10000
 
 # Delta ring buffer size for NV synchronization
 delta_ring_size = 10000
+
+# Reliable RPC Settings
+# Initial retry delay for RPC delivery (milliseconds)
+rpc_retry_initial_ms = 100
+
+# Maximum retry delay for RPC delivery (milliseconds)
+rpc_retry_max_ms = 1000
+
+# Maximum number of retry attempts for RPC delivery
+rpc_retry_max_attempts = 30
+
+# Maximum pending RPCs per client (backpressure)
+rpc_outbox_max_per_client = 100
 
 # Logging Settings
 # Directory for log files (empty string for console-only logging)
