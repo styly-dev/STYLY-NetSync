@@ -95,6 +95,16 @@ namespace Styly.NetSync
             _lastLocalReceiveTime = 0;
         }
 
+        /// <summary>
+        /// Called when a room broadcast is received to update time offset estimation.
+        ///
+        /// Threading model: This method is called from the network receive thread
+        /// (via MessageProcessor), while Tick() is called from the main Unity thread.
+        /// The fields _lastLocalReceiveTime and _hasLast are primitive types and
+        /// their access is inherently atomic on most platforms. The _offsetStats
+        /// object uses lock-free operations internally. No explicit synchronization
+        /// is required for the current usage pattern.
+        /// </summary>
         public void OnRoomBroadcast(double serverBroadcastTime, double localReceiveTime)
         {
             var offset = localReceiveTime - serverBroadcastTime;
@@ -318,24 +328,96 @@ namespace Styly.NetSync
 
         public PoseSnapshot this[int idx] => _items[idx];
 
+        /// <summary>
+        /// Compares two 16-bit sequence numbers accounting for wrap-around.
+        /// Uses the RFC 1982 serial number arithmetic approach:
+        /// a is less than or equal to b if (a - b) interpreted as unsigned >= 0x8000.
+        /// This correctly handles wrap-around when sequence numbers cross 65535->0.
+        /// Example: SequenceLE(65535, 0) returns true (65535 comes before 0 after wrap).
+        /// </summary>
         private static bool SequenceLE(ushort a, ushort b)
         {
             return (ushort)(a - b) >= 0x8000;
         }
     }
 
+    /// <summary>
+    /// Settings for pose channel smoothing behavior.
+    /// </summary>
     [Serializable]
     internal sealed class PoseChannelSettings
     {
+        /// <summary>
+        /// Maximum time to extrapolate beyond the last received snapshot.
+        /// 50ms allows for 1-2 dropped packets at 30Hz send rate.
+        /// </summary>
         public double MaxExtrapolationSeconds = 0.05;
+
+        /// <summary>
+        /// Whether to apply second-phase exponential smoothing after interpolation.
+        /// </summary>
         public bool EnableSecondPhaseSmoothing = true;
+
+        /// <summary>
+        /// Minimum exponential smoothing time constant.
+        /// 20ms provides responsive tracking for fast movements.
+        /// </summary>
         public float TauMinSeconds = 0.02f;
+
+        /// <summary>
+        /// Maximum exponential smoothing time constant.
+        /// 80ms provides stable smoothing for slow/stationary poses.
+        /// </summary>
         public float TauMaxSeconds = 0.08f;
-        public float SpeedForTauMin = 2.0f;
-        public float AngularSpeedForTauMin = 360f;
+
+        /// <summary>
+        /// Linear speed (m/s) at which TauMin is used.
+        /// 2 m/s is typical fast hand movement speed.
+        /// Must be positive to avoid division by zero.
+        /// </summary>
+        [SerializeField]
+        private float _speedForTauMin = 2.0f;
+        public float SpeedForTauMin
+        {
+            get => _speedForTauMin;
+            set => _speedForTauMin = Mathf.Max(0.001f, value);
+        }
+
+        /// <summary>
+        /// Angular speed (deg/s) at which TauMin is used.
+        /// 360 deg/s is typical fast head rotation speed.
+        /// Must be positive to avoid division by zero.
+        /// </summary>
+        [SerializeField]
+        private float _angularSpeedForTauMin = 360f;
+        public float AngularSpeedForTauMin
+        {
+            get => _angularSpeedForTauMin;
+            set => _angularSpeedForTauMin = Mathf.Max(0.001f, value);
+        }
+
+        /// <summary>
+        /// Distance threshold for teleport detection.
+        /// 2m is large enough to ignore normal movement.
+        /// </summary>
         public float TeleportDistanceMeters = 2.0f;
+
+        /// <summary>
+        /// Angle threshold for teleport detection.
+        /// 140 degrees catches large sudden rotations.
+        /// </summary>
         public float TeleportAngleDegrees = 140f;
+
+        /// <summary>
+        /// Maximum reasonable linear speed before treating as teleport.
+        /// 15 m/s exceeds typical human movement speed.
+        /// </summary>
         public float MaxReasonableSpeed = 15.0f;
+
+        /// <summary>
+        /// Maximum reasonable angular speed before treating as teleport.
+        /// 2000 deg/s exceeds typical human rotation speed.
+        /// </summary>
         public float MaxReasonableAngularSpeed = 2000f;
     }
 

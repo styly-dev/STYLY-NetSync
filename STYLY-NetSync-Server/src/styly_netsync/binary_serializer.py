@@ -1,5 +1,8 @@
+import logging
 import struct
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Message type identifiers
 PROTOCOL_VERSION = 2
@@ -396,8 +399,13 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
         else:
             # Should not reach here due to validation above
             return message_type, None, b""
-    except Exception:
-        # Error deserializing message - return None data
+    except Exception as e:
+        # Log deserialization error at DEBUG level for troubleshooting
+        logger.debug(
+            "Deserialization failed for message type %d: %s",
+            message_type,
+            str(e),
+        )
         return message_type, None, b""
 
 

@@ -2014,7 +2014,9 @@ def main() -> None:
         if config_overrides:
             logger.info("Configuration overrides from user config:")
             for override in config_overrides:
-                logger.info(f"  {override.key}: {override.default_value} -> {override.new_value}")
+                logger.info(
+                    f"  {override.key}: {override.default_value} -> {override.new_value}"
+                )
 
     # Apply global configuration settings
     binary_serializer.set_max_virtual_transforms(config.max_virtual_transforms)

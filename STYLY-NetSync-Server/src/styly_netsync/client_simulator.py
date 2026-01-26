@@ -80,6 +80,7 @@ def euler_to_quaternion(
     qz = cx * cy * sz - sx * sy * cz
     return qx, qy, qz, qw
 
+
 MESSAGE_TYPE_NAMES: dict[int, str] = {
     MSG_CLIENT_POSE_V2: "CLIENT_POSE_V2",
     MSG_ROOM_POSE_V2: "ROOM_POSE_V2",
@@ -389,23 +390,19 @@ class TransformBuilder:
             "deviceId": self.config.device_id,
             "poseSeq": 0,
             "flags": 0x3E,
-            "physical": self._pose_dict(
-                position, Vector3(0, self.rotation_y, 0), True
-            ),
+            "physical": self._pose_dict(position, Vector3(0, self.rotation_y, 0), True),
             "head": self._pose_dict(
                 head_position, Vector3(0, self.rotation_y, 0), False
             ),
-            "rightHand": self._pose_dict(
-                right_hand, Vector3(0, 0, 0), False
-            ),
-            "leftHand": self._pose_dict(
-                left_hand, Vector3(0, 0, 0), False
-            ),
+            "rightHand": self._pose_dict(right_hand, Vector3(0, 0, 0), False),
+            "leftHand": self._pose_dict(left_hand, Vector3(0, 0, 0), False),
             "virtuals": virtuals,
         }
 
     @staticmethod
-    def _pose_dict(position: Vector3, rotation: Vector3, is_local_space: bool) -> dict[str, Any]:
+    def _pose_dict(
+        position: Vector3, rotation: Vector3, is_local_space: bool
+    ) -> dict[str, Any]:
         qx, qy, qz, qw = euler_to_quaternion(rotation.x, rotation.y, rotation.z)
         return {
             "posX": position.x,
@@ -417,6 +414,7 @@ class TransformBuilder:
             "rotW": qw,
             "isLocalSpace": is_local_space,
         }
+
     def _smooth_rotation(
         self, current: float, target: float, delta_time: float
     ) -> float:

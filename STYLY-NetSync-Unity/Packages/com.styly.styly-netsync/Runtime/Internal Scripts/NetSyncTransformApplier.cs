@@ -190,11 +190,11 @@ namespace Styly.NetSync
 
         public void Clear()
         {
-            _physical?.Clear();
-            _head?.Clear();
-            _rightHand?.Clear();
-            _leftHand?.Clear();
-            _singleChannel?.Clear();
+            if (_physical != null) _physical.Clear();
+            if (_head != null) _head.Clear();
+            if (_rightHand != null) _rightHand.Clear();
+            if (_leftHand != null) _leftHand.Clear();
+            if (_singleChannel != null) _singleChannel.Clear();
             for (int i = 0; i < _virtuals.Count; i++)
             {
                 _virtuals[i].Clear();
