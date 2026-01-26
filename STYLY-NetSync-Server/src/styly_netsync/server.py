@@ -1432,9 +1432,12 @@ class NetSyncServer:
                 mappings.append((client_no, device_id, is_stealth))
 
             if mappings:
-                # Serialize and broadcast the mappings
+                # Serialize and broadcast the mappings with server version
                 topic_bytes = room_id.encode("utf-8")
-                message_bytes = binary_serializer.serialize_device_id_mapping(mappings)
+                server_version = binary_serializer.parse_version(get_version())
+                message_bytes = binary_serializer.serialize_device_id_mapping(
+                    mappings, server_version
+                )
                 self._enqueue_pub(topic_bytes, message_bytes)
                 sub_count = self._get_sub_connection_count()
                 logger.info(

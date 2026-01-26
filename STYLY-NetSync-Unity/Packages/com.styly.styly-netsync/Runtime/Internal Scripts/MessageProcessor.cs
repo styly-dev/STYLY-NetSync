@@ -36,6 +36,14 @@ namespace Styly.NetSync
         public int MessagesReceived => _messagesReceived;
         public event System.Action<int> OnLocalClientNoAssigned;
 
+        /// <summary>
+        /// Event fired when server version does not match client version.
+        /// Parameters: (serverMajor, serverMinor, serverPatch, clientMajor, clientMinor, clientPatch)
+        /// </summary>
+        public event System.Action<int, int, int, int, int, int> OnVersionMismatch;
+
+        private bool _versionChecked = false;
+
         public MessageProcessor(bool logNetworkTraffic)
         {
             _logNetworkTraffic = logNetworkTraffic;
@@ -50,6 +58,14 @@ namespace Styly.NetSync
         {
             _localClientNo = clientNo;
             // Local client number set
+        }
+
+        /// <summary>
+        /// Reset version check state. Should be called when switching rooms or reconnecting.
+        /// </summary>
+        public void ResetVersionCheck()
+        {
+            _versionChecked = false;
         }
         
         public void SetNetSyncManager(NetSyncManager netSyncManager)
@@ -363,6 +379,33 @@ namespace Styly.NetSync
 
         private void ProcessIdMappings(DeviceIdMappingData mappingData)
         {
+            // Check version compatibility on first ID mapping received
+            if (!_versionChecked)
+            {
+                _versionChecked = true;
+                if (!Information.IsVersionCompatible(
+                    mappingData.serverVersionMajor,
+                    mappingData.serverVersionMinor,
+                    mappingData.serverVersionPatch))
+                {
+                    var (clientMajor, clientMinor, clientPatch) = Information.ParseVersion(Information.GetVersion());
+                    Debug.LogError(
+                        $"[NetSync] Version mismatch! Server: {mappingData.serverVersionMajor}.{mappingData.serverVersionMinor}.{mappingData.serverVersionPatch}, " +
+                        $"Client: {clientMajor}.{clientMinor}.{clientPatch}. Major and minor versions must match.");
+
+                    if (OnVersionMismatch != null)
+                    {
+                        OnVersionMismatch.Invoke(
+                            mappingData.serverVersionMajor,
+                            mappingData.serverVersionMinor,
+                            mappingData.serverVersionPatch,
+                            clientMajor,
+                            clientMinor,
+                            clientPatch);
+                    }
+                }
+            }
+
             // Clear existing mappings
             _clientNoToDeviceId.Clear();
             _deviceIdToClientNo.Clear();
@@ -521,6 +564,7 @@ namespace Styly.NetSync
             _pendingClients.Clear();
             _knownConnectedClients.Clear();
             SetLocalClientNo(0);   // reset local mapping
+            ResetVersionCheck();   // reset version check for new room
 
             // Also clear message queues to avoid cross-room leakage.
             while (_roomTransformQueue.TryDequeue(out _)) { }

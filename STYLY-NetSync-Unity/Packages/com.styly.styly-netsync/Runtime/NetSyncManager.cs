@@ -39,6 +39,11 @@ namespace Styly.NetSync
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
         public UnityEvent OnReady;
+        /// <summary>
+        /// Event fired when server and client versions do not match.
+        /// Parameters: (serverVersion, clientVersion) as strings like "0.7.5"
+        /// </summary>
+        public UnityEvent<string, string> OnVersionMismatch = new UnityEvent<string, string>();
 
         // Advanced Options (drawn by NetSyncManagerEditor in a foldout)
         [SerializeField, Range(0.5f, 60), Tooltip("Transform sync frequency in Hz (sends per second). Higher values provide smoother movement but increase network traffic.")]
@@ -543,6 +548,7 @@ namespace Styly.NetSync
             _messageProcessor.SetLocalDeviceId(_deviceId);
             _messageProcessor.SetNetSyncManager(this);
             _messageProcessor.OnLocalClientNoAssigned += OnLocalClientNoAssigned;
+            _messageProcessor.OnVersionMismatch += HandleVersionMismatch;
             _connectionManager = new ConnectionManager(this, _messageProcessor, _enableDebugLogs, _logNetworkTraffic);
             _avatarManager = new AvatarManager(_enableDebugLogs);
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
@@ -932,6 +938,28 @@ namespace Styly.NetSync
             {
                 _isHandlingConnectionError = false;
             }
+        }
+
+        /// <summary>
+        /// Handles version mismatch between server and client.
+        /// Disconnects from the server to prevent protocol incompatibility issues.
+        /// </summary>
+        private void HandleVersionMismatch(int serverMajor, int serverMinor, int serverPatch,
+            int clientMajor, int clientMinor, int clientPatch)
+        {
+            var serverVersion = $"{serverMajor}.{serverMinor}.{serverPatch}";
+            var clientVersion = $"{clientMajor}.{clientMinor}.{clientPatch}";
+
+            Debug.LogError($"[NetSyncManager] Version mismatch! Server: {serverVersion}, Client: {clientVersion}. Disconnecting.");
+
+            // Invoke the public UnityEvent for external handlers before disconnecting
+            if (OnVersionMismatch != null)
+            {
+                OnVersionMismatch.Invoke(serverVersion, clientVersion);
+            }
+
+            // Disconnect to prevent protocol incompatibility issues
+            StopNetworking();
         }
 
         /// <summary>
