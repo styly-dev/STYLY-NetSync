@@ -22,6 +22,9 @@ namespace Styly.NetSync
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
         public const byte MSG_CLIENT_POSE_V2 = 11;  // Client pose (quaternion + timestamps)
         public const byte MSG_ROOM_POSE_V2 = 12;  // Room pose snapshot (quaternion + timestamps)
+        public const byte MSG_HEARTBEAT = 13;  // Heartbeat message
+        public const byte MSG_RPC_DELIVERY = 14;  // Reliable RPC delivery
+        public const byte MSG_RPC_ACK = 15;  // Reliable RPC ACK
 
         // Transform data type identifiers (deprecated - kept for reference)
         // All transforms now use 6 floats for consistency
@@ -169,7 +172,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE_V2)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_RPC_ACK)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -185,6 +188,8 @@ namespace Styly.NetSync
                     case MSG_RPC:
                         // RPC message
                         return (messageType, DeserializeRPCMessage(reader));
+                    case MSG_RPC_DELIVERY:
+                        return (messageType, DeserializeRpcDelivery(reader));
                     // MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
                     case MSG_DEVICE_ID_MAPPING:
                         // Device ID mapping notification
@@ -325,6 +330,32 @@ namespace Styly.NetSync
             writer.Write(argsBytes);
         }
 
+        public static byte[] SerializeHeartbeat(string deviceId, int clientNo, double timestamp)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            writer.Write(MSG_HEARTBEAT);
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? string.Empty);
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+            writer.Write((ushort)clientNo);
+            writer.Write(timestamp);
+            return ms.ToArray();
+        }
+
+        public static byte[] SerializeRpcAck(RpcAckMessage msg)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            writer.Write(MSG_RPC_ACK);
+            var rpcIdBytes = System.Text.Encoding.UTF8.GetBytes(msg.rpcId ?? string.Empty);
+            writer.Write((ushort)rpcIdBytes.Length);
+            writer.Write(rpcIdBytes);
+            writer.Write((ushort)msg.receiverClientNo);
+            writer.Write(msg.timestamp);
+            return ms.ToArray();
+        }
+
 
         /// <summary>
         /// Serialize global variable set message
@@ -429,6 +460,24 @@ namespace Styly.NetSync
             var argsJson = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(argsLen));
             return new RPCMessage
             {
+                senderClientNo = senderClientNo,
+                functionName = name,
+                argumentsJson = argsJson
+            };
+        }
+
+        private static RpcDeliveryMessage DeserializeRpcDelivery(BinaryReader reader)
+        {
+            var rpcIdLen = reader.ReadUInt16();
+            var rpcId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(rpcIdLen));
+            var senderClientNo = reader.ReadUInt16();
+            var nameLen = reader.ReadByte();
+            var name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
+            var argsLen = reader.ReadUInt16();
+            var argsJson = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(argsLen));
+            return new RpcDeliveryMessage
+            {
+                rpcId = rpcId,
                 senderClientNo = senderClientNo,
                 functionName = name,
                 argumentsJson = argsJson

@@ -18,7 +18,8 @@ namespace Styly.NetSync
         [Header("Connection Settings")]
         [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "";
         private int _dealerPort = 5555;
-        private int _subPort = 5556;
+        private int _transformSubPort = 5556;
+        private int _stateSubPort = 5557;
         [SerializeField] private string _roomId = "default_room";
 
         [Header("Avatar Settings")]
@@ -249,6 +250,7 @@ namespace Styly.NetSync
         private AvatarManager _avatarManager;
         private RPCManager _rpcManager;
         private TransformSyncManager _transformSyncManager;
+        private HeartbeatManager _heartbeatManager;
         private MessageProcessor _messageProcessor;
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
@@ -261,7 +263,8 @@ namespace Styly.NetSync
         private bool _roomSwitching; // Flag to prevent operations during room switching
         private string _discoveredServer;
         private int _discoveredDealerPort;
-        private int _discoveredSubPort;
+        private int _discoveredTransformSubPort;
+        private int _discoveredStateSubPort;
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
         private const float DiscoveryRetryDelay = 5f; // Retry discovery every 5 seconds after failure
@@ -484,6 +487,7 @@ namespace Styly.NetSync
             // Skip transform/NV operations during room switching
             if (!_roomSwitching)
             {
+                _heartbeatManager?.Tick(_roomId, _clientNo);
                 SendTransformUpdates();
 
                 // Process Network Variables debounced updates
@@ -553,6 +557,7 @@ namespace Styly.NetSync
             _avatarManager = new AvatarManager(_enableDebugLogs);
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _transformSendRate);
+            _heartbeatManager = new HeartbeatManager(_connectionManager, _deviceId);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
             _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
@@ -728,19 +733,21 @@ namespace Styly.NetSync
             _shouldCheckReady = true;
         }
 
-        private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
+        private void OnServerDiscovered(string serverAddress, int dealerPort, int transformPort, int statePort)
         {
             _discoveredServer = serverAddress;
             _discoveredDealerPort = dealerPort;
-            _discoveredSubPort = subPort;
+            _discoveredTransformSubPort = transformPort;
+            _discoveredStateSubPort = statePort;
 
             // Update the server address for future connections
             // Remove tcp:// prefix (discovery always returns with tcp://)
             _serverAddress = serverAddress.Substring(6);
             _dealerPort = dealerPort;
-            _subPort = subPort;
+            _transformSubPort = transformPort;
+            _stateSubPort = statePort;
 
-            DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+            DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, transform:{transformPort}, state:{statePort})");
         }
         #endregion ------------------------------------------------------------------------
 
@@ -756,7 +763,7 @@ namespace Styly.NetSync
 
             // Add tcp:// prefix
             string fullAddress = $"tcp://{_serverAddress}";
-            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId);
+            _connectionManager.Connect(fullAddress, _dealerPort, _transformSubPort, _stateSubPort, _roomId);
         }
 
         private void StopNetworking()
@@ -793,7 +800,12 @@ namespace Styly.NetSync
             {
                 _isDiscovering = false;
                 StopDiscovery();
-                _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort);
+                _connectionManager.ProcessDiscoveredServer(
+                    _discoveredServer,
+                    _discoveredDealerPort,
+                    _discoveredTransformSubPort,
+                    _discoveredStateSubPort
+                );
                 _discoveredServer = null;
                 return; // Exit early - no need to check timeout or retry
             }
@@ -1006,6 +1018,7 @@ namespace Styly.NetSync
             _rpcManager = null;
             _transformSyncManager?.Dispose();
             _transformSyncManager = null;
+            _heartbeatManager = null;
             _networkVariableManager?.Dispose();
             _networkVariableManager = null;
         }

@@ -13,7 +13,8 @@ namespace Styly.NetSync
     internal class ConnectionManager
     {
         private DealerSocket _dealerSocket;
-        private SubscriberSocket _subSocket;
+        private SubscriberSocket _transformSubSocket;
+        private SubscriberSocket _stateSubSocket;
         private Thread _receiveThread;
         private volatile bool _shouldStop;
         private bool _enableDebugLogs;
@@ -27,8 +28,9 @@ namespace Styly.NetSync
         private long _lastExceptionAtUnixMs;
 
         public DealerSocket DealerSocket => _dealerSocket;
-        public SubscriberSocket SubSocket => _subSocket;
-        public bool IsConnected => _dealerSocket != null && _subSocket != null && !_connectionError;
+        public SubscriberSocket TransformSubSocket => _transformSubSocket;
+        public SubscriberSocket StateSubSocket => _stateSubSocket;
+        public bool IsConnected => _dealerSocket != null && _transformSubSocket != null && _stateSubSocket != null && !_connectionError;
         public bool IsConnectionError => _connectionError;
         
         // Thread-safe accessors for exception state
@@ -49,7 +51,7 @@ namespace Styly.NetSync
             _logNetworkTraffic = logNetworkTraffic;
         }
 
-        public void Connect(string serverAddress, int dealerPort, int subPort, string roomId)
+        public void Connect(string serverAddress, int dealerPort, int transformPort, int statePort, string roomId)
         {
             if (_receiveThread != null)
             {
@@ -59,7 +61,7 @@ namespace Styly.NetSync
             _currentRoomId = roomId;
             _connectionError = false;
             _shouldStop = false;
-            _receiveThread = new Thread(() => NetworkLoop(serverAddress, dealerPort, subPort, roomId))
+            _receiveThread = new Thread(() => NetworkLoop(serverAddress, dealerPort, transformPort, statePort, roomId))
             {
                 IsBackground = true,
                 Name = "STYLY_NetworkThread"
@@ -75,16 +77,21 @@ namespace Styly.NetSync
             _shouldStop = true;
 
             // Dispose sockets
-            if (_subSocket != null)
+            if (_transformSubSocket != null)
             {
-                _subSocket.Dispose();
+                _transformSubSocket.Dispose();
+            }
+            if (_stateSubSocket != null)
+            {
+                _stateSubSocket.Dispose();
             }
             if (_dealerSocket != null)
             {
                 _dealerSocket.Dispose();
             }
 
-            _subSocket = null;
+            _transformSubSocket = null;
+            _stateSubSocket = null;
             _dealerSocket = null;
 
             // Wait for receive thread to exit (unless we're on the receive thread)
@@ -98,7 +105,7 @@ namespace Styly.NetSync
             SafeNetMQCleanup();
         }
 
-        private void NetworkLoop(string serverAddress, int dealerPort, int subPort, string roomId)
+        private void NetworkLoop(string serverAddress, int dealerPort, int transformPort, int statePort, string roomId)
         {
             try
             {
@@ -112,16 +119,22 @@ namespace Styly.NetSync
                 DebugLog($"[Thread] DEALER connected → {serverAddress}:{dealerPort}");
 
                 // Subscriber (for receiving)
-                using var sub = new SubscriberSocket();
-                sub.Options.Linger = TimeSpan.Zero;
-                sub.Options.ReceiveHighWatermark = 10;
-                sub.Connect($"{serverAddress}:{subPort}");
-                // Subscribe with topic. Using string here is one-time and acceptable.
-                // Note: NetMQ also offers byte[] overloads, but subscription happens once per connection.
-                sub.Subscribe(roomId);
-                _subSocket = sub;
+                using var transformSub = new SubscriberSocket();
+                transformSub.Options.Linger = TimeSpan.Zero;
+                transformSub.Options.ReceiveHighWatermark = 10;
+                transformSub.Connect($"{serverAddress}:{transformPort}");
+                transformSub.Subscribe(roomId);
+                _transformSubSocket = transformSub;
 
-                DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
+                using var stateSub = new SubscriberSocket();
+                stateSub.Options.Linger = TimeSpan.Zero;
+                stateSub.Options.ReceiveHighWatermark = 10;
+                stateSub.Connect($"{serverAddress}:{statePort}");
+                stateSub.Subscribe(roomId);
+                _stateSubSocket = stateSub;
+
+                DebugLog($"[Thread] Transform SUB connected → {serverAddress}:{transformPort}");
+                DebugLog($"[Thread] State SUB connected     → {serverAddress}:{statePort}");
 
                 // Notify connection established
                 if (OnConnectionEstablished != null)
@@ -131,19 +144,43 @@ namespace Styly.NetSync
 
                 while (!_shouldStop)
                 {
-                    // Receive two frames: [topic][payload]. Use string topic and direct comparison.
-                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
-                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
+                    bool received = false;
 
-                    if (topic != roomId) { continue; }
-
-                    try
+                    if (transformSub.TryReceiveFrameString(TimeSpan.FromMilliseconds(1), out var transformTopic))
                     {
-                        _messageProcessor.ProcessIncomingMessage(payload);
+                        if (transformSub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(1), out var payload) && transformTopic == roomId)
+                        {
+                            received = true;
+                            _messageProcessor.ProcessIncomingMessage(payload, dealer, roomId);
+                        }
                     }
-                    catch (Exception ex)
+
+                    if (stateSub.TryReceiveFrameString(TimeSpan.FromMilliseconds(1), out var stateTopic))
                     {
-                        Debug.LogError($"Binary parse error: {ex.Message}");
+                        if (stateSub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(1), out var payload) && stateTopic == roomId)
+                        {
+                            received = true;
+                            _messageProcessor.ProcessIncomingMessage(payload, dealer, roomId);
+                        }
+                    }
+
+                    if (dealer.TryReceiveMultipartMessage(TimeSpan.FromMilliseconds(1), out var dealerMsg))
+                    {
+                        if (dealerMsg.FrameCount >= 2)
+                        {
+                            var dealerRoom = dealerMsg[0].ConvertToString();
+                            if (dealerRoom == roomId)
+                            {
+                                var payload = dealerMsg[1].ToByteArray();
+                                received = true;
+                                _messageProcessor.ProcessIncomingMessage(payload, dealer, roomId);
+                            }
+                        }
+                    }
+
+                    if (!received)
+                    {
+                        Thread.Sleep(1);
                     }
                 }
             }
@@ -161,7 +198,7 @@ namespace Styly.NetSync
                     
                     // Log detailed exception context
                     var threadId = Thread.CurrentThread.ManagedThreadId;
-                    var endpoint = $"{serverAddress}:{dealerPort}/{subPort}";
+                    var endpoint = $"{serverAddress}:{dealerPort}/{transformPort}/{statePort}";
                     Debug.LogError($"[ConnectionManager] Network thread error. " +
                                    $"Type={ex_local.GetType().Name} Message={ex_local.Message} " +
                                    $"Endpoint={endpoint} ThreadId={threadId} " +
@@ -232,13 +269,13 @@ namespace Styly.NetSync
             }
         }
 
-        public void ProcessDiscoveredServer(string serverAddress, int dealerPort, int subPort)
+        public void ProcessDiscoveredServer(string serverAddress, int dealerPort, int transformPort, int statePort)
         {
             if (_discoveryManager != null)
             {
                 _discoveryManager.StopDiscovery();
             }
-            Connect(serverAddress, dealerPort, subPort, _currentRoomId);
+            Connect(serverAddress, dealerPort, transformPort, statePort, _currentRoomId);
         }
 
         public void DebugLog(string msg)

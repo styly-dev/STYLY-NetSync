@@ -3,6 +3,8 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using NetMQ;
+using NetMQ.Sockets;
 using Newtonsoft.Json;
 using UnityEngine;
 
@@ -24,6 +26,9 @@ namespace Styly.NetSync
         private readonly Dictionary<int, bool> _clientNoToIsStealthMode = new();
         private readonly Dictionary<int, ClientTransformData> _pendingClients = new(); // Clients waiting for ID mapping
         private readonly HashSet<int> _knownConnectedClients = new HashSet<int>(); // Clients we announced via OnAvatarConnected
+        private readonly HashSet<string> _recentRpcIds = new HashSet<string>();
+        private readonly Queue<string> _recentRpcIdOrder = new Queue<string>();
+        private const int MaxRecentRpcIds = 1024;
         private string _localDeviceId;
         private int _localClientNo = 0;
         private NetSyncManager _netSyncManager; // Reference to NetSyncManager for triggering ready checks
@@ -73,7 +78,7 @@ namespace Styly.NetSync
             _netSyncManager = netSyncManager;
         }
 
-        public void ProcessIncomingMessage(byte[] payload)
+        public void ProcessIncomingMessage(byte[] payload, DealerSocket dealerSocket = null, string roomId = null)
         {
             try
             {
@@ -99,7 +104,9 @@ namespace Styly.NetSync
 
                     case BinarySerializer.MSG_RPC when data is RPCMessage rpc:
                         // Avoid JSON round-trip: parse args once and pass object via dataObj
-                        var args = JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson);
+                        var args = string.IsNullOrEmpty(rpc.argumentsJson)
+                            ? Array.Empty<string>()
+                            : JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson);
                         _messageQueue.Enqueue(new NetworkMessage
                         {
                             type = "rpc",
@@ -108,6 +115,10 @@ namespace Styly.NetSync
                         _messagesReceived++;
                         break;
 
+                    case BinarySerializer.MSG_RPC_DELIVERY when data is RpcDeliveryMessage rpcDelivery:
+                        HandleRpcDelivery(rpcDelivery, dealerSocket, roomId);
+                        _messagesReceived++;
+                        break;
 
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
                         // Queue ID mappings for main thread processing (thread-safety fix)
@@ -150,6 +161,68 @@ namespace Styly.NetSync
                     }
                 }
             }
+        }
+
+        private void HandleRpcDelivery(RpcDeliveryMessage rpcDelivery, DealerSocket dealerSocket, string roomId)
+        {
+            if (rpcDelivery == null)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(rpcDelivery.rpcId))
+            {
+                if (_recentRpcIds.Contains(rpcDelivery.rpcId))
+                {
+                    SendRpcAck(rpcDelivery.rpcId, dealerSocket, roomId);
+                    return;
+                }
+
+                _recentRpcIds.Add(rpcDelivery.rpcId);
+                _recentRpcIdOrder.Enqueue(rpcDelivery.rpcId);
+                while (_recentRpcIdOrder.Count > MaxRecentRpcIds)
+                {
+                    var oldest = _recentRpcIdOrder.Dequeue();
+                    _recentRpcIds.Remove(oldest);
+                }
+            }
+
+            var args = string.IsNullOrEmpty(rpcDelivery.argumentsJson)
+                ? Array.Empty<string>()
+                : JsonConvert.DeserializeObject<string[]>(rpcDelivery.argumentsJson);
+            _messageQueue.Enqueue(new NetworkMessage
+            {
+                type = "rpc",
+                dataObj = new RpcMessageData
+                {
+                    senderClientNo = rpcDelivery.senderClientNo,
+                    functionName = rpcDelivery.functionName,
+                    args = args
+                }
+            });
+
+            SendRpcAck(rpcDelivery.rpcId, dealerSocket, roomId);
+        }
+
+        private void SendRpcAck(string rpcId, DealerSocket dealerSocket, string roomId)
+        {
+            if (string.IsNullOrEmpty(rpcId) || dealerSocket == null || string.IsNullOrEmpty(roomId))
+            {
+                return;
+            }
+
+            var ack = new RpcAckMessage
+            {
+                rpcId = rpcId,
+                receiverClientNo = _localClientNo,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0
+            };
+            var payload = BinarySerializer.SerializeRpcAck(ack);
+            var msg = new NetMQMessage();
+            msg.Append(roomId);
+            msg.Append(payload);
+            dealerSocket.TrySendMultipartMessage(msg);
+            msg.Clear();
         }
 
         public void ProcessMessageQueue(AvatarManager avatarManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
