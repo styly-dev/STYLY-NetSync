@@ -22,6 +22,9 @@ namespace Styly.NetSync
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
         public const byte MSG_CLIENT_POSE_V2 = 11;  // Client pose (quaternion + timestamps)
         public const byte MSG_ROOM_POSE_V2 = 12;  // Room pose snapshot (quaternion + timestamps)
+        public const byte MSG_HEARTBEAT = 13;      // Client keepalive heartbeat
+        public const byte MSG_RPC_DELIVERY = 14;   // Reliable RPC delivery (server -> client via DEALER)
+        public const byte MSG_RPC_ACK = 15;        // RPC acknowledgment (client -> server)
 
         // Transform data type identifiers (deprecated - kept for reference)
         // All transforms now use 6 floats for consistency
@@ -169,7 +172,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE_V2)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_RPC_ACK)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -183,8 +186,11 @@ namespace Styly.NetSync
                     case MSG_ROOM_POSE_V2:
                         return (messageType, DeserializeRoomTransform(reader));
                     case MSG_RPC:
-                        // RPC message
+                        // RPC message (legacy broadcast)
                         return (messageType, DeserializeRPCMessage(reader));
+                    case MSG_RPC_DELIVERY:
+                        // Reliable RPC delivery (server -> client via DEALER)
+                        return (messageType, DeserializeRPCDelivery(reader));
                     // MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
                     case MSG_DEVICE_ID_MAPPING:
                         // Device ID mapping notification
@@ -325,6 +331,52 @@ namespace Styly.NetSync
             writer.Write(argsBytes);
         }
 
+        /// <summary>
+        /// Serialize heartbeat message (client -> server).
+        /// </summary>
+        public static byte[] SerializeHeartbeat(string deviceId)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            SerializeHeartbeatInto(writer, deviceId);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize heartbeat message into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeHeartbeatInto(BinaryWriter writer, string deviceId)
+        {
+            // Message type
+            writer.Write(MSG_HEARTBEAT);
+            // Device ID (length-prefixed byte)
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+        }
+
+        /// <summary>
+        /// Serialize RPC acknowledgment message (client -> server).
+        /// </summary>
+        public static byte[] SerializeRpcAck(uint rpcId)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            SerializeRpcAckInto(writer, rpcId);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize RPC acknowledgment into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeRpcAckInto(BinaryWriter writer, uint rpcId)
+        {
+            // Message type
+            writer.Write(MSG_RPC_ACK);
+            // RPC ID (4 bytes uint32)
+            writer.Write(rpcId);
+        }
+
 
         /// <summary>
         /// Serialize global variable set message
@@ -429,6 +481,31 @@ namespace Styly.NetSync
             var argsJson = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(argsLen));
             return new RPCMessage
             {
+                senderClientNo = senderClientNo,
+                functionName = name,
+                argumentsJson = argsJson
+            };
+        }
+
+        /// <summary>
+        /// Deserialize reliable RPC delivery message (server -> client via DEALER).
+        /// Returns an RPCDeliveryMessage with additional rpcId field.
+        /// </summary>
+        private static RPCDeliveryMessage DeserializeRPCDelivery(BinaryReader reader)
+        {
+            // RPC ID (4 bytes uint32)
+            var rpcId = reader.ReadUInt32();
+            // Sender client number (2 bytes)
+            var senderClientNo = reader.ReadUInt16();
+            // Function name
+            var nameLen = reader.ReadByte();
+            var name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
+            // Arguments JSON
+            var argsLen = reader.ReadUInt16();
+            var argsJson = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(argsLen));
+            return new RPCDeliveryMessage
+            {
+                rpcId = rpcId,
                 senderClientNo = senderClientNo,
                 functionName = name,
                 argumentsJson = argsJson

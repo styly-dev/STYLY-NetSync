@@ -40,7 +40,12 @@ namespace Styly.NetSync
         public int MaxParallelConnections { get; set; } = 20; // Scan up to 20 IPs concurrently
         public int TcpConnectionTimeoutMs { get; set; } = 300; // Reduced timeout for faster scanning
 
-        public event Action<string, int, int> OnServerDiscovered;
+        /// <summary>
+        /// Event fired when server is discovered.
+        /// Parameters: (serverAddress, dealerPort, subPort, stateSubPort)
+        /// stateSubPort is 0 if the server doesn't have a separate state channel.
+        /// </summary>
+        public event Action<string, int, int, int> OnServerDiscovered;
 
         public ServerDiscoveryManager(bool enableDebugLogs)
         {
@@ -494,7 +499,7 @@ namespace Styly.NetSync
         {
             try
             {
-                var message = Encoding.UTF8.GetString(data);
+                var message = Encoding.UTF8.GetString(data).Trim();
                 var parts = message.Split('|');
 
                 if (parts.Length >= 3 && parts[0] == "STYLY-NETSYNC")
@@ -502,17 +507,20 @@ namespace Styly.NetSync
                     var dealerPort = int.Parse(parts[1]);
                     var subPort = int.Parse(parts[2]);
                     var serverName = parts.Length >= 4 ? parts[3] : "Unknown Server";
+                    // Parse stateSubPort (optional, at position 4, defaults to 0)
+                    var stateSubPort = parts.Length >= 5 ? int.Parse(parts[4]) : 0;
 
                     var serverAddress = $"tcp://{sender.Address}";
 
                     // Cache the discovered server IP for future connections
                     QueueCacheServerIp(sender.Address.ToString());
 
-                    DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+                    var statePortInfo = stateSubPort > 0 ? $", state:{stateSubPort}" : "";
+                    DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort}{statePortInfo})");
 
                     if (OnServerDiscovered != null)
                     {
-                        OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort);
+                        OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort, stateSubPort);
                     }
 
                     // Stop sending more discovery requests once we found a server

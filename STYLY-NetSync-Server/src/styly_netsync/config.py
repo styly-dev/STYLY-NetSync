@@ -64,6 +64,7 @@ class ServerConfig:
     # Network settings
     dealer_port: int
     pub_port: int
+    pub_state_port: int  # Port for state/control traffic (0 = use pub_port)
     server_discovery_port: int
     server_name: str
     enable_server_discovery: bool
@@ -105,6 +106,7 @@ _VALID_KEYS: set[str] = {
     # Network settings
     "dealer_port",
     "pub_port",
+    "pub_state_port",
     "server_discovery_port",
     "server_name",
     "enable_server_discovery",
@@ -236,6 +238,13 @@ def validate_config(config: ServerConfig) -> list[str]:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
             errors.append(f"{field_name} must be between 1 and 65535, got {port}")
+
+    # pub_state_port special validation (0 = use pub_port, or 1-65535)
+    if config.pub_state_port != 0 and not 1 <= config.pub_state_port <= 65535:
+        errors.append(
+            f"pub_state_port must be 0 (use pub_port) or between 1 and 65535, "
+            f"got {config.pub_state_port}"
+        )
 
     # Timing validation (must be positive)
     timing_fields = [

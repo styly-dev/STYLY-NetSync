@@ -108,6 +108,22 @@ namespace Styly.NetSync
                         _messagesReceived++;
                         break;
 
+                    case BinarySerializer.MSG_RPC_DELIVERY when data is RPCDeliveryMessage rpcDelivery:
+                        // Reliable RPC delivery - enqueue for deduplication and ACK handling
+                        var deliveryArgs = JsonConvert.DeserializeObject<string[]>(rpcDelivery.argumentsJson);
+                        _messageQueue.Enqueue(new NetworkMessage
+                        {
+                            type = "rpc_delivery",
+                            dataObj = new RpcDeliveryData
+                            {
+                                rpcId = rpcDelivery.rpcId,
+                                senderClientNo = rpcDelivery.senderClientNo,
+                                functionName = rpcDelivery.functionName,
+                                args = deliveryArgs
+                            }
+                        });
+                        _messagesReceived++;
+                        break;
 
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
                         // Queue ID mappings for main thread processing (thread-safety fix)
@@ -185,6 +201,25 @@ namespace Styly.NetSync
                         else
                         {
                             Debug.LogError("[MessageProcessor] rpc without dataObj (unexpected)");
+                        }
+                        break;
+
+                    case "rpc_delivery":
+                        // Reliable RPC delivery - deduplicate and send ACK
+                        if (msg.dataObj is RpcDeliveryData rpcDeliveryObj)
+                        {
+                            var roomId = netSyncManager != null ? netSyncManager.RoomId : "";
+                            rpcManager.HandleReliableRpcDelivery(
+                                roomId,
+                                rpcDeliveryObj.rpcId,
+                                rpcDeliveryObj.senderClientNo,
+                                rpcDeliveryObj.functionName,
+                                rpcDeliveryObj.args
+                            );
+                        }
+                        else
+                        {
+                            Debug.LogError("[MessageProcessor] rpc_delivery without dataObj (unexpected)");
                         }
                         break;
 
@@ -372,6 +407,17 @@ namespace Styly.NetSync
 
         private class RpcMessageData
         {
+            public int senderClientNo { get; set; }
+            public string functionName { get; set; }
+            public string[] args { get; set; }
+        }
+
+        /// <summary>
+        /// Reliable RPC delivery data (includes rpcId for deduplication and ACK)
+        /// </summary>
+        internal class RpcDeliveryData
+        {
+            public uint rpcId { get; set; }
             public int senderClientNo { get; set; }
             public string functionName { get; set; }
             public string[] args { get; set; }

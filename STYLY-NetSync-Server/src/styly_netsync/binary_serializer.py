@@ -18,6 +18,9 @@ MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 MSG_CLIENT_POSE_V2 = 11
 MSG_ROOM_POSE_V2 = 12
+MSG_HEARTBEAT = 13  # Client keepalive heartbeat
+MSG_RPC_DELIVERY = 14  # Reliable RPC delivery (server -> client via DEALER)
+MSG_RPC_ACK = 15  # RPC acknowledgment (client -> server)
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -214,6 +217,100 @@ def serialize_rpc_message(data: dict[str, Any]) -> bytes:
     return bytes(buffer)
 
 
+def serialize_heartbeat(device_id: str) -> bytes:
+    """Serialize heartbeat message (client -> server).
+
+    Args:
+        device_id: The device ID of the client sending heartbeat.
+
+    Returns:
+        Serialized heartbeat bytes.
+    """
+    buffer = bytearray()
+    buffer.append(MSG_HEARTBEAT)
+    _pack_string(buffer, device_id)
+    return bytes(buffer)
+
+
+def _deserialize_heartbeat(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize heartbeat message."""
+    result: dict[str, Any] = {}
+    result["deviceId"], offset = _unpack_string(data, offset)
+    return result
+
+
+def serialize_rpc_delivery(data: dict[str, Any]) -> bytes:
+    """Serialize reliable RPC delivery message (server -> client via DEALER).
+
+    Args:
+        data: Dictionary with rpcId, senderClientNo, functionName, argumentsJson.
+
+    Returns:
+        Serialized RPC delivery bytes.
+    """
+    buffer = bytearray()
+    buffer.append(MSG_RPC_DELIVERY)
+
+    # RPC ID (4 bytes uint32)
+    rpc_id = data.get("rpcId", 0)
+    buffer.extend(struct.pack("<I", rpc_id))
+
+    # Sender client number (2 bytes)
+    sender_client_no = data.get("senderClientNo", 0)
+    buffer.extend(struct.pack("<H", sender_client_no))
+
+    # Function name (length-prefixed byte)
+    _pack_string(buffer, data.get("functionName", ""))
+
+    # Arguments JSON (length-prefixed ushort)
+    _pack_string(buffer, data.get("argumentsJson", ""), use_ushort=True)
+
+    return bytes(buffer)
+
+
+def _deserialize_rpc_delivery(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize reliable RPC delivery message."""
+    result: dict[str, Any] = {}
+
+    # RPC ID (4 bytes uint32)
+    result["rpcId"] = struct.unpack("<I", data[offset : offset + 4])[0]
+    offset += 4
+
+    # Sender client number (2 bytes)
+    result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    # Function name
+    result["functionName"], offset = _unpack_string(data, offset)
+
+    # Arguments JSON
+    result["argumentsJson"], offset = _unpack_string(data, offset, use_ushort=True)
+
+    return result
+
+
+def serialize_rpc_ack(rpc_id: int) -> bytes:
+    """Serialize RPC acknowledgment message (client -> server).
+
+    Args:
+        rpc_id: The RPC ID being acknowledged.
+
+    Returns:
+        Serialized RPC ACK bytes.
+    """
+    buffer = bytearray()
+    buffer.append(MSG_RPC_ACK)
+    buffer.extend(struct.pack("<I", rpc_id))
+    return bytes(buffer)
+
+
+def _deserialize_rpc_ack(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize RPC acknowledgment message."""
+    result: dict[str, Any] = {}
+    result["rpcId"] = struct.unpack("<I", data[offset : offset + 4])[0]
+    return result
+
+
 def parse_version(version_str: str) -> tuple[int, int, int]:
     """Parse semantic version string into (major, minor, patch) tuple.
 
@@ -397,7 +494,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_ROOM_POSE_V2:
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_RPC_ACK:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -426,6 +523,12 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_set(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_SYNC:
             return message_type, _deserialize_client_var_sync(data, offset), b""
+        elif message_type == MSG_HEARTBEAT:
+            return message_type, _deserialize_heartbeat(data, offset), b""
+        elif message_type == MSG_RPC_DELIVERY:
+            return message_type, _deserialize_rpc_delivery(data, offset), b""
+        elif message_type == MSG_RPC_ACK:
+            return message_type, _deserialize_rpc_ack(data, offset), b""
         else:
             # Should not reach here due to validation above
             return message_type, None, b""

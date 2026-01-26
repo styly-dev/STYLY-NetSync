@@ -39,6 +39,7 @@ class TestLoadDefaultConfig:
         # Network
         assert config.dealer_port == 5555
         assert config.pub_port == 5556
+        assert config.pub_state_port == 5557
         assert config.server_discovery_port == 9999
         assert config.server_name == "STYLY-NetSync-Server"
         assert config.enable_server_discovery is True
@@ -85,6 +86,7 @@ class TestServerConfig:
         config = ServerConfig(
             dealer_port=6666,
             pub_port=6667,
+            pub_state_port=6668,
             server_discovery_port=8888,
             server_name="Custom Server",
             enable_server_discovery=False,
@@ -114,6 +116,7 @@ class TestServerConfig:
         )
         assert config.dealer_port == 6666
         assert config.pub_port == 6667
+        assert config.pub_state_port == 6668
         assert config.server_discovery_port == 8888
         assert config.server_name == "Custom Server"
         assert config.enable_server_discovery is False

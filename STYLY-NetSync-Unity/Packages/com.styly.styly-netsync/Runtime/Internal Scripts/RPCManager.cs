@@ -23,6 +23,11 @@ namespace Styly.NetSync
         private readonly ReusableBufferWriter _buf;
         private const int INITIAL_BUFFER_CAPACITY = 512;
 
+        // Deduplication cache for reliable RPC delivery
+        private readonly HashSet<uint> _processedRpcIds = new HashSet<uint>();
+        private readonly Queue<uint> _rpcIdOrder = new Queue<uint>();
+        private const int MAX_RPC_ID_CACHE = 1000;
+
         public UnityEvent<int, string, string[]> OnRPCReceived { get; } = new();
 
         // ===== Client-side RPC rate limiter (single cap) =====
@@ -228,6 +233,72 @@ namespace Styly.NetSync
             if (nameLen > 255) nameLen = 255; // capped by serializer
             var argsLen = msg != null && msg.argumentsJson != null ? Encoding.UTF8.GetByteCount(msg.argumentsJson) : 0;
             return 1 + 2 + 1 + nameLen + 2 + argsLen;
+        }
+
+        /// <summary>
+        /// Handle reliable RPC delivery from server. Deduplicates and sends ACK.
+        /// Returns true if this is a new RPC that should be processed, false if duplicate.
+        /// </summary>
+        public bool HandleReliableRpcDelivery(string roomId, uint rpcId, int senderClientNo, string functionName, string[] args)
+        {
+            // Check for duplicate
+            if (_processedRpcIds.Contains(rpcId))
+            {
+                // Still send ACK (server may have retried due to lost ACK)
+                SendRpcAck(roomId, rpcId);
+                return false;
+            }
+
+            // Add to deduplication cache
+            _processedRpcIds.Add(rpcId);
+            _rpcIdOrder.Enqueue(rpcId);
+
+            // Maintain cache size
+            while (_rpcIdOrder.Count > MAX_RPC_ID_CACHE)
+            {
+                var oldId = _rpcIdOrder.Dequeue();
+                _processedRpcIds.Remove(oldId);
+            }
+
+            // Send ACK immediately
+            SendRpcAck(roomId, rpcId);
+
+            // Queue the RPC for processing
+            EnqueueRPC(senderClientNo, functionName, args);
+            return true;
+        }
+
+        /// <summary>
+        /// Send RPC acknowledgment to server.
+        /// </summary>
+        private void SendRpcAck(string roomId, uint rpcId)
+        {
+            if (_connectionManager == null || _connectionManager.DealerSocket == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var ackBytes = BinarySerializer.SerializeRpcAck(rpcId);
+                var msg = new NetMQMessage();
+                msg.Append(roomId);
+                msg.Append(ackBytes);
+                _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NetSync/RPC] Failed to send RPC ACK: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Clears the deduplication cache. Should be called when switching rooms.
+        /// </summary>
+        public void ClearDeduplicationCache()
+        {
+            _processedRpcIds.Clear();
+            _rpcIdOrder.Clear();
         }
 
         /// <summary>

@@ -69,8 +69,9 @@ def test_transforms_pull_based():
     """Test pull-based transform consumption."""
     print("\n=== Testing Pull-based Transforms ===")
 
+    # Use ports that don't conflict with default pub_state_port (5557)
     server = NetSyncServer(
-        dealer_port=5557, pub_port=5558, enable_server_discovery=False
+        dealer_port=5565, pub_port=5566, enable_server_discovery=False
     )
     server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
     server_thread.start()
@@ -78,10 +79,10 @@ def test_transforms_pull_based():
 
     try:
         client1 = net_sync_manager(
-            server="tcp://localhost", dealer_port=5557, sub_port=5558, room="demo"
+            server="tcp://localhost", dealer_port=5565, sub_port=5566, room="demo"
         )
         client2 = net_sync_manager(
-            server="tcp://localhost", dealer_port=5557, sub_port=5558, room="demo"
+            server="tcp://localhost", dealer_port=5565, sub_port=5566, room="demo"
         )
 
         client1.start()

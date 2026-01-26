@@ -97,6 +97,20 @@ namespace Styly.NetSync
         public string argumentsJson;
     }
 
+    // Reliable RPC delivery message (server -> client via DEALER with ACK)
+    [Serializable]
+    internal class RPCDeliveryMessage
+    {
+        // Unique RPC ID for acknowledgment tracking
+        public uint rpcId;
+        // Client number of the sender
+        public int senderClientNo;
+        // Name of function to call
+        public string functionName;
+        // JSON-serialized function arguments array
+        public string argumentsJson;
+    }
+
 
     // Device ID mapping data
     [Serializable]

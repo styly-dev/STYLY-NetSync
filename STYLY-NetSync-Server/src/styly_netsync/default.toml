@@ -14,8 +14,12 @@
 # ZeroMQ DEALER port for client-server communication
 dealer_port = 5555
 
-# ZeroMQ PUB port for server-to-client broadcasts
+# ZeroMQ PUB port for high-frequency transform broadcasts
 pub_port = 5556
+
+# ZeroMQ PUB port for state/control traffic (NV, ID mappings, RPC)
+# Set to 0 to use the same port as pub_port (legacy single-channel mode)
+pub_state_port = 5557
 
 # UDP port for server discovery service
 server_discovery_port = 9999

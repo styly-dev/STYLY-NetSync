@@ -19,6 +19,7 @@ namespace Styly.NetSync
         [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "";
         private int _dealerPort = 5555;
         private int _subPort = 5556;
+        private int _stateSubPort = 0;  // State channel port (0 = use subPort for all)
         [SerializeField] private string _roomId = "default_room";
 
         [Header("Avatar Settings")]
@@ -262,6 +263,7 @@ namespace Styly.NetSync
         private string _discoveredServer;
         private int _discoveredDealerPort;
         private int _discoveredSubPort;
+        private int _discoveredStateSubPort;
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
         private const float DiscoveryRetryDelay = 5f; // Retry discovery every 5 seconds after failure
@@ -274,6 +276,10 @@ namespace Styly.NetSync
         // Battery monitoring fields
         private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
         private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
+
+        // Heartbeat fields for keepalive (prevents false timeout on server)
+        private float _heartbeatInterval = 1.0f; // Send heartbeat every 1 second
+        private float _lastHeartbeatTime = 0.0f; // Last time we sent a heartbeat
 
         // Connection error handling fields (main-thread handoff for thread-safe error handling)
         /// <summary>
@@ -491,6 +497,9 @@ namespace Styly.NetSync
 
                 // Flush pending RPCs
                 _rpcManager?.FlushPendingIfReady(_roomId);
+
+                // Send periodic heartbeat to prevent false timeout when transform traffic is congested
+                SendHeartbeatIfNeeded();
             }
 
             // Check for initial sync timeout (important for rooms with no variables)
@@ -728,19 +737,22 @@ namespace Styly.NetSync
             _shouldCheckReady = true;
         }
 
-        private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
+        private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort, int stateSubPort)
         {
             _discoveredServer = serverAddress;
             _discoveredDealerPort = dealerPort;
             _discoveredSubPort = subPort;
+            _discoveredStateSubPort = stateSubPort;
 
             // Update the server address for future connections
             // Remove tcp:// prefix (discovery always returns with tcp://)
             _serverAddress = serverAddress.Substring(6);
             _dealerPort = dealerPort;
             _subPort = subPort;
+            _stateSubPort = stateSubPort;
 
-            DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+            var statePortInfo = stateSubPort > 0 ? $", state:{stateSubPort}" : "";
+            DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, sub:{subPort}{statePortInfo})");
         }
         #endregion ------------------------------------------------------------------------
 
@@ -756,7 +768,7 @@ namespace Styly.NetSync
 
             // Add tcp:// prefix
             string fullAddress = $"tcp://{_serverAddress}";
-            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId);
+            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _stateSubPort, _roomId);
         }
 
         private void StopNetworking()
@@ -793,7 +805,7 @@ namespace Styly.NetSync
             {
                 _isDiscovering = false;
                 StopDiscovery();
-                _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort);
+                _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort, _discoveredStateSubPort);
                 _discoveredServer = null;
                 return; // Exit early - no need to check timeout or retry
             }
@@ -854,6 +866,30 @@ namespace Styly.NetSync
                     }
                 }
                 _transformSyncManager.UpdateLastSendTime(Time.time);
+            }
+        }
+
+        /// <summary>
+        /// Sends heartbeat to the server periodically to prevent false timeout
+        /// when transform traffic is congested or when the client is idle.
+        /// </summary>
+        private void SendHeartbeatIfNeeded()
+        {
+            if (_connectionManager == null || !_connectionManager.IsConnected || _connectionManager.IsConnectionError)
+            {
+                return;
+            }
+
+            // Only send heartbeat if enough time has passed
+            if (Time.time - _lastHeartbeatTime < _heartbeatInterval)
+            {
+                return;
+            }
+
+            // Send heartbeat
+            if (_connectionManager.SendHeartbeat(_roomId, _deviceId))
+            {
+                _lastHeartbeatTime = Time.time;
             }
         }
 
