@@ -108,6 +108,10 @@ namespace Styly.NetSync
                         _messagesReceived++;
                         break;
 
+                    case BinarySerializer.MSG_RPC_DELIVERY when data is RpcDeliveryMessage delivery:
+                        _messageQueue.Enqueue(new NetworkMessage { type = "rpc_delivery", dataObj = delivery });
+                        _messagesReceived++;
+                        break;
 
                     case BinarySerializer.MSG_DEVICE_ID_MAPPING when data is DeviceIdMappingData mappingData:
                         // Queue ID mappings for main thread processing (thread-safety fix)
@@ -185,6 +189,17 @@ namespace Styly.NetSync
                         else
                         {
                             Debug.LogError("[MessageProcessor] rpc without dataObj (unexpected)");
+                        }
+                        break;
+
+                    case "rpc_delivery":
+                        if (msg.dataObj is RpcDeliveryMessage delivery)
+                        {
+                            rpcManager.HandleRpcDelivery(delivery);
+                        }
+                        else
+                        {
+                            Debug.LogError("[MessageProcessor] rpc_delivery without dataObj (unexpected)");
                         }
                         break;
 

@@ -18,6 +18,9 @@ namespace Styly.NetSync
         private readonly string _deviceId;
         private readonly NetSyncManager _netSyncManager;
         private readonly ConcurrentQueue<(int senderClientNo, string fn, string[] args)> _rpcQueue = new();
+        private readonly HashSet<string> _recentRpcIds = new HashSet<string>();
+        private readonly Queue<string> _recentRpcOrder = new Queue<string>();
+        private const int MaxRecentRpcIds = 512;
 
         // Reusable serialization resources to reduce GC
         private readonly ReusableBufferWriter _buf;
@@ -218,6 +221,77 @@ namespace Styly.NetSync
         public void EnqueueRPC(int senderClientNo, string functionName, string[] args)
         {
             _rpcQueue.Enqueue((senderClientNo, functionName, args));
+        }
+
+        public void HandleRpcDelivery(RpcDeliveryMessage delivery)
+        {
+            if (delivery == null || string.IsNullOrEmpty(delivery.rpcId))
+            {
+                return;
+            }
+
+            bool shouldExecute;
+            lock (_recentRpcIds)
+            {
+                shouldExecute = !_recentRpcIds.Contains(delivery.rpcId);
+                if (shouldExecute)
+                {
+                    _recentRpcIds.Add(delivery.rpcId);
+                    _recentRpcOrder.Enqueue(delivery.rpcId);
+                    if (_recentRpcOrder.Count > MaxRecentRpcIds)
+                    {
+                        var oldId = _recentRpcOrder.Dequeue();
+                        _recentRpcIds.Remove(oldId);
+                    }
+                }
+            }
+
+            SendRpcAck(delivery.rpcId);
+
+            if (!shouldExecute)
+            {
+                return;
+            }
+
+            var argsJson = string.IsNullOrEmpty(delivery.argumentsJson) ? "[]" : delivery.argumentsJson;
+            var args = JsonConvert.DeserializeObject<string[]>(argsJson);
+            EnqueueRPC(delivery.senderClientNo, delivery.functionName, args);
+        }
+
+        private void SendRpcAck(string rpcId)
+        {
+            if (_connectionManager.DealerSocket == null)
+            {
+                return;
+            }
+
+            var ack = new RpcAckMessage
+            {
+                rpcId = rpcId,
+                receiverClientNo = _netSyncManager.ClientNo,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0
+            };
+            var payload = BinarySerializer.SerializeRpcAck(ack);
+            var roomId = _netSyncManager.RoomId;
+
+            try
+            {
+                var msg = new NetMQMessage();
+                try
+                {
+                    msg.Append(roomId);
+                    msg.Append(payload);
+                    _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
+                }
+                finally
+                {
+                    msg.Clear();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NetSync/RPC] Failed to send RPC ACK: {ex.Message}");
+            }
         }
 
         // Buffer growth handled by ReusableBufferWriter

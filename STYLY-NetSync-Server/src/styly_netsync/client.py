@@ -12,6 +12,7 @@ import socket
 import threading
 import time
 import uuid
+from collections import deque
 from queue import Empty, Full, Queue
 from typing import Any
 
@@ -48,6 +49,8 @@ class net_sync_manager:
         server: str = "tcp://localhost",
         dealer_port: int = 5555,
         sub_port: int = 5556,
+        transform_sub_port: int | None = None,
+        state_sub_port: int | None = None,
         room: str = "default_room",
         auto_dispatch: bool = True,
         queue_max: int = 10000,
@@ -58,7 +61,9 @@ class net_sync_manager:
         Args:
             server: ZeroMQ base address (e.g., "tcp://localhost")
             dealer_port: Server ROUTER port for uplink
-            sub_port: Server PUB port for downlink
+            sub_port: Server PUB port for downlink (legacy, transform channel)
+            transform_sub_port: Transform PUB port override
+            state_sub_port: State PUB port override
             room: Room topic to subscribe to
             auto_dispatch: If True, callbacks fire on receive thread
             queue_max: Max queued events for RPC/NV
@@ -66,6 +71,12 @@ class net_sync_manager:
         self._server = server
         self._dealer_port = dealer_port
         self._sub_port = sub_port
+        self._transform_sub_port = (
+            transform_sub_port if transform_sub_port is not None else sub_port
+        )
+        self._state_sub_port = (
+            state_sub_port if state_sub_port is not None else sub_port
+        )
         self._room = room
         self._auto_dispatch = auto_dispatch
         self._queue_max = queue_max
@@ -73,7 +84,8 @@ class net_sync_manager:
         # ZeroMQ context and sockets
         self._context: zmq.Context | None = None
         self._dealer_socket: zmq.Socket | None = None
-        self._sub_socket: zmq.Socket | None = None
+        self._transform_sub_socket: zmq.Socket | None = None
+        self._state_sub_socket: zmq.Socket | None = None
 
         # Threading
         self._running = False
@@ -109,6 +121,11 @@ class net_sync_manager:
         self.on_avatar_connected = EventHandler()
         self.on_client_disconnected = EventHandler()
         self.on_server_discovered = EventHandler()
+
+        # RPC de-duplication cache
+        self._recent_rpc_ids: set[str] = set()
+        self._recent_rpc_order: deque[str] = deque()
+        self._recent_rpc_limit = 512
 
         # Discovery
         self._discovery_socket: socket.socket | None = None
@@ -163,7 +180,17 @@ class net_sync_manager:
     @property
     def sub_port(self) -> int:
         """Subscriber port."""
-        return self._sub_port
+        return self._transform_sub_port
+
+    @property
+    def transform_sub_port(self) -> int:
+        """Transform subscriber port."""
+        return self._transform_sub_port
+
+    @property
+    def state_sub_port(self) -> int:
+        """State subscriber port."""
+        return self._state_sub_port
 
     def start(self) -> "net_sync_manager":
         """Start the client and connect to server."""
@@ -180,11 +207,19 @@ class net_sync_manager:
                 dealer_addr = f"{self._server}:{self._dealer_port}"
                 self._dealer_socket.connect(dealer_addr)
 
-                # SUB socket for downlink
-                self._sub_socket = self._context.socket(zmq.SUB)
-                sub_addr = f"{self._server}:{self._sub_port}"
-                self._sub_socket.connect(sub_addr)
-                self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
+                # SUB sockets for downlink
+                self._transform_sub_socket = self._context.socket(zmq.SUB)
+                self._state_sub_socket = self._context.socket(zmq.SUB)
+                transform_addr = f"{self._server}:{self._transform_sub_port}"
+                state_addr = f"{self._server}:{self._state_sub_port}"
+                self._transform_sub_socket.connect(transform_addr)
+                self._state_sub_socket.connect(state_addr)
+                self._transform_sub_socket.setsockopt(
+                    zmq.SUBSCRIBE, self._room.encode("utf-8")
+                )
+                self._state_sub_socket.setsockopt(
+                    zmq.SUBSCRIBE, self._room.encode("utf-8")
+                )
 
                 # Start receive thread
                 self._running = True
@@ -194,7 +229,11 @@ class net_sync_manager:
                 self._receive_thread.start()
 
                 logger.info(
-                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
+                    "NetSync client started: %s, %s, %s, room=%s",
+                    dealer_addr,
+                    transform_addr,
+                    state_addr,
+                    self._room,
                 )
 
             except Exception as e:
@@ -230,9 +269,12 @@ class net_sync_manager:
         if self._dealer_socket:
             self._dealer_socket.close()
             self._dealer_socket = None
-        if self._sub_socket:
-            self._sub_socket.close()
-            self._sub_socket = None
+        if self._transform_sub_socket:
+            self._transform_sub_socket.close()
+            self._transform_sub_socket = None
+        if self._state_sub_socket:
+            self._state_sub_socket.close()
+            self._state_sub_socket = None
         if self._context:
             self._context.term()
             self._context = None
@@ -240,19 +282,28 @@ class net_sync_manager:
     def _receive_loop(self) -> None:
         """Main receive loop for processing server messages."""
         poller = zmq.Poller()
-        if self._sub_socket:
-            poller.register(self._sub_socket, zmq.POLLIN)
+        if self._transform_sub_socket:
+            poller.register(self._transform_sub_socket, zmq.POLLIN)
+        if self._state_sub_socket:
+            poller.register(self._state_sub_socket, zmq.POLLIN)
 
         while self._running:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
 
-                if self._sub_socket is not None and self._sub_socket in socks:
-                    message_parts = self._sub_socket.recv_multipart()
+                if (
+                    self._transform_sub_socket is not None
+                    and self._transform_sub_socket in socks
+                ):
+                    message_parts = self._transform_sub_socket.recv_multipart()
                     if len(message_parts) >= 2:
-                        # room_id = message_parts[0].decode("utf-8")  # Not used currently
                         data = message_parts[1]
+                        self._process_message(data)
 
+                if self._state_sub_socket is not None and self._state_sub_socket in socks:
+                    message_parts = self._state_sub_socket.recv_multipart()
+                    if len(message_parts) >= 2:
+                        data = message_parts[1]
                         self._process_message(data)
 
             except zmq.Again:
@@ -276,6 +327,8 @@ class net_sync_manager:
                 self._process_device_mapping(msg_data)
             elif msg_type == binary_serializer.MSG_RPC:
                 self._process_rpc(msg_data)
+            elif msg_type == binary_serializer.MSG_RPC_DELIVERY:
+                self._process_rpc_delivery(msg_data)
             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SYNC:
                 self._process_global_var_sync(msg_data)
             elif msg_type == binary_serializer.MSG_CLIENT_VAR_SYNC:
@@ -381,6 +434,46 @@ class net_sync_manager:
 
         except Exception as e:
             logger.error(f"Error processing RPC: {e}")
+
+    def _process_rpc_delivery(self, msg_data: dict[str, Any]) -> None:
+        """Process reliable RPC delivery with de-duplication and ACK."""
+        try:
+            rpc_id = msg_data.get("rpcId")
+            if not rpc_id:
+                return
+
+            self._send_rpc_ack(rpc_id)
+
+            if rpc_id in self._recent_rpc_ids:
+                return
+
+            self._recent_rpc_ids.add(rpc_id)
+            self._recent_rpc_order.append(rpc_id)
+            if len(self._recent_rpc_order) > self._recent_rpc_limit:
+                old_id = self._recent_rpc_order.popleft()
+                self._recent_rpc_ids.discard(old_id)
+
+            self._process_rpc(msg_data)
+        except Exception as e:
+            logger.error(f"Error processing RPC delivery: {e}")
+
+    def _send_rpc_ack(self, rpc_id: str) -> None:
+        """Send RPC ACK back to server."""
+        if self._dealer_socket is None:
+            return
+        payload = binary_serializer.serialize_rpc_ack(
+            {
+                "rpcId": rpc_id,
+                "receiverClientNo": self._client_no or 0,
+                "timestamp": time.monotonic(),
+            }
+        )
+        try:
+            self._dealer_socket.send_multipart(
+                [self._room.encode("utf-8"), payload], flags=zmq.DONTWAIT
+            )
+        except zmq.Again:
+            pass
 
     def _process_global_var_sync(self, msg_data: dict[str, Any]) -> None:
         """Process global variable sync."""
@@ -681,15 +774,29 @@ class net_sync_manager:
                         parts = response.split("|")
                         if len(parts) >= 4:
                             dealer_port = int(parts[1])
-                            sub_port = int(parts[2])
-                            server_name = parts[3]
+                            if len(parts) >= 5:
+                                transform_sub_port = int(parts[2])
+                                state_sub_port = int(parts[3])
+                                server_name = parts[4]
+                            else:
+                                transform_sub_port = int(parts[2])
+                                state_sub_port = transform_sub_port
+                                server_name = parts[3]
 
                             logger.info(
-                                f"Discovered server: {server_name} at {addr[0]}:{dealer_port}/{sub_port}"
+                                "Discovered server: %s at %s:%s (transform=%s state=%s)",
+                                server_name,
+                                addr[0],
+                                dealer_port,
+                                transform_sub_port,
+                                state_sub_port,
                             )
                             server_address = f"tcp://{addr[0]}"
                             self.on_server_discovered.invoke(
-                                server_address, dealer_port, sub_port
+                                server_address,
+                                dealer_port,
+                                transform_sub_port,
+                                state_sub_port,
                             )
                             # Could auto-reconnect here if desired
 
