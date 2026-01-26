@@ -27,6 +27,10 @@ namespace Styly.NetSync
         private string _localDeviceId;
         private int _localClientNo = 0;
         private NetSyncManager _netSyncManager; // Reference to NetSyncManager for triggering ready checks
+        private readonly Queue<ulong> _recentRpcIds = new Queue<ulong>();
+        private readonly HashSet<ulong> _recentRpcSet = new HashSet<ulong>();
+        private const int MaxRecentRpcIds = 1024;
+        private Action<byte[]> _dealerPayloadSender;
 
         // Scratch collections reused per-room update to avoid frequent allocations (GC pressure)
         // NOTE: These are used only on the main thread inside ProcessRoomTransform.
@@ -73,6 +77,11 @@ namespace Styly.NetSync
             _netSyncManager = netSyncManager;
         }
 
+        public void SetDealerPayloadSender(Action<byte[]> sender)
+        {
+            _dealerPayloadSender = sender;
+        }
+
         public void ProcessIncomingMessage(byte[] payload)
         {
             try
@@ -99,11 +108,31 @@ namespace Styly.NetSync
 
                     case BinarySerializer.MSG_RPC when data is RPCMessage rpc:
                         // Avoid JSON round-trip: parse args once and pass object via dataObj
-                        var args = JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson);
+                        var args = JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson ?? "[]");
                         _messageQueue.Enqueue(new NetworkMessage
                         {
                             type = "rpc",
                             dataObj = new RpcMessageData { senderClientNo = rpc.senderClientNo, functionName = rpc.functionName, args = args }
+                        });
+                        _messagesReceived++;
+                        break;
+
+                    case BinarySerializer.MSG_RPC_DELIVERY when data is RPCDeliveryMessage delivery:
+                        SendRpcAck(delivery.rpcId);
+                        if (IsDuplicateRpc(delivery.rpcId))
+                        {
+                            break;
+                        }
+                        var deliveryArgs = JsonConvert.DeserializeObject<string[]>(delivery.argumentsJson ?? "[]");
+                        _messageQueue.Enqueue(new NetworkMessage
+                        {
+                            type = "rpc",
+                            dataObj = new RpcMessageData
+                            {
+                                senderClientNo = delivery.senderClientNo,
+                                functionName = delivery.functionName,
+                                args = deliveryArgs
+                            }
                         });
                         _messagesReceived++;
                         break;
@@ -150,6 +179,33 @@ namespace Styly.NetSync
                     }
                 }
             }
+        }
+
+        private bool IsDuplicateRpc(ulong rpcId)
+        {
+            if (_recentRpcSet.Contains(rpcId))
+            {
+                return true;
+            }
+            _recentRpcSet.Add(rpcId);
+            _recentRpcIds.Enqueue(rpcId);
+            while (_recentRpcIds.Count > MaxRecentRpcIds)
+            {
+                var oldId = _recentRpcIds.Dequeue();
+                _recentRpcSet.Remove(oldId);
+            }
+            return false;
+        }
+
+        private void SendRpcAck(ulong rpcId)
+        {
+            if (_dealerPayloadSender == null || string.IsNullOrEmpty(_localDeviceId))
+            {
+                return;
+            }
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+            var payload = BinarySerializer.SerializeRpcAck(rpcId, _localDeviceId, timestamp);
+            _dealerPayloadSender(payload);
         }
 
         public void ProcessMessageQueue(AvatarManager avatarManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
@@ -569,6 +625,8 @@ namespace Styly.NetSync
             // Also clear message queues to avoid cross-room leakage.
             while (_roomTransformQueue.TryDequeue(out _)) { }
             while (_messageQueue.TryDequeue(out _)) { }
+            _recentRpcIds.Clear();
+            _recentRpcSet.Clear();
         }
     }
 }

@@ -42,7 +42,10 @@ def test_connectivity():
     print("\n=== Testing Connectivity ===")
 
     server = NetSyncServer(
-        dealer_port=5555, pub_port=5556, enable_server_discovery=False
+        dealer_port=5555,
+        transform_pub_port=5556,
+        state_pub_port=5557,
+        enable_server_discovery=False,
     )
     server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
     server_thread.start()
@@ -50,7 +53,11 @@ def test_connectivity():
 
     try:
         manager = net_sync_manager(
-            server="tcp://localhost", dealer_port=5555, sub_port=5556, room="test_room"
+            server="tcp://localhost",
+            dealer_port=5555,
+            sub_port=5556,
+            state_sub_port=5557,
+            room="test_room",
         )
         manager.start()
 
@@ -70,7 +77,10 @@ def test_transforms_pull_based():
     print("\n=== Testing Pull-based Transforms ===")
 
     server = NetSyncServer(
-        dealer_port=5557, pub_port=5558, enable_server_discovery=False
+        dealer_port=5557,
+        transform_pub_port=5558,
+        state_pub_port=5559,
+        enable_server_discovery=False,
     )
     server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
     server_thread.start()
@@ -78,10 +88,18 @@ def test_transforms_pull_based():
 
     try:
         client1 = net_sync_manager(
-            server="tcp://localhost", dealer_port=5557, sub_port=5558, room="demo"
+            server="tcp://localhost",
+            dealer_port=5557,
+            sub_port=5558,
+            state_sub_port=5559,
+            room="demo",
         )
         client2 = net_sync_manager(
-            server="tcp://localhost", dealer_port=5557, sub_port=5558, room="demo"
+            server="tcp://localhost",
+            dealer_port=5557,
+            sub_port=5558,
+            state_sub_port=5559,
+            room="demo",
         )
 
         client1.start()
@@ -123,7 +141,10 @@ def test_device_mapping():
     print("\n=== Testing Device Mapping ===")
 
     server = NetSyncServer(
-        dealer_port=5559, pub_port=5560, enable_server_discovery=False
+        dealer_port=5559,
+        transform_pub_port=5560,
+        state_pub_port=5561,
+        enable_server_discovery=False,
     )
     server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
     server_thread.start()
@@ -134,6 +155,7 @@ def test_device_mapping():
             server="tcp://localhost",
             dealer_port=5559,
             sub_port=5560,
+            state_sub_port=5561,
             room="mapping_test",
         )
         manager.start()
@@ -162,7 +184,10 @@ def test_rpc():
     print("\n=== Testing RPC ===")
 
     server = NetSyncServer(
-        dealer_port=5561, pub_port=5562, enable_server_discovery=False
+        dealer_port=5561,
+        transform_pub_port=5562,
+        state_pub_port=5563,
+        enable_server_discovery=False,
     )
     server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
     server_thread.start()
@@ -173,6 +198,7 @@ def test_rpc():
             server="tcp://localhost",
             dealer_port=5561,
             sub_port=5562,
+            state_sub_port=5563,
             room="rpc_test",
             auto_dispatch=False,
         )
@@ -180,6 +206,7 @@ def test_rpc():
             server="tcp://localhost",
             dealer_port=5561,
             sub_port=5562,
+            state_sub_port=5563,
             room="rpc_test",
             auto_dispatch=False,
         )
@@ -222,7 +249,10 @@ def test_network_variables():
     print("\n=== Testing Network Variables ===")
 
     server = NetSyncServer(
-        dealer_port=5563, pub_port=5564, enable_server_discovery=False
+        dealer_port=5563,
+        transform_pub_port=5564,
+        state_pub_port=5565,
+        enable_server_discovery=False,
     )
     server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
     server_thread.start()
@@ -230,10 +260,18 @@ def test_network_variables():
 
     try:
         client1 = net_sync_manager(
-            server="tcp://localhost", dealer_port=5563, sub_port=5564, room="nv_test"
+            server="tcp://localhost",
+            dealer_port=5563,
+            sub_port=5564,
+            state_sub_port=5565,
+            room="nv_test",
         )
         client2 = net_sync_manager(
-            server="tcp://localhost", dealer_port=5563, sub_port=5564, room="nv_test"
+            server="tcp://localhost",
+            dealer_port=5563,
+            sub_port=5564,
+            state_sub_port=5565,
+            room="nv_test",
         )
 
         client1.start()
@@ -268,7 +306,10 @@ def test_stealth_mode():
     print("\n=== Testing Stealth Mode ===")
 
     server = NetSyncServer(
-        dealer_port=5565, pub_port=5566, enable_server_discovery=False
+        dealer_port=5565,
+        transform_pub_port=5566,
+        state_pub_port=5567,
+        enable_server_discovery=False,
     )
     server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
     server_thread.start()
@@ -279,12 +320,14 @@ def test_stealth_mode():
             server="tcp://localhost",
             dealer_port=5565,
             sub_port=5566,
+            state_sub_port=5567,
             room="stealth_test",
         )
         client2 = net_sync_manager(
             server="tcp://localhost",
             dealer_port=5565,
             sub_port=5566,
+            state_sub_port=5567,
             room="stealth_test",
         )
 

@@ -17,6 +17,12 @@ dealer_port = 5555
 # ZeroMQ PUB port for server-to-client broadcasts
 pub_port = 5556
 
+# ZeroMQ PUB port for transform snapshots (lossy, latest-only)
+transform_pub_port = 5556
+
+# ZeroMQ PUB port for state snapshots (lossy, latest-only)
+state_pub_port = 5557
+
 # UDP port for server discovery service
 server_discovery_port = 9999
 
@@ -38,6 +44,9 @@ transform_broadcast_rate = 10
 # Client disconnect timeout in seconds
 client_timeout = 2.5
 
+# Heartbeat timeout in seconds (liveness driven by heartbeat, not transforms)
+heartbeat_timeout = 5.0
+
 # Cleanup interval in seconds for removing stale data
 cleanup_interval = 1.0
 
@@ -52,6 +61,12 @@ main_loop_sleep = 0.02
 
 # ZeroMQ poll timeout in milliseconds
 poll_timeout = 100
+
+# State broadcast frequency in Hz (network variables + mappings)
+state_broadcast_rate_hz = 10.0
+
+# Expected heartbeat interval in seconds (diagnostics only)
+heartbeat_expected_interval = 1.0
 
 # Network Variable Settings
 # Maximum global variables per room
@@ -84,6 +99,19 @@ pub_queue_maxsize = 10000
 
 # Delta ring buffer size for NV synchronization
 delta_ring_size = 10000
+
+# RPC retry settings
+# Initial retry delay in milliseconds
+rpc_retry_initial_ms = 100
+
+# Max retry delay in milliseconds (exponential backoff ceiling)
+rpc_retry_max_ms = 1000
+
+# Max retry attempts before dropping an RPC delivery
+rpc_retry_max_attempts = 30
+
+# Max outbox entries per client (backpressure)
+rpc_outbox_max_per_client = 256
 
 # Logging Settings
 # Directory for log files (empty string for console-only logging)

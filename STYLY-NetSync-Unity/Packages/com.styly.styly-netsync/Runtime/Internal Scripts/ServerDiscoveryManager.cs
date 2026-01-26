@@ -40,7 +40,7 @@ namespace Styly.NetSync
         public int MaxParallelConnections { get; set; } = 20; // Scan up to 20 IPs concurrently
         public int TcpConnectionTimeoutMs { get; set; } = 300; // Reduced timeout for faster scanning
 
-        public event Action<string, int, int> OnServerDiscovered;
+        public event Action<string, int, int, int> OnServerDiscovered;
 
         public ServerDiscoveryManager(bool enableDebugLogs)
         {
@@ -500,19 +500,20 @@ namespace Styly.NetSync
                 if (parts.Length >= 3 && parts[0] == "STYLY-NETSYNC")
                 {
                     var dealerPort = int.Parse(parts[1]);
-                    var subPort = int.Parse(parts[2]);
-                    var serverName = parts.Length >= 4 ? parts[3] : "Unknown Server";
+                    var transformSubPort = int.Parse(parts[2]);
+                    var stateSubPort = parts.Length >= 5 ? int.Parse(parts[3]) : transformSubPort;
+                    var serverName = parts.Length >= 5 ? parts[4] : (parts.Length >= 4 ? parts[3] : "Unknown Server");
 
                     var serverAddress = $"tcp://{sender.Address}";
 
                     // Cache the discovered server IP for future connections
                     QueueCacheServerIp(sender.Address.ToString());
 
-                    DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+                    DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, transform:{transformSubPort}, state:{stateSubPort})");
 
                     if (OnServerDiscovered != null)
                     {
-                        OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort);
+                        OnServerDiscovered.Invoke(serverAddress, dealerPort, transformSubPort, stateSubPort);
                     }
 
                     // Stop sending more discovery requests once we found a server

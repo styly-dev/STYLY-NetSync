@@ -22,6 +22,9 @@ namespace Styly.NetSync
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
         public const byte MSG_CLIENT_POSE_V2 = 11;  // Client pose (quaternion + timestamps)
         public const byte MSG_ROOM_POSE_V2 = 12;  // Room pose snapshot (quaternion + timestamps)
+        public const byte MSG_HEARTBEAT = 13;
+        public const byte MSG_RPC_DELIVERY = 14;
+        public const byte MSG_RPC_ACK = 15;
 
         // Transform data type identifiers (deprecated - kept for reference)
         // All transforms now use 6 floats for consistency
@@ -169,7 +172,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE_V2)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_RPC_ACK)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -186,6 +189,12 @@ namespace Styly.NetSync
                         // RPC message
                         return (messageType, DeserializeRPCMessage(reader));
                     // MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
+                    case MSG_RPC_DELIVERY:
+                        return (messageType, DeserializeRPCDelivery(reader));
+                    case MSG_RPC_ACK:
+                        return (messageType, DeserializeRPCAck(reader));
+                    case MSG_HEARTBEAT:
+                        return (messageType, DeserializeHeartbeat(reader));
                     case MSG_DEVICE_ID_MAPPING:
                         // Device ID mapping notification
                         return (messageType, DeserializeDeviceIdMapping(reader));
@@ -325,6 +334,62 @@ namespace Styly.NetSync
             writer.Write(argsBytes);
         }
 
+        /// <summary>
+        /// Serialize heartbeat into a new byte array.
+        /// </summary>
+        public static byte[] SerializeHeartbeat(string deviceId, int clientNo, double timestamp)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            SerializeHeartbeatInto(writer, deviceId, clientNo, timestamp);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize heartbeat into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeHeartbeatInto(BinaryWriter writer, string deviceId, int clientNo, double timestamp)
+        {
+            writer.Write(MSG_HEARTBEAT);
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? string.Empty);
+            if (deviceIdBytes.Length > 255)
+            {
+                throw new ArgumentException("Device ID is too long. Maximum length is 255 bytes.");
+            }
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+            writer.Write((ushort)clientNo);
+            writer.Write(timestamp);
+        }
+
+        /// <summary>
+        /// Serialize RPC ack into a new byte array.
+        /// </summary>
+        public static byte[] SerializeRpcAck(ulong rpcId, string deviceId, double timestamp)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            SerializeRpcAckInto(writer, rpcId, deviceId, timestamp);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Serialize RPC ack into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeRpcAckInto(BinaryWriter writer, ulong rpcId, string deviceId, double timestamp)
+        {
+            writer.Write(MSG_RPC_ACK);
+            writer.Write(rpcId);
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? string.Empty);
+            if (deviceIdBytes.Length > 255)
+            {
+                throw new ArgumentException("Device ID is too long. Maximum length is 255 bytes.");
+            }
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
+            writer.Write(timestamp);
+        }
+
 
         /// <summary>
         /// Serialize global variable set message
@@ -432,6 +497,51 @@ namespace Styly.NetSync
                 senderClientNo = senderClientNo,
                 functionName = name,
                 argumentsJson = argsJson
+            };
+        }
+
+        private static RPCDeliveryMessage DeserializeRPCDelivery(BinaryReader reader)
+        {
+            var rpcId = reader.ReadUInt64();
+            var senderClientNo = reader.ReadUInt16();
+            var nameLen = reader.ReadByte();
+            var name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
+            var argsLen = reader.ReadUInt16();
+            var argsJson = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(argsLen));
+            return new RPCDeliveryMessage
+            {
+                rpcId = rpcId,
+                senderClientNo = senderClientNo,
+                functionName = name,
+                argumentsJson = argsJson
+            };
+        }
+
+        private static RpcAckMessage DeserializeRPCAck(BinaryReader reader)
+        {
+            var rpcId = reader.ReadUInt64();
+            var deviceIdLen = reader.ReadByte();
+            var deviceId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(deviceIdLen));
+            var timestamp = reader.ReadDouble();
+            return new RpcAckMessage
+            {
+                rpcId = rpcId,
+                deviceId = deviceId,
+                timestamp = timestamp
+            };
+        }
+
+        private static HeartbeatMessage DeserializeHeartbeat(BinaryReader reader)
+        {
+            var deviceIdLen = reader.ReadByte();
+            var deviceId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(deviceIdLen));
+            var clientNo = reader.ReadUInt16();
+            var timestamp = reader.ReadDouble();
+            return new HeartbeatMessage
+            {
+                deviceId = deviceId,
+                clientNo = clientNo,
+                timestamp = timestamp
             };
         }
 

@@ -64,6 +64,8 @@ class ServerConfig:
     # Network settings
     dealer_port: int
     pub_port: int
+    transform_pub_port: int
+    state_pub_port: int
     server_discovery_port: int
     server_name: str
     enable_server_discovery: bool
@@ -72,11 +74,20 @@ class ServerConfig:
     idle_broadcast_interval: float
     transform_broadcast_rate: int
     client_timeout: float
+    heartbeat_timeout: float
     cleanup_interval: float
     device_id_expiry_time: float
     status_log_interval: float
     main_loop_sleep: float
     poll_timeout: int
+    state_broadcast_rate_hz: float
+    heartbeat_expected_interval: float
+
+    # RPC retry settings
+    rpc_retry_initial_ms: int
+    rpc_retry_max_ms: int
+    rpc_retry_max_attempts: int
+    rpc_outbox_max_per_client: int
 
     # Network Variable settings
     max_global_vars: int
@@ -105,6 +116,8 @@ _VALID_KEYS: set[str] = {
     # Network settings
     "dealer_port",
     "pub_port",
+    "transform_pub_port",
+    "state_pub_port",
     "server_discovery_port",
     "server_name",
     "enable_server_discovery",
@@ -112,11 +125,14 @@ _VALID_KEYS: set[str] = {
     "idle_broadcast_interval",
     "transform_broadcast_rate",
     "client_timeout",
+    "heartbeat_timeout",
     "cleanup_interval",
     "device_id_expiry_time",
     "status_log_interval",
     "main_loop_sleep",
     "poll_timeout",
+    "state_broadcast_rate_hz",
+    "heartbeat_expected_interval",
     # Network Variable settings
     "max_global_vars",
     "max_client_vars",
@@ -135,6 +151,11 @@ _VALID_KEYS: set[str] = {
     "log_json_console",
     "log_rotation",
     "log_retention",
+    # RPC retry settings
+    "rpc_retry_initial_ms",
+    "rpc_retry_max_ms",
+    "rpc_retry_max_attempts",
+    "rpc_outbox_max_per_client",
 }
 
 
@@ -231,7 +252,13 @@ def validate_config(config: ServerConfig) -> list[str]:
     errors: list[str] = []
 
     # Port validation (1-65535)
-    port_fields = ["dealer_port", "pub_port", "server_discovery_port"]
+    port_fields = [
+        "dealer_port",
+        "pub_port",
+        "transform_pub_port",
+        "state_pub_port",
+        "server_discovery_port",
+    ]
     for field_name in port_fields:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
@@ -241,10 +268,13 @@ def validate_config(config: ServerConfig) -> list[str]:
     timing_fields = [
         "idle_broadcast_interval",
         "client_timeout",
+        "heartbeat_timeout",
         "cleanup_interval",
         "device_id_expiry_time",
         "status_log_interval",
         "main_loop_sleep",
+        "state_broadcast_rate_hz",
+        "heartbeat_expected_interval",
     ]
     for field_name in timing_fields:
         value = getattr(config, field_name)
@@ -272,6 +302,13 @@ def validate_config(config: ServerConfig) -> list[str]:
     if config.poll_timeout <= 0:
         errors.append(f"poll_timeout must be positive, got {config.poll_timeout}")
 
+    # State broadcast rate validation (0.5-60 Hz range)
+    if not 0.5 <= config.state_broadcast_rate_hz <= 60:
+        errors.append(
+            f"state_broadcast_rate_hz must be between 0.5 and 60 Hz, "
+            f"got {config.state_broadcast_rate_hz}"
+        )
+
     # Network Variable limits validation (must be positive integers)
     nv_int_fields = [
         "max_global_vars",
@@ -295,6 +332,17 @@ def validate_config(config: ServerConfig) -> list[str]:
     # Internal limits validation (must be positive integers)
     limits_fields = ["max_virtual_transforms", "pub_queue_maxsize", "delta_ring_size"]
     for field_name in limits_fields:
+        value = getattr(config, field_name)
+        if value <= 0:
+            errors.append(f"{field_name} must be positive, got {value}")
+
+    rpc_fields = [
+        "rpc_retry_initial_ms",
+        "rpc_retry_max_ms",
+        "rpc_retry_max_attempts",
+        "rpc_outbox_max_per_client",
+    ]
+    for field_name in rpc_fields:
         value = getattr(config, field_name)
         if value <= 0:
             errors.append(f"{field_name} must be positive, got {value}")

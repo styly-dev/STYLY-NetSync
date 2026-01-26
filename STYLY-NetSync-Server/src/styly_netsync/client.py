@@ -12,6 +12,7 @@ import socket
 import threading
 import time
 import uuid
+from collections import deque
 from queue import Empty, Full, Queue
 from typing import Any
 
@@ -49,6 +50,7 @@ class net_sync_manager:
         dealer_port: int = 5555,
         sub_port: int = 5556,
         room: str = "default_room",
+        state_sub_port: int | None = None,
         auto_dispatch: bool = True,
         queue_max: int = 10000,
     ):
@@ -58,14 +60,16 @@ class net_sync_manager:
         Args:
             server: ZeroMQ base address (e.g., "tcp://localhost")
             dealer_port: Server ROUTER port for uplink
-            sub_port: Server PUB port for downlink
+            sub_port: Server PUB port for transform downlink
             room: Room topic to subscribe to
+            state_sub_port: Server PUB port for state downlink (optional)
             auto_dispatch: If True, callbacks fire on receive thread
             queue_max: Max queued events for RPC/NV
         """
         self._server = server
         self._dealer_port = dealer_port
         self._sub_port = sub_port
+        self._state_sub_port = state_sub_port if state_sub_port is not None else sub_port
         self._room = room
         self._auto_dispatch = auto_dispatch
         self._queue_max = queue_max
@@ -74,6 +78,7 @@ class net_sync_manager:
         self._context: zmq.Context | None = None
         self._dealer_socket: zmq.Socket | None = None
         self._sub_socket: zmq.Socket | None = None
+        self._state_sub_socket: zmq.Socket | None = None
 
         # Threading
         self._running = False
@@ -101,6 +106,8 @@ class net_sync_manager:
         # Event queues and handlers
         self._rpc_queue: Queue = Queue(maxsize=queue_max)
         self._nv_queue: Queue = Queue(maxsize=queue_max)
+        self._recent_rpc_ids: deque[int] = deque(maxlen=1024)
+        self._recent_rpc_set: set[int] = set()
 
         # Event handlers
         self.on_rpc_received = EventHandler()
@@ -165,6 +172,11 @@ class net_sync_manager:
         """Subscriber port."""
         return self._sub_port
 
+    @property
+    def state_sub_port(self) -> int:
+        """State subscriber port."""
+        return self._state_sub_port
+
     def start(self) -> "net_sync_manager":
         """Start the client and connect to server."""
         with self._lock:
@@ -180,11 +192,17 @@ class net_sync_manager:
                 dealer_addr = f"{self._server}:{self._dealer_port}"
                 self._dealer_socket.connect(dealer_addr)
 
-                # SUB socket for downlink
+                # SUB sockets for downlink
                 self._sub_socket = self._context.socket(zmq.SUB)
                 sub_addr = f"{self._server}:{self._sub_port}"
                 self._sub_socket.connect(sub_addr)
                 self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
+                self._state_sub_socket = self._context.socket(zmq.SUB)
+                state_sub_addr = f"{self._server}:{self._state_sub_port}"
+                self._state_sub_socket.connect(state_sub_addr)
+                self._state_sub_socket.setsockopt(
+                    zmq.SUBSCRIBE, self._room.encode("utf-8")
+                )
 
                 # Start receive thread
                 self._running = True
@@ -194,7 +212,8 @@ class net_sync_manager:
                 self._receive_thread.start()
 
                 logger.info(
-                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
+                    f"NetSync client started: {dealer_addr}, {sub_addr}, "
+                    f"{state_sub_addr}, room={self._room}"
                 )
 
             except Exception as e:
@@ -233,6 +252,9 @@ class net_sync_manager:
         if self._sub_socket:
             self._sub_socket.close()
             self._sub_socket = None
+        if self._state_sub_socket:
+            self._state_sub_socket.close()
+            self._state_sub_socket = None
         if self._context:
             self._context.term()
             self._context = None
@@ -242,6 +264,8 @@ class net_sync_manager:
         poller = zmq.Poller()
         if self._sub_socket:
             poller.register(self._sub_socket, zmq.POLLIN)
+        if self._dealer_socket:
+            poller.register(self._dealer_socket, zmq.POLLIN)
 
         while self._running:
             try:
@@ -254,7 +278,16 @@ class net_sync_manager:
                         data = message_parts[1]
 
                         self._process_message(data)
-
+                if self._state_sub_socket is not None and self._state_sub_socket in socks:
+                    message_parts = self._state_sub_socket.recv_multipart()
+                    if len(message_parts) >= 2:
+                        data = message_parts[1]
+                        self._process_message(data)
+                if self._dealer_socket is not None and self._dealer_socket in socks:
+                    message_parts = self._dealer_socket.recv_multipart()
+                    if len(message_parts) >= 2:
+                        data = message_parts[1]
+                        self._process_message(data)
             except zmq.Again:
                 continue
             except Exception as e:
@@ -276,6 +309,8 @@ class net_sync_manager:
                 self._process_device_mapping(msg_data)
             elif msg_type == binary_serializer.MSG_RPC:
                 self._process_rpc(msg_data)
+            elif msg_type == binary_serializer.MSG_RPC_DELIVERY:
+                self._process_rpc_delivery(msg_data)
             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SYNC:
                 self._process_global_var_sync(msg_data)
             elif msg_type == binary_serializer.MSG_CLIENT_VAR_SYNC:
@@ -381,6 +416,69 @@ class net_sync_manager:
 
         except Exception as e:
             logger.error(f"Error processing RPC: {e}")
+
+    def _process_rpc_delivery(self, msg_data: dict[str, Any]) -> None:
+        """Process reliable RPC delivery with ACK + dedupe."""
+        try:
+            rpc_id = msg_data.get("rpcId")
+            if rpc_id is None:
+                return
+            self._send_rpc_ack(int(rpc_id))
+            if self._is_duplicate_rpc(int(rpc_id)):
+                return
+            sender_client_no = msg_data.get("senderClientNo")
+            function_name = msg_data.get("functionName", "")
+            args_json = msg_data.get("argumentsJson", "[]")
+
+            try:
+                args = json.loads(args_json)
+            except json.JSONDecodeError:
+                args = []
+
+            self._stats["rpc_received"] += 1
+
+            rpc_event = (sender_client_no, function_name, args)
+            if self._auto_dispatch:
+                self.on_rpc_received.invoke(sender_client_no, function_name, args)
+            else:
+                try:
+                    self._rpc_queue.put_nowait(rpc_event)
+                except Full:
+                    try:
+                        self._rpc_queue.get_nowait()
+                        self._rpc_queue.put_nowait(rpc_event)
+                    except Empty:
+                        pass
+
+        except Exception as e:
+            logger.error(f"Error processing RPC delivery: {e}")
+
+    def _is_duplicate_rpc(self, rpc_id: int) -> bool:
+        if rpc_id in self._recent_rpc_set:
+            return True
+        self._recent_rpc_set.add(rpc_id)
+        self._recent_rpc_ids.append(rpc_id)
+        while len(self._recent_rpc_ids) > self._recent_rpc_ids.maxlen:
+            old_id = self._recent_rpc_ids.popleft()
+            self._recent_rpc_set.discard(old_id)
+        return False
+
+    def _send_rpc_ack(self, rpc_id: int) -> None:
+        if self._dealer_socket is None:
+            return
+        payload = binary_serializer.serialize_rpc_ack(
+            {
+                "rpcId": rpc_id,
+                "deviceId": self._device_id,
+                "timestamp": time.monotonic(),
+            }
+        )
+        try:
+            self._dealer_socket.send_multipart(
+                [self._room.encode("utf-8"), payload], flags=zmq.DONTWAIT
+            )
+        except Exception:
+            pass
 
     def _process_global_var_sync(self, msg_data: dict[str, Any]) -> None:
         """Process global variable sync."""
@@ -682,14 +780,22 @@ class net_sync_manager:
                         if len(parts) >= 4:
                             dealer_port = int(parts[1])
                             sub_port = int(parts[2])
-                            server_name = parts[3]
+                            state_sub_port = (
+                                int(parts[3]) if len(parts) >= 5 else sub_port
+                            )
+                            server_name = parts[4] if len(parts) >= 5 else parts[3]
 
                             logger.info(
-                                f"Discovered server: {server_name} at {addr[0]}:{dealer_port}/{sub_port}"
+                                "Discovered server: %s at %s:%s/%s/%s",
+                                server_name,
+                                addr[0],
+                                dealer_port,
+                                sub_port,
+                                state_sub_port,
                             )
                             server_address = f"tcp://{addr[0]}"
                             self.on_server_discovered.invoke(
-                                server_address, dealer_port, sub_port
+                                server_address, dealer_port, sub_port, state_sub_port
                             )
                             # Could auto-reconnect here if desired
 
