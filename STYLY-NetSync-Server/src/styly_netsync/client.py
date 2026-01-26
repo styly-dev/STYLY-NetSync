@@ -48,6 +48,7 @@ class net_sync_manager:
         server: str = "tcp://localhost",
         dealer_port: int = 5555,
         sub_port: int = 5556,
+        transform_sub_port: int | None = None,
         room: str = "default_room",
         auto_dispatch: bool = True,
         queue_max: int = 10000,
@@ -58,7 +59,8 @@ class net_sync_manager:
         Args:
             server: ZeroMQ base address (e.g., "tcp://localhost")
             dealer_port: Server ROUTER port for uplink
-            sub_port: Server PUB port for downlink
+            sub_port: Server PUB port for downlink (State)
+            transform_sub_port: Server PUB port for transforms (optional, defaults to sub_port + 1 or explicit)
             room: Room topic to subscribe to
             auto_dispatch: If True, callbacks fire on receive thread
             queue_max: Max queued events for RPC/NV
@@ -66,6 +68,7 @@ class net_sync_manager:
         self._server = server
         self._dealer_port = dealer_port
         self._sub_port = sub_port
+        self._transform_sub_port = transform_sub_port
         self._room = room
         self._auto_dispatch = auto_dispatch
         self._queue_max = queue_max
@@ -184,6 +187,12 @@ class net_sync_manager:
                 self._sub_socket = self._context.socket(zmq.SUB)
                 sub_addr = f"{self._server}:{self._sub_port}"
                 self._sub_socket.connect(sub_addr)
+
+                # Connect to transform port if specified
+                if self._transform_sub_port is not None:
+                    transform_addr = f"{self._server}:{self._transform_sub_port}"
+                    self._sub_socket.connect(transform_addr)
+
                 self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
 
                 # Start receive thread
@@ -242,6 +251,8 @@ class net_sync_manager:
         poller = zmq.Poller()
         if self._sub_socket:
             poller.register(self._sub_socket, zmq.POLLIN)
+        if self._dealer_socket:
+            poller.register(self._dealer_socket, zmq.POLLIN)
 
         while self._running:
             try:
@@ -252,7 +263,13 @@ class net_sync_manager:
                     if len(message_parts) >= 2:
                         # room_id = message_parts[0].decode("utf-8")  # Not used currently
                         data = message_parts[1]
+                        self._process_message(data)
 
+                if self._dealer_socket is not None and self._dealer_socket in socks:
+                    message_parts = self._dealer_socket.recv_multipart()
+                    # Expected: [room_id, payload]
+                    if len(message_parts) >= 2:
+                        data = message_parts[1]
                         self._process_message(data)
 
             except zmq.Again:
@@ -275,7 +292,11 @@ class net_sync_manager:
             elif msg_type == binary_serializer.MSG_DEVICE_ID_MAPPING:
                 self._process_device_mapping(msg_data)
             elif msg_type == binary_serializer.MSG_RPC:
+                # Legacy unreliable RPC (broadcast via PUB)
                 self._process_rpc(msg_data)
+            elif msg_type == binary_serializer.MSG_RPC_DELIVERY:
+                # Reliable RPC (via DEALER)
+                self._process_rpc_delivery(msg_data)
             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SYNC:
                 self._process_global_var_sync(msg_data)
             elif msg_type == binary_serializer.MSG_CLIENT_VAR_SYNC:
@@ -381,6 +402,55 @@ class net_sync_manager:
 
         except Exception as e:
             logger.error(f"Error processing RPC: {e}")
+
+    def _process_rpc_delivery(self, msg_data: dict[str, Any]) -> None:
+        """Process Reliable RPC delivery and send ACK."""
+        try:
+            rpc_id = msg_data.get("rpcId")
+            sender_client_no = msg_data.get("senderClientNo")
+            function_name = msg_data.get("functionName", "")
+            args_json = msg_data.get("argumentsJson", "[]")
+
+            # Send ACK immediately
+            if rpc_id and self._dealer_socket:
+                ack_data = {
+                    "rpcId": rpc_id,
+                    "receiverClientNo": self._client_no or 0,
+                    "timestamp": time.time(),
+                }
+                ack_msg = binary_serializer.serialize_rpc_ack(ack_data)
+                try:
+                    self._dealer_socket.send_multipart([self._room.encode("utf-8"), ack_msg])
+                except Exception as e:
+                    logger.error(f"Failed to send RPC ACK: {e}")
+
+            # TODO: Add deduplication here if needed (track recently seen rpcIds)
+
+            try:
+                args = json.loads(args_json)
+            except json.JSONDecodeError:
+                args = []
+
+            self._stats["rpc_received"] += 1
+
+            # Queue for pull or auto-dispatch
+            rpc_event = (sender_client_no, function_name, args)
+
+            if self._auto_dispatch:
+                self.on_rpc_received.invoke(sender_client_no, function_name, args)
+            else:
+                try:
+                    self._rpc_queue.put_nowait(rpc_event)
+                except Full:
+                    # Drop oldest and add new
+                    try:
+                        self._rpc_queue.get_nowait()
+                        self._rpc_queue.put_nowait(rpc_event)
+                    except Empty:
+                        pass
+
+        except Exception as e:
+            logger.error(f"Error processing Reliable RPC: {e}")
 
     def _process_global_var_sync(self, msg_data: dict[str, Any]) -> None:
         """Process global variable sync."""

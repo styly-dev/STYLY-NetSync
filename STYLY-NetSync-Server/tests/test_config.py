@@ -39,13 +39,17 @@ class TestLoadDefaultConfig:
         # Network
         assert config.dealer_port == 5555
         assert config.pub_port == 5556
+        assert config.transform_pub_port == 5557
+        assert config.state_pub_port == 5556
         assert config.server_discovery_port == 9999
         assert config.server_name == "STYLY-NetSync-Server"
         assert config.enable_server_discovery is True
         # Timing
         assert config.idle_broadcast_interval == 2.0
         assert config.transform_broadcast_rate == 10
+        assert config.state_broadcast_rate_hz == 10
         assert config.client_timeout == 2.5
+        assert config.heartbeat_timeout == 5.0
         assert config.cleanup_interval == 1.0
         assert config.device_id_expiry_time == 300.0
         assert config.status_log_interval == 10.0
@@ -59,6 +63,11 @@ class TestLoadDefaultConfig:
         assert config.nv_flush_interval == 0.05
         assert config.nv_monitor_window_size == 1.0
         assert config.nv_monitor_threshold == 200
+        # RPC
+        assert config.rpc_retry_initial_ms == 100
+        assert config.rpc_retry_max_ms == 1000
+        assert config.rpc_retry_max_attempts == 30
+        assert config.rpc_outbox_max_per_client == 100
         # Limits
         assert config.max_virtual_transforms == 50
         assert config.pub_queue_maxsize == 10000
@@ -85,12 +94,16 @@ class TestServerConfig:
         config = ServerConfig(
             dealer_port=6666,
             pub_port=6667,
+            transform_pub_port=6668,
+            state_pub_port=6669,
             server_discovery_port=8888,
             server_name="Custom Server",
             enable_server_discovery=False,
             idle_broadcast_interval=default_config.idle_broadcast_interval,
             transform_broadcast_rate=default_config.transform_broadcast_rate,
+            state_broadcast_rate_hz=default_config.state_broadcast_rate_hz,
             client_timeout=default_config.client_timeout,
+            heartbeat_timeout=default_config.heartbeat_timeout,
             cleanup_interval=default_config.cleanup_interval,
             device_id_expiry_time=default_config.device_id_expiry_time,
             status_log_interval=default_config.status_log_interval,
@@ -103,6 +116,10 @@ class TestServerConfig:
             nv_flush_interval=default_config.nv_flush_interval,
             nv_monitor_window_size=default_config.nv_monitor_window_size,
             nv_monitor_threshold=default_config.nv_monitor_threshold,
+            rpc_retry_initial_ms=default_config.rpc_retry_initial_ms,
+            rpc_retry_max_ms=default_config.rpc_retry_max_ms,
+            rpc_retry_max_attempts=default_config.rpc_retry_max_attempts,
+            rpc_outbox_max_per_client=default_config.rpc_outbox_max_per_client,
             max_virtual_transforms=default_config.max_virtual_transforms,
             pub_queue_maxsize=default_config.pub_queue_maxsize,
             delta_ring_size=default_config.delta_ring_size,
@@ -114,6 +131,8 @@ class TestServerConfig:
         )
         assert config.dealer_port == 6666
         assert config.pub_port == 6667
+        assert config.transform_pub_port == 6668
+        assert config.state_pub_port == 6669
         assert config.server_discovery_port == 8888
         assert config.server_name == "Custom Server"
         assert config.enable_server_discovery is False
@@ -127,6 +146,8 @@ class TestLoadConfigFromToml:
         toml_content = """
 dealer_port = 7777
 pub_port = 7778
+transform_pub_port = 7779
+state_pub_port = 7780
 server_name = "Test Server"
 enable_server_discovery = false
 """
@@ -136,6 +157,8 @@ enable_server_discovery = false
         data = load_config_from_toml(config_file)
         assert data["dealer_port"] == 7777
         assert data["pub_port"] == 7778
+        assert data["transform_pub_port"] == 7779
+        assert data["state_pub_port"] == 7780
         assert data["server_name"] == "Test Server"
         assert data["enable_server_discovery"] is False
 
@@ -171,6 +194,8 @@ class TestProcessTomlConfig:
         toml_data = {
             "dealer_port": 5555,
             "pub_port": 5556,
+            "transform_pub_port": 5557,
+            "state_pub_port": 5556,
             "server_discovery_port": 9999,
             "server_name": "Test",
             "enable_server_discovery": True,
@@ -179,6 +204,8 @@ class TestProcessTomlConfig:
         result = process_toml_config(toml_data)
         assert result["dealer_port"] == 5555
         assert result["pub_port"] == 5556
+        assert result["transform_pub_port"] == 5557
+        assert result["state_pub_port"] == 5556
         assert result["server_discovery_port"] == 9999
         assert result["server_name"] == "Test"
         assert result["enable_server_discovery"] is True
@@ -209,7 +236,9 @@ class TestProcessTomlConfig:
         toml_data = {
             "idle_broadcast_interval": 1.0,
             "transform_broadcast_rate": 30,
+            "state_broadcast_rate_hz": 5,
             "client_timeout": 2.0,
+            "heartbeat_timeout": 6.0,
             "cleanup_interval": 2.0,
             "device_id_expiry_time": 600.0,
             "status_log_interval": 20.0,
@@ -219,7 +248,9 @@ class TestProcessTomlConfig:
         result = process_toml_config(toml_data)
         assert result["idle_broadcast_interval"] == 1.0
         assert result["transform_broadcast_rate"] == 30
+        assert result["state_broadcast_rate_hz"] == 5
         assert result["client_timeout"] == 2.0
+        assert result["heartbeat_timeout"] == 6.0
         assert result["cleanup_interval"] == 2.0
         assert result["device_id_expiry_time"] == 600.0
         assert result["status_log_interval"] == 20.0
@@ -245,6 +276,20 @@ class TestProcessTomlConfig:
         assert result["nv_flush_interval"] == 0.1
         assert result["nv_monitor_window_size"] == 2.0
         assert result["nv_monitor_threshold"] == 300
+
+    def test_process_rpc_keys(self) -> None:
+        """Test processing RPC keys."""
+        toml_data = {
+            "rpc_retry_initial_ms": 200,
+            "rpc_retry_max_ms": 2000,
+            "rpc_retry_max_attempts": 50,
+            "rpc_outbox_max_per_client": 50,
+        }
+        result = process_toml_config(toml_data)
+        assert result["rpc_retry_initial_ms"] == 200
+        assert result["rpc_retry_max_ms"] == 2000
+        assert result["rpc_retry_max_attempts"] == 50
+        assert result["rpc_outbox_max_per_client"] == 50
 
     def test_process_limits_keys(self) -> None:
         """Test processing limits keys."""

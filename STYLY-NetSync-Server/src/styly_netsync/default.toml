@@ -14,8 +14,14 @@
 # ZeroMQ DEALER port for client-server communication
 dealer_port = 5555
 
-# ZeroMQ PUB port for server-to-client broadcasts
+# ZeroMQ PUB port for server-to-client broadcasts (State channel)
 pub_port = 5556
+
+# ZeroMQ PUB port for high-frequency transform broadcasts
+transform_pub_port = 5557
+
+# ZeroMQ PUB port for reliable/state broadcasts (alias for pub_port for backward compat if needed, usually same as pub_port)
+state_pub_port = 5556
 
 # UDP port for server discovery service
 server_discovery_port = 9999
@@ -37,6 +43,9 @@ transform_broadcast_rate = 10
 
 # Client disconnect timeout in seconds
 client_timeout = 2.5
+
+# Heartbeat timeout in seconds (should be longer than heartbeat interval)
+heartbeat_timeout = 5.0
 
 # Cleanup interval in seconds for removing stale data
 cleanup_interval = 1.0
@@ -74,6 +83,23 @@ nv_monitor_window_size = 1.0
 
 # NV requests per second before warning
 nv_monitor_threshold = 200
+
+# State Broadcast Settings
+# Rate at which state snapshots (NVs, etc) are broadcast (Hz)
+state_broadcast_rate_hz = 10
+
+# RPC Settings
+# Initial retry interval for reliable RPCs (milliseconds)
+rpc_retry_initial_ms = 100
+
+# Maximum retry interval for reliable RPCs (milliseconds)
+rpc_retry_max_ms = 1000
+
+# Maximum number of retry attempts for reliable RPCs
+rpc_retry_max_attempts = 30
+
+# Maximum number of pending RPCs per client in outbox
+rpc_outbox_max_per_client = 100
 
 # Internal Limits
 # Maximum virtual transforms per client

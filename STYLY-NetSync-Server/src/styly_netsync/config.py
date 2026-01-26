@@ -64,6 +64,8 @@ class ServerConfig:
     # Network settings
     dealer_port: int
     pub_port: int
+    transform_pub_port: int
+    state_pub_port: int
     server_discovery_port: int
     server_name: str
     enable_server_discovery: bool
@@ -71,7 +73,9 @@ class ServerConfig:
     # Timing settings
     idle_broadcast_interval: float
     transform_broadcast_rate: int
+    state_broadcast_rate_hz: int
     client_timeout: float
+    heartbeat_timeout: float
     cleanup_interval: float
     device_id_expiry_time: float
     status_log_interval: float
@@ -86,6 +90,12 @@ class ServerConfig:
     nv_flush_interval: float
     nv_monitor_window_size: float
     nv_monitor_threshold: int
+
+    # RPC settings
+    rpc_retry_initial_ms: int
+    rpc_retry_max_ms: int
+    rpc_retry_max_attempts: int
+    rpc_outbox_max_per_client: int
 
     # Internal limits
     max_virtual_transforms: int
@@ -105,13 +115,17 @@ _VALID_KEYS: set[str] = {
     # Network settings
     "dealer_port",
     "pub_port",
+    "transform_pub_port",
+    "state_pub_port",
     "server_discovery_port",
     "server_name",
     "enable_server_discovery",
     # Timing settings
     "idle_broadcast_interval",
     "transform_broadcast_rate",
+    "state_broadcast_rate_hz",
     "client_timeout",
+    "heartbeat_timeout",
     "cleanup_interval",
     "device_id_expiry_time",
     "status_log_interval",
@@ -125,6 +139,11 @@ _VALID_KEYS: set[str] = {
     "nv_flush_interval",
     "nv_monitor_window_size",
     "nv_monitor_threshold",
+    # RPC settings
+    "rpc_retry_initial_ms",
+    "rpc_retry_max_ms",
+    "rpc_retry_max_attempts",
+    "rpc_outbox_max_per_client",
     # Internal limits
     "max_virtual_transforms",
     "pub_queue_maxsize",
@@ -231,7 +250,13 @@ def validate_config(config: ServerConfig) -> list[str]:
     errors: list[str] = []
 
     # Port validation (1-65535)
-    port_fields = ["dealer_port", "pub_port", "server_discovery_port"]
+    port_fields = [
+        "dealer_port",
+        "pub_port",
+        "transform_pub_port",
+        "state_pub_port",
+        "server_discovery_port",
+    ]
     for field_name in port_fields:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
@@ -241,6 +266,7 @@ def validate_config(config: ServerConfig) -> list[str]:
     timing_fields = [
         "idle_broadcast_interval",
         "client_timeout",
+        "heartbeat_timeout",
         "cleanup_interval",
         "device_id_expiry_time",
         "status_log_interval",
@@ -268,6 +294,13 @@ def validate_config(config: ServerConfig) -> list[str]:
                 f"idle_broadcast_interval ({config.idle_broadcast_interval}s)"
             )
 
+    # State broadcast rate validation (0.1-60 Hz range)
+    if not 0.1 <= config.state_broadcast_rate_hz <= 60:
+        errors.append(
+            f"state_broadcast_rate_hz must be between 0.1 and 60 Hz, "
+            f"got {config.state_broadcast_rate_hz}"
+        )
+
     # poll_timeout must be positive integer
     if config.poll_timeout <= 0:
         errors.append(f"poll_timeout must be positive, got {config.poll_timeout}")
@@ -288,6 +321,18 @@ def validate_config(config: ServerConfig) -> list[str]:
     # NV timing validation (must be positive floats)
     nv_float_fields = ["nv_flush_interval", "nv_monitor_window_size"]
     for field_name in nv_float_fields:
+        value = getattr(config, field_name)
+        if value <= 0:
+            errors.append(f"{field_name} must be positive, got {value}")
+
+    # RPC settings validation (must be positive integers)
+    rpc_fields = [
+        "rpc_retry_initial_ms",
+        "rpc_retry_max_ms",
+        "rpc_retry_max_attempts",
+        "rpc_outbox_max_per_client",
+    ]
+    for field_name in rpc_fields:
         value = getattr(config, field_name)
         if value <= 0:
             errors.append(f"{field_name} must be positive, got {value}")

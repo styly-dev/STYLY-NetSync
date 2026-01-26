@@ -3,10 +3,12 @@
 Test platform-specific error messages when port is already in use.
 """
 
+import dataclasses
 import unittest.mock as mock
 
 import pytest
 
+from styly_netsync.config import load_default_config
 from styly_netsync.server import NetSyncServer
 
 
@@ -18,12 +20,28 @@ class TestPortErrorMessage:
         with mock.patch("platform.system", return_value="Linux"):
             with mock.patch("styly_netsync.server.logger") as mock_logger:
                 # Create a server to bind to a port
-                server1 = NetSyncServer(dealer_port=15555, pub_port=15556)
+                config1 = load_default_config()
+                config1 = dataclasses.replace(
+                    config1,
+                    dealer_port=15555,
+                    pub_port=15556,
+                    transform_pub_port=15558,
+                    state_pub_port=15556,
+                )
+                server1 = NetSyncServer(config=config1)
                 try:
                     server1.start()
 
                     # Try to create a second server on the same port
-                    server2 = NetSyncServer(dealer_port=15555, pub_port=15557)
+                    config2 = load_default_config()
+                    config2 = dataclasses.replace(
+                        config2,
+                        dealer_port=15555,
+                        pub_port=15557,
+                        transform_pub_port=15559,
+                        state_pub_port=15557,
+                    )
+                    server2 = NetSyncServer(config=config2)
                     with pytest.raises(SystemExit):
                         server2.start()
 
@@ -51,12 +69,28 @@ class TestPortErrorMessage:
         with mock.patch("platform.system", return_value="Windows"):
             with mock.patch("styly_netsync.server.logger") as mock_logger:
                 # Create a server to bind to a port
-                server1 = NetSyncServer(dealer_port=16555, pub_port=16556)
+                config1 = load_default_config()
+                config1 = dataclasses.replace(
+                    config1,
+                    dealer_port=16555,
+                    pub_port=16556,
+                    transform_pub_port=16558,
+                    state_pub_port=16556,
+                )
+                server1 = NetSyncServer(config=config1)
                 try:
                     server1.start()
 
                     # Try to create a second server on the same port
-                    server2 = NetSyncServer(dealer_port=16555, pub_port=16557)
+                    config2 = load_default_config()
+                    config2 = dataclasses.replace(
+                        config2,
+                        dealer_port=16555,
+                        pub_port=16557,
+                        transform_pub_port=16559,
+                        state_pub_port=16557,
+                    )
+                    server2 = NetSyncServer(config=config2)
                     with pytest.raises(SystemExit):
                         server2.start()
 
@@ -85,12 +119,28 @@ class TestPortErrorMessage:
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("styly_netsync.server.logger") as mock_logger:
                 # Create a server to bind to a port
-                server1 = NetSyncServer(dealer_port=17555, pub_port=17556)
+                config1 = load_default_config()
+                config1 = dataclasses.replace(
+                    config1,
+                    dealer_port=17555,
+                    pub_port=17556,
+                    transform_pub_port=17558,
+                    state_pub_port=17556,
+                )
+                server1 = NetSyncServer(config=config1)
                 try:
                     server1.start()
 
                     # Try to create a second server on the same port
-                    server2 = NetSyncServer(dealer_port=17555, pub_port=17557)
+                    config2 = load_default_config()
+                    config2 = dataclasses.replace(
+                        config2,
+                        dealer_port=17555,
+                        pub_port=17557,
+                        transform_pub_port=17559,
+                        state_pub_port=17557,
+                    )
+                    server2 = NetSyncServer(config=config2)
                     with pytest.raises(SystemExit):
                         server2.start()
 
