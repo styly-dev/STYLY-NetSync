@@ -498,12 +498,16 @@ class TestValidateConfig:
         # Test below range
         config = replace(default_config, transform_broadcast_rate=0)
         errors = validate_config(config)
-        assert any("transform_broadcast_rate" in e and "0.5 and 60" in e for e in errors)
+        assert any(
+            "transform_broadcast_rate" in e and "0.5 and 60" in e for e in errors
+        )
 
         # Test above range
         config = replace(default_config, transform_broadcast_rate=100)
         errors = validate_config(config)
-        assert any("transform_broadcast_rate" in e and "0.5 and 60" in e for e in errors)
+        assert any(
+            "transform_broadcast_rate" in e and "0.5 and 60" in e for e in errors
+        )
 
     def test_valid_timing_relationships(self, default_config: ServerConfig) -> None:
         """Test that valid timing relationships pass validation."""

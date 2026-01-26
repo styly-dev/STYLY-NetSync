@@ -45,22 +45,45 @@ import zmq
 
 # Import public APIs from styly_netsync module
 from styly_netsync.binary_serializer import (
-    MSG_CLIENT_TRANSFORM,
+    MSG_CLIENT_POSE_V2,
     MSG_CLIENT_VAR_SET,
     MSG_CLIENT_VAR_SYNC,
     MSG_DEVICE_ID_MAPPING,
     MSG_GLOBAL_VAR_SET,
     MSG_GLOBAL_VAR_SYNC,
-    MSG_ROOM_TRANSFORM,
+    MSG_ROOM_POSE_V2,
     MSG_RPC,
     deserialize,
     serialize_client_transform,
     serialize_client_var_set,
 )
 
+
+def euler_to_quaternion(
+    x_rad: float, y_rad: float, z_rad: float
+) -> tuple[float, float, float, float]:
+    """Convert Euler angles (radians) to a quaternion (x, y, z, w)."""
+    x = x_rad
+    y = y_rad
+    z = z_rad
+
+    cx = math.cos(x * 0.5)
+    sx = math.sin(x * 0.5)
+    cy = math.cos(y * 0.5)
+    sy = math.sin(y * 0.5)
+    cz = math.cos(z * 0.5)
+    sz = math.sin(z * 0.5)
+
+    qw = cx * cy * cz + sx * sy * sz
+    qx = sx * cy * cz - cx * sy * sz
+    qy = cx * sy * cz + sx * cy * sz
+    qz = cx * cy * sz - sx * sy * cz
+    return qx, qy, qz, qw
+
+
 MESSAGE_TYPE_NAMES: dict[int, str] = {
-    MSG_CLIENT_TRANSFORM: "CLIENT_TRANSFORM",
-    MSG_ROOM_TRANSFORM: "ROOM_TRANSFORM",
+    MSG_CLIENT_POSE_V2: "CLIENT_POSE_V2",
+    MSG_ROOM_POSE_V2: "ROOM_POSE_V2",
     MSG_RPC: "RPC",
     MSG_DEVICE_ID_MAPPING: "DEVICE_ID_MAPPING",
     MSG_GLOBAL_VAR_SET: "GLOBAL_VAR_SET",
@@ -106,7 +129,7 @@ class Vector3:
 
 @dataclass
 class Transform:
-    """6DOF transform with position and rotation."""
+    """6DOF transform with position and rotation (Euler -> quaternion on wire)."""
 
     position: Vector3 = field(default_factory=Vector3)
     rotation: Vector3 = field(default_factory=Vector3)
@@ -114,13 +137,17 @@ class Transform:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format expected by serializer."""
+        qx, qy, qz, qw = euler_to_quaternion(
+            self.rotation.x, self.rotation.y, self.rotation.z
+        )
         return {
             "posX": self.position.x,
             "posY": self.position.y,
             "posZ": self.position.z,
-            "rotX": self.rotation.x,
-            "rotY": self.rotation.y,
-            "rotZ": self.rotation.z,
+            "rotX": qx,
+            "rotY": qy,
+            "rotZ": qz,
+            "rotW": qw,
             "isLocalSpace": self.is_local_space,
         }
 
@@ -361,43 +388,31 @@ class TransformBuilder:
 
         return {
             "deviceId": self.config.device_id,
-            "physical": {
-                "posX": position.x,
-                "posY": 0,  # Physical Y is always 0
-                "posZ": position.z,
-                "rotX": 0,
-                "rotY": self.rotation_y,
-                "rotZ": 0,
-                "isLocalSpace": True,
-            },
-            "head": {
-                "posX": head_position.x,
-                "posY": head_position.y,
-                "posZ": head_position.z,
-                "rotX": 0,
-                "rotY": self.rotation_y,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
-            "rightHand": {
-                "posX": right_hand.x,
-                "posY": right_hand.y,
-                "posZ": right_hand.z,
-                "rotX": 0,
-                "rotY": 0,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
-            "leftHand": {
-                "posX": left_hand.x,
-                "posY": left_hand.y,
-                "posZ": left_hand.z,
-                "rotX": 0,
-                "rotY": 0,
-                "rotZ": 0,
-                "isLocalSpace": False,
-            },
+            "poseSeq": 0,
+            "flags": 0x3E,
+            "physical": self._pose_dict(position, Vector3(0, self.rotation_y, 0), True),
+            "head": self._pose_dict(
+                head_position, Vector3(0, self.rotation_y, 0), False
+            ),
+            "rightHand": self._pose_dict(right_hand, Vector3(0, 0, 0), False),
+            "leftHand": self._pose_dict(left_hand, Vector3(0, 0, 0), False),
             "virtuals": virtuals,
+        }
+
+    @staticmethod
+    def _pose_dict(
+        position: Vector3, rotation: Vector3, is_local_space: bool
+    ) -> dict[str, Any]:
+        qx, qy, qz, qw = euler_to_quaternion(rotation.x, rotation.y, rotation.z)
+        return {
+            "posX": position.x,
+            "posY": position.y,
+            "posZ": position.z,
+            "rotX": qx,
+            "rotY": qy,
+            "rotZ": qz,
+            "rotW": qw,
+            "isLocalSpace": is_local_space,
         }
 
     def _smooth_rotation(
@@ -468,15 +483,15 @@ class TransformBuilder:
             orbit_z = math.sin(phase) * radius * 0.7
 
             virtuals.append(
-                {
-                    "posX": avatar_center.x + orbit_x,
-                    "posY": avatar_center.y + orbit_y,
-                    "posZ": avatar_center.z + orbit_z,
-                    "rotX": 0,
-                    "rotY": phase,
-                    "rotZ": 0,
-                    "isLocalSpace": False,
-                }
+                self._pose_dict(
+                    Vector3(
+                        avatar_center.x + orbit_x,
+                        avatar_center.y + orbit_y,
+                        avatar_center.z + orbit_z,
+                    ),
+                    Vector3(0, phase, 0),
+                    False,
+                )
             )
 
         return virtuals
@@ -1106,9 +1121,9 @@ class SimulatedClient:
         if self.logger.isEnabledFor(logging.DEBUG):
             message_name = MESSAGE_TYPE_NAMES.get(msg_type, f"UNKNOWN_{msg_type}")
             summary = "payload"
-            if msg_type == MSG_CLIENT_TRANSFORM and data:
+            if msg_type == MSG_CLIENT_POSE_V2 and data:
                 summary = f"transform from {data.get('deviceId', 'unknown')}"
-            elif msg_type == MSG_ROOM_TRANSFORM and data:
+            elif msg_type == MSG_ROOM_POSE_V2 and data:
                 summary = f"room transform with {len(data.get('clients', []))} clients"
             elif msg_type in (MSG_GLOBAL_VAR_SET, MSG_CLIENT_VAR_SET) and data:
                 summary = (

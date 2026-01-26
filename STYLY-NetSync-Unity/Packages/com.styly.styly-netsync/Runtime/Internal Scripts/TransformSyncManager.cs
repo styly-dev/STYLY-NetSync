@@ -16,6 +16,7 @@ namespace Styly.NetSync
         private readonly string _deviceId;
         private int _messagesSent;
         private float _lastSendTime;
+        private ushort _poseSeq;
 
         // Reusable pooled buffer + stream + writer
         private readonly ReusableBufferWriter _buf;
@@ -46,6 +47,8 @@ namespace Styly.NetSync
             try
             {
                 var tx = localAvatar.GetTransformData();
+                _poseSeq++;
+                tx.poseSeq = _poseSeq;
 
                 // Ensure buffer is large enough for the upcoming payload
                 var required = EstimateClientTransformSize(tx);
@@ -149,18 +152,19 @@ namespace Styly.NetSync
         /// </summary>
         private static int EstimateClientTransformSize(ClientTransformData data)
         {
-            // 1 (type) + 1 (deviceIdLen) + deviceIdBytes + 4x TransformData (6 floats each) + 1 (virtual count) + N * 24
+            // 1 (type) + 1 (protocol) + 1 (deviceIdLen) + deviceIdBytes + 2 (poseSeq) + 1 (flags)
+            // + 4x TransformData (7 floats each) + 1 (virtual count) + N * 28
             var deviceIdBytes = data != null ? Encoding.UTF8.GetByteCount(data.deviceId ?? string.Empty) : 0;
             if (deviceIdBytes > 255) deviceIdBytes = 255; // Length prefix is 1 byte
 
-            var baseSize = 1 + 1 + deviceIdBytes + (4 * 6 * sizeof(float)) + 1;
+            var baseSize = 1 + 1 + 1 + deviceIdBytes + 2 + 1 + (4 * 7 * sizeof(float)) + 1;
             var virtualCount = 0;
             if (data != null && data.virtuals != null)
             {
                 virtualCount = data.virtuals.Count;
                 if (virtualCount > MAX_VIRTUAL_TRANSFORMS) virtualCount = MAX_VIRTUAL_TRANSFORMS;
             }
-            var virtualSize = virtualCount * (6 * sizeof(float));
+            var virtualSize = virtualCount * (7 * sizeof(float));
             return baseSize + virtualSize;
         }
 
@@ -171,8 +175,9 @@ namespace Styly.NetSync
         {
             var deviceIdBytes = deviceId != null ? Encoding.UTF8.GetByteCount(deviceId) : 0;
             if (deviceIdBytes > 255) deviceIdBytes = 255; // Length prefix is 1 byte
-            // 1 (type) + 1 (deviceIdLen) + deviceId + 4 * 6 floats + 1 (virtual count 0)
-            return 1 + 1 + deviceIdBytes + (4 * 6 * sizeof(float)) + 1;
+            // 1 (type) + 1 (protocol) + 1 (deviceIdLen) + deviceId + 2 (poseSeq) + 1 (flags)
+            // + 4 * 7 floats + 1 (virtual count 0)
+            return 1 + 1 + 1 + deviceIdBytes + 2 + 1 + (4 * 7 * sizeof(float)) + 1;
         }
 
         /// <summary>

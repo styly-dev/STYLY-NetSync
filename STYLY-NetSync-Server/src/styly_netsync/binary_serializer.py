@@ -1,10 +1,13 @@
-import math
+import logging
 import struct
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 # Message type identifiers
+PROTOCOL_VERSION = 2
 MSG_CLIENT_TRANSFORM = 1
-MSG_ROOM_TRANSFORM = 2  # Room transform with short IDs only
+MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call
 MSG_RPC_SERVER = 4  # Reserved for future use
 MSG_RPC_CLIENT = 5  # Reserved for future use
@@ -13,6 +16,8 @@ MSG_GLOBAL_VAR_SET = 7  # Set global variable
 MSG_GLOBAL_VAR_SYNC = 8  # Sync global variables
 MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
+MSG_CLIENT_POSE_V2 = 11
+MSG_ROOM_POSE_V2 = 12
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -40,54 +45,9 @@ def set_max_virtual_transforms(value: int) -> None:
     MAX_VIRTUAL_TRANSFORMS = value
 
 
-# Stealth mode detection utilities
-def _is_nan_transform(transform: dict[str, Any]) -> bool:
-    """Check if a transform contains all NaN values (stealth mode indicator)"""
-    # Check physical transform (all 6 values must be NaN)
-    physical = transform.get("physical", {})
-    if not physical:
-        return False
-
-    # All physical values must be NaN (now 6 floats)
-    for key in ["posX", "posY", "posZ", "rotX", "rotY", "rotZ"]:
-        if not math.isnan(physical.get(key, 0)):
-            return False
-
-    # Check head transform (all 6 values must be NaN)
-    head = transform.get("head", {})
-    if not head:
-        return False
-    for key in ["posX", "posY", "posZ", "rotX", "rotY", "rotZ"]:
-        if not math.isnan(head.get(key, 0)):
-            return False
-
-    # Check right hand transform (all 6 values must be NaN)
-    right_hand = transform.get("rightHand", {})
-    if not right_hand:
-        return False
-    for key in ["posX", "posY", "posZ", "rotX", "rotY", "rotZ"]:
-        if not math.isnan(right_hand.get(key, 0)):
-            return False
-
-    # Check left hand transform (all 6 values must be NaN)
-    left_hand = transform.get("leftHand", {})
-    if not left_hand:
-        return False
-    for key in ["posX", "posY", "posZ", "rotX", "rotY", "rotZ"]:
-        if not math.isnan(left_hand.get(key, 0)):
-            return False
-
-    # Check virtuals count is 0
-    virtuals = transform.get("virtuals", [])
-    if len(virtuals) != 0:
-        return False
-
-    return True
-
-
 def _is_stealth_client(data: dict[str, Any]) -> bool:
-    """Check if client data indicates stealth mode (NaN handshake)"""
-    return _is_nan_transform(data)
+    """Check if client data indicates stealth mode (flag bit)."""
+    return bool(data.get("flags", 0) & 0x01)
 
 
 # Helper functions for common operations
@@ -120,7 +80,8 @@ def _pack_transform(
 ) -> None:
     """Pack a transform with specified keys"""
     for key in keys:
-        buffer.extend(struct.pack("<f", transform.get(key, 0)))
+        default = 1.0 if key == "rotW" else 0.0
+        buffer.extend(struct.pack("<f", transform.get(key, default)))
 
 
 def _unpack_transform(
@@ -136,35 +97,36 @@ def _unpack_transform(
 
 
 def _pack_full_transform(buffer: bytearray, transform: dict[str, Any]) -> None:
-    """Pack a full 6-float transform"""
-    _pack_transform(buffer, transform, ["posX", "posY", "posZ", "rotX", "rotY", "rotZ"])
+    """Pack a full 7-float pose (position + quaternion rotation)."""
+    _pack_transform(
+        buffer, transform, ["posX", "posY", "posZ", "rotX", "rotY", "rotZ", "rotW"]
+    )
 
 
 def _unpack_full_transform(
     data: bytes, offset: int, is_local_space: bool = False
 ) -> tuple[dict[str, Any], int]:
-    """Unpack a full 6-float transform"""
+    """Unpack a full 7-float pose (position + quaternion rotation)."""
     return _unpack_transform(
-        data, offset, ["posX", "posY", "posZ", "rotX", "rotY", "rotZ"], is_local_space
+        data,
+        offset,
+        ["posX", "posY", "posZ", "rotX", "rotY", "rotZ", "rotW"],
+        is_local_space,
     )
 
 
-def _serialize_client_data(buffer: bytearray, client: dict[str, Any]) -> None:
-    """Serialize a single client's data (shared by room transform and client transform)"""
-    # Device ID
-    _pack_string(buffer, client.get("deviceId", ""))
+def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
+    """Serialize a client's body (poseSeq, flags, poses, virtuals)."""
+    buffer.extend(struct.pack("<H", client.get("poseSeq", 0)))
+    buffer.append(client.get("flags", 0))
 
-    # Physical transform (now full 6 floats)
     _pack_full_transform(buffer, client.get("physical", {}))
 
-    # Head, Right hand, Left hand transforms
     for transform_key in ["head", "rightHand", "leftHand"]:
         _pack_full_transform(buffer, client.get(transform_key, {}))
 
-    # Virtual transforms
     virtuals = client.get("virtuals", [])
     virtual_count = min(len(virtuals), MAX_VIRTUAL_TRANSFORMS)
-    # Limit virtual transforms to maximum allowed
     buffer.append(virtual_count)
 
     for i in range(virtual_count):
@@ -176,10 +138,16 @@ def serialize_client_transform(data: dict[str, Any]) -> bytes:
     buffer = bytearray()
 
     # Message type
-    buffer.append(MSG_CLIENT_TRANSFORM)
+    buffer.append(MSG_CLIENT_POSE_V2)
 
-    # Client data
-    _serialize_client_data(buffer, data)
+    # Protocol version
+    buffer.append(PROTOCOL_VERSION)
+
+    # Device ID
+    _pack_string(buffer, data.get("deviceId", ""))
+
+    # Client body
+    _serialize_client_body(buffer, data)
 
     return bytes(buffer)
 
@@ -193,10 +161,16 @@ def serialize_room_transform(data: dict[str, Any]) -> bytes:
     buffer = bytearray()
 
     # Message type
-    buffer.append(MSG_ROOM_TRANSFORM)
+    buffer.append(MSG_ROOM_POSE_V2)
+
+    # Protocol version
+    buffer.append(PROTOCOL_VERSION)
 
     # Room ID
     _pack_string(buffer, data.get("roomId", ""))
+
+    # Broadcast time
+    buffer.extend(struct.pack("<d", data.get("broadcastTime", 0.0)))
 
     # Number of clients
     clients = data.get("clients", [])
@@ -215,21 +189,10 @@ def _serialize_client_data_short(buffer: bytearray, client: dict[str, Any]) -> N
     client_no = client.get("clientNo", 0)
     buffer.extend(struct.pack("<H", client_no))
 
-    # Physical transform (now full 6 floats)
-    _pack_full_transform(buffer, client.get("physical", {}))
+    # Pose time (8 bytes double)
+    buffer.extend(struct.pack("<d", client.get("poseTime", 0.0)))
 
-    # Head, Right hand, Left hand transforms
-    for transform_key in ["head", "rightHand", "leftHand"]:
-        _pack_full_transform(buffer, client.get(transform_key, {}))
-
-    # Virtual transforms
-    virtuals = client.get("virtuals", [])
-    virtual_count = min(len(virtuals), MAX_VIRTUAL_TRANSFORMS)
-    # Limit virtual transforms to maximum allowed
-    buffer.append(virtual_count)
-
-    for i in range(virtual_count):
-        _pack_full_transform(buffer, virtuals[i])
+    _serialize_client_body(buffer, client)
 
 
 def _serialize_rpc_base(buffer: bytearray, data: dict[str, Any], msg_type: int) -> None:
@@ -394,7 +357,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
 
     Returns:
         Tuple of (message_type, data_dict, raw_payload)
-        raw_payload is the client data portion for MSG_CLIENT_TRANSFORM, empty bytes otherwise
+        raw_payload is the client data portion for MSG_CLIENT_POSE_V2, empty bytes otherwise
     """
     if not data:
         return 0, None, b""
@@ -404,20 +367,21 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_CLIENT_VAR_SYNC:
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_ROOM_POSE_V2:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
     try:
-        if message_type == MSG_CLIENT_TRANSFORM:
-            # Extract the raw client data for caching
-            raw_client_data = data[offset:]
+        if message_type == MSG_CLIENT_POSE_V2:
+            device_id_len = data[offset + 1]
+            body_offset = offset + 2 + device_id_len
+            raw_client_data = data[body_offset:]
             return (
                 message_type,
                 _deserialize_client_transform(data, offset),
                 raw_client_data,
             )
-        elif message_type == MSG_ROOM_TRANSFORM:
+        elif message_type == MSG_ROOM_POSE_V2:
             return message_type, _deserialize_room_transform(data, offset), b""
         elif message_type == MSG_RPC:
             return message_type, _deserialize_rpc_message(data, offset), b""
@@ -435,19 +399,32 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
         else:
             # Should not reach here due to validation above
             return message_type, None, b""
-    except Exception:
-        # Error deserializing message - return None data
+    except Exception as e:
+        # Log deserialization error at DEBUG level for troubleshooting
+        logger.debug(
+            "Deserialization failed for message type %d: %s",
+            message_type,
+            str(e),
+        )
         return message_type, None, b""
 
 
 def _deserialize_client_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize client transform from binary data"""
+    """Deserialize client pose (v2) from binary data."""
     result: dict[str, Any] = {}
+
+    result["protocolVersion"] = data[offset]
+    offset += 1
 
     # Device ID
     result["deviceId"], offset = _unpack_string(data, offset)
 
-    # Physical transform (now full 6 floats)
+    result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    result["flags"] = data[offset]
+    offset += 1
+
+    # Physical pose
     result["physical"], offset = _unpack_full_transform(
         data, offset, is_local_space=True
     )
@@ -488,11 +465,17 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
 
 
 def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize room transform with client numbers only"""
+    """Deserialize room pose (v2) with client numbers only."""
     result: dict[str, Any] = {}
+
+    result["protocolVersion"] = data[offset]
+    offset += 1
 
     # Room ID
     result["roomId"], offset = _unpack_string(data, offset)
+
+    result["broadcastTime"] = struct.unpack("<d", data[offset : offset + 8])[0]
+    offset += 8
 
     # Number of clients
     client_count = struct.unpack("<H", data[offset : offset + 2])[0]
@@ -507,7 +490,17 @@ def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
         offset += 2
         client["clientNo"] = client_no
 
-        # Physical transform (now full 6 floats)
+        # Pose time
+        client["poseTime"] = struct.unpack("<d", data[offset : offset + 8])[0]
+        offset += 8
+
+        # Pose sequence + flags
+        client["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
+        offset += 2
+        client["flags"] = data[offset]
+        offset += 1
+
+        # Physical pose
         client["physical"], offset = _unpack_full_transform(
             data, offset, is_local_space=True
         )

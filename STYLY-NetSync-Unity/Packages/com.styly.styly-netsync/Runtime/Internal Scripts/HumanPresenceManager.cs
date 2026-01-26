@@ -8,15 +8,16 @@ namespace Styly.NetSync
     /// Spawns and updates a simple visual presence per remote client at their physical pose.
     /// - Spawns under the corresponding Remote Avatar when available; otherwise at the hierarchy root
     /// - Hidden for local client
-    /// - No smoothing; updates directly from received data
+    /// - Updates directly from received data (no interpolation)
     /// - Ignores stealth clients (non-supported / not displayed)
     /// </summary>
     internal class HumanPresenceManager
     {
         private readonly Dictionary<int, GameObject> _presenceByClient = new Dictionary<int, GameObject>();
-        private readonly Dictionary<int, NetSyncTransformSmoother> _smootherByClient = new Dictionary<int, NetSyncTransformSmoother>();
+        private readonly Dictionary<int, NetSyncTransformApplier> _applierByClient = new Dictionary<int, NetSyncTransformApplier>();
         private readonly NetSyncManager _netSyncManager;
         private readonly bool _enableDebugLogs;
+        private readonly NetSyncSmoothingSettings _smoothingSettings = new NetSyncSmoothingSettings();
 
         public HumanPresenceManager(NetSyncManager netSyncManager, bool enableDebugLogs)
         {
@@ -57,10 +58,15 @@ namespace Styly.NetSync
                     && avatarManager.ConnectedPeers.TryGetValue(clientNo, out var avatarGo)
                     && avatarGo != null) { go.transform.SetParent(avatarGo.transform, true); }
                 _presenceByClient[clientNo] = go;
-                // Create and configure smoother for this instance (world space)
-                var smoother = new NetSyncTransformSmoother();
-                smoother.InitializeForSingle(go.transform, NetSyncTransformSmoother.SpaceMode.World);
-                _smootherByClient[clientNo] = smoother;
+                // Create and configure transform applier for this instance (world space)
+                var applier = new NetSyncTransformApplier();
+                applier.InitializeForSingle(
+                    go.transform,
+                    NetSyncTransformApplier.SpaceMode.World,
+                    _netSyncManager != null ? _netSyncManager.TimeEstimator : null,
+                    _smoothingSettings,
+                    _netSyncManager != null ? _netSyncManager.TransformSendRate : 10f);
+                _applierByClient[clientNo] = applier;
                 DebugLog($"Spawned Human Presence for client {clientNo}");
             }
         }
@@ -80,23 +86,23 @@ namespace Styly.NetSync
                 DebugLog($"Destroyed Human Presence for client {clientNo}");
             }
 
-            if (_smootherByClient.ContainsKey(clientNo))
+            if (_applierByClient.ContainsKey(clientNo))
             {
-                _smootherByClient.Remove(clientNo);
+                _applierByClient.Remove(clientNo);
             }
         }
 
         /// <summary>
         /// Update transform for a remote client's presence.
         /// </summary>
-        public void UpdateTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
+        public void UpdateTransform(int clientNo, Vector3 position, Quaternion rotation, double poseTime, ushort poseSeq)
         {
-            // Update smoother target; smoothing is applied in Tick()
-            if (_smootherByClient.TryGetValue(clientNo, out var smoother))
+            // Update transform target; applied directly in Tick()
+            if (_applierByClient.TryGetValue(clientNo, out var applier))
             {
-                if (smoother != null)
+                if (applier != null)
                 {
-                    smoother.SetSingleTarget(position, eulerRotation);
+                    applier.AddSingleSnapshot(poseTime, poseSeq, position, rotation);
                 }
             }
         }
@@ -116,22 +122,23 @@ namespace Styly.NetSync
                 }
             }
             _presenceByClient.Clear();
-            _smootherByClient.Clear();
+            _applierByClient.Clear();
             DebugLog("Cleared all Human Presence instances");
         }
 
         /// <summary>
-        /// Per-frame update called from NetSyncManager.Update() to progress interpolation.
+        /// Per-frame update called from NetSyncManager.Update() to apply transforms.
         /// </summary>
-        public void Tick(float deltaTime)
+        public void Tick()
         {
-            if (_smootherByClient.Count == 0) { return; }
-            foreach (var kv in _smootherByClient)
+            if (_applierByClient.Count == 0) { return; }
+            foreach (var kv in _applierByClient)
             {
-                var smoother = kv.Value;
-                if (smoother != null)
+                var applier = kv.Value;
+                if (applier != null)
                 {
-                    smoother.Update(deltaTime);
+                    // Use high-resolution clock for consistent time estimation
+                    applier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
                 }
             }
         }

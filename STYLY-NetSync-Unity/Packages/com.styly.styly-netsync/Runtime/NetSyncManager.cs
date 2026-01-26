@@ -222,6 +222,7 @@ namespace Styly.NetSync
 
             // Clear room-scoped state to prevent leaks across rooms
             _messageProcessor?.ClearRoomScopedState();
+            _timeEstimator.Reset();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
@@ -247,6 +248,7 @@ namespace Styly.NetSync
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
+        private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
         private bool _isDiscovering;
@@ -334,6 +336,8 @@ namespace Styly.NetSync
         internal RPCManager RPCManager => _rpcManager;
         internal TransformSyncManager TransformSyncManager => _transformSyncManager;
         internal MessageProcessor MessageProcessor => _messageProcessor;
+        internal NetSyncTimeEstimator TimeEstimator => _timeEstimator;
+        internal bool IsStealthMode => _isStealthMode;
         public bool HasServerConnection => _connectionManager?.IsConnected == true && !_connectionManager.IsConnectionError;
         public bool HasHandshake => _clientNo > 0;
         public bool HasNetworkVariablesSync => _networkVariableManager?.HasReceivedInitialSync == true;
@@ -498,10 +502,10 @@ namespace Styly.NetSync
 
             LogStatistics();
 
-            // Progress Human Presence smoothing on main thread
+            // Apply Human Presence transforms on main thread
             if (_humanPresenceManager != null)
             {
-                _humanPresenceManager.Tick(Time.deltaTime);
+                _humanPresenceManager.Tick();
             }
         }
         #endregion ------------------------------------------------------------------------
@@ -1028,8 +1032,13 @@ namespace Styly.NetSync
         /// </summary>
         /// <param name="clientNo">Remote client number</param>
         /// <param name="position">Local position (physical, relative to remote head's parent)</param>
-        /// <param name="eulerRotation">Local rotation euler (physical); only Y (yaw) is used</param>
-        internal void UpdateHumanPresenceTransform(int clientNo, Vector3 position, Vector3 eulerRotation)
+        /// <param name="rotation">Local rotation (physical); only yaw is used</param>
+        internal void UpdateHumanPresenceTransform(
+            int clientNo,
+            Vector3 position,
+            Quaternion rotation,
+            double poseTime,
+            ushort poseSeq)
         {
             if (_humanPresenceManager == null) { return; }
 
@@ -1044,31 +1053,29 @@ namespace Styly.NetSync
 
             // Convert local physical to world using parent transform when available.
             Vector3 worldPos = position;
-            Vector3 worldYawEuler;
+            Quaternion worldYaw;
             if (parent != null)
             {
                 // Full local->world for position
                 worldPos = parent.TransformPoint(position);
 
                 // Yaw-only in local space, then compose with parent's rotation to get world yaw
-                var localYaw = Quaternion.Euler(0f, eulerRotation.y, 0f);
-                var worldYaw = parent.rotation * localYaw;
-                worldYawEuler = worldYaw.eulerAngles;
+                var localYaw = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
+                worldYaw = parent.rotation * localYaw;
 
                 // Apply XROrigin offset and physical offset to get true world position/rotation
-                // Todo: This can be done more smoothly if the offset is applied after smoothing
                 var xrOriginPos = _XrOriginTransform != null ? _XrOriginTransform.position : Vector3.zero;
                 var xrOriginEuler = _XrOriginTransform != null ? _XrOriginTransform.eulerAngles : Vector3.zero;
                 worldPos = worldPos + xrOriginPos - _physicalOffsetPosition;
-                worldYawEuler = worldYawEuler + xrOriginEuler - _physicalOffsetRotation;
+                worldYaw = Quaternion.Euler(xrOriginEuler - _physicalOffsetRotation) * worldYaw;
             }
             else
             {
                 // As a safety fallback (e.g., avatar not spawned yet), treat given values as world
-                worldYawEuler = new Vector3(0f, eulerRotation.y, 0f);
+                worldYaw = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
             }
 
-            _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYawEuler);
+            _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYaw, poseTime, poseSeq);
         }
     }
 }
