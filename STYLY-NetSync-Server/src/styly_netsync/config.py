@@ -64,6 +64,8 @@ class ServerConfig:
     # Network settings
     dealer_port: int
     pub_port: int
+    transform_pub_port: int
+    state_pub_port: int
     server_discovery_port: int
     server_name: str
     enable_server_discovery: bool
@@ -72,6 +74,7 @@ class ServerConfig:
     idle_broadcast_interval: float
     transform_broadcast_rate: int
     client_timeout: float
+    heartbeat_timeout: float
     cleanup_interval: float
     device_id_expiry_time: float
     status_log_interval: float
@@ -86,6 +89,14 @@ class ServerConfig:
     nv_flush_interval: float
     nv_monitor_window_size: float
     nv_monitor_threshold: int
+    state_broadcast_rate_hz: float
+    heartbeat_expected_interval: float
+
+    # RPC retry settings
+    rpc_retry_initial_ms: int
+    rpc_retry_max_ms: int
+    rpc_retry_max_attempts: int
+    rpc_outbox_max_per_client: int
 
     # Internal limits
     max_virtual_transforms: int
@@ -105,6 +116,8 @@ _VALID_KEYS: set[str] = {
     # Network settings
     "dealer_port",
     "pub_port",
+    "transform_pub_port",
+    "state_pub_port",
     "server_discovery_port",
     "server_name",
     "enable_server_discovery",
@@ -112,6 +125,7 @@ _VALID_KEYS: set[str] = {
     "idle_broadcast_interval",
     "transform_broadcast_rate",
     "client_timeout",
+    "heartbeat_timeout",
     "cleanup_interval",
     "device_id_expiry_time",
     "status_log_interval",
@@ -125,6 +139,13 @@ _VALID_KEYS: set[str] = {
     "nv_flush_interval",
     "nv_monitor_window_size",
     "nv_monitor_threshold",
+    "state_broadcast_rate_hz",
+    "heartbeat_expected_interval",
+    # RPC retry settings
+    "rpc_retry_initial_ms",
+    "rpc_retry_max_ms",
+    "rpc_retry_max_attempts",
+    "rpc_outbox_max_per_client",
     # Internal limits
     "max_virtual_transforms",
     "pub_queue_maxsize",
@@ -231,7 +252,13 @@ def validate_config(config: ServerConfig) -> list[str]:
     errors: list[str] = []
 
     # Port validation (1-65535)
-    port_fields = ["dealer_port", "pub_port", "server_discovery_port"]
+    port_fields = [
+        "dealer_port",
+        "pub_port",
+        "transform_pub_port",
+        "state_pub_port",
+        "server_discovery_port",
+    ]
     for field_name in port_fields:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
@@ -241,6 +268,7 @@ def validate_config(config: ServerConfig) -> list[str]:
     timing_fields = [
         "idle_broadcast_interval",
         "client_timeout",
+        "heartbeat_timeout",
         "cleanup_interval",
         "device_id_expiry_time",
         "status_log_interval",
@@ -286,7 +314,12 @@ def validate_config(config: ServerConfig) -> list[str]:
             errors.append(f"{field_name} must be positive, got {value}")
 
     # NV timing validation (must be positive floats)
-    nv_float_fields = ["nv_flush_interval", "nv_monitor_window_size"]
+    nv_float_fields = [
+        "nv_flush_interval",
+        "nv_monitor_window_size",
+        "state_broadcast_rate_hz",
+        "heartbeat_expected_interval",
+    ]
     for field_name in nv_float_fields:
         value = getattr(config, field_name)
         if value <= 0:
@@ -440,3 +473,24 @@ def create_config_from_args(
         raise ConfigurationError(errors)
 
     return config, overrides
+    # RPC retry settings validation
+    if config.rpc_retry_initial_ms <= 0:
+        errors.append(
+            f"rpc_retry_initial_ms must be positive, got {config.rpc_retry_initial_ms}"
+        )
+    if config.rpc_retry_max_ms <= 0:
+        errors.append(
+            f"rpc_retry_max_ms must be positive, got {config.rpc_retry_max_ms}"
+        )
+    if config.rpc_retry_max_ms < config.rpc_retry_initial_ms:
+        errors.append(
+            "rpc_retry_max_ms must be greater than or equal to rpc_retry_initial_ms"
+        )
+    if config.rpc_retry_max_attempts <= 0:
+        errors.append(
+            f"rpc_retry_max_attempts must be positive, got {config.rpc_retry_max_attempts}"
+        )
+    if config.rpc_outbox_max_per_client <= 0:
+        errors.append(
+            f"rpc_outbox_max_per_client must be positive, got {config.rpc_outbox_max_per_client}"
+        )

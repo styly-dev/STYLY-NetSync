@@ -97,6 +97,15 @@ namespace Styly.NetSync
         public string argumentsJson;
     }
 
+    [Serializable]
+    internal class RpcDeliveryMessage
+    {
+        public string rpcId;
+        public int senderClientNo;
+        public string functionName;
+        public string argumentsJson;
+    }
+
 
     // Device ID mapping data
     [Serializable]

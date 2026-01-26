@@ -14,6 +14,8 @@ if sys.version_info < MIN_PY:
 
 import argparse
 import base64
+from collections import OrderedDict
+from dataclasses import dataclass
 import json
 import os
 import platform
@@ -21,6 +23,7 @@ import socket
 import threading
 import time
 import traceback
+import uuid
 from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
@@ -142,6 +145,13 @@ def get_version() -> str:
     return "unknown"
 
 
+@dataclass
+class RpcOutboxEntry:
+    payload: bytes
+    next_send_time: float
+    attempts: int
+
+
 class NetSyncServer:
     # Note: All default values are defined in default.toml, not in code.
     # The BROADCAST_CHECK_INTERVAL is derived from transform_broadcast_rate in config.
@@ -168,6 +178,8 @@ class NetSyncServer:
         self,
         dealer_port: int | None = None,
         pub_port: int | None = None,
+        transform_pub_port: int | None = None,
+        state_pub_port: int | None = None,
         enable_server_discovery: bool | None = None,
         server_discovery_port: int | None = None,
         server_name: str | None = None,
@@ -184,7 +196,21 @@ class NetSyncServer:
         self.dealer_port = (
             dealer_port if dealer_port is not None else config.dealer_port
         )
-        self.pub_port = pub_port if pub_port is not None else config.pub_port
+        legacy_pub_port = pub_port if pub_port is not None else config.pub_port
+        self.transform_pub_port = (
+            transform_pub_port
+            if transform_pub_port is not None
+            else (
+                legacy_pub_port
+                if pub_port is not None
+                else config.transform_pub_port
+            )
+        )
+        self.state_pub_port = (
+            state_pub_port
+            if state_pub_port is not None
+            else (legacy_pub_port if pub_port is not None else config.state_pub_port)
+        )
         self.context = zmq.Context()
 
         # Initialize timing settings from config
@@ -197,8 +223,16 @@ class NetSyncServer:
         self.STATUS_LOG_INTERVAL = config.status_log_interval
         self.MAIN_LOOP_SLEEP = config.main_loop_sleep
         self.CLIENT_TIMEOUT = config.client_timeout
+        self.HEARTBEAT_TIMEOUT = config.heartbeat_timeout
         self.DEVICE_ID_EXPIRY_TIME = config.device_id_expiry_time
         self.POLL_TIMEOUT = config.poll_timeout
+        self.STATE_BROADCAST_INTERVAL = 1.0 / config.state_broadcast_rate_hz
+        self.HEARTBEAT_EXPECTED_INTERVAL = config.heartbeat_expected_interval
+
+        self.RPC_RETRY_INITIAL_SEC = config.rpc_retry_initial_ms / 1000.0
+        self.RPC_RETRY_MAX_SEC = config.rpc_retry_max_ms / 1000.0
+        self.RPC_RETRY_MAX_ATTEMPTS = config.rpc_retry_max_attempts
+        self.RPC_OUTBOX_MAX_PER_CLIENT = config.rpc_outbox_max_per_client
 
         # Server discovery settings (with override support)
         self.enable_server_discovery = (
@@ -225,12 +259,11 @@ class NetSyncServer:
 
         # Sockets
         self.router: zmq.sugar.socket.Socket[bytes] | None = None
-        self.pub: zmq.sugar.socket.Socket[bytes] | None = (
-            None  # Will be created/owned by Publisher thread only
-        )
+        self.pub_transform: zmq.sugar.socket.Socket[bytes] | None = None
+        self.pub_state: zmq.sugar.socket.Socket[bytes] | None = None
 
         # Publisher thread infrastructure
-        self._pub_queue_ctrl: Queue[tuple[bytes | None, bytes | None]] = Queue(
+        self._pub_queue_state: Queue[tuple[bytes | None, bytes | None]] = Queue(
             maxsize=config.pub_queue_maxsize
         )
         self._publisher_thread: threading.Thread | None = None
@@ -251,6 +284,9 @@ class NetSyncServer:
         self._coalesce_lock = threading.Lock()
         # topic_bytes -> message_bytes (keep only the most-recent per topic)
         self._coalesce_latest: dict[bytes, bytes] = {}
+
+        self._rpc_outbox_lock = threading.Lock()
+        self.rpc_outbox: dict[tuple[str, str], OrderedDict[str, RpcOutboxEntry]] = {}
 
         # Thread-safe room management with locks
         self.rooms: dict[str, dict[str, Any]] = (
@@ -305,6 +341,7 @@ class NetSyncServer:
         # NV flush cadence configuration (from config)
         self.nv_flush_interval = config.nv_flush_interval
         self.room_last_nv_flush: dict[str, float] = {}  # room_id -> last_flush_time
+        self.room_last_state_broadcast: dict[str, float] = {}
 
         # NV monitoring window (sliding window for logging only)
         self.nv_monitor_window: dict[str, list] = {}  # room_id -> [timestamps]
@@ -440,7 +477,7 @@ class NetSyncServer:
 
     def _control_backlog_exceeded(self) -> bool:
         """Return True when control queue backlog exceeds watermark."""
-        return self._pub_queue_ctrl.qsize() > self.CTRL_BACKLOG_WATERMARK
+        return self._pub_queue_state.qsize() > self.CTRL_BACKLOG_WATERMARK
 
     def _refill_transform_tokens(self) -> None:
         """Refill token bucket for transform rate limiting (thread-safe)."""
@@ -458,8 +495,8 @@ class NetSyncServer:
 
     def _try_send_transform(self) -> bool:
         """Send at most one coalesced transform message if budget allows."""
-        pub = self.pub
-        if pub is None:
+        pub_transform = self.pub_transform
+        if pub_transform is None:
             return False
 
         self._refill_transform_tokens()
@@ -478,7 +515,9 @@ class NetSyncServer:
             self._transform_tokens -= cost
 
         try:
-            pub.send_multipart([topic_bytes, message_bytes], flags=zmq.DONTWAIT)
+            pub_transform.send_multipart(
+                [topic_bytes, message_bytes], flags=zmq.DONTWAIT
+            )
             self._increment_stat("broadcast_count")
             with self._coalesce_lock:
                 # Remove only if the message is still the latest.
@@ -498,25 +537,30 @@ class NetSyncServer:
             return False
 
     def _publisher_loop(self) -> None:
-        """The only place that owns/uses self.pub and performs ZMQ sends."""
+        """The only place that owns/uses PUB sockets and performs ZMQ sends."""
         try:
-            # Create/bind PUB in this thread to avoid cross-thread use
-            self.pub = self.context.socket(zmq.PUB)
+            # Create/bind PUB sockets in this thread to avoid cross-thread use
+            self.pub_transform = self.context.socket(zmq.PUB)
+            self.pub_state = self.context.socket(zmq.PUB)
             # Set LINGER=0 to prevent FD accumulation during rapid connect/disconnect
-            self.pub.setsockopt(zmq.LINGER, 0)
+            self.pub_transform.setsockopt(zmq.LINGER, 0)
+            self.pub_state.setsockopt(zmq.LINGER, 0)
             try:
-                self.pub.setsockopt(zmq.BACKLOG, self.PUB_BACKLOG)
+                self.pub_transform.setsockopt(zmq.BACKLOG, self.PUB_BACKLOG)
+                self.pub_state.setsockopt(zmq.BACKLOG, self.PUB_BACKLOG)
             except Exception:
                 pass
             try:
-                self.pub.setsockopt(zmq.SNDHWM, 10000)
+                self.pub_transform.setsockopt(zmq.SNDHWM, 10)
+                self.pub_state.setsockopt(zmq.SNDHWM, 10)
             except Exception:
                 # Best effort; ignore if high-water mark option is unsupported
                 pass
-            self.pub.bind(f"tcp://*:{self.pub_port}")
+            self.pub_transform.bind(f"tcp://*:{self.transform_pub_port}")
+            self.pub_state.bind(f"tcp://*:{self.state_pub_port}")
 
             # Set up socket monitor for tracking SUB connections
-            self._pub_monitor = self.pub.get_monitor_socket(
+            self._pub_monitor = self.pub_state.get_monitor_socket(
                 zmq.EVENT_ACCEPTED | zmq.EVENT_DISCONNECTED
             )
             self._pub_monitor.setsockopt(zmq.LINGER, 0)
@@ -531,7 +575,7 @@ class NetSyncServer:
                 drained = 0
                 while drained < self.CTRL_DRAIN_BATCH:
                     try:
-                        item = self._pub_queue_ctrl.get_nowait()
+                        item = self._pub_queue_state.get_nowait()
                     except Empty:
                         break
 
@@ -543,8 +587,12 @@ class NetSyncServer:
                     topic_bytes, message_bytes = item
 
                     try:
-                        self.pub.send_multipart([topic_bytes, message_bytes])
+                        self.pub_state.send_multipart(
+                            [topic_bytes, message_bytes], flags=zmq.DONTWAIT
+                        )
                         self._increment_stat("broadcast_count")
+                    except zmq.Again:
+                        self._increment_stat("skipped_broadcasts")
                     except Exception as e:
                         logger.error(f"Publisher failed to send: {e}")
 
@@ -571,28 +619,34 @@ class NetSyncServer:
             if self._pub_monitor_thread:
                 self._pub_monitor_thread.join(timeout=1.0)
                 self._pub_monitor_thread = None
-            if self.pub is not None:
+            if self.pub_transform is not None:
                 try:
-                    self.pub.close()
+                    self.pub_transform.close()
                 except Exception:
                     pass
-                self.pub = None
+                self.pub_transform = None
+            if self.pub_state is not None:
+                try:
+                    self.pub_state.close()
+                except Exception:
+                    pass
+                self.pub_state = None
             logger.info("Publisher loop ended")
 
     def _enqueue_pub(self, topic_bytes: bytes, message_bytes: bytes) -> None:
-        """Thread-safe enqueue of a broadcast for reliable/low-rate messages (RPC/NV).
+        """Thread-safe enqueue of a broadcast for low-rate state messages.
         Backpressure policy: drop the oldest item (ring buffer) to prefer newer updates.
         """
         try:
-            self._pub_queue_ctrl.put_nowait((topic_bytes, message_bytes))
+            self._pub_queue_state.put_nowait((topic_bytes, message_bytes))
         except Full:
             # Ring-buffer behavior: remove oldest then enqueue latest
             try:
-                _ = self._pub_queue_ctrl.get_nowait()
+                _ = self._pub_queue_state.get_nowait()
             except Empty:
                 pass
             try:
-                self._pub_queue_ctrl.put_nowait((topic_bytes, message_bytes))
+                self._pub_queue_state.put_nowait((topic_bytes, message_bytes))
             except Full:
                 # If still full, count as skipped
                 self._increment_stat("skipped_broadcasts")
@@ -650,6 +704,7 @@ class NetSyncServer:
             self.pending_global_nv[room_id] = {}
             self.pending_client_nv[room_id] = {}
             self.room_last_nv_flush[room_id] = 0
+            self.room_last_state_broadcast[room_id] = 0
 
             # Initialize monitoring window
             self.nv_monitor_window[room_id] = []
@@ -666,6 +721,41 @@ class NetSyncServer:
                     if client_data.get("identity") == client_identity:
                         return device_id
         return None
+
+    def _refresh_client_liveness(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        device_id: str | None,
+    ) -> str | None:
+        """Refresh last_update and identity mapping for any incoming message."""
+        resolved_device_id = device_id or self._get_device_id_from_identity(
+            client_identity, room_id
+        )
+        if not resolved_device_id:
+            return None
+
+        now = time.monotonic()
+        with self._rooms_lock:
+            self._initialize_room(room_id)
+            is_new_client = resolved_device_id not in self.rooms[room_id]
+            client_no = self._get_or_assign_client_no(room_id, resolved_device_id)
+
+            if is_new_client:
+                self.rooms[room_id][resolved_device_id] = {
+                    "identity": client_identity,
+                    "last_update": now,
+                    "transform_data": None,
+                    "client_no": client_no,
+                    "is_stealth": False,
+                }
+                self.room_id_mapping_dirty[room_id] = True
+            else:
+                self.rooms[room_id][resolved_device_id]["identity"] = client_identity
+                self.rooms[room_id][resolved_device_id]["last_update"] = now
+                self.rooms[room_id][resolved_device_id]["client_no"] = client_no
+
+        return resolved_device_id
 
     def _get_client_no_for_device_id(self, room_id: str, device_id: str) -> int:
         """Get client number for a given device ID in a room"""
@@ -801,7 +891,7 @@ class NetSyncServer:
                 app = create_app(
                     server_addr="tcp://127.0.0.1",
                     dealer_port=self.dealer_port,
-                    sub_port=self.pub_port,
+                    sub_port=self.state_pub_port,
                 )
                 rest_port = int(os.getenv("NETSYNC_REST_PORT", "8800"))
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
@@ -879,15 +969,15 @@ class NetSyncServer:
         # Stop Publisher thread
         self._publisher_running = False
         try:
-            self._pub_queue_ctrl.put_nowait((None, None))  # sentinel
+            self._pub_queue_state.put_nowait((None, None))  # sentinel
         except Full:
             # Best-effort to make room, then send sentinel
             try:
-                _ = self._pub_queue_ctrl.get_nowait()
+                _ = self._pub_queue_state.get_nowait()
             except Empty:
                 pass
             try:
-                self._pub_queue_ctrl.put_nowait((None, None))
+                self._pub_queue_state.put_nowait((None, None))
             except Full:
                 pass
         if self._publisher_thread:
@@ -933,25 +1023,32 @@ class NetSyncServer:
                             if data is None:
                                 logger.warning("Received message with None data")
                                 continue
+                            device_id = None
+                            if isinstance(data, dict):
+                                device_id = data.get("deviceId")
+                            resolved_device_id = self._refresh_client_liveness(
+                                client_identity, room_id, device_id
+                            )
                             if msg_type == binary_serializer.MSG_CLIENT_POSE_V2:
                                 self._handle_client_transform(
                                     client_identity, room_id, data, raw_payload
                                 )
                             elif msg_type == binary_serializer.MSG_RPC:
                                 # Get sender's client number from client identity
-                                sender_device_id = self._get_device_id_from_identity(
-                                    client_identity, room_id
-                                )
-                                if sender_device_id:
-                                    sender_client_no = (
-                                        self._get_client_no_for_device_id(
-                                            room_id, sender_device_id
-                                        )
+                                if resolved_device_id:
+                                    sender_client_no = self._get_client_no_for_device_id(
+                                        room_id, resolved_device_id
                                     )
                                     data["senderClientNo"] = sender_client_no
                                 # Send RPC to room excluding sender
                                 self._send_rpc_to_room(room_id, data)
                             # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
+                            elif msg_type == binary_serializer.MSG_RPC_ACK:
+                                self._handle_rpc_ack(
+                                    client_identity, room_id, data, resolved_device_id
+                                )
+                            elif msg_type == binary_serializer.MSG_HEARTBEAT:
+                                continue
                             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
                                 # Buffer global variable set request (no rate limit drops)
                                 self._buffer_global_var_set(room_id, data)
@@ -990,6 +1087,10 @@ class NetSyncServer:
             msg_type = msg_data.get("type")
             data_str = msg_data.get("data", "{}")
             data = json.loads(data_str) if data_str else {}
+
+            self._refresh_client_liveness(
+                client_identity, room_id, data.get("deviceId")
+            )
 
             # Process client transform messages (support both enum and string formats)
             if msg_type in [0, "ClientTransform", "client_transform"]:
@@ -1090,12 +1191,132 @@ class NetSyncServer:
             f"RPC: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}"
         )
 
-        # Prepare topic and payload
-        topic_bytes = room_id.encode("utf-8")
-        message_bytes = binary_serializer.serialize_rpc_message(rpc_data)
+        if "argumentsJson" in rpc_data:
+            args_json = rpc_data["argumentsJson"]
+        else:
+            args_json = json.dumps(args)
 
-        # Send multipart [roomId, payload]
-        self._enqueue_pub(topic_bytes, message_bytes)
+        sender_device_id = None
+        with self._rooms_lock:
+            if room_id in self.room_client_no_to_device_id:
+                sender_device_id = self.room_client_no_to_device_id[room_id].get(
+                    sender_client_no
+                )
+
+        rpc_id = str(uuid.uuid4())
+        room_id_bytes = room_id.encode("utf-8")
+
+        with self._rooms_lock:
+            if room_id not in self.rooms:
+                return
+            targets = []
+            for device_id, client_data in self.rooms[room_id].items():
+                if sender_device_id and device_id == sender_device_id:
+                    continue
+                identity = client_data.get("identity")
+                if identity is not None:
+                    targets.append((device_id, identity))
+
+        for device_id, identity in targets:
+            payload = binary_serializer.serialize_rpc_delivery(
+                {
+                    "rpcId": rpc_id,
+                    "senderClientNo": sender_client_no,
+                    "functionName": function_name,
+                    "argumentsJson": args_json,
+                }
+            )
+            self._enqueue_rpc_outbox(room_id, device_id, identity, rpc_id, payload)
+
+    def _enqueue_rpc_outbox(
+        self,
+        room_id: str,
+        device_id: str,
+        identity: bytes,
+        rpc_id: str,
+        payload: bytes,
+    ) -> None:
+        now = time.monotonic()
+        key = (room_id, device_id)
+        with self._rpc_outbox_lock:
+            entries = self.rpc_outbox.setdefault(key, OrderedDict())
+            if rpc_id not in entries and len(entries) >= self.RPC_OUTBOX_MAX_PER_CLIENT:
+                entries.popitem(last=False)
+                logger.warning(
+                    "RPC outbox full for %s/%s: dropping oldest entry",
+                    room_id,
+                    device_id[:8],
+                )
+            entries[rpc_id] = RpcOutboxEntry(
+                payload=payload, next_send_time=now, attempts=0
+            )
+
+        self._attempt_rpc_send(identity, room_id.encode("utf-8"), key, rpc_id)
+
+    def _attempt_rpc_send(
+        self,
+        identity: bytes,
+        room_id_bytes: bytes,
+        key: tuple[str, str],
+        rpc_id: str,
+    ) -> None:
+        router = self.router
+        if router is None:
+            return
+        with self._rpc_outbox_lock:
+            entry = self.rpc_outbox.get(key, {}).get(rpc_id)
+            if entry is None:
+                return
+            if entry.attempts >= self.RPC_RETRY_MAX_ATTEMPTS:
+                return
+
+        try:
+            router.send_multipart(
+                [identity, room_id_bytes, entry.payload], flags=zmq.DONTWAIT
+            )
+            sent = True
+        except zmq.Again:
+            sent = False
+        except Exception as exc:
+            logger.error("RPC send failed: %s", exc)
+            sent = False
+
+        with self._rpc_outbox_lock:
+            entry = self.rpc_outbox.get(key, {}).get(rpc_id)
+            if entry is None:
+                return
+            entry.attempts += 1
+            delay = min(
+                self.RPC_RETRY_MAX_SEC,
+                self.RPC_RETRY_INITIAL_SEC * (2 ** max(0, entry.attempts - 1)),
+            )
+            entry.next_send_time = time.monotonic() + delay
+            if not sent:
+                self._increment_stat("skipped_broadcasts")
+
+    def _handle_rpc_ack(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        data: dict[str, Any],
+        resolved_device_id: str | None,
+    ) -> None:
+        rpc_id = data.get("rpcId")
+        if not rpc_id:
+            return
+        device_id = data.get("deviceId") or resolved_device_id
+        if not device_id:
+            device_id = self._get_device_id_from_identity(client_identity, room_id)
+        if not device_id:
+            return
+
+        key = (room_id, device_id)
+        with self._rpc_outbox_lock:
+            entries = self.rpc_outbox.get(key)
+            if entries and rpc_id in entries:
+                del entries[rpc_id]
+                if not entries:
+                    del self.rpc_outbox[key]
 
     def _monitor_nv_sliding_window(self, room_id: str) -> None:
         """Monitor NV request rate for logging only (no gating)"""
@@ -1346,6 +1567,11 @@ class NetSyncServer:
                     f"Broadcasted client variables for {len(client_variables)} clients to room {room_id}"
                 )
 
+    def _broadcast_state_snapshot(self, room_id: str) -> None:
+        """Broadcast full state snapshots on the state PUB channel."""
+        self._broadcast_global_var_sync(room_id)
+        self._broadcast_client_var_sync(room_id)
+
     def _sync_network_variables_to_new_client(self, room_id: str) -> None:
         """Send current Network Variables state to a newly connected client"""
         self._broadcast_global_var_sync(room_id)
@@ -1465,6 +1691,69 @@ class NetSyncServer:
         for room_id in rooms_to_broadcast:
             self._broadcast_id_mappings(room_id)
 
+    def _process_rpc_outbox(self, current_time: float) -> None:
+        """Retry pending RPC deliveries until ACK or max attempts."""
+        router = self.router
+        if router is None:
+            return
+
+        with self._rpc_outbox_lock:
+            outbox_items = list(self.rpc_outbox.items())
+
+        for key, entries in outbox_items:
+            room_id, device_id = key
+            with self._rooms_lock:
+                identity = self.rooms.get(room_id, {}).get(device_id, {}).get(
+                    "identity"
+                )
+            if identity is None:
+                continue
+
+            room_id_bytes = room_id.encode("utf-8")
+            for rpc_id, entry in list(entries.items()):
+                if entry.attempts >= self.RPC_RETRY_MAX_ATTEMPTS:
+                    with self._rpc_outbox_lock:
+                        entries = self.rpc_outbox.get(key)
+                        if entries and rpc_id in entries:
+                            del entries[rpc_id]
+                            if not entries:
+                                del self.rpc_outbox[key]
+                    logger.warning(
+                        "RPC delivery expired (room=%s, device=%s, rpc=%s)",
+                        room_id,
+                        device_id[:8],
+                        rpc_id,
+                    )
+                    continue
+
+                if current_time < entry.next_send_time:
+                    continue
+
+                try:
+                    router.send_multipart(
+                        [identity, room_id_bytes, entry.payload], flags=zmq.DONTWAIT
+                    )
+                    sent = True
+                except zmq.Again:
+                    sent = False
+                except Exception as exc:
+                    logger.error("RPC retry send failed: %s", exc)
+                    sent = False
+
+                with self._rpc_outbox_lock:
+                    entries = self.rpc_outbox.get(key)
+                    if entries is None or rpc_id not in entries:
+                        continue
+                    entry = entries[rpc_id]
+                    entry.attempts += 1
+                    delay = min(
+                        self.RPC_RETRY_MAX_SEC,
+                        self.RPC_RETRY_INITIAL_SEC * (2 ** max(0, entry.attempts - 1)),
+                    )
+                    entry.next_send_time = current_time + delay
+                if not sent:
+                    self._increment_stat("skipped_broadcasts")
+
     def _periodic_loop(self) -> None:
         """Combined broadcast and cleanup loop with adaptive rates"""
         last_broadcast_check: float = 0.0
@@ -1487,6 +1776,15 @@ class NetSyncServer:
                         if current_time - last_flush >= self.nv_flush_interval:
                             self._flush_nv_drain(room_id)
                             self.room_last_nv_flush[room_id] = current_time
+                        last_state_broadcast = self.room_last_state_broadcast.get(
+                            room_id, 0.0
+                        )
+                        if (
+                            current_time - last_state_broadcast
+                            >= self.STATE_BROADCAST_INTERVAL
+                        ):
+                            self._broadcast_state_snapshot(room_id)
+                            self.room_last_state_broadcast[room_id] = current_time
 
                     if not self._control_backlog_exceeded():
                         self._adaptive_broadcast_all_rooms(current_time)
@@ -1499,6 +1797,9 @@ class NetSyncServer:
 
                 # Debounced ID mapping broadcasts
                 self._flush_debounced_id_mapping_broadcasts(current_time)
+
+                # Retry pending RPC deliveries
+                self._process_rpc_outbox(current_time)
 
                 # Clean up expired device ID mappings periodically
                 if current_time - last_device_id_cleanup >= DEVICE_ID_CLEANUP_INTERVAL:
@@ -1663,7 +1964,7 @@ class NetSyncServer:
 
     def _cleanup_clients(self, current_time: float) -> None:
         """Clean up disconnected clients with atomic operations to prevent memory leaks"""
-        timeout = self.CLIENT_TIMEOUT
+        timeout = self.HEARTBEAT_TIMEOUT
 
         with self._rooms_lock:
             rooms_to_remove = []
@@ -1681,6 +1982,8 @@ class NetSyncServer:
                     for device_id in clients_to_remove:
                         client_no = clients[device_id].get("client_no")
                         del clients[device_id]
+                        with self._rpc_outbox_lock:
+                            self.rpc_outbox.pop((room_id, device_id), None)
                         # Clean up binary cache by client number
                         if client_no and client_no in self.client_transform_body_cache:
                             del self.client_transform_body_cache[client_no]
@@ -1734,6 +2037,8 @@ class NetSyncServer:
                         del self.pending_client_nv[room_id]
                     if room_id in self.room_last_nv_flush:
                         del self.room_last_nv_flush[room_id]
+                    if room_id in self.room_last_state_broadcast:
+                        del self.room_last_state_broadcast[room_id]
                     if room_id in self.nv_monitor_window:
                         del self.nv_monitor_window[room_id]
 
@@ -1797,7 +2102,9 @@ class NetSyncServer:
         """UDP discovery service loop - responds to client discovery requests"""
         # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName
         response = (
-            f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}"
+            "STYLY-NETSYNC|"
+            f"{self.dealer_port}|{self.transform_pub_port}|{self.server_name}|"
+            f"{self.state_pub_port}"
         )
         response_bytes = response.encode("utf-8")
         udp_socket = self.server_discovery_socket
@@ -1872,7 +2179,9 @@ class NetSyncServer:
         """TCP discovery service loop - responds to client discovery requests"""
         # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName\n
         response = (
-            f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}\n"
+            "STYLY-NETSYNC|"
+            f"{self.dealer_port}|{self.transform_pub_port}|{self.server_name}|"
+            f"{self.state_pub_port}\n"
         )
         response_bytes = response.encode("utf-8")
         tcp_socket = self.tcp_server_discovery_socket
@@ -2039,7 +2348,8 @@ def main() -> None:
         logger.info("  Server IP addresses: Unable to detect")
 
     logger.info(f"  DEALER port: {config.dealer_port}")
-    logger.info(f"  PUB port: {config.pub_port}")
+    logger.info(f"  Transform PUB port: {config.transform_pub_port}")
+    logger.info(f"  State PUB port: {config.state_pub_port}")
     if config.enable_server_discovery:
         logger.info(f"  Server discovery port: {config.server_discovery_port}")
         logger.info(f"  Server name: {config.server_name}")
@@ -2050,6 +2360,8 @@ def main() -> None:
     server = NetSyncServer(
         dealer_port=config.dealer_port,
         pub_port=config.pub_port,
+        transform_pub_port=config.transform_pub_port,
+        state_pub_port=config.state_pub_port,
         enable_server_discovery=config.enable_server_discovery,
         server_discovery_port=config.server_discovery_port,
         server_name=config.server_name,

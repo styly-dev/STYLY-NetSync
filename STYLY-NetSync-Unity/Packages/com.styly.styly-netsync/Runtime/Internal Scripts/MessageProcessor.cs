@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
 using UnityEngine;
@@ -24,9 +25,14 @@ namespace Styly.NetSync
         private readonly Dictionary<int, bool> _clientNoToIsStealthMode = new();
         private readonly Dictionary<int, ClientTransformData> _pendingClients = new(); // Clients waiting for ID mapping
         private readonly HashSet<int> _knownConnectedClients = new HashSet<int>(); // Clients we announced via OnAvatarConnected
+        private readonly HashSet<string> _recentRpcIds = new HashSet<string>();
+        private readonly Queue<string> _recentRpcIdQueue = new Queue<string>();
+        private const int RpcDedupCacheSize = 512;
         private string _localDeviceId;
         private int _localClientNo = 0;
         private NetSyncManager _netSyncManager; // Reference to NetSyncManager for triggering ready checks
+        private ConnectionManager _connectionManager;
+        private string _currentRoomId;
 
         // Scratch collections reused per-room update to avoid frequent allocations (GC pressure)
         // NOTE: These are used only on the main thread inside ProcessRoomTransform.
@@ -52,6 +58,16 @@ namespace Styly.NetSync
         public void SetLocalDeviceId(string deviceId)
         {
             _localDeviceId = deviceId;
+        }
+
+        public void SetConnectionManager(ConnectionManager connectionManager)
+        {
+            _connectionManager = connectionManager;
+        }
+
+        public void SetCurrentRoomId(string roomId)
+        {
+            _currentRoomId = roomId;
         }
 
         public void SetLocalClientNo(int clientNo)
@@ -104,6 +120,27 @@ namespace Styly.NetSync
                         {
                             type = "rpc",
                             dataObj = new RpcMessageData { senderClientNo = rpc.senderClientNo, functionName = rpc.functionName, args = args }
+                        });
+                        _messagesReceived++;
+                        break;
+
+                    case BinarySerializer.MSG_RPC_DELIVERY when data is RpcDeliveryMessage rpcDelivery:
+                        SendRpcAck(rpcDelivery.rpcId);
+                        if (!RegisterRpcId(rpcDelivery.rpcId))
+                        {
+                            _messagesReceived++;
+                            break;
+                        }
+                        var deliveryArgs = JsonConvert.DeserializeObject<string[]>(rpcDelivery.argumentsJson);
+                        _messageQueue.Enqueue(new NetworkMessage
+                        {
+                            type = "rpc",
+                            dataObj = new RpcMessageData
+                            {
+                                senderClientNo = rpcDelivery.senderClientNo,
+                                functionName = rpcDelivery.functionName,
+                                args = deliveryArgs
+                            }
                         });
                         _messagesReceived++;
                         break;
@@ -279,6 +316,52 @@ namespace Styly.NetSync
                         _pendingClients.Remove(clientNo);
                     }
                 }
+            }
+        }
+
+        private bool RegisterRpcId(string rpcId)
+        {
+            if (string.IsNullOrEmpty(rpcId))
+            {
+                return true;
+            }
+
+            if (_recentRpcIds.Contains(rpcId))
+            {
+                return false;
+            }
+
+            _recentRpcIds.Add(rpcId);
+            _recentRpcIdQueue.Enqueue(rpcId);
+
+            while (_recentRpcIdQueue.Count > RpcDedupCacheSize)
+            {
+                var removed = _recentRpcIdQueue.Dequeue();
+                _recentRpcIds.Remove(removed);
+            }
+
+            return true;
+        }
+
+        private void SendRpcAck(string rpcId)
+        {
+            if (string.IsNullOrEmpty(rpcId) || _connectionManager == null || string.IsNullOrEmpty(_currentRoomId))
+            {
+                return;
+            }
+
+            try
+            {
+                using var ms = new MemoryStream();
+                using var writer = new BinaryWriter(ms);
+                var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+                BinarySerializer.SerializeRpcAckInto(writer, rpcId, _localDeviceId, timestamp);
+                writer.Flush();
+                _connectionManager.TrySendDealerMessage(_currentRoomId, ms.ToArray());
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[MessageProcessor] Failed to send RPC ACK: {ex.Message}");
             }
         }
 

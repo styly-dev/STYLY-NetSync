@@ -48,6 +48,8 @@ class net_sync_manager:
         server: str = "tcp://localhost",
         dealer_port: int = 5555,
         sub_port: int = 5556,
+        transform_sub_port: int | None = None,
+        state_sub_port: int | None = None,
         room: str = "default_room",
         auto_dispatch: bool = True,
         queue_max: int = 10000,
@@ -66,6 +68,8 @@ class net_sync_manager:
         self._server = server
         self._dealer_port = dealer_port
         self._sub_port = sub_port
+        self._transform_sub_port = transform_sub_port or sub_port
+        self._state_sub_port = state_sub_port or self._transform_sub_port
         self._room = room
         self._auto_dispatch = auto_dispatch
         self._queue_max = queue_max
@@ -73,7 +77,8 @@ class net_sync_manager:
         # ZeroMQ context and sockets
         self._context: zmq.Context | None = None
         self._dealer_socket: zmq.Socket | None = None
-        self._sub_socket: zmq.Socket | None = None
+        self._transform_sub_socket: zmq.Socket | None = None
+        self._state_sub_socket: zmq.Socket | None = None
 
         # Threading
         self._running = False
@@ -163,7 +168,17 @@ class net_sync_manager:
     @property
     def sub_port(self) -> int:
         """Subscriber port."""
-        return self._sub_port
+        return self._transform_sub_port
+
+    @property
+    def transform_sub_port(self) -> int:
+        """Transform subscriber port."""
+        return self._transform_sub_port
+
+    @property
+    def state_sub_port(self) -> int:
+        """State subscriber port."""
+        return self._state_sub_port
 
     def start(self) -> "net_sync_manager":
         """Start the client and connect to server."""
@@ -180,11 +195,20 @@ class net_sync_manager:
                 dealer_addr = f"{self._server}:{self._dealer_port}"
                 self._dealer_socket.connect(dealer_addr)
 
-                # SUB socket for downlink
-                self._sub_socket = self._context.socket(zmq.SUB)
-                sub_addr = f"{self._server}:{self._sub_port}"
-                self._sub_socket.connect(sub_addr)
-                self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
+                # SUB sockets for downlink
+                self._transform_sub_socket = self._context.socket(zmq.SUB)
+                transform_addr = f"{self._server}:{self._transform_sub_port}"
+                self._transform_sub_socket.connect(transform_addr)
+                self._transform_sub_socket.setsockopt(
+                    zmq.SUBSCRIBE, self._room.encode("utf-8")
+                )
+
+                self._state_sub_socket = self._context.socket(zmq.SUB)
+                state_addr = f"{self._server}:{self._state_sub_port}"
+                self._state_sub_socket.connect(state_addr)
+                self._state_sub_socket.setsockopt(
+                    zmq.SUBSCRIBE, self._room.encode("utf-8")
+                )
 
                 # Start receive thread
                 self._running = True
@@ -194,7 +218,11 @@ class net_sync_manager:
                 self._receive_thread.start()
 
                 logger.info(
-                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
+                    "NetSync client started: %s, %s, %s, room=%s",
+                    dealer_addr,
+                    transform_addr,
+                    state_addr,
+                    self._room,
                 )
 
             except Exception as e:
@@ -230,9 +258,12 @@ class net_sync_manager:
         if self._dealer_socket:
             self._dealer_socket.close()
             self._dealer_socket = None
-        if self._sub_socket:
-            self._sub_socket.close()
-            self._sub_socket = None
+        if self._transform_sub_socket:
+            self._transform_sub_socket.close()
+            self._transform_sub_socket = None
+        if self._state_sub_socket:
+            self._state_sub_socket.close()
+            self._state_sub_socket = None
         if self._context:
             self._context.term()
             self._context = None
@@ -240,19 +271,65 @@ class net_sync_manager:
     def _receive_loop(self) -> None:
         """Main receive loop for processing server messages."""
         poller = zmq.Poller()
-        if self._sub_socket:
-            poller.register(self._sub_socket, zmq.POLLIN)
+        if self._transform_sub_socket:
+            poller.register(self._transform_sub_socket, zmq.POLLIN)
+        if self._state_sub_socket:
+            poller.register(self._state_sub_socket, zmq.POLLIN)
+        if self._dealer_socket:
+            poller.register(self._dealer_socket, zmq.POLLIN)
+
+        last_heartbeat_sent = 0.0
+        heartbeat_interval = 0.5
 
         while self._running:
             try:
+                now = time.monotonic()
+                if (
+                    self._dealer_socket is not None
+                    and now - last_heartbeat_sent >= heartbeat_interval
+                ):
+                    heartbeat = binary_serializer.serialize_heartbeat(
+                        {
+                            "deviceId": self._device_id,
+                            "clientNo": self._client_no or 0,
+                            "timestamp": now,
+                        }
+                    )
+                    try:
+                        self._dealer_socket.send_multipart(
+                            [self._room.encode("utf-8"), heartbeat],
+                            flags=zmq.DONTWAIT,
+                        )
+                    except zmq.Again:
+                        pass
+                    last_heartbeat_sent = now
+
                 socks = dict(poller.poll(100))  # 100ms timeout
 
-                if self._sub_socket is not None and self._sub_socket in socks:
-                    message_parts = self._sub_socket.recv_multipart()
+                if (
+                    self._transform_sub_socket is not None
+                    and self._transform_sub_socket in socks
+                ):
+                    message_parts = self._transform_sub_socket.recv_multipart()
                     if len(message_parts) >= 2:
                         # room_id = message_parts[0].decode("utf-8")  # Not used currently
                         data = message_parts[1]
 
+                        self._process_message(data)
+
+                if (
+                    self._state_sub_socket is not None
+                    and self._state_sub_socket in socks
+                ):
+                    message_parts = self._state_sub_socket.recv_multipart()
+                    if len(message_parts) >= 2:
+                        data = message_parts[1]
+                        self._process_message(data)
+
+                if self._dealer_socket is not None and self._dealer_socket in socks:
+                    message_parts = self._dealer_socket.recv_multipart()
+                    if len(message_parts) >= 2:
+                        data = message_parts[1]
                         self._process_message(data)
 
             except zmq.Again:
@@ -275,6 +352,9 @@ class net_sync_manager:
             elif msg_type == binary_serializer.MSG_DEVICE_ID_MAPPING:
                 self._process_device_mapping(msg_data)
             elif msg_type == binary_serializer.MSG_RPC:
+                self._process_rpc(msg_data)
+            elif msg_type == binary_serializer.MSG_RPC_DELIVERY:
+                self._send_rpc_ack(msg_data)
                 self._process_rpc(msg_data)
             elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SYNC:
                 self._process_global_var_sync(msg_data)
@@ -381,6 +461,27 @@ class net_sync_manager:
 
         except Exception as e:
             logger.error(f"Error processing RPC: {e}")
+
+    def _send_rpc_ack(self, msg_data: dict[str, Any]) -> None:
+        """Send RPC ACK for delivery messages."""
+        rpc_id = msg_data.get("rpcId")
+        if not rpc_id:
+            return
+        if self._dealer_socket is None:
+            return
+        payload = binary_serializer.serialize_rpc_ack(
+            {
+                "rpcId": rpc_id,
+                "deviceId": self._device_id,
+                "timestamp": time.monotonic(),
+            }
+        )
+        try:
+            self._dealer_socket.send_multipart(
+                [self._room.encode("utf-8"), payload], flags=zmq.DONTWAIT
+            )
+        except zmq.Again:
+            pass
 
     def _process_global_var_sync(self, msg_data: dict[str, Any]) -> None:
         """Process global variable sync."""
