@@ -1,11 +1,11 @@
 // TransformSyncManager.cs - Handles transform synchronization
-// Note: This class now reuses MemoryStream/BinaryWriter/NetMQMessage and a pooled byte[] buffer
+// Note: This class now reuses MemoryStream/BinaryWriter and a pooled byte[] buffer
 // to reduce per-send allocations and GC pressure.
+// Send operations use ConnectionManager's queue API for thread-safe socket access.
 using System;
 using System.Buffers;
 using System.IO;
 using System.Text;
-using NetMQ;
 using UnityEngine;
 
 namespace Styly.NetSync
@@ -41,7 +41,7 @@ namespace Styly.NetSync
 
         public bool SendLocalTransform(NetSyncAvatar localAvatar, string roomId)
         {
-            if (localAvatar == null || _connectionManager.DealerSocket == null)
+            if (localAvatar == null || !_connectionManager.IsConnected)
                 return false;
 
             try
@@ -62,25 +62,14 @@ namespace Styly.NetSync
 
                 var length = (int)_buf.Stream.Position;
 
-                // Build a fresh message per send to ensure proper frame lifetime.
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    // Copy the exact payload length into a fresh array owned by NetMQ (avoid sharing pooled buffer).
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
+                // Copy the exact payload length into a fresh array for the send queue
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
 
-                    var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                    if (ok) _messagesSent++;
-                    return ok;
-                }
-                finally
-                {
-                    // NetMQMessage is not IDisposable; clear to release frames promptly.
-                    msg.Clear();
-                }
+                // Enqueue for network thread to send (latest-wins for transforms)
+                var ok = _connectionManager.EnqueueTransformSend(roomId, payload);
+                if (ok) _messagesSent++;
+                return ok;
             }
             catch (Exception ex)
             {
@@ -91,7 +80,7 @@ namespace Styly.NetSync
 
         internal bool SendStealthHandshake(string roomId)
         {
-            if (_connectionManager.DealerSocket == null)
+            if (!_connectionManager.IsConnected)
                 return false;
 
             try
@@ -106,22 +95,13 @@ namespace Styly.NetSync
 
                 var length = (int)_buf.Stream.Position;
 
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
 
-                    var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                    if (ok) _messagesSent++;
-                    return ok;
-                }
-                finally
-                {
-                    msg.Clear();
-                }
+                // Use reliable queue for handshake (important for connection setup)
+                var ok = _connectionManager.EnqueueReliableSend(roomId, payload);
+                if (ok) _messagesSent++;
+                return ok;
             }
             catch (Exception ex)
             {

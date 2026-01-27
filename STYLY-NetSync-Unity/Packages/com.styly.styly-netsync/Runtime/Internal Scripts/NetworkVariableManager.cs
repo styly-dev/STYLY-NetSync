@@ -1,11 +1,11 @@
 // NetworkVariableManager.cs - Handles Network Variables system
+// Send operations use ConnectionManager's queue API for thread-safe socket access.
 using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
-using NetMQ;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 
@@ -159,7 +159,7 @@ namespace Styly.NetSync
 
             try
             {
-                if (_connectionManager.DealerSocket == null)
+                if (!_connectionManager.IsConnected)
                 {
                     return false;
                 }
@@ -172,20 +172,11 @@ namespace Styly.NetSync
                 _buf.Writer.Flush();
                 var length = (int)_buf.Stream.Position;
 
-                bool sent;
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
-                    sent = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                }
-                finally
-                {
-                    msg.Clear();
-                }
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+
+                // Enqueue for network thread to send (reliable FIFO queue)
+                bool sent = _connectionManager.EnqueueReliableSend(roomId, payload);
                 if (sent)
                 {
                     _lastSentGlobal[name] = value; // Update last sent cache
@@ -272,7 +263,7 @@ namespace Styly.NetSync
 
             try
             {
-                if (_connectionManager.DealerSocket == null)
+                if (!_connectionManager.IsConnected)
                 {
                     return false;
                 }
@@ -285,20 +276,11 @@ namespace Styly.NetSync
                 _buf.Writer.Flush();
                 var length = (int)_buf.Stream.Position;
 
-                bool sent;
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
-                    sent = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                }
-                finally
-                {
-                    msg.Clear();
-                }
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+
+                // Enqueue for network thread to send (reliable FIFO queue)
+                bool sent = _connectionManager.EnqueueReliableSend(roomId, payload);
                 if (sent)
                 {
                     var key = (targetClientNo, name);
