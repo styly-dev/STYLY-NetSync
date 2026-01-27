@@ -1,9 +1,10 @@
 // ConnectionManager.cs - Handles network connection management
 using System;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Text;
 using NetMQ;
 using NetMQ.Sockets;
 using UnityEngine;
@@ -21,16 +22,15 @@ namespace Styly.NetSync
         private bool _connectionError;
         private ServerDiscoveryManager _discoveryManager;
         private string _currentRoomId;
-        
+
         // Thread-safe exception state (written on receive thread, read on main thread)
         private volatile Exception _lastException;
         private long _lastExceptionAtUnixMs;
 
-        public DealerSocket DealerSocket => _dealerSocket;
         public SubscriberSocket SubSocket => _subSocket;
         public bool IsConnected => _dealerSocket != null && _subSocket != null && !_connectionError;
         public bool IsConnectionError => _connectionError;
-        
+
         // Thread-safe accessors for exception state
         public Exception LastException => _lastException;
         public long LastExceptionAtUnixMs => Volatile.Read(ref _lastExceptionAtUnixMs);
@@ -40,6 +40,18 @@ namespace Styly.NetSync
 
         private readonly NetSyncManager _netSyncManager;
         private readonly MessageProcessor _messageProcessor;
+
+        private readonly ConcurrentQueue<DealerSendItem> _reliableSendQ = new();
+        private int _reliableSendQCount;
+        private const int ReliableSendQMax = 512;
+        private DealerSendItem _reliableInFlight;
+        private int _hasReliableInFlight;
+
+        private string _pendingTransformRoomId;
+        private byte[] _pendingTransformPayload;
+        private int _pendingTransformFlag;
+
+        private const int TransformRcvHwm = 2;
 
         public ConnectionManager(NetSyncManager netSyncManager, MessageProcessor messageProcessor, bool enableDebugLogs, bool logNetworkTraffic)
         {
@@ -73,6 +85,7 @@ namespace Styly.NetSync
             if (_receiveThread == null) { return; }
 
             _shouldStop = true;
+            ClearOutgoingQueues();
 
             // Dispose sockets
             if (_subSocket != null)
@@ -114,7 +127,7 @@ namespace Styly.NetSync
                 // Subscriber (for receiving)
                 using var sub = new SubscriberSocket();
                 sub.Options.Linger = TimeSpan.Zero;
-                sub.Options.ReceiveHighWatermark = 10;
+                sub.Options.ReceiveHighWatermark = TransformRcvHwm;
                 sub.Connect($"{serverAddress}:{subPort}");
                 // Subscribe with topic. Using string here is one-time and acceptable.
                 // Note: NetMQ also offers byte[] overloads, but subscription happens once per connection.
@@ -129,21 +142,29 @@ namespace Styly.NetSync
                     OnConnectionEstablished.Invoke();
                 }
 
+                var roomIdBytes = Encoding.UTF8.GetBytes(roomId);
+
                 while (!_shouldStop)
                 {
-                    // Receive two frames: [topic][payload]. Use string topic and direct comparison.
-                    if (!sub.TryReceiveFrameString(TimeSpan.FromMilliseconds(10), out var topic)) { continue; }
-                    if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload)) { continue; }
+                    var sentAny = FlushOutgoing(dealer);
+                    var receivedAny = false;
 
-                    if (topic != roomId) { continue; }
-
-                    try
+                    if (TryDrainTransform(sub, roomIdBytes, out var lastPayload))
                     {
-                        _messageProcessor.ProcessIncomingMessage(payload);
+                        try
+                        {
+                            _messageProcessor.ProcessIncomingMessage(lastPayload);
+                            receivedAny = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"Transform parse error: {ex.Message}");
+                        }
                     }
-                    catch (Exception ex)
+
+                    if (!receivedAny && !sentAny)
                     {
-                        Debug.LogError($"Binary parse error: {ex.Message}");
+                        Thread.Sleep(1);
                     }
                 }
             }
@@ -179,6 +200,33 @@ namespace Styly.NetSync
                     }
                 }
             }
+        }
+
+        public bool EnqueueTransformSend(string roomId, byte[] payload)
+        {
+            if (_receiveThread == null || _shouldStop || _connectionError) { return false; }
+            if (_dealerSocket == null) { return false; }
+
+            _pendingTransformRoomId = roomId;
+            _pendingTransformPayload = payload;
+            Interlocked.Exchange(ref _pendingTransformFlag, 1);
+            return true;
+        }
+
+        public bool EnqueueReliableSend(string roomId, byte[] payload)
+        {
+            if (_receiveThread == null || _shouldStop || _connectionError) { return false; }
+            if (_dealerSocket == null) { return false; }
+
+            var n = Interlocked.Increment(ref _reliableSendQCount);
+            if (n > ReliableSendQMax)
+            {
+                Interlocked.Decrement(ref _reliableSendQCount);
+                return false;
+            }
+
+            _reliableSendQ.Enqueue(new DealerSendItem(roomId, payload));
+            return true;
         }
 
         private static void WaitThreadExit(Thread t, int ms)
@@ -221,6 +269,136 @@ namespace Styly.NetSync
             }
         }
 
+        private void ClearOutgoingQueues()
+        {
+            Interlocked.Exchange(ref _pendingTransformFlag, 0);
+            _pendingTransformRoomId = null;
+            _pendingTransformPayload = null;
+
+            while (_reliableSendQ.TryDequeue(out _)) { }
+            _reliableSendQCount = 0;
+            _hasReliableInFlight = 0;
+        }
+
+        private bool FlushOutgoing(DealerSocket dealer)
+        {
+            bool didWork = false;
+
+            if (Interlocked.CompareExchange(ref _hasReliableInFlight, 1, 1) == 1)
+            {
+                if (TrySendDealer(dealer, _reliableInFlight.RoomId, _reliableInFlight.Payload))
+                {
+                    Interlocked.Exchange(ref _hasReliableInFlight, 0);
+                    didWork = true;
+                }
+                else
+                {
+                    return didWork;
+                }
+            }
+
+            while (Interlocked.CompareExchange(ref _hasReliableInFlight, 1, 0) == 0 &&
+                   _reliableSendQ.TryDequeue(out var item))
+            {
+                Interlocked.Decrement(ref _reliableSendQCount);
+                _reliableInFlight = item;
+
+                if (TrySendDealer(dealer, item.RoomId, item.Payload))
+                {
+                    Interlocked.Exchange(ref _hasReliableInFlight, 0);
+                    didWork = true;
+                    continue;
+                }
+
+                return didWork;
+            }
+
+            if (Interlocked.Exchange(ref _pendingTransformFlag, 0) == 1)
+            {
+                var room = _pendingTransformRoomId;
+                var payload = _pendingTransformPayload;
+                if (!TrySendDealer(dealer, room, payload))
+                {
+                    _pendingTransformRoomId = room;
+                    _pendingTransformPayload = payload;
+                    Interlocked.Exchange(ref _pendingTransformFlag, 1);
+                }
+                else
+                {
+                    didWork = true;
+                }
+            }
+
+            return didWork;
+        }
+
+        private static bool TrySendDealer(DealerSocket dealer, string roomId, byte[] payload)
+        {
+            var msg = new NetMQMessage();
+            try
+            {
+                msg.Append(roomId);
+                msg.Append(payload);
+                return dealer.TrySendMultipartMessage(msg);
+            }
+            finally
+            {
+                msg.Clear();
+            }
+        }
+
+        private static bool TryDrainTransform(SubscriberSocket sub, byte[] roomIdBytes, out byte[] lastPayload)
+        {
+            lastPayload = null;
+            bool got = false;
+
+            if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var topic))
+            {
+                return false;
+            }
+
+            if (!sub.TryReceiveFrameBytes(TimeSpan.FromMilliseconds(10), out var payload))
+            {
+                return false;
+            }
+
+            if (TopicMatches(topic, roomIdBytes))
+            {
+                lastPayload = payload;
+                got = true;
+            }
+
+            while (sub.TryReceiveFrameBytes(TimeSpan.Zero, out topic))
+            {
+                if (!sub.TryReceiveFrameBytes(TimeSpan.Zero, out payload))
+                {
+                    break;
+                }
+
+                if (TopicMatches(topic, roomIdBytes))
+                {
+                    lastPayload = payload;
+                    got = true;
+                }
+            }
+
+            return got;
+        }
+
+        private static bool TopicMatches(byte[] topic, byte[] roomIdBytes)
+        {
+            if (topic == null || roomIdBytes == null) { return false; }
+            if (topic.Length != roomIdBytes.Length) { return false; }
+            for (int i = 0; i < topic.Length; i++)
+            {
+                if (topic[i] != roomIdBytes[i])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public void StartDiscovery(ServerDiscoveryManager discoveryManager, string roomId)
         {
             _discoveryManager = discoveryManager;
@@ -258,6 +436,18 @@ namespace Styly.NetSync
             // (NetSyncManager has already copied it to _pendingConnectionException)
             _lastException = null;
             // Keep timestamp for basic diagnostics
+        }
+
+        private readonly struct DealerSendItem
+        {
+            public readonly string RoomId;
+            public readonly byte[] Payload;
+
+            public DealerSendItem(string roomId, byte[] payload)
+            {
+                RoomId = roomId;
+                Payload = payload;
+            }
         }
     }
 }

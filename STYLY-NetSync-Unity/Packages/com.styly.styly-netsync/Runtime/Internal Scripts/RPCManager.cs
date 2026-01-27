@@ -1,11 +1,8 @@
 // RPCManager.cs - Handles RPC (Remote Procedure Call) system
 using System;
-using System.Buffers;
-using System.IO;
 using System.Text;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using NetMQ;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.Events;
@@ -89,8 +86,6 @@ namespace Styly.NetSync
 
         private bool TrySendNow(string roomId, string functionName, string[] args)
         {
-            if (_connectionManager.DealerSocket == null) { return false; }
-
             // === Rate limit preflight (single global cap) ===
             if (!TryConsumeQuota(out var retryAfter, out var count))
             {
@@ -122,20 +117,9 @@ namespace Styly.NetSync
 
             try
             {
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
-                    return _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                }
-                finally
-                {
-                    // Clear frames explicitly since NetMQMessage isn't IDisposable.
-                    msg.Clear();
-                }
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                return _connectionManager.EnqueueReliableSend(roomId, payload);
             }
             catch (Exception ex)
             {
