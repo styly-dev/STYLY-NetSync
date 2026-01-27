@@ -5,7 +5,6 @@ using System;
 using System.Buffers;
 using System.IO;
 using System.Text;
-using NetMQ;
 using UnityEngine;
 
 namespace Styly.NetSync
@@ -41,7 +40,7 @@ namespace Styly.NetSync
 
         public bool SendLocalTransform(NetSyncAvatar localAvatar, string roomId)
         {
-            if (localAvatar == null || _connectionManager.DealerSocket == null)
+            if (localAvatar == null)
                 return false;
 
             try
@@ -62,25 +61,12 @@ namespace Styly.NetSync
 
                 var length = (int)_buf.Stream.Position;
 
-                // Build a fresh message per send to ensure proper frame lifetime.
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    // Copy the exact payload length into a fresh array owned by NetMQ (avoid sharing pooled buffer).
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
-
-                    var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                    if (ok) _messagesSent++;
-                    return ok;
-                }
-                finally
-                {
-                    // NetMQMessage is not IDisposable; clear to release frames promptly.
-                    msg.Clear();
-                }
+                // Copy the exact payload length into a fresh array (avoid sharing pooled buffer).
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                var ok = _connectionManager.EnqueueTransformSend(roomId, payload);
+                if (ok) _messagesSent++;
+                return ok;
             }
             catch (Exception ex)
             {
@@ -91,9 +77,6 @@ namespace Styly.NetSync
 
         internal bool SendStealthHandshake(string roomId)
         {
-            if (_connectionManager.DealerSocket == null)
-                return false;
-
             try
             {
                 // Estimate size for handshake and ensure capacity
@@ -106,22 +89,11 @@ namespace Styly.NetSync
 
                 var length = (int)_buf.Stream.Position;
 
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
-
-                    var ok = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                    if (ok) _messagesSent++;
-                    return ok;
-                }
-                finally
-                {
-                    msg.Clear();
-                }
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                var ok = _connectionManager.EnqueueReliableSend(roomId, payload);
+                if (ok) _messagesSent++;
+                return ok;
             }
             catch (Exception ex)
             {
