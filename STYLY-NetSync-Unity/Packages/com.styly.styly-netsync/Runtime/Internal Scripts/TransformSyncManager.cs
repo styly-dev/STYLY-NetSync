@@ -65,7 +65,7 @@ namespace Styly.NetSync
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
 
-                // Phase 2: Use SetLatestTransform for latest-wins semantics
+                // Use SetLatestTransform for latest-wins semantics
                 // This always succeeds (overwrites previous) - actual send is async in network thread
                 _connectionManager.SetLatestTransform(roomId, payload);
                 _messagesSent++;
@@ -94,13 +94,13 @@ namespace Styly.NetSync
 
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                var ok = _connectionManager.EnqueueReliableSend(roomId, payload);
+                var ok = _connectionManager.TryEnqueueControl(roomId, payload);
                 if (ok)
                 {
                     _messagesSent++;
                     return SendOutcome.Sent();
                 }
-                // EnqueueReliableSend returns false when queue full - this is backpressure
+                // TryEnqueueControl returns false when queue full - this is backpressure
                 return SendOutcome.Backpressure();
             }
             catch (Exception ex)

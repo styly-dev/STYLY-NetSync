@@ -47,19 +47,11 @@ namespace Styly.NetSync
         private readonly MessageProcessor _messageProcessor;
 
         private const int TransformRcvHwm = 2;
-        private const int ReliableSendQMax = 512;
         private const long QueueFullWarnIntervalMs = 5000; // Rate limit warning logs to once per 5 seconds
         private long _lastQueueFullWarnMs;
 
         // Diagnostic counter for tracking dropped transform frames during draining
         private long _droppedTransformFrames;
-
-        private readonly ConcurrentQueue<DealerSendItem> _reliableSendQ = new();
-        private int _reliableSendQCount;
-        private DealerSendItem _reliableInFlight;
-        private int _hasReliableInFlight;
-
-        // ===== Phase 2: Application-level send queue with priority control =====
 
         /// <summary>
         /// Maximum number of control messages that can be queued.
@@ -101,10 +93,6 @@ namespace Styly.NetSync
         /// Cumulative count of send failures due to backpressure (EAGAIN/would-block).
         /// </summary>
         public long WouldBlockCount => Interlocked.Read(ref _wouldBlockCount);
-
-        private volatile string _pendingTransformRoomId;
-        private volatile byte[] _pendingTransformPayload;
-        private int _pendingTransformFlag;
 
         public ConnectionManager(NetSyncManager netSyncManager, MessageProcessor messageProcessor, bool enableDebugLogs, bool logNetworkTraffic)
         {
@@ -162,25 +150,6 @@ namespace Styly.NetSync
 
             // OS-specific cleanup
             SafeNetMQCleanup();
-        }
-
-        public bool EnqueueTransformSend(string roomId, byte[] payload)
-        {
-            if (_receiveThread == null || _shouldStop || _connectionError) { return false; }
-            if (_dealerSocket == null) { return false; }
-
-            _pendingTransformRoomId = roomId;
-            _pendingTransformPayload = payload;
-            // Ensure writes are visible to the network thread before setting the flag
-            Thread.MemoryBarrier();
-            Interlocked.Exchange(ref _pendingTransformFlag, 1);
-            return true;
-        }
-
-        public bool EnqueueReliableSend(string roomId, byte[] payload)
-        {
-            // Delegate to TryEnqueueControl for backwards compatibility
-            return TryEnqueueControl(roomId, payload);
         }
 
         /// <summary>
@@ -390,39 +359,12 @@ namespace Styly.NetSync
         {
             bool didWork = false;
 
-            // Phase 2: Priority-based send drain
+            // Priority-based send drain:
             // 1. Drain control messages first (higher priority)
             // 2. Then try to send latest transform (lower priority)
 
-            // Drain control outbox with priority
             didWork |= DrainControlSends(dealer, maxBatch: 64);
-
-            // Try to send the latest transform (latest-wins semantics)
             didWork |= TrySendLatestTransform(dealer);
-
-            // Legacy: Handle old-style pending transform (for backwards compatibility with EnqueueTransformSend)
-            if (Interlocked.Exchange(ref _pendingTransformFlag, 0) == 1)
-            {
-                var room = _pendingTransformRoomId;
-                var payload = _pendingTransformPayload;
-
-                // Null check to handle race condition during disconnect or incomplete writes
-                if (room == null || payload == null)
-                {
-                    // Skip this send; data was cleared during disconnect
-                }
-                else if (!TrySendDealer(dealer, room, payload))
-                {
-                    _pendingTransformRoomId = room;
-                    _pendingTransformPayload = payload;
-                    Interlocked.Exchange(ref _pendingTransformFlag, 1);
-                    Interlocked.Increment(ref _wouldBlockCount);
-                }
-                else
-                {
-                    didWork = true;
-                }
-            }
 
             return didWork;
         }
@@ -536,22 +478,11 @@ namespace Styly.NetSync
 
         private void ClearOutgoingBuffers()
         {
-            // Clear legacy pending transform
-            Interlocked.Exchange(ref _pendingTransformFlag, 0);
-            _pendingTransformRoomId = null;
-            _pendingTransformPayload = null;
-
-            // Clear legacy reliable send queue (kept for backwards compatibility)
-            while (_reliableSendQ.TryDequeue(out _)) { }
-            _reliableInFlight = default;
-            Interlocked.Exchange(ref _hasReliableInFlight, 0);
-            Interlocked.Exchange(ref _reliableSendQCount, 0);
-
-            // Clear Phase 2 control outbox
+            // Clear control outbox
             while (_ctrlOutbox.TryDequeue(out _)) { }
             Interlocked.Exchange(ref _ctrlOutboxCount, 0);
 
-            // Clear Phase 2 latest transform
+            // Clear latest transform
             Volatile.Write(ref _latestTransform, null);
         }
 
@@ -621,7 +552,7 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Clears the connection error state. Should be called after StopNetworking() 
+        /// Clears the connection error state. Should be called after StopNetworking()
         /// and before attempting reconnection.
         /// Thread-safe: must be called from main thread when receive thread is not running.
         /// </summary>
@@ -632,18 +563,6 @@ namespace Styly.NetSync
             // (NetSyncManager has already copied it to _pendingConnectionException)
             _lastException = null;
             // Keep timestamp for basic diagnostics
-        }
-
-        private readonly struct DealerSendItem
-        {
-            public readonly string RoomId;
-            public readonly byte[] Payload;
-
-            public DealerSendItem(string roomId, byte[] payload)
-            {
-                RoomId = roomId;
-                Payload = payload;
-            }
         }
     }
 }

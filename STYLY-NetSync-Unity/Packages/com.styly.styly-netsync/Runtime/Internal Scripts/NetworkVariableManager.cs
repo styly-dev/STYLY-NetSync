@@ -168,7 +168,6 @@ namespace Styly.NetSync
 
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                // Phase 2: Use TryEnqueueControl for priority-based sending
                 var sent = _connectionManager.TryEnqueueControl(roomId, payload);
                 if (sent)
                 {
@@ -266,7 +265,6 @@ namespace Styly.NetSync
 
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                // Phase 2: Use TryEnqueueControl for priority-based sending
                 var sent = _connectionManager.TryEnqueueControl(roomId, payload);
                 if (sent)
                 {
