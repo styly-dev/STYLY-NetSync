@@ -121,7 +121,8 @@ namespace Styly.NetSync
             {
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                return _connectionManager.EnqueueReliableSend(roomId, payload);
+                // Phase 2: Use TryEnqueueControl for priority-based sending
+                return _connectionManager.TryEnqueueControl(roomId, payload);
             }
             catch (Exception ex)
             {
@@ -159,11 +160,18 @@ namespace Styly.NetSync
             TrySendNow(roomId, functionName, args);
         }
 
-        public void FlushPendingIfReady(string roomId)
+        /// <summary>
+        /// Flush pending RPCs if ready.
+        /// </summary>
+        /// <param name="roomId">The room ID to send to.</param>
+        /// <returns>True if all pending RPCs were flushed (or queue is empty), false if any backpressure occurred.</returns>
+        public bool FlushPendingIfReady(string roomId)
         {
-            if (!_netSyncManager.IsReady) return;
+            if (!_netSyncManager.IsReady) return true; // Not ready yet, but no backpressure
 
             int sentThisFrame = 0;
+            bool hitBackpressure = false;
+
             while (sentThisFrame < _maxFlushPerFrame && _pendingOut.TryPeek(out var item))
             {
                 var (fn, args, enqAt) = item;
@@ -184,9 +192,13 @@ namespace Styly.NetSync
                     continue;
                 }
 
-                // If rate-limited, stop draining this frame (don't drop)
+                // If rate-limited or backpressure, stop draining this frame (don't drop)
+                hitBackpressure = true;
                 break;
             }
+
+            // Return true if queue is empty and no backpressure
+            return !hitBackpressure && _pendingOut.IsEmpty;
         }
 
 

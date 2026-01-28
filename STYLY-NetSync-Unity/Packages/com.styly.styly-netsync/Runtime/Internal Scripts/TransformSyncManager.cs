@@ -38,10 +38,10 @@ namespace Styly.NetSync
             _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
         }
 
-        public bool SendLocalTransform(NetSyncAvatar localAvatar, string roomId)
+        public SendOutcome SendLocalTransform(NetSyncAvatar localAvatar, string roomId)
         {
             if (localAvatar == null)
-                return false;
+                return SendOutcome.Fatal("localAvatar is null");
 
             try
             {
@@ -64,18 +64,21 @@ namespace Styly.NetSync
                 // Copy the exact payload length into a fresh array (avoid sharing pooled buffer).
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                var ok = _connectionManager.EnqueueTransformSend(roomId, payload);
-                if (ok) _messagesSent++;
-                return ok;
+
+                // Phase 2: Use SetLatestTransform for latest-wins semantics
+                // This always succeeds (overwrites previous) - actual send is async in network thread
+                _connectionManager.SetLatestTransform(roomId, payload);
+                _messagesSent++;
+                return SendOutcome.Sent();
             }
             catch (Exception ex)
             {
                 Debug.LogError($"SendLocalTransform: {ex.Message}");
-                return false;
+                return SendOutcome.Fatal(ex.Message);
             }
         }
 
-        internal bool SendStealthHandshake(string roomId)
+        internal SendOutcome SendStealthHandshake(string roomId)
         {
             try
             {
@@ -92,13 +95,18 @@ namespace Styly.NetSync
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
                 var ok = _connectionManager.EnqueueReliableSend(roomId, payload);
-                if (ok) _messagesSent++;
-                return ok;
+                if (ok)
+                {
+                    _messagesSent++;
+                    return SendOutcome.Sent();
+                }
+                // EnqueueReliableSend returns false when queue full - this is backpressure
+                return SendOutcome.Backpressure();
             }
             catch (Exception ex)
             {
                 Debug.LogError($"SendStealthHandshake: {ex.Message}");
-                return false;
+                return SendOutcome.Fatal(ex.Message);
             }
         }
 
