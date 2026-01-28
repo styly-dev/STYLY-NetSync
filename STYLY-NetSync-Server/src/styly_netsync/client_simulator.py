@@ -545,27 +545,31 @@ class NetworkTransport:
     def connect(self) -> bool:
         """Establish connection to server (both DEALER and SUB)."""
         try:
-            # DEALER for sending
+            # DEALER for sending and control message receive
+            # Low HWM (10) for backpressure detection matching Unity client
             self.socket = self.context.socket(zmq.DEALER)
             self._register_socket(self.socket)
             self.socket.setsockopt(zmq.LINGER, 0)
             self.socket.setsockopt(zmq.IMMEDIATE, 1)
-            self.socket.setsockopt(zmq.RCVTIMEO, 1000)
+            self.socket.setsockopt(zmq.RCVTIMEO, 0)  # Non-blocking receive
             self.socket.setsockopt(zmq.SNDTIMEO, 1000)
-            self.socket.setsockopt(zmq.SNDHWM, 10000)
+            self.socket.setsockopt(zmq.SNDHWM, 10)  # Low HWM for backpressure
 
             dealer_endpoint = f"{self.server_addr}:{self.dealer_port}"
             self.socket.connect(dealer_endpoint)
             self.logger.debug(f"Connected DEALER to {dealer_endpoint}")
 
             # Optional SUB for receiving broadcasts (ID mappings, NV syncs, etc.)
+            # Low RCVHWM (2) to prefer recent updates and drop stale messages
             if self.enable_sub:
                 try:
                     self.sub_socket = self.context.socket(zmq.SUB)
                     self._register_socket(self.sub_socket)
                     self.sub_socket.setsockopt(zmq.LINGER, 0)
                     self.sub_socket.setsockopt(zmq.RCVTIMEO, 10)  # non-blocking-ish
-                    self.sub_socket.setsockopt(zmq.RCVHWM, 10000)
+                    self.sub_socket.setsockopt(
+                        zmq.RCVHWM, 2
+                    )  # Low HWM to prefer recent
                     sub_endpoint = f"{self.server_addr}:{self.sub_port}"
                     self.sub_socket.connect(sub_endpoint)
                     # Subscribe to room topic
@@ -709,6 +713,66 @@ class NetworkTransport:
             # For other message types, drop and continue scanning
         return None
 
+    def recv_dealer_control(
+        self, max_drain: int = 10
+    ) -> tuple[int, dict[str, Any] | None] | None:
+        """Receive control messages from DEALER socket (sent via ROUTER unicast).
+
+        Server sends RPC, NV sync, and ID mappings via ROUTER->DEALER for reliable
+        delivery instead of PUB/SUB. This method drains incoming control messages.
+
+        Args:
+            max_drain: Maximum number of messages to drain per call.
+
+        Returns:
+            Tuple of (message_type, data) for the first relevant message, or None.
+            Returns immediately on first valid message or after draining max_drain
+            messages without finding a valid one.
+        """
+        if not self.socket:
+            return None
+
+        for _ in range(max_drain):
+            try:
+                parts = self.socket.recv_multipart(flags=zmq.NOBLOCK)
+            except zmq.Again:
+                # No more messages available
+                return None
+            except zmq.ZMQError as e:
+                # Terminal errors: stop draining
+                if e.errno in (zmq.ETERM, zmq.ENOTSOCK):
+                    self.logger.debug(f"DEALER socket error: {e}")
+                    return None
+                self.logger.debug(f"Non-fatal DEALER receive error: {e}")
+                continue
+            except Exception as e:
+                self.logger.debug(f"DEALER receive error: {e}")
+                # Continue to next iteration rather than returning early
+                continue
+
+            if len(parts) != 2:
+                continue
+
+            dealer_room_id, payload = parts
+            room_id_str = dealer_room_id.decode("utf-8", errors="ignore")
+
+            # Only process messages for our room
+            if room_id_str != self.room_id:
+                continue
+
+            try:
+                if not payload:
+                    continue
+                msg_type = payload[0]
+                _, data, _ = deserialize(payload)
+                return msg_type, data
+            except Exception:
+                # Malformed payload; skip and continue draining
+                continue
+
+        # Drained max_drain messages without finding a valid one
+        return None
+
     def disconnect(self) -> None:
         """Close connection to server."""
         if self.socket:
@@ -731,7 +795,23 @@ class NetworkTransport:
 
 
 class SharedSubscriber:
-    """Single SUB socket that receives broadcasts and shares mappings."""
+    """Single SUB socket that receives broadcasts and shares mappings.
+
+    IMPORTANT: As of PR #316, the intended primary path for ID mappings is
+    ROUTER/DEALER unicast instead of PUB/SUB. Each SimulatedClient must poll
+    its DEALER socket for control messages (including ID mappings) via
+    _poll_dealer_control().
+
+    However, for backwards compatibility with older servers and mixed
+    deployments, ID mapping messages (MSG_DEVICE_ID_MAPPING) may still be
+    delivered via PUB/SUB, and this simulator continues to support mappings
+    received on the shared SUB socket. In practice, ID mappings can therefore
+    arrive via DEALER, SUB, or both, depending on server behavior.
+
+    SharedSubscriber is kept for backward compatibility and may still receive
+    transform broadcasts via SUB; new features should prefer the DEALER-based
+    control/mapping channel.
+    """
 
     def __init__(
         self,
@@ -1040,7 +1120,7 @@ class SimulatedClient:
             self.last_battery_send = current_time
 
     def _poll_broadcasts(self) -> None:
-        """Update local client number from shared subscriber or fallback SUB."""
+        """Update local client number from shared subscriber, DEALER, or fallback SUB."""
         # Prefer shared subscriber for scalability
         if self.shared_subscriber:
             assigned = self.shared_subscriber.get_client_no(self.config.device_id)
@@ -1049,9 +1129,11 @@ class SimulatedClient:
                 self.logger.info(
                     f"Assigned client number by server: {self.client_number}"
                 )
+            # Still check DEALER for control messages even when using shared subscriber
+            self._poll_dealer_control()
             return
 
-        # Fallback: use own transport SUB if available
+        # Fallback: use own transport SUB and DEALER if available
         if not self.transport:
             return
 
@@ -1065,6 +1147,25 @@ class SimulatedClient:
         budget_ns = 5_000_000 if self.client_number == 0 else 1_000_000  # 5ms / 1ms
         t0 = time.perf_counter_ns()
 
+        # First, poll DEALER for control messages (RPC, NV, ID mapping via ROUTER unicast)
+        while drained < max_drains and (time.perf_counter_ns() - t0) < budget_ns:
+            msg = self.transport.recv_dealer_control(max_drain=1)
+            if not msg:
+                break
+
+            drained += 1
+            msg_type, data = msg
+            assigned_this_poll = self._process_mapping_message(
+                msg_type, data, assigned_this_poll
+            )
+
+            if self.enable_receive:
+                self._handle_broadcast_payload(msg_type, data)
+
+            if assigned_this_poll and not self.enable_receive:
+                break
+
+        # Then poll SUB for transform broadcasts
         while drained < max_drains and (time.perf_counter_ns() - t0) < budget_ns:
             msg = self.transport.recv_broadcast(allow_any=self.enable_receive)
             if not msg:
@@ -1072,37 +1173,60 @@ class SimulatedClient:
 
             drained += 1
             msg_type, data = msg
-
-            if msg_type == MSG_DEVICE_ID_MAPPING:
-                try:
-                    mappings = data.get("mappings", []) if data else []
-                    for mapping in mappings:
-                        if mapping.get("deviceId") == self.config.device_id:
-                            assigned = int(mapping.get("clientNo", 0))
-                            if assigned and assigned != self.client_number:
-                                self.client_number = assigned
-                                assigned_this_poll = True
-                                self.logger.info(
-                                    f"Assigned client number by server: {self.client_number}"
-                                )
-                            break
-                except Exception as exc:
-                    self.logger.debug(f"Failed to process broadcast: {exc}")
-
-                if self.enable_receive:
-                    self._handle_broadcast_payload(msg_type, data)
-
-                # Once assignment is confirmed we can stop early if we're not
-                # actively measuring receive throughput.
-                if assigned_this_poll and not self.enable_receive:
-                    break
-                continue
+            assigned_this_poll = self._process_mapping_message(
+                msg_type, data, assigned_this_poll
+            )
 
             if self.enable_receive:
                 self._handle_broadcast_payload(msg_type, data)
 
+            # Once assignment is confirmed we can stop early if we're not
+            # actively measuring receive throughput.
+            if assigned_this_poll and not self.enable_receive:
+                break
+
         # NOTE: Time budget may interrupt draining, but subsequent ticks will continue
         # processing messages. This prevents send loop starvation.
+
+    def _poll_dealer_control(self) -> None:
+        """Poll DEALER socket for control messages when using shared subscriber."""
+        if not self.transport:
+            return
+
+        for _ in range(10):  # Drain up to 10 control messages
+            msg = self.transport.recv_dealer_control(max_drain=1)
+            if not msg:
+                break
+
+            msg_type, data = msg
+            self._process_mapping_message(msg_type, data, False)
+
+            if self.enable_receive:
+                self._handle_broadcast_payload(msg_type, data)
+
+    def _process_mapping_message(
+        self, msg_type: int, data: dict[str, Any] | None, already_assigned: bool
+    ) -> bool:
+        """Process device ID mapping message and return True if assignment occurred."""
+        if msg_type != MSG_DEVICE_ID_MAPPING:
+            return already_assigned
+
+        try:
+            mappings = data.get("mappings", []) if data else []
+            for mapping in mappings:
+                if mapping.get("deviceId") == self.config.device_id:
+                    assigned = int(mapping.get("clientNo", 0))
+                    if assigned and assigned != self.client_number:
+                        self.client_number = assigned
+                        self.logger.info(
+                            f"Assigned client number by server: {self.client_number}"
+                        )
+                        return True
+                    break
+        except Exception as exc:
+            self.logger.debug(f"Failed to process mapping: {exc}")
+
+        return already_assigned
 
     def _handle_broadcast_payload(
         self, msg_type: int, data: dict[str, Any] | None
