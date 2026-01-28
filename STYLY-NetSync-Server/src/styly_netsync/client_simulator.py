@@ -971,7 +971,8 @@ class SimulatedClient:
         room_id: str,
         shared_subscriber: Optional["SharedSubscriber"] = None,
         simulate_battery: bool = True,
-        enable_receive: bool = False,
+        enable_receive: bool = True,
+        transform_send_rate: float = 10.0,
     ):
         self.config = config
         self.transport = transport
@@ -982,6 +983,7 @@ class SimulatedClient:
         self.shared_subscriber = shared_subscriber
         self.simulate_battery = simulate_battery
         self.enable_receive = enable_receive
+        self.transform_send_rate = transform_send_rate
         self.recv_stats: ReceiveStats | None = (
             ReceiveStats() if enable_receive else None
         )
@@ -1018,7 +1020,7 @@ class SimulatedClient:
             return
 
         self.running = True
-        update_interval = 0.1  # 10Hz
+        update_interval = 1.0 / self.transform_send_rate  # Calculate interval from rate
         last_send_time = time.monotonic()
 
         try:
@@ -1529,7 +1531,8 @@ class ClientSimulator:
         spawn_batch_size: int | None = None,
         spawn_batch_interval: float | None = None,
         simulate_battery: bool = True,
-        enable_receive: bool = False,
+        enable_receive: bool = True,
+        transform_send_rate: float = 10.0,
     ):
         self.server_addr = server_addr
         self.dealer_port = dealer_port
@@ -1542,6 +1545,7 @@ class ClientSimulator:
         )
         self.simulate_battery = simulate_battery
         self.enable_receive = enable_receive
+        self.transform_send_rate = transform_send_rate
 
         self.context = zmq.Context(io_threads=1)
         self.thread_pool = ClientThreadPool(num_clients)
@@ -1744,6 +1748,7 @@ class ClientSimulator:
                 shared_subscriber=shared_sub,
                 simulate_battery=self.simulate_battery,
                 enable_receive=self.enable_receive,
+                transform_send_rate=self.transform_send_rate,
             )
 
             # Add to thread pool
@@ -1855,8 +1860,8 @@ Examples:
     parser.add_argument(
         "--server",
         type=str,
-        default="tcp://localhost",
-        help="Server address (default: tcp://localhost)",
+        default="localhost",
+        help="Server address (default: localhost)",
     )
     parser.add_argument(
         "--dealer-port",
@@ -1901,12 +1906,17 @@ Examples:
         help="Disable battery level synchronization",
     )
     parser.add_argument(
-        "--enable-recv",
-        action="store_true",
-        help="Enable per-client SUB sockets and track incoming broadcasts",
+        "--transform-send-rate",
+        type=float,
+        default=10.0,
+        help="Transform update send rate in Hz (default: 10.0)",
     )
 
     args = parser.parse_args()
+
+    # Normalize server address format: accept both "localhost" and "tcp://localhost"
+    if not args.server.startswith("tcp://") and not args.server.startswith("ipc://"):
+        args.server = f"tcp://{args.server}"
 
     # Configure logging
     logging.basicConfig(
@@ -1931,7 +1941,8 @@ Examples:
         spawn_batch_size=args.spawn_batch_size,
         spawn_batch_interval=args.spawn_batch_interval,
         simulate_battery=not args.no_sync_battery,
-        enable_receive=args.enable_recv,
+        enable_receive=True,  # Always enable receive (was args.enable_recv)
+        transform_send_rate=args.transform_send_rate,
     )
 
     try:
