@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
-using NetMQ;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 
@@ -159,11 +158,6 @@ namespace Styly.NetSync
 
             try
             {
-                if (_connectionManager.DealerSocket == null)
-                {
-                    return false;
-                }
-
                 var required = EstimateGlobalVarSetSize(name, value);
                 _buf.EnsureCapacity(required);
 
@@ -172,20 +166,9 @@ namespace Styly.NetSync
                 _buf.Writer.Flush();
                 var length = (int)_buf.Stream.Position;
 
-                bool sent;
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
-                    sent = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                }
-                finally
-                {
-                    msg.Clear();
-                }
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                var sent = _connectionManager.EnqueueReliableSend(roomId, payload);
                 if (sent)
                 {
                     _lastSentGlobal[name] = value; // Update last sent cache
@@ -272,11 +255,6 @@ namespace Styly.NetSync
 
             try
             {
-                if (_connectionManager.DealerSocket == null)
-                {
-                    return false;
-                }
-
                 var required = EstimateClientVarSetSize(name, value);
                 _buf.EnsureCapacity(required);
 
@@ -285,20 +263,9 @@ namespace Styly.NetSync
                 _buf.Writer.Flush();
                 var length = (int)_buf.Stream.Position;
 
-                bool sent;
-                var msg = new NetMQMessage();
-                try
-                {
-                    msg.Append(roomId);
-                    var payload = new byte[length];
-                    Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                    msg.Append(payload);
-                    sent = _connectionManager.DealerSocket.TrySendMultipartMessage(msg);
-                }
-                finally
-                {
-                    msg.Clear();
-                }
+                var payload = new byte[length];
+                Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
+                var sent = _connectionManager.EnqueueReliableSend(roomId, payload);
                 if (sent)
                 {
                     var key = (targetClientNo, name);

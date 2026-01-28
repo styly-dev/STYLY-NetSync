@@ -509,7 +509,9 @@ class NetSyncServer:
             except Exception:
                 pass
             try:
-                self.pub.setsockopt(zmq.SNDHWM, 10000)
+                # Low SNDHWM (2) ensures we drop stale messages when clients are slow.
+                # Transform data only needs the latest; queueing old frames wastes bandwidth.
+                self.pub.setsockopt(zmq.SNDHWM, 2)
             except Exception:
                 # Best effort; ignore if high-water mark option is unsupported
                 pass
@@ -543,8 +545,13 @@ class NetSyncServer:
                     topic_bytes, message_bytes = item
 
                     try:
-                        self.pub.send_multipart([topic_bytes, message_bytes])
+                        self.pub.send_multipart(
+                            [topic_bytes, message_bytes], flags=zmq.DONTWAIT
+                        )
                         self._increment_stat("broadcast_count")
+                    except zmq.Again:
+                        # Socket buffer full; drop the message (PUB-SUB is unreliable by design)
+                        self._increment_stat("control_drop_count")
                     except Exception as e:
                         logger.error(f"Publisher failed to send: {e}")
 
