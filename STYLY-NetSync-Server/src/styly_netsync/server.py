@@ -612,23 +612,27 @@ class NetSyncServer:
             try:
                 _ = self._pub_queue_ctrl.get_nowait()
             except Empty:
+                # Queue became empty between Full and get_nowait (rare race condition)
                 pass
+            else:
+                # Count and log the drop of the oldest message
+                self._increment_stat("skipped_broadcasts")
+                logger.debug("PUB queue full: dropping oldest message")
             try:
                 self._pub_queue_ctrl.put_nowait((topic_bytes, message_bytes))
             except Full:
-                # If still full, count as skipped
+                # If still full after removing one, count as dropped (another drop)
                 self._increment_stat("skipped_broadcasts")
-                logger.debug("PUB queue full: dropping a message")
+                logger.debug("PUB queue full: dropping new message")
 
     def _enqueue_router(
         self, identity: bytes, room_id: str, message_bytes: bytes
     ) -> None:
         """Thread-safe enqueue of a control message for unicast via ROUTER.
 
-        Used for control-like messages (RPC, NV sync, ID mapping) that benefit
-        from more reliable delivery than PUB/SUB, but are still subject to loss
-        under backpressure and send failures (ring-buffer drop-on-full and
-        non-blocking router drain).
+        Used for control-like messages (RPC, NV sync, ID mapping) that are
+        more reliable than PUB/SUB, but still drop under backpressure and
+        send failures (ring-buffer drop-on-full and non-blocking router drain).
 
         Args:
             identity: Client's ZeroMQ identity (from ROUTER socket)

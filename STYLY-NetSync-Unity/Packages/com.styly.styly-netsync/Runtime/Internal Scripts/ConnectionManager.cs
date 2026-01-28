@@ -389,7 +389,7 @@ namespace Styly.NetSync
                 // TTL check - skip expired packets
                 if (now - packet.EnqueuedAt > CTRL_TTL_SECONDS)
                 {
-                    // Packet expired, drop it silently
+                    Debug.LogWarning($"[ConnectionManager] Control packet expired (TTL {CTRL_TTL_SECONDS}s exceeded)");
                     continue;
                 }
 
@@ -405,10 +405,11 @@ namespace Styly.NetSync
                     Interlocked.Increment(ref _wouldBlockCount);
                     packet.Attempts++;
 
-                    // Re-enqueue at the front is not possible with ConcurrentQueue,
-                    // so we accept that this packet may be processed out of order on retry.
-                    // For control messages, this is acceptable as they are idempotent or have timestamps.
-                    // Note: We don't re-enqueue to avoid infinite loops; the packet is dropped on backpressure.
+                    // The packet is DROPPED on backpressure (not retried) for the following reasons:
+                    // 1. Re-enqueue at the front is not possible with ConcurrentQueue
+                    // 2. Re-enqueuing at the back would cause out-of-order delivery
+                    // 3. Retrying could cause infinite loops if backpressure persists
+                    // This is acceptable for control messages as they are idempotent or timestamped.
                     // In practice, the HWM should rarely be hit with proper flow control.
                     break;
                 }
@@ -435,8 +436,11 @@ namespace Styly.NetSync
             // Try to send
             if (TrySendDealer(dealer, packet.RoomId, packet.Payload))
             {
-                // Success - clear the packet using compare-exchange
-                // This ensures we don't clear a newer packet that was set during send
+                // Success - clear the packet using compare-exchange.
+                // CompareExchange atomically sets _latestTransform to null ONLY if it still equals 'packet'.
+                // This is safe against race conditions: if another thread called SetLatestTransform()
+                // during our send, _latestTransform will hold the newer packet (not 'packet'),
+                // so CompareExchange will fail and preserve the newer packet for the next send cycle.
                 Interlocked.CompareExchange(ref _latestTransform, null, packet);
                 return true;
             }

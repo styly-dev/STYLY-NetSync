@@ -679,7 +679,7 @@ namespace Styly.NetSync
             }
 
             // End room switching on success
-            DebugLog($"Sent {handshakeType} handshake to new room");
+            DebugLog($"Sent {handshakeType} handshake for room {_roomId}: {outcome}");
             _roomSwitching = false;
             DebugLog("Room switching completed");
         }
