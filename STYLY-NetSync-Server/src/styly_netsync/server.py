@@ -202,6 +202,7 @@ class NetSyncServer:
         self.MAIN_LOOP_SLEEP = config.main_loop_sleep
         self.CLIENT_TIMEOUT = config.client_timeout
         self.DEVICE_ID_EXPIRY_TIME = config.device_id_expiry_time
+        self.EMPTY_ROOM_EXPIRY_TIME = config.empty_room_expiry_time
         self.POLL_TIMEOUT = config.poll_timeout
 
         # Server discovery settings (with override support)
@@ -292,6 +293,11 @@ class NetSyncServer:
         self.device_id_last_seen: dict[str, float] = (
             {}
         )  # device_id -> last_seen_timestamp
+
+        # Empty room tracking for delayed removal
+        self.room_empty_since: dict[str, float] = (
+            {}
+        )  # room_id -> timestamp when room became empty
 
         # ID Mapping broadcast debouncing
         self.room_id_mapping_dirty: dict[str, bool] = (
@@ -1849,11 +1855,29 @@ class NetSyncServer:
                     # Mark room for debounced ID mapping broadcast
                     self.room_id_mapping_dirty[room_id] = True
 
-                # Mark empty rooms for removal
+                # Handle empty room tracking with delayed removal
                 if not clients:
-                    rooms_to_remove.append(room_id)
+                    # Room is empty - track when it became empty
+                    if room_id not in self.room_empty_since:
+                        # Just became empty - start tracking
+                        self.room_empty_since[room_id] = current_time
+                        logger.info(
+                            f"Room {room_id} became empty, "
+                            f"will expire in {self.EMPTY_ROOM_EXPIRY_TIME}s"
+                        )
+                    elif (
+                        current_time - self.room_empty_since[room_id]
+                        > self.EMPTY_ROOM_EXPIRY_TIME
+                    ):
+                        # Been empty long enough - mark for removal
+                        rooms_to_remove.append(room_id)
+                else:
+                    # Room has clients - clear empty tracking if exists
+                    if room_id in self.room_empty_since:
+                        del self.room_empty_since[room_id]
+                        logger.info(f"Room {room_id} is no longer empty")
 
-            # Remove empty rooms and clean up ALL tracking data
+            # Remove rooms that have been empty for longer than EMPTY_ROOM_EXPIRY_TIME
             for room_id in rooms_to_remove:
                 try:
                     # Delete from all room-related data structures
@@ -1875,6 +1899,10 @@ class NetSyncServer:
                         del self.room_id_mapping_dirty[room_id]
                     if room_id in self.room_last_id_mapping_broadcast:
                         del self.room_last_id_mapping_broadcast[room_id]
+
+                    # Clean up empty room tracking
+                    if room_id in self.room_empty_since:
+                        del self.room_empty_since[room_id]
 
                     # Clean up NV-related structures
                     if room_id in self.global_variables:

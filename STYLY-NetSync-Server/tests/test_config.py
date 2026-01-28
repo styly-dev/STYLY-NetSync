@@ -47,7 +47,8 @@ class TestLoadDefaultConfig:
         assert config.transform_broadcast_rate == 10
         assert config.client_timeout == 2.5
         assert config.cleanup_interval == 1.0
-        assert config.device_id_expiry_time == 300.0
+        assert config.device_id_expiry_time == 86400.0
+        assert config.empty_room_expiry_time == 86400.0
         assert config.status_log_interval == 10.0
         assert config.main_loop_sleep == 0.02
         assert config.poll_timeout == 100
@@ -93,6 +94,7 @@ class TestServerConfig:
             client_timeout=default_config.client_timeout,
             cleanup_interval=default_config.cleanup_interval,
             device_id_expiry_time=default_config.device_id_expiry_time,
+            empty_room_expiry_time=default_config.empty_room_expiry_time,
             status_log_interval=default_config.status_log_interval,
             main_loop_sleep=default_config.main_loop_sleep,
             poll_timeout=default_config.poll_timeout,
