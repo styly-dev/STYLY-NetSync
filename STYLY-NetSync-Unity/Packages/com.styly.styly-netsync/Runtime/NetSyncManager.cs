@@ -630,12 +630,13 @@ namespace Styly.NetSync
 
             // Send handshake to new room to trigger client number assignment
             SendOutcome outcome;
+            string handshakeType;
             if (_isStealthMode)
             {
                 outcome = _transformSyncManager != null
                     ? _transformSyncManager.SendStealthHandshake(_roomId)
                     : SendOutcome.Fatal("TransformSyncManager is null");
-                DebugLog("Sent stealth handshake to new room");
+                handshakeType = "stealth";
             }
             else
             {
@@ -645,7 +646,7 @@ namespace Styly.NetSync
                     outcome = _transformSyncManager != null
                         ? _transformSyncManager.SendLocalTransform(localAvatar, _roomId)
                         : SendOutcome.Fatal("TransformSyncManager is null");
-                    DebugLog("Sent transform handshake to new room");
+                    handshakeType = "transform";
                 }
                 else
                 {
@@ -653,7 +654,7 @@ namespace Styly.NetSync
                     outcome = _transformSyncManager != null
                         ? _transformSyncManager.SendStealthHandshake(_roomId)
                         : SendOutcome.Fatal("TransformSyncManager is null");
-                    DebugLog("Sent stealth handshake to new room (no local avatar)");
+                    handshakeType = "stealth (no local avatar)";
                 }
             }
 
@@ -663,6 +664,7 @@ namespace Styly.NetSync
             {
                 _transformBackpressureCount++;
                 MaybeLogBackpressureWarning("room switch handshake");
+                DebugLog($"Room switch {handshakeType} handshake backpressure, will retry");
                 // Don't end room switching yet - retry on next frame
                 _shouldSendHandshake = true;
                 return;
@@ -670,12 +672,14 @@ namespace Styly.NetSync
 
             if (outcome.IsFatal)
             {
+                DebugLog($"Room switch {handshakeType} handshake fatal: {outcome.Error}");
                 HandleConnectionError($"Room switch handshake fatal: {outcome.Error}");
                 _roomSwitching = false;
                 return;
             }
 
             // End room switching on success
+            DebugLog($"Sent {handshakeType} handshake to new room");
             _roomSwitching = false;
             DebugLog("Room switching completed");
         }

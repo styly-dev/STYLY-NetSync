@@ -625,8 +625,10 @@ class NetSyncServer:
     ) -> None:
         """Thread-safe enqueue of a control message for unicast via ROUTER.
 
-        Used for control messages (RPC, NV sync, ID mapping) that need reliable
-        delivery to specific clients. Uses ring-buffer behavior on backpressure.
+        Used for control-like messages (RPC, NV sync, ID mapping) that benefit
+        from more reliable delivery than PUB/SUB, but are still subject to loss
+        under backpressure and send failures (ring-buffer drop-on-full and
+        non-blocking router drain).
 
         Args:
             identity: Client's ZeroMQ identity (from ROUTER socket)
@@ -641,15 +643,22 @@ class NetSyncServer:
             try:
                 _ = self._router_queue_ctrl.get_nowait()
             except Empty:
+                # Queue became empty between Full and get_nowait (rare race condition)
                 pass
+            else:
+                # Count and log the drop of the oldest message
+                self._increment_stat("ctrl_unicast_dropped")
+                logger.debug(
+                    "Router control queue full: dropping oldest control message"
+                )
             try:
                 self._router_queue_ctrl.put_nowait(
                     (identity, room_bytes, message_bytes)
                 )
             except Full:
-                # If still full after removing one, count as dropped
+                # If still full after removing one, count as dropped (another drop)
                 self._increment_stat("ctrl_unicast_dropped")
-                logger.debug("Router control queue full: dropping a message")
+                logger.debug("Router control queue full: dropping new message")
 
     def _send_ctrl_to_room_via_router(
         self,
@@ -659,27 +668,32 @@ class NetSyncServer:
     ) -> None:
         """Send a control message to all clients in a room via ROUTER unicast.
 
-        This method enqueues the message for each client in the room, allowing
-        for reliable delivery of control messages (RPC, NV sync, ID mapping)
-        without relying on the PUB socket which can drop messages under load.
+        This method enqueues the message for each client in the room, providing
+        more reliable delivery than PUB/SUB (though still subject to drops under
+        backpressure).
 
         Args:
             room_id: Room ID to broadcast to
             message_bytes: Serialized message payload
             exclude_identity: Optional client identity to exclude (e.g., sender)
         """
+        identities_to_send: list[bytes] = []
         with self._rooms_lock:
             if room_id not in self.rooms:
                 return
 
-            # Collect all client identities in the room
+            # Collect all client identities in the room while holding the lock
             for _device_id, client_data in self.rooms[room_id].items():
                 identity = client_data.get("identity")
                 if identity is None:
                     continue
                 if exclude_identity is not None and identity == exclude_identity:
                     continue
-                self._enqueue_router(identity, room_id, message_bytes)
+                identities_to_send.append(identity)
+
+        # Enqueue control messages outside of the rooms lock to reduce contention
+        for identity in identities_to_send:
+            self._enqueue_router(identity, room_id, message_bytes)
 
     def _get_or_assign_client_no(self, room_id: str, device_id: str) -> int:
         """Get existing client number or assign a new one for the given device ID in the room"""
