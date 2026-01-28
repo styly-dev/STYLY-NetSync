@@ -563,6 +563,9 @@ def _deserialize_device_id_mapping(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize device ID mapping message"""
     result: dict[str, Any] = {"mappings": []}
 
+    # Skip server version (3 bytes: major, minor, patch)
+    offset += 3
+
     # Number of mappings
     count = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2

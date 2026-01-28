@@ -193,6 +193,10 @@ class net_sync_manager:
                 )
                 self._receive_thread.start()
 
+                # Send stealth handshake to register with server and get client number
+                # This allows RPC and NV operations to work immediately
+                self.send_stealth_handshake()
+
                 logger.info(
                     f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
                 )
@@ -242,11 +246,26 @@ class net_sync_manager:
         poller = zmq.Poller()
         if self._sub_socket:
             poller.register(self._sub_socket, zmq.POLLIN)
+        if self._dealer_socket:
+            poller.register(self._dealer_socket, zmq.POLLIN)
 
         while self._running:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
 
+                # Check for control messages from DEALER (RPC, NV, device mapping)
+                if self._dealer_socket is not None and self._dealer_socket in socks:
+                    try:
+                        message_parts = self._dealer_socket.recv_multipart()
+                        if len(message_parts) >= 2:
+                            # DEALER receives [room_id, payload] from ROUTER
+                            # room_id = message_parts[0].decode("utf-8")  # Not used currently
+                            data = message_parts[1]
+                            self._process_message(data)
+                    except Exception as ex:
+                        logger.error(f"Error processing DEALER message: {ex}")
+
+                # Check for transform updates from SUB
                 if self._sub_socket is not None and self._sub_socket in socks:
                     message_parts = self._sub_socket.recv_multipart()
                     if len(message_parts) >= 2:
