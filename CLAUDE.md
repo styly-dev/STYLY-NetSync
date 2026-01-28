@@ -99,6 +99,12 @@ kill <PID>                          # Kill process using port
 
 - **Do NOT use `ZMQ_CONFLATE` option**: This option does not support multipart messages. Since the current implementation uses 2-frame multipart messages (topic + payload), enabling `ZMQ_CONFLATE` will corrupt messages. If you need conflate-like behavior (keeping only the latest message), implement it at the application level instead.
 
+#### Backward Compatibility Policy
+
+- **Network protocol changes do NOT require backward compatibility**: When modifying communication-related code (binary protocol, message formats, serialization), backward compatibility with older versions is not required.
+- **Avoid unnecessary breaking changes**: Do not introduce breaking changes to non-networking code without good reason.
+- **Always notify the user of breaking changes**: If a code modification breaks backward compatibility, clearly inform the user about the change and its impact.
+
 ### Key Architectural Patterns
 
 - **Server**: Multi-threaded (receive, periodic, discovery threads) with group-based room management
