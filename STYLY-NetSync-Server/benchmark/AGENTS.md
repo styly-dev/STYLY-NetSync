@@ -8,12 +8,11 @@
 
 ## Build, Test, and Development Commands
 - `python -V` confirms Python 3.11+ before installing dependencies.
-- `uv pip install -e .` (or `pip install -e .`) sets up an editable dev environment.
-- `ruff check .` runs linting; fix flagged issues before committing.
-- `black .` formats Python code using the project’s 88-char line length.
-- `mypy src` performs strict type checks; resolve warnings rather than suppressing.
-- `pytest --cov=src` executes the test suite with branch coverage reporting.
-- `styly-netsync-server` starts the local server; pair with the Unity sample scenes for manual validation.
+- `pip install -r requirements.txt` installs benchmark dependencies.
+- Locust Web UI: `locust -f locustfile.py --host=tcp://localhost:5555`.
+- Locust headless: `locust -f locustfile.py --headless -u 100 -r 10 -t 300s`.
+- Client type selection: `STYLY_CLIENT_TYPE=raw_zmq locust -f locustfile.py` or `--styly-client-type`.
+- Run tests: `pytest tests/`.
 
 ## Coding Style & Naming Conventions
 - Use 4-space indentation across Python and C# files.
@@ -25,7 +24,7 @@
 ## Testing Guidelines
 - Write deterministic pytest cases; isolate side effects with fixtures.
 - Name tests descriptively (`test_<function>_<scenario>`), and prefer branch coverage where possible.
-- For manual Unity checks, open `Assets/Samples_Dev/Demo-01.unity` against a running local server to verify sync behavior.
+- Tests are in `tests/` directory; run with `pytest tests/`.
 
 ## Commit & Pull Request Guidelines
 - Use Conventional Commits like `feat: add room snapshot API`; limit subject lines to 72 chars.

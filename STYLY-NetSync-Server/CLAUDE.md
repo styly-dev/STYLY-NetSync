@@ -25,6 +25,12 @@ uv run dev                # Development mode
 styly-netsync-server
 styly-netsync-server --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999
 styly-netsync-server --no-server-discovery  # Without UDP discovery
+styly-netsync-server --config my-config.toml  # Custom TOML configuration
+
+# Additional CLI options:
+# --log-dir PATH         Directory for log files
+# --log-level-console LEVEL  Console log level (default: INFO)
+# --log-json-console     Emit console logs as JSON
 
 # As Python module
 python -m styly_netsync
@@ -42,7 +48,9 @@ pytest -k test_stealth    # Specific test pattern
 pytest tests/integration/ # Integration tests only
 
 # Client simulation for load testing
-styly-netsync-simulator --clients 100 --server tcp://localhost --room default_room
+styly-netsync-simulator --clients 100 --server localhost --room default_room
+styly-netsync-simulator --clients 100 --transform-send-rate 60  # Custom rate
+styly-netsync-simulator --clients 100 --spawn-batch-size 10 --spawn-batch-interval 1.0  # Progressive spawning
 python src/styly_netsync/client_simulator.py --clients 100
 ```
 
@@ -70,11 +78,20 @@ pkill -f styly-netsync  # Kill all STYLY processes
 ### Core Components
 - **NetSyncServer** (`server.py`): Main server class with multi-threaded architecture
   - Main Thread: Server lifecycle management
-  - Receive Thread: Client message processing  
+  - Receive Thread: Client message processing
   - Periodic Thread: Broadcasting and cleanup
   - Discovery Thread: UDP server discovery service
 - **BinarySerializer** (`binary_serializer.py`): Custom binary protocol (~60% bandwidth reduction vs JSON)
 - **Python Client API** (`client.py`): `net_sync_manager` class for Python clients
+- **REST Bridge** (`rest_bridge.py`): FastAPI-based REST API for external integrations
+- **Configuration** (`default.toml`): TOML-based server configuration
+
+### Configuration System
+- `default.toml` contains all available settings with defaults
+- User config overrides: `--config user.toml`
+- Priority: CLI args > user config > default config
+- Environment variable: `NETSYNC_REST_PORT` (default: 8800)
+- REST endpoint: `POST /v1/rooms/{roomId}/devices/{deviceId}/client-variables`
 
 ### Key Data Types (`types.py`)
 - **transform_data**: Basic position/rotation data
@@ -96,7 +113,7 @@ Multi-threaded server with thread-safe design:
 ## Development Standards
 
 ### Python Requirements
-- **Version**: Python 3.11+ (with 3.8+ compatibility)
+- **Version**: Python 3.11+ required (3.11 and 3.12 supported)
 - **Type Hints**: Required for all functions (`mypy` strict mode)
 - **Formatting**: Black (88-character line length)
 - **Linting**: Ruff with comprehensive rule set
@@ -104,7 +121,7 @@ Multi-threaded server with thread-safe design:
 ### Quality Gates (All Required)
 - ✅ Black formatting applied
 - ✅ Ruff linting passes
-- ✅ MyPy type checking passes  
+- ✅ MyPy type checking passes
 - ✅ All tests pass including integration tests
 - ✅ Test coverage maintained
 

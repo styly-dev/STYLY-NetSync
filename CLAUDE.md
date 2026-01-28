@@ -36,7 +36,8 @@ styly-netsync-server --no-server-discovery  # Without UDP discovery
 python -m styly_netsync
 
 # Load testing
-styly-netsync-simulator --clients 50 --server tcp://localhost --room default_room
+styly-netsync-simulator --clients 50 --server localhost --room default_room
+styly-netsync-simulator --clients 100 --transform-send-rate 60  # Custom rate
 python src/styly_netsync/client_simulator.py --clients 50
 
 # Development tools (ALWAYS run before committing)
@@ -57,9 +58,10 @@ kill <PID>                          # Kill process using port
 
 ### Unity Client (STYLY-NetSync-Unity/)
 
-- Build and test using Unity Editor (Unity 6000.0.48f1+)
+- Build and test using Unity Editor (Unity 6)
 - Main package: `Packages/com.styly.styly-netsync/`
 - Test scenes: `Assets/Samples_Dev/Demo-01/` and `Assets/Samples_Dev/Debug/`
+- Package samples: `Packages/com.styly.styly-netsync/Samples~/SimpleDemos/`
 
 ## Architecture Overview
 
@@ -78,15 +80,28 @@ kill <PID>                          # Kill process using port
 **Unity Client:**
 - `NetSyncManager.cs` - Main singleton entry point and API
 - `NetSyncAvatar.cs` - Component for avatar synchronization
-- `Internal/` - Core networking components:
+- `Internal Scripts/` - Core networking components:
   - `ConnectionManager.cs` - ZeroMQ socket management and threading
   - `MessageProcessor.cs` - Binary protocol message handling
   - `TransformSyncManager.cs` - Position/rotation synchronization (1-120Hz)
-  - `RPCManager.cs` - Remote procedure call system
+  - `RPCManager.cs` - Remote procedure call system with priority-based sending
   - `NetworkVariableManager.cs` - Synchronized key-value storage
   - `AvatarManager.cs` - Player spawn/despawn management
   - `ServerDiscoveryManager.cs` - UDP discovery service client
   - `HumanPresenceManager.cs` - Collision avoidance visualization
+  - `BinarySerializer.cs` - Binary protocol serialization/deserialization
+  - `OutboundPacket.cs` - Outbound send queue with priority lanes
+  - `SendOutcome.cs` - Result type for send operations (Sent/Backpressure/Fatal)
+  - `DataStructure.cs` - Core data structures for networking
+  - `NetSyncSmoothing.cs` - Transform smoothing and interpolation
+  - `NetSyncTransformApplier.cs` - Transform application with snapshot interpolation
+  - `HandPoseNormalizer.cs` - Hand pose normalization utilities
+  - `Information.cs` - Version handling and compatibility checking
+  - `NetMQLifecycle.cs` - NetMQ lifecycle management
+  - `ReusableBufferWriter.cs` - Memory-efficient buffer writing
+- `Util Scripts/` - Utility components:
+  - `BodyTransformSolver.cs` - Body transform solving utilities
+  - `NetworkUtils.cs` - Network utility functions
 
 ### Protocol Details
 
@@ -94,6 +109,7 @@ kill <PID>                          # Kill process using port
 - Binary serialization with client number system (2-byte IDs)
 - UDP discovery service for automatic server finding (port 9999)
 - Adaptive broadcasting (1-120Hz) with thread-safe design
+- Priority-based sending: Control messages (RPC, Network Variables) prioritized over Transform updates
 
 #### ZeroMQ Important Notes
 
@@ -122,11 +138,13 @@ kill <PID>                          # Kill process using port
 - **System**: psutil >= 5.9.0
 
 ### Unity Client
-- **Unity**: 6000.0.48f1+
-- **NetMQ**: 4.0.2 (ZeroMQ for Unity)
-- **Newtonsoft.Json**: 3.2.1
-- **STYLY XR Rig**: 0.4.10
-- **Device ID Provider**: 0.2.0
+- **Unity**: Unity 6
+- **NetMQ** (ZeroMQ for Unity)
+- **Newtonsoft.Json**
+- **STYLY XR Rig**
+- **Device ID Provider**
+- **XR Core Utils**
+- **STYLY Shader Collection URP**
 
 ## Unity C# Coding Rules (CRITICAL)
 
