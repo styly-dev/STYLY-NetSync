@@ -74,6 +74,7 @@ class ServerConfig:
     client_timeout: float
     cleanup_interval: float
     device_id_expiry_time: float
+    empty_room_expiry_time: float
     status_log_interval: float
     main_loop_sleep: float
     poll_timeout: int
@@ -114,6 +115,7 @@ _VALID_KEYS: set[str] = {
     "client_timeout",
     "cleanup_interval",
     "device_id_expiry_time",
+    "empty_room_expiry_time",
     "status_log_interval",
     "main_loop_sleep",
     "poll_timeout",
@@ -243,6 +245,7 @@ def validate_config(config: ServerConfig) -> list[str]:
         "client_timeout",
         "cleanup_interval",
         "device_id_expiry_time",
+        "empty_room_expiry_time",
         "status_log_interval",
         "main_loop_sleep",
     ]

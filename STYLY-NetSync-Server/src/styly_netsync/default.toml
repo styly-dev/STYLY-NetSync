@@ -41,8 +41,12 @@ client_timeout = 2.5
 # Cleanup interval in seconds for removing stale data
 cleanup_interval = 1.0
 
-# Device ID mapping expiry time in seconds (5 minutes default)
-device_id_expiry_time = 300.0
+# Device ID mapping expiry time in seconds (24 hours default)
+device_id_expiry_time = 86400.0
+
+# Empty room expiry time in seconds (24 hours default)
+# Rooms without any clients will be removed after this duration
+empty_room_expiry_time = 86400.0
 
 # Status log interval in seconds
 status_log_interval = 10.0
