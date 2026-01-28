@@ -95,6 +95,10 @@ kill <PID>                          # Kill process using port
 - UDP discovery service for automatic server finding (port 9999)
 - Adaptive broadcasting (1-120Hz) with thread-safe design
 
+#### ZeroMQ Important Notes
+
+- **Do NOT use `ZMQ_CONFLATE` option**: This option does not support multipart messages. Since the current implementation uses 2-frame multipart messages (topic + payload), enabling `ZMQ_CONFLATE` will corrupt messages. If you need conflate-like behavior (keeping only the latest message), implement it at the application level instead.
+
 ### Key Architectural Patterns
 
 - **Server**: Multi-threaded (receive, periodic, discovery threads) with group-based room management
