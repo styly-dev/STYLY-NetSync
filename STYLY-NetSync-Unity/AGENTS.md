@@ -1,16 +1,16 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Unity client lives here: `STYLY-NetSync-Unity` (Unity 6.0, editor 6000.0.48f1).
+- Unity client lives here: `STYLY-NetSync-Unity` (Unity 6).
 - Runtime code: `Packages/com.styly.styly-netsync/Runtime/`.
 - Editor tooling: `Packages/com.styly.styly-netsync/Editor/`.
 - Sample scenes: `Assets/Samples_Dev/` (e.g., `Demo-01.unity`, `Debug Scene.unity`).
 - Python server is in sibling repo `STYLY-NetSync-Server` (used for local testing).
 
 ## Build, Test, and Development Commands
-- Unity client: open this folder with Unity 6000.0.48f1 and use the sample scenes for manual checks.
+- Unity client: open this folder with Unity 6 and use the sample scenes for manual checks.
 - Run server (from the Python repo): `cd STYLY-NetSync-Server && uv pip install -e . && styly-netsync-server`.
-- Simulate clients: `styly-netsync-simulator --server tcp://localhost --room demo --clients 10`.
+- Simulate clients: `styly-netsync-simulator --server localhost --room demo --clients 10`.
 
 ## Coding Style & Naming Conventions
 - Indentation: 4 spaces. Public APIs use `PascalCase`; fields/locals `camelCase`. Serialized privates: `[SerializeField] private Type name;`.

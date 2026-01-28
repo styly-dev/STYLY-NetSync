@@ -1,9 +1,9 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Unity client (6000.0.59f2): `STYLY-NetSync-Unity`  
+- Unity client (Unity 6): `STYLY-NetSync-Unity`
   Runtime: `Packages/com.styly.styly-netsync/Runtime/`; Editor: `Packages/com.styly.styly-netsync/Editor/`; Samples: `Assets/Samples_Dev/` (e.g., `Demo-01.unity`, `Debug Scene.unity`).
-- Python server (this repo): `STYLY-NetSync-Server`  
+- Python server (this repo): `STYLY-NetSync-Server`
   Source: `src/styly_netsync/`; Tests: `tests/`; Config: `pyproject.toml`.
 
 ## Build, Test, and Development Commands
@@ -13,8 +13,9 @@
 - Type check: `mypy src`.
 - Test: `pytest -q` or `pytest --cov=src`.
 - Run server: `styly-netsync-server`.
-- Simulate clients: `styly-netsync-simulator --server tcp://localhost --room demo --clients 10`.
-- Unity: open `STYLY-NetSync-Unity` with 6000.0.48f1; use sample scenes for manual checks.
+- Simulate clients: `styly-netsync-simulator --server localhost --room demo --clients 10`.
+- Additional simulator options: `--transform-send-rate`, `--spawn-batch-size`, `--spawn-batch-interval`, `--no-sync-battery`.
+- Unity: open `STYLY-NetSync-Unity` with Unity 6; use sample scenes for manual checks.
 
 ## Coding Style & Naming Conventions
 - Python: 4 spaces; Black (line length 88), Ruff, MyPy (strict). Names — modules `snake_case`, classes `PascalCase`, functions `snake_case`.

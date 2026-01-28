@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the Unity client component of STYLY-NetSync, a multiplayer framework for Location-Based Entertainment (LBE) VR/AR experiences.
 
-- **Unity Version**: Unity 6000.0.48f1 or later required
+- **Unity Version**: Unity 6 required
 - **Package Location**: `Packages/com.styly.styly-netsync/` (main package code)
-- **Test Scenes**: 
+- **Test Scenes**:
   - `Assets/Samples_Dev/Demo-01/Demo-01.unity` (main demo scene)
   - `Assets/Samples_Dev/Debug/Debug Scene.unity` (debug testing)
 
@@ -38,20 +38,37 @@ ls Assets/Samples_Dev/                          # Test scenes and examples
 - **NetSyncAvatar.cs**: Component for synchronizing GameObjects
 - **Internal/** namespace: Core networking implementation (not public API)
 
-### Key Internal Managers
+### Key Internal Scripts
 - **ConnectionManager**: ZeroMQ socket management and threading
 - **TransformSyncManager**: Position/rotation synchronization (1-120Hz)
-- **RPCManager**: Remote procedure call system
+- **RPCManager**: Remote procedure call system with priority-based sending
 - **NetworkVariableManager**: Synchronized key-value storage
 - **AvatarManager**: Player spawn/despawn management
 - **MessageProcessor**: Binary protocol message handling
+- **BinarySerializer**: Binary protocol serialization/deserialization
+- **ServerDiscoveryManager**: UDP discovery service client
+- **HumanPresenceManager**: Collision avoidance visualization
+- **OutboundPacket**: Outbound send queue with priority lanes
+- **SendOutcome**: Send result type (Sent/Backpressure/Fatal)
+- **DataStructure**: Core data structures for networking
+- **NetSyncSmoothing**: Transform smoothing and interpolation
+- **NetSyncTransformApplier**: Transform application with snapshot interpolation
+- **HandPoseNormalizer**: Hand pose normalization utilities
+- **Information**: Version handling and compatibility checking
+- **NetMQLifecycle**: NetMQ lifecycle management
+- **ReusableBufferWriter**: Memory-efficient buffer writing
+
+### Util Scripts
+- **BodyTransformSolver**: Body transform solving utilities
+- **NetworkUtils**: Network utility functions
 
 ### Dependencies (package.json)
-- NetMQ 4.0.2 (ZeroMQ for Unity)
-- Unity XR Core Utils 2.1.1
-- Newtonsoft.Json 3.2.1
-- STYLY XR Rig 0.4.7
-- STYLY Shader Collection URP 0.0.5
+- NetMQ (ZeroMQ for Unity)
+- Unity XR Core Utils
+- Newtonsoft.Json
+- STYLY XR Rig
+- STYLY Shader Collection URP
+- Device ID Provider
 
 ## Unity C# Coding Rules (CRITICAL)
 
@@ -95,12 +112,17 @@ ls Assets/Samples_Dev/                          # Test scenes and examples
   - `NetSyncManager.cs` - Main API entry point
   - `NetSyncAvatar.cs` - Sync component for GameObjects
   - `Internal/` - Manager classes (not public API)
-  - `Prefab/` - Prefab resources (avatars, manager prefab)
+  - `Prefabs/` - Prefab resources (avatars, manager prefab)
 - `Editor/` - Editor-only functionality
   - Custom inspectors and menu items
+
+### Package Samples (`Packages/com.styly.styly-netsync/Samples~/`)
+- `SimpleDemos/` - Official package sample scenes
 
 ### Development Assets (`Assets/`)
 - `Samples_Dev/Demo-01/` - Main demonstration scene
 - `Samples_Dev/Debug/` - Debug testing environment
+- `Samples_Dev/HandTest/` - Hand tracking testing
+- `Samples_Dev/SimpleSyncCheck/` - Network sync verification
 - `Settings/` - Render pipeline and project settings
 - `XR/` - XR/VR configuration files
