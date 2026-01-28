@@ -193,13 +193,14 @@ class net_sync_manager:
                 )
                 self._receive_thread.start()
 
-                # Send stealth handshake to register with server and get client number
-                # This allows RPC and NV operations to work immediately
-                self.send_stealth_handshake()
-
                 logger.info(
                     f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
                 )
+
+                # Send stealth handshake to register with server and get client number
+                # This allows RPC and NV operations to work immediately
+                # Sent after logger.info to allow receive thread to fully initialize
+                self.send_stealth_handshake()
 
             except Exception as e:
                 self._cleanup()
@@ -255,15 +256,12 @@ class net_sync_manager:
 
                 # Check for control messages from DEALER (RPC, NV, device mapping)
                 if self._dealer_socket is not None and self._dealer_socket in socks:
-                    try:
-                        message_parts = self._dealer_socket.recv_multipart()
-                        if len(message_parts) >= 2:
-                            # DEALER receives [room_id, payload] from ROUTER
-                            # room_id = message_parts[0].decode("utf-8")  # Not used currently
-                            data = message_parts[1]
-                            self._process_message(data)
-                    except Exception as ex:
-                        logger.error(f"Error processing DEALER message: {ex}")
+                    message_parts = self._dealer_socket.recv_multipart()
+                    if len(message_parts) >= 2:
+                        # DEALER receives [room_id, payload] from ROUTER
+                        # room_id = message_parts[0].decode("utf-8")  # Not used currently
+                        data = message_parts[1]
+                        self._process_message(data)
 
                 # Check for transform updates from SUB
                 if self._sub_socket is not None and self._sub_socket in socks:
@@ -271,7 +269,6 @@ class net_sync_manager:
                     if len(message_parts) >= 2:
                         # room_id = message_parts[0].decode("utf-8")  # Not used currently
                         data = message_parts[1]
-
                         self._process_message(data)
 
             except zmq.Again:
