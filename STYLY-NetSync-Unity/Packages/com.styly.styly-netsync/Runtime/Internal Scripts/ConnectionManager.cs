@@ -34,6 +34,12 @@ namespace Styly.NetSync
         public Exception LastException => _lastException;
         public long LastExceptionAtUnixMs => Volatile.Read(ref _lastExceptionAtUnixMs);
 
+        /// <summary>
+        /// Cumulative count of transform frames that were skipped during SUB draining.
+        /// Only the latest frame is processed; older frames are dropped for latency reduction.
+        /// </summary>
+        public long DroppedTransformFrames => Interlocked.Read(ref _droppedTransformFrames);
+
         public event Action<string> OnConnectionError;
         public event Action OnConnectionEstablished;
 
@@ -42,6 +48,11 @@ namespace Styly.NetSync
 
         private const int TransformRcvHwm = 2;
         private const int ReliableSendQMax = 512;
+        private const long QueueFullWarnIntervalMs = 5000; // Rate limit warning logs to once per 5 seconds
+        private long _lastQueueFullWarnMs;
+
+        // Diagnostic counter for tracking dropped transform frames during draining
+        private long _droppedTransformFrames;
 
         private readonly ConcurrentQueue<DealerSendItem> _reliableSendQ = new();
         private int _reliableSendQCount;
@@ -117,6 +128,8 @@ namespace Styly.NetSync
 
             _pendingTransformRoomId = roomId;
             _pendingTransformPayload = payload;
+            // Ensure writes are visible to the network thread before setting the flag
+            Thread.MemoryBarrier();
             Interlocked.Exchange(ref _pendingTransformFlag, 1);
             return true;
         }
@@ -130,6 +143,13 @@ namespace Styly.NetSync
             if (n > ReliableSendQMax)
             {
                 Interlocked.Decrement(ref _reliableSendQCount);
+                // Rate-limited warning: only log occasionally to avoid spam
+                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                if (now - Interlocked.Read(ref _lastQueueFullWarnMs) > QueueFullWarnIntervalMs)
+                {
+                    Interlocked.Exchange(ref _lastQueueFullWarnMs, now);
+                    Debug.LogWarning($"[ConnectionManager] Reliable send queue full ({ReliableSendQMax}), dropping message");
+                }
                 return false;
             }
 
@@ -177,6 +197,7 @@ namespace Styly.NetSync
 
                     byte[] lastPayload = null;
                     bool gotPayload = false;
+                    int framesReceived = 0;
 
                     while (sub.TryReceiveFrameBytes(TimeSpan.Zero, out var topicBytes))
                     {
@@ -186,11 +207,18 @@ namespace Styly.NetSync
                         {
                             lastPayload = payload;
                             gotPayload = true;
+                            framesReceived++;
                         }
                     }
 
                     if (gotPayload)
                     {
+                        // Track dropped frames for diagnostics (only process the last one)
+                        if (framesReceived > 1)
+                        {
+                            Interlocked.Add(ref _droppedTransformFrames, framesReceived - 1);
+                        }
+
                         try
                         {
                             _messageProcessor.ProcessIncomingMessage(lastPayload);
@@ -281,7 +309,12 @@ namespace Styly.NetSync
                 var room = _pendingTransformRoomId;
                 var payload = _pendingTransformPayload;
 
-                if (!TrySendDealer(dealer, room, payload))
+                // Null check to handle race condition during disconnect or incomplete writes
+                if (room == null || payload == null)
+                {
+                    // Skip this send; data was cleared during disconnect
+                }
+                else if (!TrySendDealer(dealer, room, payload))
                 {
                     _pendingTransformRoomId = room;
                     _pendingTransformPayload = payload;
