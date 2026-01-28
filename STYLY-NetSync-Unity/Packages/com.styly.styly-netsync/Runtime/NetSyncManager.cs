@@ -304,6 +304,11 @@ namespace Styly.NetSync
         // Constants for atomic flag values
         private const int PENDING_ERROR_NONE = 0;
         private const int PENDING_ERROR_SET = 1;
+
+        // Backpressure statistics and cooldown (P1-05)
+        private long _transformBackpressureCount;
+        private float _lastBackpressureWarnAt;
+        private const float BackpressureWarnCooldown = 1f; // Log backpressure warning at most once per second
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
@@ -484,13 +489,18 @@ namespace Styly.NetSync
             // Skip transform/NV operations during room switching
             if (!_roomSwitching)
             {
-                SendTransformUpdates();
+                // P1-04: Control messages (NV/RPC) are sent before transform
+                // This prioritizes important control messages over high-frequency transform updates
+                // which helps maintain responsiveness under low bandwidth conditions
 
-                // Process Network Variables debounced updates
+                // Process Network Variables debounced updates (control - high priority)
                 _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
 
-                // Flush pending RPCs
+                // Flush pending RPCs (control - high priority)
                 _rpcManager?.FlushPendingIfReady(_roomId);
+
+                // Send transform updates (lower priority, can be dropped if backpressured)
+                SendTransformUpdates();
             }
 
             // Check for initial sync timeout (important for rooms with no variables)
@@ -619,28 +629,57 @@ namespace Styly.NetSync
             }
 
             // Send handshake to new room to trigger client number assignment
+            SendOutcome outcome;
+            string handshakeType;
             if (_isStealthMode)
             {
-                _transformSyncManager?.SendStealthHandshake(_roomId);
-                DebugLog("Sent stealth handshake to new room");
+                outcome = _transformSyncManager != null
+                    ? _transformSyncManager.SendStealthHandshake(_roomId)
+                    : SendOutcome.Fatal("TransformSyncManager is null");
+                handshakeType = "stealth";
             }
             else
             {
-                var localAvatar = _avatarManager?.LocalAvatar;
+                var localAvatar = _avatarManager != null ? _avatarManager.LocalAvatar : null;
                 if (localAvatar != null)
                 {
-                    _transformSyncManager?.SendLocalTransform(localAvatar, _roomId);
-                    DebugLog("Sent transform handshake to new room");
+                    outcome = _transformSyncManager != null
+                        ? _transformSyncManager.SendLocalTransform(localAvatar, _roomId)
+                        : SendOutcome.Fatal("TransformSyncManager is null");
+                    handshakeType = "transform";
                 }
                 else
                 {
                     // Fallback to stealth handshake if no local avatar
-                    _transformSyncManager?.SendStealthHandshake(_roomId);
-                    DebugLog("Sent stealth handshake to new room (no local avatar)");
+                    outcome = _transformSyncManager != null
+                        ? _transformSyncManager.SendStealthHandshake(_roomId)
+                        : SendOutcome.Fatal("TransformSyncManager is null");
+                    handshakeType = "stealth (no local avatar)";
                 }
             }
 
-            // End room switching
+            // Handle outcome - backpressure on handshake is concerning but not fatal
+            // The next Update() cycle will retry sending
+            if (outcome.IsBackpressure)
+            {
+                _transformBackpressureCount++;
+                MaybeLogBackpressureWarning("room switch handshake");
+                DebugLog($"Room switch {handshakeType} handshake backpressure, will retry");
+                // Don't end room switching yet - retry on next frame
+                _shouldSendHandshake = true;
+                return;
+            }
+
+            if (outcome.IsFatal)
+            {
+                DebugLog($"Room switch {handshakeType} handshake fatal: {outcome.Error}");
+                HandleConnectionError($"Room switch handshake fatal: {outcome.Error}");
+                _roomSwitching = false;
+                return;
+            }
+
+            // End room switching on success
+            DebugLog($"Sent {handshakeType} handshake for room {_roomId}: {outcome}");
             _roomSwitching = false;
             DebugLog("Room switching completed");
         }
@@ -834,26 +873,58 @@ namespace Styly.NetSync
 
         private void SendTransformUpdates()
         {
-            if (_connectionManager.IsConnected && !_connectionManager.IsConnectionError && _transformSyncManager.ShouldSendTransform(Time.time))
+            if (!_connectionManager.IsConnected || _connectionManager.IsConnectionError)
+                return;
+
+            if (!_transformSyncManager.ShouldSendTransform(Time.time))
+                return;
+
+            SendOutcome outcome;
+            if (_isStealthMode)
             {
-                if (_isStealthMode)
-                {
-                    // Send stealth handshake instead of regular transform
-                    if (!_transformSyncManager.SendStealthHandshake(_roomId))
-                    {
-                        HandleConnectionError("Send failed – disconnected?");
-                    }
-                }
-                else
-                {
-                    // Normal transform sending
-                    var localAvatar = _avatarManager.LocalAvatar;
-                    if (!_transformSyncManager.SendLocalTransform(localAvatar, _roomId))
-                    {
-                        HandleConnectionError("Send failed – disconnected?");
-                    }
-                }
-                _transformSyncManager.UpdateLastSendTime(Time.time);
+                // Send stealth handshake instead of regular transform
+                outcome = _transformSyncManager.SendStealthHandshake(_roomId);
+            }
+            else
+            {
+                // Normal transform sending
+                var localAvatar = _avatarManager.LocalAvatar;
+                outcome = _transformSyncManager.SendLocalTransform(localAvatar, _roomId);
+            }
+
+            // Update last send time regardless of outcome (prevents send spam on backpressure)
+            _transformSyncManager.UpdateLastSendTime(Time.time);
+
+            if (outcome.IsSent)
+            {
+                // Successfully sent
+                return;
+            }
+
+            if (outcome.IsBackpressure)
+            {
+                // P1-03: Backpressure is NOT a disconnect - just log and continue
+                // The system will naturally recover when the send queue clears
+                _transformBackpressureCount++;
+                MaybeLogBackpressureWarning("transform");
+                return;
+            }
+
+            // Fatal error - this may indicate a real disconnect
+            HandleConnectionError($"Transform send fatal: {outcome.Error}");
+        }
+
+        /// <summary>
+        /// Logs a backpressure warning with cooldown to prevent log spam.
+        /// </summary>
+        private void MaybeLogBackpressureWarning(string messageType)
+        {
+            float now = Time.time;
+            if (now - _lastBackpressureWarnAt >= BackpressureWarnCooldown)
+            {
+                _lastBackpressureWarnAt = now;
+                DebugLog($"Backpressure on {messageType} send (total count: {_transformBackpressureCount}). " +
+                         "This is normal under low bandwidth - messages will be sent when queue clears.");
             }
         }
 

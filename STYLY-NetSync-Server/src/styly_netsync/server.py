@@ -158,7 +158,11 @@ class NetSyncServer:
     # - TRANSFORM_BUDGET_BYTES_PER_SEC: Token bucket rate limit for transform broadcasts
     # - BACKLOG_SLEEP_SEC: Sleep duration when control backlog is high (5ms)
     # - MAX_COALESCE_BUFFER_SIZE: Max rooms in coalesce buffer before dropping oldest
+    # - ROUTER_CTRL_DRAIN_BATCH: Max control messages to drain via ROUTER per receive loop
+    # - ROUTER_CTRL_QUEUE_MAXSIZE: Max size for router control queue (ring buffer)
     CTRL_DRAIN_BATCH = 256
+    ROUTER_CTRL_DRAIN_BATCH = 64
+    ROUTER_CTRL_QUEUE_MAXSIZE = 1024
     CTRL_BACKLOG_WATERMARK = 500
     TRANSFORM_BUDGET_BYTES_PER_SEC = 15_000_000
     BACKLOG_SLEEP_SEC = 0.005
@@ -240,6 +244,17 @@ class NetSyncServer:
         self._transform_tokens = float(self.TRANSFORM_BUDGET_BYTES_PER_SEC)
         self._transform_last_refill = time.monotonic()
         self._transform_budget_lock = threading.Lock()
+
+        # Router control queue for unicast control messages (RPC/NV/ID mapping)
+        # Format: (identity, room_id_bytes, message_bytes)
+        self._router_queue_ctrl: Queue[tuple[bytes, bytes, bytes]] = Queue(
+            maxsize=self.ROUTER_CTRL_QUEUE_MAXSIZE
+        )
+
+        # Statistics for router control messages
+        self.ctrl_unicast_sent = 0
+        self.ctrl_unicast_wouldblock = 0
+        self.ctrl_unicast_dropped = 0
 
         # PUB socket monitor for tracking SUB connections
         self._pub_monitor: zmq.sugar.socket.Socket[bytes] | None = None
@@ -597,13 +612,92 @@ class NetSyncServer:
             try:
                 _ = self._pub_queue_ctrl.get_nowait()
             except Empty:
+                # Queue became empty between Full and get_nowait (rare race condition)
                 pass
+            else:
+                # Count and log the drop of the oldest message
+                self._increment_stat("skipped_broadcasts")
+                logger.debug("PUB queue full: dropping oldest message")
             try:
                 self._pub_queue_ctrl.put_nowait((topic_bytes, message_bytes))
             except Full:
-                # If still full, count as skipped
+                # If still full after removing one, count as dropped (another drop)
                 self._increment_stat("skipped_broadcasts")
-                logger.debug("PUB queue full: dropping a message")
+                logger.debug("PUB queue full: dropping new message")
+
+    def _enqueue_router(
+        self, identity: bytes, room_id: str, message_bytes: bytes
+    ) -> None:
+        """Thread-safe enqueue of a control message for unicast via ROUTER.
+
+        Used for control-like messages (RPC, NV sync, ID mapping) that are
+        more reliable than PUB/SUB, but still drop under backpressure and
+        send failures (ring-buffer drop-on-full and non-blocking router drain).
+
+        Args:
+            identity: Client's ZeroMQ identity (from ROUTER socket)
+            room_id: Room ID string
+            message_bytes: Serialized message payload
+        """
+        room_bytes = room_id.encode("utf-8")
+        try:
+            self._router_queue_ctrl.put_nowait((identity, room_bytes, message_bytes))
+        except Full:
+            # Ring-buffer behavior: drop oldest to make room for newest
+            try:
+                _ = self._router_queue_ctrl.get_nowait()
+            except Empty:
+                # Queue became empty between Full and get_nowait (rare race condition)
+                pass
+            else:
+                # Count and log the drop of the oldest message
+                self._increment_stat("ctrl_unicast_dropped")
+                logger.debug(
+                    "Router control queue full: dropping oldest control message"
+                )
+            try:
+                self._router_queue_ctrl.put_nowait(
+                    (identity, room_bytes, message_bytes)
+                )
+            except Full:
+                # If still full after removing one, count as dropped (another drop)
+                self._increment_stat("ctrl_unicast_dropped")
+                logger.debug("Router control queue full: dropping new message")
+
+    def _send_ctrl_to_room_via_router(
+        self,
+        room_id: str,
+        message_bytes: bytes,
+        exclude_identity: bytes | None = None,
+    ) -> None:
+        """Send a control message to all clients in a room via ROUTER unicast.
+
+        This method enqueues the message for each client in the room, providing
+        more reliable delivery than PUB/SUB (though still subject to drops under
+        backpressure).
+
+        Args:
+            room_id: Room ID to broadcast to
+            message_bytes: Serialized message payload
+            exclude_identity: Optional client identity to exclude (e.g., sender)
+        """
+        identities_to_send: list[bytes] = []
+        with self._rooms_lock:
+            if room_id not in self.rooms:
+                return
+
+            # Collect all client identities in the room while holding the lock
+            for _device_id, client_data in self.rooms[room_id].items():
+                identity = client_data.get("identity")
+                if identity is None:
+                    continue
+                if exclude_identity is not None and identity == exclude_identity:
+                    continue
+                identities_to_send.append(identity)
+
+        # Enqueue control messages outside of the rooms lock to reduce contention
+        for identity in identities_to_send:
+            self._enqueue_router(identity, room_id, message_bytes)
 
     def _get_or_assign_client_no(self, room_id: str, device_id: str) -> int:
         """Get existing client number or assign a new one for the given device ID in the room"""
@@ -908,7 +1002,10 @@ class NetSyncServer:
 
         logger.info(
             f"Server stopped. Total messages processed: {self.message_count}, "
-            f"Broadcasts sent: {self.broadcast_count}, Skipped broadcasts: {self.skipped_broadcasts}"
+            f"Broadcasts sent: {self.broadcast_count}, Skipped broadcasts: {self.skipped_broadcasts}, "
+            f"Control unicasts sent: {self.ctrl_unicast_sent}, "
+            f"Control unicast wouldblock: {self.ctrl_unicast_wouldblock}, "
+            f"Control unicast dropped: {self.ctrl_unicast_dropped}"
         )
 
     def _receive_loop(self) -> None:
@@ -982,11 +1079,43 @@ class NetSyncServer:
                             f"Received incomplete message with only {len(parts)} parts"
                         )
 
+                # Drain control messages via ROUTER after processing incoming
+                self._drain_router_ctrl_queue()
+
             except Exception as e:
                 logger.error(f"Error in receive loop: {e}")
                 logger.error(traceback.format_exc())
 
         logger.info("Receive loop ended")
+
+    def _drain_router_ctrl_queue(self) -> None:
+        """Drain pending control messages from the router queue.
+
+        This method sends queued control messages (RPC, NV sync, ID mapping)
+        via the ROUTER socket to specific clients. It is called from the
+        receive loop to ensure timely delivery of control messages.
+        """
+        router = self.router
+        if router is None:
+            return
+
+        for _ in range(self.ROUTER_CTRL_DRAIN_BATCH):
+            try:
+                ident, room_bytes, msg_bytes = self._router_queue_ctrl.get_nowait()
+            except Empty:
+                break
+
+            try:
+                # Send via ROUTER: [identity, room_id, payload]
+                router.send_multipart(
+                    [ident, room_bytes, msg_bytes], flags=zmq.DONTWAIT
+                )
+                self._increment_stat("ctrl_unicast_sent")
+            except zmq.Again:
+                # Socket would block - drop the message (don't re-enqueue)
+                self._increment_stat("ctrl_unicast_wouldblock")
+            except Exception as exc:
+                logger.error(f"Router send error: {exc}")
 
     def _process_message(
         self, client_identity: bytes, room_id: str, message: str
@@ -1088,7 +1217,11 @@ class NetSyncServer:
         return raw_payload or b""
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]) -> None:
-        """Send RPC to all clients in room except sender"""
+        """Send RPC to all clients in room via ROUTER unicast.
+
+        RPC messages are sent via ROUTER for reliable delivery to each client,
+        rather than via PUB which can drop messages under load.
+        """
         # Log RPC
         sender_client_no = rpc_data.get("senderClientNo", 0)
         function_name = rpc_data.get("functionName", "unknown")
@@ -1097,12 +1230,11 @@ class NetSyncServer:
             f"RPC: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}"
         )
 
-        # Prepare topic and payload
-        topic_bytes = room_id.encode("utf-8")
+        # Serialize the RPC message
         message_bytes = binary_serializer.serialize_rpc_message(rpc_data)
 
-        # Send multipart [roomId, payload]
-        self._enqueue_pub(topic_bytes, message_bytes)
+        # Send via ROUTER unicast to all clients in the room
+        self._send_ctrl_to_room_via_router(room_id, message_bytes)
 
     def _monitor_nv_sliding_window(self, room_id: str) -> None:
         """Monitor NV request rate for logging only (no gating)"""
@@ -1296,7 +1428,11 @@ class NetSyncServer:
             self._broadcast_client_var_sync(room_id)
 
     def _broadcast_global_var_sync(self, room_id: str) -> None:
-        """Broadcast global variables sync to all clients in room"""
+        """Broadcast global variables sync to all clients in room via ROUTER unicast.
+
+        Network Variable syncs are sent via ROUTER for reliable delivery to each client,
+        rather than via PUB which can drop messages under load.
+        """
         with self._rooms_lock:
             if room_id not in self.global_variables:
                 return
@@ -1313,17 +1449,22 @@ class NetSyncServer:
                 )
 
             if variables:
-                topic_bytes = room_id.encode("utf-8")
                 message_bytes = binary_serializer.serialize_global_var_sync(
                     {"variables": variables}
                 )
-                self._enqueue_pub(topic_bytes, message_bytes)
+                # Send via ROUTER unicast (lock is held, but _send_ctrl_to_room_via_router
+                # will acquire the lock again - RLock allows this)
+                self._send_ctrl_to_room_via_router(room_id, message_bytes)
                 logger.debug(
                     f"Broadcasted {len(variables)} global variables to room {room_id}"
                 )
 
     def _broadcast_client_var_sync(self, room_id: str) -> None:
-        """Broadcast client variables sync to all clients in room"""
+        """Broadcast client variables sync to all clients in room via ROUTER unicast.
+
+        Network Variable syncs are sent via ROUTER for reliable delivery to each client,
+        rather than via PUB which can drop messages under load.
+        """
         with self._rooms_lock:
             if room_id not in self.client_variables:
                 return
@@ -1344,11 +1485,12 @@ class NetSyncServer:
                     client_variables[str(client_no)] = client_vars
 
             if client_variables:
-                topic_bytes = room_id.encode("utf-8")
                 message_bytes = binary_serializer.serialize_client_var_sync(
                     {"clientVariables": client_variables}
                 )
-                self._enqueue_pub(topic_bytes, message_bytes)
+                # Send via ROUTER unicast (lock is held, but _send_ctrl_to_room_via_router
+                # will acquire the lock again - RLock allows this)
+                self._send_ctrl_to_room_via_router(room_id, message_bytes)
                 logger.debug(
                     f"Broadcasted client variables for {len(client_variables)} clients to room {room_id}"
                 )
@@ -1389,7 +1531,7 @@ class NetSyncServer:
                     }
                 )
 
-        topic = room_id.encode("utf-8")
+        # Send NV syncs via ROUTER unicast for reliable delivery
         if applied_globals:
             vars_payload = []
             with self._rooms_lock:
@@ -1406,14 +1548,14 @@ class NetSyncServer:
             msg = binary_serializer.serialize_global_var_sync(
                 {"variables": vars_payload}
             )
-            self._enqueue_pub(topic, msg)
+            self._send_ctrl_to_room_via_router(room_id, msg)
 
         if applied_clients:
             client_vars = {str(cno): lst for cno, lst in applied_clients.items()}
             msg = binary_serializer.serialize_client_var_sync(
                 {"clientVariables": client_vars}
             )
-            self._enqueue_pub(topic, msg)
+            self._send_ctrl_to_room_via_router(room_id, msg)
 
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         if elapsed_ms > 10.0:
@@ -1422,7 +1564,11 @@ class NetSyncServer:
             logger.debug(f"NV flush took {elapsed_ms:.2f} ms (room={room_id})")
 
     def _broadcast_id_mappings(self, room_id: str) -> None:
-        """Broadcast all device ID mappings for a room (including stealth clients with flag)"""
+        """Broadcast all device ID mappings for a room via ROUTER unicast.
+
+        ID mapping messages are sent via ROUTER for reliable delivery to each client,
+        rather than via PUB which can drop messages under load.
+        """
         with self._rooms_lock:
             if room_id not in self.room_device_id_to_client_no:
                 return
@@ -1440,15 +1586,15 @@ class NetSyncServer:
 
             if mappings:
                 # Serialize and broadcast the mappings with server version
-                topic_bytes = room_id.encode("utf-8")
                 server_version = binary_serializer.parse_version(get_version())
                 message_bytes = binary_serializer.serialize_device_id_mapping(
                     mappings, server_version
                 )
-                self._enqueue_pub(topic_bytes, message_bytes)
-                sub_count = self._get_sub_connection_count()
+                # Send via ROUTER unicast (lock is held, but _send_ctrl_to_room_via_router
+                # will acquire the lock again - RLock allows this)
+                self._send_ctrl_to_room_via_router(room_id, message_bytes)
                 logger.info(
-                    f"Broadcasted {len(mappings)} ID mappings to room {room_id} (connected SUBs: {sub_count})"
+                    f"Broadcasted {len(mappings)} ID mappings to room {room_id} via ROUTER"
                 )
 
     def _flush_debounced_id_mapping_broadcasts(self, current_time: float) -> None:

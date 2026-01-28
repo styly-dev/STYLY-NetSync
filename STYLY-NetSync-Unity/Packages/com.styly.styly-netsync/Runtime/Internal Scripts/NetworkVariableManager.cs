@@ -168,7 +168,7 @@ namespace Styly.NetSync
 
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                var sent = _connectionManager.EnqueueReliableSend(roomId, payload);
+                var sent = _connectionManager.TryEnqueueControl(roomId, payload);
                 if (sent)
                 {
                     _lastSentGlobal[name] = value; // Update last sent cache
@@ -265,7 +265,7 @@ namespace Styly.NetSync
 
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                var sent = _connectionManager.EnqueueReliableSend(roomId, payload);
+                var sent = _connectionManager.TryEnqueueControl(roomId, payload);
                 if (sent)
                 {
                     var key = (targetClientNo, name);
@@ -455,11 +455,17 @@ namespace Styly.NetSync
             return new Dictionary<string, string>();
         }
 
-        // Tick method to process pending NV updates
-        public void Tick(double nowSeconds, string roomId)
+        /// <summary>
+        /// Process pending network variable updates.
+        /// </summary>
+        /// <param name="nowSeconds">Current time in seconds (Unix timestamp).</param>
+        /// <param name="roomId">The room ID to send to.</param>
+        /// <returns>True if all pending were flushed successfully, false if any backpressure occurred.</returns>
+        public bool Tick(double nowSeconds, string roomId)
         {
-            FlushPendingGlobal(nowSeconds, roomId);
-            FlushPendingClient(nowSeconds, roomId);
+            bool globalOk = FlushPendingGlobal(nowSeconds, roomId);
+            bool clientOk = FlushPendingClient(nowSeconds, roomId);
+            return globalOk && clientOk;
         }
 
         // Buffer growth handled by ReusableBufferWriter
@@ -486,9 +492,14 @@ namespace Styly.NetSync
             return Math.Min(len, max);
         }
 
-        private void FlushPendingGlobal(double nowSeconds, string roomId)
+        /// <summary>
+        /// Flush pending global variable updates.
+        /// </summary>
+        /// <returns>True if all pending were flushed, false if any backpressure occurred.</returns>
+        private bool FlushPendingGlobal(double nowSeconds, string roomId)
         {
             var toFlush = new List<(string name, string value)>();
+            bool allFlushed = true;
 
             foreach (var kvp in _dueGlobal)
             {
@@ -516,13 +527,25 @@ namespace Styly.NetSync
                     // Start a new cooldown window from the trailing edge
                     _nextAllowedGlobal[name] = nowSeconds + DEBOUNCE_INTERVAL;
                 }
+                else
+                {
+                    // Send failed - backpressure
+                    allFlushed = false;
+                }
                 // If send fails, keep entries so a later tick can retry.
             }
+
+            return allFlushed;
         }
 
-        private void FlushPendingClient(double nowSeconds, string roomId)
+        /// <summary>
+        /// Flush pending client variable updates.
+        /// </summary>
+        /// <returns>True if all pending were flushed, false if any backpressure occurred.</returns>
+        private bool FlushPendingClient(double nowSeconds, string roomId)
         {
             var toFlush = new List<((int targetClientNo, string name) key, string value)>();
+            bool allFlushed = true;
 
             foreach (var kvp in _dueClient)
             {
@@ -550,8 +573,15 @@ namespace Styly.NetSync
                     // Start a new cooldown window from the trailing edge
                     _nextAllowedClient[key] = nowSeconds + DEBOUNCE_INTERVAL;
                 }
+                else
+                {
+                    // Send failed - backpressure
+                    allFlushed = false;
+                }
                 // If send fails, keep entries to retry on subsequent ticks.
             }
+
+            return allFlushed;
         }
 
         /// <summary>
