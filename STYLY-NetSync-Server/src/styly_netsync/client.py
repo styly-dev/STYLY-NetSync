@@ -125,9 +125,6 @@ class OutboundPacket:
     enqueued_at: float = field(default_factory=time.monotonic)
     """Monotonic timestamp when this packet was enqueued (for TTL)."""
 
-    attempts: int = 0
-    """Number of send attempts made for this packet."""
-
 
 class net_sync_manager:
     """
@@ -287,6 +284,9 @@ class net_sync_manager:
                 self._dealer_socket.setsockopt(
                     zmq.SNDHWM, 10
                 )  # Low HWM for backpressure
+                self._dealer_socket.setsockopt(
+                    zmq.RCVHWM, 10
+                )  # Bound receive queue for control messages
                 self._dealer_socket.setsockopt(zmq.RCVTIMEO, 0)  # Non-blocking receive
                 dealer_addr = f"{self._server}:{self._dealer_port}"
                 self._dealer_socket.connect(dealer_addr)
@@ -405,36 +405,94 @@ class net_sync_manager:
                                     last_payload = message_parts[1]
                                     frames_received += 1
                         except zmq.Again:
+                            # No more messages available on SUB socket
                             break
+                        except zmq.ZMQError as e:
+                            # Handle ZMQ-specific errors
+                            # Terminal errors: stop draining this socket
+                            if e.errno in (zmq.ETERM, zmq.ENOTSOCK):
+                                if self._running:
+                                    logger.error(
+                                        f"ZMQ error while draining SUB socket: {e}"
+                                    )
+                                break
+                            if self._running:
+                                logger.warning(
+                                    f"Non-fatal ZMQ error draining SUB, skipping: {e}"
+                                )
+                            continue
+                        except Exception as e:
+                            # Unexpected error: log and skip this message, keep draining
+                            if self._running:
+                                logger.warning(
+                                    f"Unexpected error draining SUB, skipping: {e}"
+                                )
+                            continue
 
                     if last_payload is not None:
                         # Track dropped frames for diagnostics
                         if frames_received > 1:
-                            self._stats["dropped_transform_frames"] += (
-                                frames_received - 1
-                            )
+                            with self._lock:
+                                self._stats["dropped_transform_frames"] += (
+                                    frames_received - 1
+                                )
 
                         self._process_message(last_payload)
                         received_any = True
 
                 # DEALER receive: control messages (RPC, NV, ID mapping) from ROUTER
                 # Server sends control messages via ROUTER->DEALER instead of PUB/SUB
+                # Limit drain to prevent starvation of SUB processing and outgoing sends
                 if self._dealer_socket is not None and self._dealer_socket in socks:
-                    while True:
+                    dealer_drained = 0
+                    max_dealer_drain = 64  # Limit drain iterations
+                    while dealer_drained < max_dealer_drain:
                         try:
                             message_parts = self._dealer_socket.recv_multipart(
                                 flags=zmq.NOBLOCK
                             )
+                            dealer_drained += 1
                             if len(message_parts) >= 2:
-                                dealer_room_id = message_parts[0].decode("utf-8")
+                                try:
+                                    dealer_room_id = message_parts[0].decode("utf-8")
+                                except UnicodeDecodeError as e:
+                                    # Malformed room ID in control message; skip
+                                    logger.warning(
+                                        f"Failed to decode DEALER room id: {e}"
+                                    )
+                                    continue
                                 dealer_payload = message_parts[1]
 
                                 # Only process messages for our room
                                 if dealer_room_id == self._room:
-                                    self._process_message(dealer_payload)
-                                    received_any = True
+                                    try:
+                                        self._process_message(dealer_payload)
+                                        received_any = True
+                                    except Exception as e:
+                                        # Malformed or unexpected control payload; skip
+                                        logger.warning(
+                                            f"Error processing DEALER control message: {e}"
+                                        )
+                                        continue
                         except zmq.Again:
                             break
+                        except zmq.ZMQError as e:
+                            # Terminal errors: stop draining
+                            if e.errno in (zmq.ETERM, zmq.ENOTSOCK):
+                                if self._running:
+                                    logger.error(
+                                        f"ZMQ error in DEALER receive drain: {e}"
+                                    )
+                                break
+                            if self._running:
+                                logger.warning(
+                                    f"Non-fatal ZMQ error draining DEALER: {e}"
+                                )
+                            continue
+                        except Exception as e:
+                            # Unexpected error while draining DEALER; log and continue
+                            logger.warning(f"Error in DEALER receive drain loop: {e}")
+                            continue
 
                 # Sleep briefly if idle to avoid busy-waiting
                 if not received_any and not sent_any:
@@ -495,9 +553,23 @@ class net_sync_manager:
                 did_work = True
                 sent += 1
             elif outcome.is_backpressure:
-                # Backpressure - increment counter and stop draining
-                # The packet is DROPPED on backpressure (not retried)
-                self._stats["would_block_count"] += 1
+                # Backpressure - increment counter and attempt to re-queue the packet
+                with self._lock:
+                    self._stats["would_block_count"] += 1
+                try:
+                    # Re-queue the control packet so it can be retried later
+                    self._ctrl_outbox.put_nowait(packet)
+                except Full:
+                    # Queue is full: this control packet is dropped; log prominently
+                    with self._lock:
+                        self._stats["ctrl_queue_drops"] += 1
+                    logger.warning(
+                        "Control packet dropped due to backpressure and full queue; "
+                        "would_block=%s, queue_drops=%s",
+                        self._stats.get("would_block_count"),
+                        self._stats.get("ctrl_queue_drops"),
+                    )
+                # Stop draining on backpressure to respect socket backpressure signal
                 break
             else:
                 # Fatal error
@@ -527,7 +599,8 @@ class net_sync_manager:
                 return True
             elif outcome.is_backpressure:
                 # Backpressure - keep the packet for retry
-                self._stats["would_block_count"] += 1
+                with self._lock:
+                    self._stats["would_block_count"] += 1
                 return False
             else:
                 # Fatal error
@@ -561,7 +634,8 @@ class net_sync_manager:
             if msg_data is None:
                 return
 
-            self._stats["messages_received"] += 1
+            with self._lock:
+                self._stats["messages_received"] += 1
 
             if msg_type == binary_serializer.MSG_ROOM_POSE_V2:
                 self._process_room_transform(msg_data)
@@ -607,8 +681,9 @@ class net_sync_manager:
             for client_no in removed:
                 self.on_client_disconnected.invoke(client_no)
 
-            self._stats["transforms_received"] += 1
-            self._stats["last_snapshot_time"] = time.monotonic()
+            with self._lock:
+                self._stats["transforms_received"] += 1
+                self._stats["last_snapshot_time"] = time.monotonic()
 
         except Exception as e:
             logger.error(f"Error processing room transform: {e}")
@@ -654,7 +729,8 @@ class net_sync_manager:
             except json.JSONDecodeError:
                 args = []
 
-            self._stats["rpc_received"] += 1
+            with self._lock:
+                self._stats["rpc_received"] += 1
 
             # Queue for pull or auto-dispatch
             rpc_event = (sender_client_no, function_name, args)
@@ -688,7 +764,8 @@ class net_sync_manager:
                 self._global_variables[name] = value
 
                 if old_value != value:
-                    self._stats["nv_updates"] += 1
+                    with self._lock:
+                        self._stats["nv_updates"] += 1
 
                     event = ("global", name, old_value, value)
                     if self._auto_dispatch:
@@ -728,7 +805,8 @@ class net_sync_manager:
                     self._client_variables[client_no][name] = value
 
                     if old_value != value:
-                        self._stats["nv_updates"] += 1
+                        with self._lock:
+                            self._stats["nv_updates"] += 1
 
                         event = ("client", client_no, name, old_value, value)
                         if self._auto_dispatch:
@@ -801,7 +879,9 @@ class net_sync_manager:
         try:
             wire_data = client_transform_to_wire(stealth_tx)
             message = binary_serializer.serialize_client_transform(wire_data)
-            return self._enqueue_control(self._room, message)
+            return self._enqueue_control(
+                self._room, message, msg_type="stealth_handshake"
+            )
         except Exception as e:
             logger.error(f"Error sending stealth handshake: {e}")
             return False
@@ -818,7 +898,7 @@ class net_sync_manager:
                 "argumentsJson": json.dumps(args),
             }
             message = binary_serializer.serialize_rpc_message(rpc_data)
-            return self._enqueue_control(self._room, message)
+            return self._enqueue_control(self._room, message, msg_type="RPC")
 
         except Exception as e:
             logger.error(f"Error queueing RPC: {e}")
@@ -838,7 +918,9 @@ class net_sync_manager:
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_global_var_set(var_data)
-            return self._enqueue_control(self._room, message)
+            return self._enqueue_control(
+                self._room, message, msg_type="global_variable"
+            )
 
         except Exception as e:
             logger.error(f"Error queueing global variable: {e}")
@@ -858,14 +940,23 @@ class net_sync_manager:
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_client_var_set(var_data)
-            return self._enqueue_control(self._room, message)
+            return self._enqueue_control(
+                self._room, message, msg_type="client_variable"
+            )
 
         except Exception as e:
             logger.error(f"Error queueing client variable: {e}")
             return False
 
-    def _enqueue_control(self, room_id: str, payload: bytes) -> bool:
+    def _enqueue_control(
+        self, room_id: str, payload: bytes, msg_type: str = "control"
+    ) -> bool:
         """Enqueue a control message for sending (FIFO with TTL).
+
+        Args:
+            room_id: The room ID this message should be sent to.
+            payload: The serialized payload bytes to send.
+            msg_type: Description of message type for logging (e.g., "RPC", "NV").
 
         Returns True if enqueued successfully, False if queue is full.
         """
@@ -878,8 +969,13 @@ class net_sync_manager:
             self._ctrl_outbox.put_nowait(packet)
             return True
         except Full:
-            self._stats["ctrl_queue_drops"] += 1
-            logger.warning("Control outbox full, dropping message")
+            with self._lock:
+                self._stats["ctrl_queue_drops"] += 1
+            logger.warning(
+                "Control outbox full, dropping %s message (queue_drops=%s)",
+                msg_type,
+                self._stats.get("ctrl_queue_drops"),
+            )
             return False
 
     def get_global_variable(self, name: str, default: str | None = None) -> str | None:

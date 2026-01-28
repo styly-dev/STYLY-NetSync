@@ -726,6 +726,8 @@ class NetworkTransport:
 
         Returns:
             Tuple of (message_type, data) for the first relevant message, or None.
+            Returns immediately on first valid message or after draining max_drain
+            messages without finding a valid one.
         """
         if not self.socket:
             return None
@@ -734,10 +736,19 @@ class NetworkTransport:
             try:
                 parts = self.socket.recv_multipart(flags=zmq.NOBLOCK)
             except zmq.Again:
+                # No more messages available
                 return None
+            except zmq.ZMQError as e:
+                # Terminal errors: stop draining
+                if e.errno in (zmq.ETERM, zmq.ENOTSOCK):
+                    self.logger.debug(f"DEALER socket error: {e}")
+                    return None
+                self.logger.debug(f"Non-fatal DEALER receive error: {e}")
+                continue
             except Exception as e:
                 self.logger.debug(f"DEALER receive error: {e}")
-                return None
+                # Continue to next iteration rather than returning early
+                continue
 
             if len(parts) != 2:
                 continue
@@ -756,8 +767,10 @@ class NetworkTransport:
                 _, data, _ = deserialize(payload)
                 return msg_type, data
             except Exception:
+                # Malformed payload; skip and continue draining
                 continue
 
+        # Drained max_drain messages without finding a valid one
         return None
 
     def disconnect(self) -> None:
@@ -784,13 +797,20 @@ class NetworkTransport:
 class SharedSubscriber:
     """Single SUB socket that receives broadcasts and shares mappings.
 
-    IMPORTANT: As of PR #316, the server sends ID mappings via ROUTER unicast
-    instead of PUB/SUB. This means SharedSubscriber will NOT receive ID mapping
-    messages. Each SimulatedClient must poll its DEALER socket for control
-    messages (including ID mappings) via _poll_dealer_control().
+    IMPORTANT: As of PR #316, the intended primary path for ID mappings is
+    ROUTER/DEALER unicast instead of PUB/SUB. Each SimulatedClient must poll
+    its DEALER socket for control messages (including ID mappings) via
+    _poll_dealer_control().
+
+    However, for backwards compatibility with older servers and mixed
+    deployments, ID mapping messages (MSG_DEVICE_ID_MAPPING) may still be
+    delivered via PUB/SUB, and this simulator continues to support mappings
+    received on the shared SUB socket. In practice, ID mappings can therefore
+    arrive via DEALER, SUB, or both, depending on server behavior.
 
     SharedSubscriber is kept for backward compatibility and may still receive
-    transform broadcasts via SUB, but ID mapping functionality is deprecated.
+    transform broadcasts via SUB; new features should prefer the DEALER-based
+    control/mapping channel.
     """
 
     def __init__(
