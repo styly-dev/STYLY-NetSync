@@ -3,6 +3,13 @@ NetSync client implementation with pull-based transform consumption.
 
 Provides a Python client API that mirrors Unity NetSync capabilities while using
 snake_case naming and pull-based transform consumption by default.
+
+Key features (mirroring Unity ConnectionManager PR #311 and #316):
+- Priority-based sending: Control messages (RPC, NV) have priority over transforms
+- Latest-wins transform sending: Only the most recent transform is sent
+- Control message queue with TTL expiration
+- SUB receive draining: Only process the last payload to reduce CPU
+- DEALER receive for control messages from server (ROUTER unicast)
 """
 
 import json
@@ -12,6 +19,8 @@ import socket
 import threading
 import time
 import uuid
+from dataclasses import dataclass, field
+from enum import Enum
 from queue import Empty, Full, Queue
 from typing import Any
 
@@ -34,6 +43,90 @@ from .events import EventHandler
 from .types import client_transform_data, room_transform_data
 
 logger = logging.getLogger(__name__)
+
+
+class SendStatus(Enum):
+    """Status of a send operation."""
+
+    SENT = "sent"
+    """Message was sent successfully."""
+
+    BACKPRESSURE = "backpressure"
+    """Message could not be sent due to backpressure (HWM reached, temporary)."""
+
+    FATAL = "fatal"
+    """Fatal error occurred (exception, socket null). May indicate a disconnect."""
+
+
+@dataclass
+class SendOutcome:
+    """Result of a send operation with status and optional error details."""
+
+    status: SendStatus
+    """Status of the send operation."""
+
+    error: str | None = None
+    """Error message when status is FATAL, None otherwise."""
+
+    @property
+    def is_sent(self) -> bool:
+        """Returns True if the message was sent successfully."""
+        return self.status == SendStatus.SENT
+
+    @property
+    def is_backpressure(self) -> bool:
+        """Returns True if send failed due to backpressure (temporary)."""
+        return self.status == SendStatus.BACKPRESSURE
+
+    @property
+    def is_fatal(self) -> bool:
+        """Returns True if a fatal error occurred."""
+        return self.status == SendStatus.FATAL
+
+    @staticmethod
+    def sent() -> "SendOutcome":
+        """Create a successful send outcome."""
+        return SendOutcome(status=SendStatus.SENT)
+
+    @staticmethod
+    def backpressure() -> "SendOutcome":
+        """Create a backpressure outcome (temporary send failure)."""
+        return SendOutcome(status=SendStatus.BACKPRESSURE)
+
+    @staticmethod
+    def fatal(error: str) -> "SendOutcome":
+        """Create a fatal error outcome."""
+        return SendOutcome(status=SendStatus.FATAL, error=error or "unknown")
+
+
+class OutboundLane(Enum):
+    """Priority lane for outbound packets."""
+
+    CONTROL = "control"
+    """Control messages (RPC, Network Variables). Higher priority."""
+
+    TRANSFORM = "transform"
+    """Transform updates. Lower priority, uses latest-wins semantics."""
+
+
+@dataclass
+class OutboundPacket:
+    """Outbound packet waiting to be sent with TTL support."""
+
+    lane: OutboundLane
+    """The priority lane for this packet."""
+
+    room_id: str
+    """The room ID this packet should be sent to."""
+
+    payload: bytes
+    """The serialized payload bytes to send."""
+
+    enqueued_at: float = field(default_factory=time.monotonic)
+    """Monotonic timestamp when this packet was enqueued (for TTL)."""
+
+    attempts: int = 0
+    """Number of send attempts made for this packet."""
 
 
 class net_sync_manager:
@@ -115,6 +208,16 @@ class net_sync_manager:
         self._discovery_thread: threading.Thread | None = None
         self._discovery_running = False
 
+        # Priority-based sending (mirroring Unity ConnectionManager)
+        # Control messages (RPC, NV) have priority over transforms
+        self._ctrl_outbox: Queue[OutboundPacket] = Queue(maxsize=256)
+        self._latest_transform: OutboundPacket | None = None
+        self._transform_lock = threading.Lock()
+
+        # Constants for send queue behavior
+        self._ctrl_ttl_seconds = 5.0  # TTL for control messages
+        self._ctrl_drain_batch = 64  # Max control messages to drain per loop
+
         # Statistics
         self._stats = {
             "messages_received": 0,
@@ -122,6 +225,9 @@ class net_sync_manager:
             "rpc_received": 0,
             "nv_updates": 0,
             "last_snapshot_time": 0.0,
+            "would_block_count": 0,
+            "dropped_transform_frames": 0,
+            "ctrl_queue_drops": 0,
         }
 
     # Properties
@@ -175,13 +281,21 @@ class net_sync_manager:
                 # Initialize ZeroMQ
                 self._context = zmq.Context()
 
-                # DEALER socket for uplink
+                # DEALER socket for uplink and control message receive
                 self._dealer_socket = self._context.socket(zmq.DEALER)
+                self._dealer_socket.setsockopt(zmq.LINGER, 0)
+                self._dealer_socket.setsockopt(
+                    zmq.SNDHWM, 10
+                )  # Low HWM for backpressure
+                self._dealer_socket.setsockopt(zmq.RCVTIMEO, 0)  # Non-blocking receive
                 dealer_addr = f"{self._server}:{self._dealer_port}"
                 self._dealer_socket.connect(dealer_addr)
 
-                # SUB socket for downlink
+                # SUB socket for downlink (transform broadcasts)
+                # Low RCVHWM (2) to prefer recent updates and drop stale messages
                 self._sub_socket = self._context.socket(zmq.SUB)
+                self._sub_socket.setsockopt(zmq.LINGER, 0)
+                self._sub_socket.setsockopt(zmq.RCVHWM, 2)  # TransformRcvHwm
                 sub_addr = f"{self._server}:{self._sub_port}"
                 self._sub_socket.connect(sub_addr)
                 self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
@@ -211,6 +325,9 @@ class net_sync_manager:
 
             self._running = False
 
+            # Clear outgoing buffers
+            self._clear_outgoing_buffers()
+
             # Stop discovery if running
             self.stop_discovery()
 
@@ -237,29 +354,205 @@ class net_sync_manager:
             self._context.term()
             self._context = None
 
+    def _clear_outgoing_buffers(self) -> None:
+        """Clear pending outgoing packets."""
+        # Clear control outbox
+        while not self._ctrl_outbox.empty():
+            try:
+                self._ctrl_outbox.get_nowait()
+            except Empty:
+                break
+
+        # Clear latest transform
+        with self._transform_lock:
+            self._latest_transform = None
+
     def _receive_loop(self) -> None:
-        """Main receive loop for processing server messages."""
+        """Main receive loop for processing server messages and flushing outgoing."""
         poller = zmq.Poller()
         if self._sub_socket:
             poller.register(self._sub_socket, zmq.POLLIN)
+        if self._dealer_socket:
+            poller.register(self._dealer_socket, zmq.POLLIN)
+
+        room_id_bytes = self._room.encode("utf-8")
 
         while self._running:
             try:
-                socks = dict(poller.poll(100))  # 100ms timeout
+                # Flush outgoing messages first (priority-based)
+                sent_any = self._flush_outgoing()
 
+                socks = dict(
+                    poller.poll(1 if sent_any else 10)
+                )  # Short timeout if actively sending
+                received_any = False
+
+                # SUB receive with drain: process only the last payload
                 if self._sub_socket is not None and self._sub_socket in socks:
-                    message_parts = self._sub_socket.recv_multipart()
-                    if len(message_parts) >= 2:
-                        # room_id = message_parts[0].decode("utf-8")  # Not used currently
-                        data = message_parts[1]
+                    last_payload = None
+                    frames_received = 0
 
-                        self._process_message(data)
+                    # Drain all available frames, keep only the last
+                    while True:
+                        try:
+                            message_parts = self._sub_socket.recv_multipart(
+                                flags=zmq.NOBLOCK
+                            )
+                            if len(message_parts) >= 2:
+                                topic = message_parts[0]
+                                # Byte-level topic matching
+                                if topic == room_id_bytes:
+                                    last_payload = message_parts[1]
+                                    frames_received += 1
+                        except zmq.Again:
+                            break
+
+                    if last_payload is not None:
+                        # Track dropped frames for diagnostics
+                        if frames_received > 1:
+                            self._stats["dropped_transform_frames"] += (
+                                frames_received - 1
+                            )
+
+                        self._process_message(last_payload)
+                        received_any = True
+
+                # DEALER receive: control messages (RPC, NV, ID mapping) from ROUTER
+                # Server sends control messages via ROUTER->DEALER instead of PUB/SUB
+                if self._dealer_socket is not None and self._dealer_socket in socks:
+                    while True:
+                        try:
+                            message_parts = self._dealer_socket.recv_multipart(
+                                flags=zmq.NOBLOCK
+                            )
+                            if len(message_parts) >= 2:
+                                dealer_room_id = message_parts[0].decode("utf-8")
+                                dealer_payload = message_parts[1]
+
+                                # Only process messages for our room
+                                if dealer_room_id == self._room:
+                                    self._process_message(dealer_payload)
+                                    received_any = True
+                        except zmq.Again:
+                            break
+
+                # Sleep briefly if idle to avoid busy-waiting
+                if not received_any and not sent_any:
+                    time.sleep(0.001)
 
             except zmq.Again:
                 continue
             except Exception as e:
                 if self._running:
                     logger.error(f"Error in receive loop: {e}")
+
+    def _flush_outgoing(self) -> bool:
+        """Flush outgoing messages with priority-based drain.
+
+        Returns True if any message was sent.
+        """
+        if not self._dealer_socket:
+            return False
+
+        did_work = False
+
+        # Priority-based send drain:
+        # 1. Drain control messages first (higher priority)
+        # 2. Then try to send latest transform (lower priority)
+        did_work |= self._drain_control_sends()
+        did_work |= self._try_send_latest_transform()
+
+        return did_work
+
+    def _drain_control_sends(self) -> bool:
+        """Drain control messages from the outbox queue.
+
+        Returns True if any message was sent.
+        """
+        if not self._dealer_socket:
+            return False
+
+        did_work = False
+        sent = 0
+        now = time.monotonic()
+
+        while sent < self._ctrl_drain_batch:
+            try:
+                packet = self._ctrl_outbox.get_nowait()
+            except Empty:
+                break
+
+            # TTL check - skip expired packets
+            if now - packet.enqueued_at > self._ctrl_ttl_seconds:
+                logger.warning(
+                    f"Control packet expired (TTL {self._ctrl_ttl_seconds}s exceeded)"
+                )
+                continue
+
+            # Try to send
+            outcome = self._try_send_dealer(packet.room_id, packet.payload)
+            if outcome.is_sent:
+                did_work = True
+                sent += 1
+            elif outcome.is_backpressure:
+                # Backpressure - increment counter and stop draining
+                # The packet is DROPPED on backpressure (not retried)
+                self._stats["would_block_count"] += 1
+                break
+            else:
+                # Fatal error
+                logger.error(f"Fatal send error: {outcome.error}")
+                break
+
+        return did_work
+
+    def _try_send_latest_transform(self) -> bool:
+        """Try to send the latest transform packet (latest-wins semantics).
+
+        Returns True if a transform was sent.
+        """
+        if not self._dealer_socket:
+            return False
+
+        with self._transform_lock:
+            packet = self._latest_transform
+            if packet is None:
+                return False
+
+            # Try to send
+            outcome = self._try_send_dealer(packet.room_id, packet.payload)
+            if outcome.is_sent:
+                # Success - clear the packet
+                self._latest_transform = None
+                return True
+            elif outcome.is_backpressure:
+                # Backpressure - keep the packet for retry
+                self._stats["would_block_count"] += 1
+                return False
+            else:
+                # Fatal error
+                logger.error(f"Fatal send error: {outcome.error}")
+                return False
+
+    def _try_send_dealer(self, room_id: str, payload: bytes) -> SendOutcome:
+        """Try to send a message via DEALER socket.
+
+        Returns SendOutcome indicating success, backpressure, or fatal error.
+        """
+        if not self._dealer_socket:
+            return SendOutcome.fatal("Socket not available")
+
+        try:
+            # Use NOBLOCK to detect backpressure
+            self._dealer_socket.send_multipart(
+                [room_id.encode("utf-8"), payload], flags=zmq.NOBLOCK
+            )
+            return SendOutcome.sent()
+        except zmq.Again:
+            # HWM reached - backpressure
+            return SendOutcome.backpressure()
+        except Exception as e:
+            return SendOutcome.fatal(str(e))
 
     def _process_message(self, data: bytes) -> None:
         """Process a received message."""
@@ -468,9 +761,13 @@ class net_sync_manager:
             return snapshot.clients[client_no]
         return None
 
-    # Sending API
+    # Sending API (queued for network thread)
     def send_transform(self, tx: client_transform_data) -> bool:
-        """Send client transform to server."""
+        """Queue client transform to be sent (latest-wins semantics).
+
+        Only the most recent transform is retained. Calling this multiple times
+        before the network thread sends will only send the last one.
+        """
         if not self._running or not self._dealer_socket:
             return False
 
@@ -479,22 +776,38 @@ class net_sync_manager:
             wire_data = client_transform_to_wire(tx)
             message = binary_serializer.serialize_client_transform(wire_data)
 
-            # Send with room topic
-            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
+            # Set latest transform (latest-wins)
+            with self._transform_lock:
+                self._latest_transform = OutboundPacket(
+                    lane=OutboundLane.TRANSFORM,
+                    room_id=self._room,
+                    payload=message,
+                )
             return True
 
         except Exception as e:
-            logger.error(f"Error sending transform: {e}")
+            logger.error(f"Error queueing transform: {e}")
             return False
 
     def send_stealth_handshake(self) -> bool:
-        """Send stealth handshake to become invisible client."""
+        """Send stealth handshake to become invisible client.
+
+        Note: Stealth handshake is sent via control queue (reliable) instead of
+        latest-wins transform queue to ensure it's delivered.
+        """
         stealth_tx = create_stealth_transform()
         stealth_tx.device_id = self._device_id
-        return self.send_transform(stealth_tx)
+
+        try:
+            wire_data = client_transform_to_wire(stealth_tx)
+            message = binary_serializer.serialize_client_transform(wire_data)
+            return self._enqueue_control(self._room, message)
+        except Exception as e:
+            logger.error(f"Error sending stealth handshake: {e}")
+            return False
 
     def rpc(self, function_name: str, args: list[str]) -> bool:
-        """Send RPC to all clients in room."""
+        """Queue RPC to be sent to all clients in room (via control queue)."""
         if not self._running or not self._dealer_socket or self._client_no is None:
             return False
 
@@ -505,16 +818,15 @@ class net_sync_manager:
                 "argumentsJson": json.dumps(args),
             }
             message = binary_serializer.serialize_rpc_message(rpc_data)
-            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
-            return True
+            return self._enqueue_control(self._room, message)
 
         except Exception as e:
-            logger.error(f"Error sending RPC: {e}")
+            logger.error(f"Error queueing RPC: {e}")
             return False
 
-    # Network Variables API
+    # Network Variables API (queued via control queue)
     def set_global_variable(self, name: str, value: str) -> bool:
-        """Set global variable."""
+        """Queue global variable update (via control queue)."""
         if not self._running or not self._dealer_socket or self._client_no is None:
             return False
 
@@ -526,15 +838,14 @@ class net_sync_manager:
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_global_var_set(var_data)
-            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
-            return True
+            return self._enqueue_control(self._room, message)
 
         except Exception as e:
-            logger.error(f"Error setting global variable: {e}")
+            logger.error(f"Error queueing global variable: {e}")
             return False
 
     def set_client_variable(self, target_client_no: int, name: str, value: str) -> bool:
-        """Set client variable."""
+        """Queue client variable update (via control queue)."""
         if not self._running or not self._dealer_socket or self._client_no is None:
             return False
 
@@ -547,11 +858,28 @@ class net_sync_manager:
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_client_var_set(var_data)
-            self._dealer_socket.send_multipart([self._room.encode("utf-8"), message])
-            return True
+            return self._enqueue_control(self._room, message)
 
         except Exception as e:
-            logger.error(f"Error setting client variable: {e}")
+            logger.error(f"Error queueing client variable: {e}")
+            return False
+
+    def _enqueue_control(self, room_id: str, payload: bytes) -> bool:
+        """Enqueue a control message for sending (FIFO with TTL).
+
+        Returns True if enqueued successfully, False if queue is full.
+        """
+        packet = OutboundPacket(
+            lane=OutboundLane.CONTROL,
+            room_id=room_id,
+            payload=payload,
+        )
+        try:
+            self._ctrl_outbox.put_nowait(packet)
+            return True
+        except Full:
+            self._stats["ctrl_queue_drops"] += 1
+            logger.warning("Control outbox full, dropping message")
             return False
 
     def get_global_variable(self, name: str, default: str | None = None) -> str | None:
