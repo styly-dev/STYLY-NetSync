@@ -1,0 +1,88 @@
+# Codex GitHub Action Workflow Template
+#
+# IMPORTANT: This file is a TEMPLATE and should be moved to .github/workflows/codex.yml
+# to activate it as a GitHub Action.
+#
+# This workflow provides a foundation for integrating an AI code assistant (Codex)
+# that triggers when mentioned in issues, PRs, and comments.
+#
+# SETUP INSTRUCTIONS:
+# 1. Copy this file to: .github/workflows/codex.yml
+# 2. Add required secrets to your GitHub repository:
+#    - CODEX_API_KEY or OPENAI_API_KEY (depending on which service you use)
+# 3. Modify the action step (lines 40-45) to use your specific Codex action
+# 4. Test by creating an issue or comment with @codex mention
+
+name: 'Codex AI Assistant'
+
+on:
+  # Trigger on issue comments
+  issue_comment:
+    types: [created]
+  # Trigger on PR review comments
+  pull_request_review_comment:
+    types: [created]
+  # Trigger on PR reviews
+  pull_request_review:
+    types: [submitted]
+  # Trigger on new issues
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  codex:
+    # Only run when @codex is mentioned in the comment/issue/review
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@codex')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@codex')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@codex')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@codex') || contains(github.event.issue.title, '@codex')))
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # =================================================================
+      # REPLACE THIS STEP WITH YOUR ACTUAL CODEX ACTION
+      # =================================================================
+      # Option 1: If using a pre-built Codex action (replace with actual action name)
+      # - name: Run Codex
+      #   uses: owner/codex-action@v1
+      #   with:
+      #     api_key: ${{ secrets.CODEX_API_KEY }}
+
+      # Option 2: If using OpenAI API directly with a custom script
+      # - name: Run OpenAI Codex
+      #   uses: actions/github-script@v7
+      #   env:
+      #     OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      #   with:
+      #     script: |
+      #       // Add your custom OpenAI API integration here
+      #       // This would call OpenAI's API and post responses as comments
+
+      # Option 3: Placeholder for testing the trigger mechanism
+      - name: Acknowledge Codex mention (PLACEHOLDER - REPLACE THIS)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            if (issue_number) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue_number,
+                body: '🤖 Codex has been mentioned! This is a placeholder response. Please configure the actual Codex action in the workflow file.'
+              });
+            }
+      # =================================================================
