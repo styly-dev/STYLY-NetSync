@@ -22,20 +22,43 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+      id-token: write
+      actions: read # Required for Codex to read CI results on PRs
     outputs:
       final_message: ${{ steps.run_codex.outputs.final-message }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Pre-fetch base and head refs for PR
-        if: github.event.pull_request
+        if: |
+          github.event.pull_request ||
+          (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
+          (github.event_name == 'pull_request_review_comment') ||
+          (github.event_name == 'pull_request_review')
         run: |
+          # Determine PR number based on event type
+          if [ "${{ github.event.pull_request.number }}" != "" ]; then
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+          else
+            PR_NUMBER="${{ github.event.issue.number }}"
+          fi
+
+          # Fetch base branch and PR head
           git fetch --no-tags origin \
-            ${{ github.event.pull_request.base.ref }} \
-            +refs/pull/${{ github.event.pull_request.number }}/head
+            +refs/pull/${PR_NUMBER}/head
+
+      - name: Validate OPENAI_API_KEY secret
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "❌ Error: OPENAI_API_KEY secret is not set"
+            echo "Please add OPENAI_API_KEY to repository secrets in Settings > Secrets and variables > Actions"
+            exit 1
+          fi
 
       - name: Run Codex
         id: run_codex
@@ -50,7 +73,7 @@ jobs:
 
             ${{ github.event.pull_request && format('This is PR #{0}: {1}', github.event.pull_request.number, github.event.pull_request.title) || format('This is Issue #{0}: {1}', github.event.issue.number, github.event.issue.title) }}
 
-            ${{ github.event.pull_request && format('Review ONLY the changes introduced by the PR. Consider: git log --oneline {0}...{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
+            ${{ github.event.pull_request && format('Review ONLY the changes introduced by the PR. Use: git diff {0}...{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
 
             Description:
             ----
@@ -92,5 +115,30 @@ jobs:
                 repo: context.repo.repo,
                 issue_number: issueNumber,
                 body: process.env.CODEX_FINAL_MESSAGE,
+              });
+            }
+
+  fallthrough:
+    needs:
+      - codex
+      - post_feedback
+    if: always() && !cancelled() && failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post failure comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const issueNumber = context.payload.pull_request?.number || context.payload.issue?.number;
+            if (issueNumber) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `🤖 I'm sorry @${{ github.actor }}, but I was unable to process your Codex request. Please [see the logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for more details.`,
               });
             }
