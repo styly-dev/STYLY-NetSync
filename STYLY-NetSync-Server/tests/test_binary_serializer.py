@@ -262,6 +262,71 @@ class TestTransformSerializationV3:
         """Protocol version constant should be updated to v3."""
         assert binary_serializer.PROTOCOL_VERSION == 3
 
+    def test_client_roundtrip_without_flags_infers_valid_bits(self) -> None:
+        """Serializer should infer valid bits when flags are omitted."""
+        payload = {
+            "deviceId": "infer-flags",
+            "poseSeq": 77,
+            "physical": _build_transform((1.2, 0.0, -2.3), (0.0, 0.0, 0.0, 1.0)),
+            "head": _build_transform((1.2, 1.6, -2.3), _random_unit_quaternion(random.Random(11))),
+            "rightHand": _build_transform((1.5, 1.2, -2.3), _random_unit_quaternion(random.Random(12))),
+            "leftHand": _build_transform((0.9, 1.2, -2.3), _random_unit_quaternion(random.Random(13))),
+            "virtuals": [
+                _build_transform((1.2, 1.0, -1.8), _random_unit_quaternion(random.Random(14)))
+            ],
+        }
+
+        msg_type, decoded, _ = binary_serializer.deserialize(
+            binary_serializer.serialize_client_transform(payload)
+        )
+        assert msg_type == binary_serializer.MSG_CLIENT_POSE_V2
+        assert decoded is not None
+
+        expected_flags = (
+            binary_serializer.POSE_FLAG_PHYSICAL_VALID
+            | binary_serializer.POSE_FLAG_HEAD_VALID
+            | binary_serializer.POSE_FLAG_RIGHT_VALID
+            | binary_serializer.POSE_FLAG_LEFT_VALID
+            | binary_serializer.POSE_FLAG_VIRTUALS_VALID
+        )
+        assert decoded["flags"] == expected_flags
+        assert abs(decoded["head"]["posX"] - 1.2) <= 0.01
+        assert abs(decoded["head"]["posY"] - 1.6) <= 0.01
+        assert abs(decoded["head"]["posZ"] + 2.3) <= 0.01
+        assert len(decoded["virtuals"]) == 1
+
+    def test_stealth_flag_sanitizes_transform_valid_bits(self) -> None:
+        """Stealth messages should not carry transform-valid bits or virtual payloads."""
+        payload = {
+            "deviceId": "stealth-sanitize",
+            "poseSeq": 88,
+            "flags": (
+                binary_serializer.POSE_FLAG_STEALTH
+                | binary_serializer.POSE_FLAG_PHYSICAL_VALID
+                | binary_serializer.POSE_FLAG_HEAD_VALID
+                | binary_serializer.POSE_FLAG_RIGHT_VALID
+                | binary_serializer.POSE_FLAG_LEFT_VALID
+                | binary_serializer.POSE_FLAG_VIRTUALS_VALID
+            ),
+            "physical": _build_transform((9.0, 9.0, 9.0), _random_unit_quaternion(random.Random(21))),
+            "head": _build_transform((8.0, 8.0, 8.0), _random_unit_quaternion(random.Random(22))),
+            "rightHand": _build_transform((7.0, 7.0, 7.0), _random_unit_quaternion(random.Random(23))),
+            "leftHand": _build_transform((6.0, 6.0, 6.0), _random_unit_quaternion(random.Random(24))),
+            "virtuals": [
+                _build_transform((5.0, 5.0, 5.0), _random_unit_quaternion(random.Random(25)))
+            ],
+        }
+
+        _, decoded, _ = binary_serializer.deserialize(
+            binary_serializer.serialize_client_transform(payload)
+        )
+        assert decoded is not None
+        assert decoded["flags"] == binary_serializer.POSE_FLAG_STEALTH
+        assert decoded["virtuals"] == []
+        assert decoded["head"]["posX"] == 0.0
+        assert decoded["head"]["posY"] == 0.0
+        assert decoded["head"]["posZ"] == 0.0
+
     def test_quaternion_codec_random_10000(self) -> None:
         """Quaternion smallest-three codec should remain within 1 degree."""
         rng = random.Random(42)

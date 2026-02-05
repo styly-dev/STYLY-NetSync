@@ -24,7 +24,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src')
 
 from styly_netsync.binary_serializer import (
     MSG_DEVICE_ID_MAPPING,
-    MSG_ROOM_TRANSFORM,
+    MSG_ROOM_POSE_V2,
     MSG_RPC,
     deserialize,
     serialize_client_transform,
@@ -377,7 +377,7 @@ class RawZMQClient(INetSyncClient):
                         logger.info(f"Received client number: {self.client_no} for {self.user_id}")
                         break
             
-            elif msg_type == MSG_ROOM_TRANSFORM:
+            elif msg_type == MSG_ROOM_POSE_V2:
                 # Record message for counters
                 result = self.metrics.record_message_received(None, "room_transform", len(message_data))
                 

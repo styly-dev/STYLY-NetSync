@@ -43,6 +43,13 @@ ENCODING_FLAGS_DEFAULT = (
     | ENCODING_VIRTUAL_REL_HEAD
 )
 
+POSE_FLAG_STEALTH = 1 << 0
+POSE_FLAG_PHYSICAL_VALID = 1 << 1
+POSE_FLAG_HEAD_VALID = 1 << 2
+POSE_FLAG_RIGHT_VALID = 1 << 3
+POSE_FLAG_LEFT_VALID = 1 << 4
+POSE_FLAG_VIRTUALS_VALID = 1 << 5
+
 
 def get_max_virtual_transforms() -> int:
     """Get the current maximum virtual transforms limit."""
@@ -279,24 +286,45 @@ def _create_transform_dict(
 def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     """Serialize a client body in protocol v3 compact format."""
     pose_seq = int(client.get("poseSeq", 0)) & 0xFFFF
-    flags = int(client.get("flags", 0)) & 0xFF
-    if (flags & 0x04) == 0:
-        flags &= ~(0x08 | 0x10 | 0x20)
-    buffer.extend(struct.pack("<H", pose_seq))
-    buffer.append(flags)
-    buffer.append(ENCODING_FLAGS_DEFAULT)
-
-    physical_valid = bool(flags & 0x02)
-    head_valid = bool(flags & 0x04)
-    right_valid = head_valid and bool(flags & 0x08)
-    left_valid = head_valid and bool(flags & 0x10)
-    virtual_valid = head_valid and bool(flags & 0x20)
-
     physical = client.get("physical", {}) or {}
     head = client.get("head", {}) or {}
     right = client.get("rightHand", {}) or {}
     left = client.get("leftHand", {}) or {}
     virtuals = client.get("virtuals", []) or []
+
+    raw_flags = client.get("flags")
+    if raw_flags is None:
+        flags = 0
+        if physical:
+            flags |= POSE_FLAG_PHYSICAL_VALID
+        if head:
+            flags |= POSE_FLAG_HEAD_VALID
+            if right:
+                flags |= POSE_FLAG_RIGHT_VALID
+            if left:
+                flags |= POSE_FLAG_LEFT_VALID
+            if virtuals:
+                flags |= POSE_FLAG_VIRTUALS_VALID
+    else:
+        flags = int(raw_flags) & 0xFF
+
+    # Stealth frames must not include transform-valid bits.
+    if flags & POSE_FLAG_STEALTH:
+        flags = POSE_FLAG_STEALTH
+
+    # Relative transforms require head as anchor.
+    if (flags & POSE_FLAG_HEAD_VALID) == 0:
+        flags &= ~(POSE_FLAG_RIGHT_VALID | POSE_FLAG_LEFT_VALID | POSE_FLAG_VIRTUALS_VALID)
+
+    buffer.extend(struct.pack("<H", pose_seq))
+    buffer.append(flags)
+    buffer.append(ENCODING_FLAGS_DEFAULT)
+
+    physical_valid = bool(flags & POSE_FLAG_PHYSICAL_VALID)
+    head_valid = bool(flags & POSE_FLAG_HEAD_VALID)
+    right_valid = head_valid and bool(flags & POSE_FLAG_RIGHT_VALID)
+    left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
+    virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
 
     physical_pos = _transform_get_position(physical)
     physical_rot = _transform_get_quaternion(physical)
@@ -718,11 +746,11 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     result["encodingFlags"] = encoding_flags
     offset += 1
 
-    physical_valid = bool(flags & 0x02)
-    head_valid = bool(flags & 0x04)
-    right_valid = head_valid and bool(flags & 0x08)
-    left_valid = head_valid and bool(flags & 0x10)
-    virtual_valid = head_valid and bool(flags & 0x20)
+    physical_valid = bool(flags & POSE_FLAG_PHYSICAL_VALID)
+    head_valid = bool(flags & POSE_FLAG_HEAD_VALID)
+    right_valid = head_valid and bool(flags & POSE_FLAG_RIGHT_VALID)
+    left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
+    virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
 
     physical = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, True)
     head = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False)
