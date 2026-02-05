@@ -1,11 +1,12 @@
 import logging
+import math
 import struct
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Message type identifiers
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call
@@ -25,6 +26,22 @@ MSG_ROOM_POSE_V2 = 12
 # This can be configured via set_max_virtual_transforms()
 _max_virtual_transforms = 50
 MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward compat
+
+# Protocol v3 transform encoding constants
+ABS_POS_SCALE = 0.01
+REL_POS_SCALE = 0.005
+PHYSICAL_YAW_SCALE = 0.1
+
+ENCODING_PHYSICAL_YAW_ONLY = 1 << 0
+ENCODING_RIGHT_REL_HEAD = 1 << 1
+ENCODING_LEFT_REL_HEAD = 1 << 2
+ENCODING_VIRTUAL_REL_HEAD = 1 << 3
+ENCODING_FLAGS_DEFAULT = (
+    ENCODING_PHYSICAL_YAW_ONLY
+    | ENCODING_RIGHT_REL_HEAD
+    | ENCODING_LEFT_REL_HEAD
+    | ENCODING_VIRTUAL_REL_HEAD
+)
 
 
 def get_max_virtual_transforms() -> int:
@@ -75,62 +92,312 @@ def _unpack_string(
     return string, offset + length
 
 
-def _pack_transform(
-    buffer: bytearray, transform: dict[str, Any], keys: list[str]
-) -> None:
-    """Pack a transform with specified keys"""
-    for key in keys:
-        default = 1.0 if key == "rotW" else 0.0
-        buffer.extend(struct.pack("<f", transform.get(key, default)))
-
-
-def _unpack_transform(
-    data: bytes, offset: int, keys: list[str], is_local_space: bool = False
-) -> tuple[dict[str, Any], int]:
-    """Unpack a transform with specified keys"""
-    transform = {"isLocalSpace": is_local_space}
-    for key in keys:
-        value = struct.unpack("<f", data[offset : offset + 4])[0]
-        transform[key] = value
-        offset += 4
-    return transform, offset
-
-
-def _pack_full_transform(buffer: bytearray, transform: dict[str, Any]) -> None:
-    """Pack a full 7-float pose (position + quaternion rotation)."""
-    _pack_transform(
-        buffer, transform, ["posX", "posY", "posZ", "rotX", "rotY", "rotZ", "rotW"]
+def _transform_get_position(transform: dict[str, Any]) -> tuple[float, float, float]:
+    """Read position from wire transform dict with defaults."""
+    return (
+        float(transform.get("posX", 0.0)),
+        float(transform.get("posY", 0.0)),
+        float(transform.get("posZ", 0.0)),
     )
 
 
-def _unpack_full_transform(
-    data: bytes, offset: int, is_local_space: bool = False
-) -> tuple[dict[str, Any], int]:
-    """Unpack a full 7-float pose (position + quaternion rotation)."""
-    return _unpack_transform(
-        data,
-        offset,
-        ["posX", "posY", "posZ", "rotX", "rotY", "rotZ", "rotW"],
-        is_local_space,
+def _transform_get_quaternion(transform: dict[str, Any]) -> tuple[float, float, float, float]:
+    """Read quaternion from wire transform dict with defaults."""
+    return (
+        float(transform.get("rotX", 0.0)),
+        float(transform.get("rotY", 0.0)),
+        float(transform.get("rotZ", 0.0)),
+        float(transform.get("rotW", 1.0)),
     )
+
+
+def _normalize_quaternion(
+    qx: float, qy: float, qz: float, qw: float
+) -> tuple[float, float, float, float]:
+    """Normalize a quaternion and guard against zero-length input."""
+    mag_sq = qx * qx + qy * qy + qz * qz + qw * qw
+    if mag_sq <= 1e-12:
+        return 0.0, 0.0, 0.0, 1.0
+
+    inv_mag = 1.0 / math.sqrt(mag_sq)
+    return qx * inv_mag, qy * inv_mag, qz * inv_mag, qw * inv_mag
+
+
+def _quaternion_inverse(
+    qx: float, qy: float, qz: float, qw: float
+) -> tuple[float, float, float, float]:
+    """Inverse of a unit quaternion (after normalization)."""
+    nx, ny, nz, nw = _normalize_quaternion(qx, qy, qz, qw)
+    return -nx, -ny, -nz, nw
+
+
+def _quaternion_multiply(
+    ax: float,
+    ay: float,
+    az: float,
+    aw: float,
+    bx: float,
+    by: float,
+    bz: float,
+    bw: float,
+) -> tuple[float, float, float, float]:
+    """Quaternion multiplication."""
+    return (
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    )
+
+
+def _quaternion_to_yaw_degrees(
+    qx: float, qy: float, qz: float, qw: float
+) -> float:
+    """Extract yaw in degrees from quaternion."""
+    nx, ny, nz, nw = _normalize_quaternion(qx, qy, qz, qw)
+    siny_cosp = 2.0 * (nw * ny + nz * nx)
+    cosy_cosp = 1.0 - 2.0 * (ny * ny + nz * nz)
+    yaw = math.degrees(math.atan2(siny_cosp, cosy_cosp))
+    return _normalize_yaw_degrees(yaw)
+
+
+def _normalize_yaw_degrees(yaw: float) -> float:
+    """Normalize yaw to [-180, 180)."""
+    normalized = ((yaw + 180.0) % 360.0) - 180.0
+    return normalized
+
+
+def _quantize_signed(value: float, scale: float) -> int:
+    """Quantize a float to signed int16 with clamping."""
+    if scale <= 0:
+        return 0
+    scaled = int(round(value / scale))
+    if scaled < -32768:
+        return -32768
+    if scaled > 32767:
+        return 32767
+    return scaled
+
+
+def _dequantize_signed(value: int, scale: float) -> float:
+    """Restore quantized value to float."""
+    return float(value) * scale
+
+
+def _compress_quaternion_smallest_three(
+    qx: float, qy: float, qz: float, qw: float
+) -> int:
+    """Compress quaternion to 32-bit using smallest-three encoding."""
+    nx, ny, nz, nw = _normalize_quaternion(qx, qy, qz, qw)
+    values = [nx, ny, nz, nw]
+    abs_values = [abs(v) for v in values]
+    largest_index = max(range(4), key=lambda i: abs_values[i])
+
+    if values[largest_index] < 0.0:
+        values = [-v for v in values]
+
+    qmin = -0.70710677
+    qmax = 0.70710677
+    max_10bit = 1023
+
+    packed = largest_index << 30
+    write_index = 0
+    for i in range(4):
+        if i == largest_index:
+            continue
+
+        clamped = min(max(values[i], qmin), qmax)
+        normalized = (clamped - qmin) / (qmax - qmin)
+        scaled = int(round(normalized * max_10bit))
+        if scaled < 0:
+            scaled = 0
+        if scaled > max_10bit:
+            scaled = max_10bit
+        shift = 20 - (write_index * 10)
+        packed |= scaled << shift
+        write_index += 1
+
+    return packed
+
+
+def _decompress_quaternion_smallest_three(packed: int) -> tuple[float, float, float, float]:
+    """Decompress 32-bit smallest-three quaternion."""
+    largest_index = (packed >> 30) & 0x3
+    a = (packed >> 20) & 0x3FF
+    b = (packed >> 10) & 0x3FF
+    c = packed & 0x3FF
+
+    qmin = -0.70710677
+    qmax = 0.70710677
+    inv = 1.0 / 1023.0
+
+    def decode(v: int) -> float:
+        return qmin + ((qmax - qmin) * (v * inv))
+
+    values = [0.0, 0.0, 0.0, 0.0]
+    read_values = [a, b, c]
+    read_index = 0
+    for i in range(4):
+        if i == largest_index:
+            continue
+        values[i] = decode(read_values[read_index])
+        read_index += 1
+
+    sum_sq = 0.0
+    for i in range(4):
+        if i == largest_index:
+            continue
+        sum_sq += values[i] * values[i]
+    values[largest_index] = math.sqrt(max(0.0, 1.0 - sum_sq))
+
+    return _normalize_quaternion(values[0], values[1], values[2], values[3])
+
+
+def _create_transform_dict(
+    px: float,
+    py: float,
+    pz: float,
+    qx: float,
+    qy: float,
+    qz: float,
+    qw: float,
+    is_local_space: bool,
+) -> dict[str, Any]:
+    """Create a standard wire transform dictionary."""
+    return {
+        "posX": px,
+        "posY": py,
+        "posZ": pz,
+        "rotX": qx,
+        "rotY": qy,
+        "rotZ": qz,
+        "rotW": qw,
+        "isLocalSpace": is_local_space,
+    }
 
 
 def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
-    """Serialize a client's body (poseSeq, flags, poses, virtuals)."""
-    buffer.extend(struct.pack("<H", client.get("poseSeq", 0)))
-    buffer.append(client.get("flags", 0))
+    """Serialize a client body in protocol v3 compact format."""
+    pose_seq = int(client.get("poseSeq", 0)) & 0xFFFF
+    flags = int(client.get("flags", 0)) & 0xFF
+    if (flags & 0x04) == 0:
+        flags &= ~(0x08 | 0x10 | 0x20)
+    buffer.extend(struct.pack("<H", pose_seq))
+    buffer.append(flags)
+    buffer.append(ENCODING_FLAGS_DEFAULT)
 
-    _pack_full_transform(buffer, client.get("physical", {}))
+    physical_valid = bool(flags & 0x02)
+    head_valid = bool(flags & 0x04)
+    right_valid = head_valid and bool(flags & 0x08)
+    left_valid = head_valid and bool(flags & 0x10)
+    virtual_valid = head_valid and bool(flags & 0x20)
 
-    for transform_key in ["head", "rightHand", "leftHand"]:
-        _pack_full_transform(buffer, client.get(transform_key, {}))
+    physical = client.get("physical", {}) or {}
+    head = client.get("head", {}) or {}
+    right = client.get("rightHand", {}) or {}
+    left = client.get("leftHand", {}) or {}
+    virtuals = client.get("virtuals", []) or []
 
-    virtuals = client.get("virtuals", [])
-    virtual_count = min(len(virtuals), MAX_VIRTUAL_TRANSFORMS)
+    physical_pos = _transform_get_position(physical)
+    physical_rot = _transform_get_quaternion(physical)
+    head_pos = _transform_get_position(head)
+    head_rot = _transform_get_quaternion(head)
+    head_rot_n = _normalize_quaternion(*head_rot)
+
+    if physical_valid:
+        buffer.extend(
+            struct.pack(
+                "<hhh",
+                _quantize_signed(physical_pos[0], ABS_POS_SCALE),
+                _quantize_signed(physical_pos[1], ABS_POS_SCALE),
+                _quantize_signed(physical_pos[2], ABS_POS_SCALE),
+            )
+        )
+        yaw_deg = _quaternion_to_yaw_degrees(*physical_rot)
+        buffer.extend(struct.pack("<h", _quantize_signed(yaw_deg, PHYSICAL_YAW_SCALE)))
+
+    if head_valid:
+        buffer.extend(
+            struct.pack(
+                "<hhh",
+                _quantize_signed(head_pos[0], ABS_POS_SCALE),
+                _quantize_signed(head_pos[1], ABS_POS_SCALE),
+                _quantize_signed(head_pos[2], ABS_POS_SCALE),
+            )
+        )
+        head_packed = _compress_quaternion_smallest_three(*head_rot_n)
+        buffer.extend(struct.pack("<I", head_packed))
+
+    inv_head_rot = _quaternion_inverse(*head_rot_n)
+
+    if right_valid:
+        right_pos = _transform_get_position(right)
+        right_rot = _normalize_quaternion(*_transform_get_quaternion(right))
+        rel_pos = (
+            right_pos[0] - head_pos[0],
+            right_pos[1] - head_pos[1],
+            right_pos[2] - head_pos[2],
+        )
+        rel_rot = _quaternion_multiply(*inv_head_rot, *right_rot)
+        buffer.extend(
+            struct.pack(
+                "<hhh",
+                _quantize_signed(rel_pos[0], REL_POS_SCALE),
+                _quantize_signed(rel_pos[1], REL_POS_SCALE),
+                _quantize_signed(rel_pos[2], REL_POS_SCALE),
+            )
+        )
+        buffer.extend(
+            struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot))
+        )
+
+    if left_valid:
+        left_pos = _transform_get_position(left)
+        left_rot = _normalize_quaternion(*_transform_get_quaternion(left))
+        rel_pos = (
+            left_pos[0] - head_pos[0],
+            left_pos[1] - head_pos[1],
+            left_pos[2] - head_pos[2],
+        )
+        rel_rot = _quaternion_multiply(*inv_head_rot, *left_rot)
+        buffer.extend(
+            struct.pack(
+                "<hhh",
+                _quantize_signed(rel_pos[0], REL_POS_SCALE),
+                _quantize_signed(rel_pos[1], REL_POS_SCALE),
+                _quantize_signed(rel_pos[2], REL_POS_SCALE),
+            )
+        )
+        buffer.extend(
+            struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot))
+        )
+
+    virtual_count = 0
+    if virtual_valid:
+        virtual_count = min(len(virtuals), MAX_VIRTUAL_TRANSFORMS)
     buffer.append(virtual_count)
 
     for i in range(virtual_count):
-        _pack_full_transform(buffer, virtuals[i])
+        vt = virtuals[i] or {}
+        vt_pos = _transform_get_position(vt)
+        vt_rot = _normalize_quaternion(*_transform_get_quaternion(vt))
+        rel_pos = (
+            vt_pos[0] - head_pos[0],
+            vt_pos[1] - head_pos[1],
+            vt_pos[2] - head_pos[2],
+        )
+        rel_rot = _quaternion_multiply(*inv_head_rot, *vt_rot)
+        buffer.extend(
+            struct.pack(
+                "<hhh",
+                _quantize_signed(rel_pos[0], REL_POS_SCALE),
+                _quantize_signed(rel_pos[1], REL_POS_SCALE),
+                _quantize_signed(rel_pos[2], REL_POS_SCALE),
+            )
+        )
+        buffer.extend(
+            struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot))
+        )
 
 
 def serialize_client_transform(data: dict[str, Any]) -> bytes:
@@ -439,45 +706,179 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
         return message_type, None, b""
 
 
-def _deserialize_client_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize client pose (v2) from binary data."""
+def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], int]:
+    """Deserialize protocol v3 compact pose body."""
     result: dict[str, Any] = {}
-
-    result["protocolVersion"] = data[offset]
-    offset += 1
-
-    # Device ID
-    result["deviceId"], offset = _unpack_string(data, offset)
-
     result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
-    result["flags"] = data[offset]
+    flags = data[offset]
+    result["flags"] = flags
+    offset += 1
+    encoding_flags = data[offset]
+    result["encodingFlags"] = encoding_flags
     offset += 1
 
-    # Physical pose
-    result["physical"], offset = _unpack_full_transform(
-        data, offset, is_local_space=True
-    )
+    physical_valid = bool(flags & 0x02)
+    head_valid = bool(flags & 0x04)
+    right_valid = head_valid and bool(flags & 0x08)
+    left_valid = head_valid and bool(flags & 0x10)
+    virtual_valid = head_valid and bool(flags & 0x20)
 
-    # Head, Right hand, Left hand transforms
-    result["head"], offset = _unpack_full_transform(data, offset)
-    result["rightHand"], offset = _unpack_full_transform(data, offset)
-    result["leftHand"], offset = _unpack_full_transform(data, offset)
+    physical = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, True)
+    head = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False)
+    right = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False)
+    left = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False)
 
-    # Virtual transforms
+    head_pos = (0.0, 0.0, 0.0)
+    head_rot = (0.0, 0.0, 0.0, 1.0)
+
+    if physical_valid:
+        px_q, py_q, pz_q = struct.unpack("<hhh", data[offset : offset + 6])
+        offset += 6
+        yaw_q = struct.unpack("<h", data[offset : offset + 2])[0]
+        offset += 2
+        yaw_deg = _dequantize_signed(yaw_q, PHYSICAL_YAW_SCALE)
+        yaw_rad = math.radians(yaw_deg)
+        half = yaw_rad * 0.5
+        qy = math.sin(half)
+        qw = math.cos(half)
+        physical = _create_transform_dict(
+            _dequantize_signed(px_q, ABS_POS_SCALE),
+            _dequantize_signed(py_q, ABS_POS_SCALE),
+            _dequantize_signed(pz_q, ABS_POS_SCALE),
+            0.0,
+            qy,
+            0.0,
+            qw,
+            True,
+        )
+
+    if head_valid:
+        hx_q, hy_q, hz_q = struct.unpack("<hhh", data[offset : offset + 6])
+        offset += 6
+        packed_head = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
+        head_pos = (
+            _dequantize_signed(hx_q, ABS_POS_SCALE),
+            _dequantize_signed(hy_q, ABS_POS_SCALE),
+            _dequantize_signed(hz_q, ABS_POS_SCALE),
+        )
+        head_rot = _decompress_quaternion_smallest_three(packed_head)
+        head = _create_transform_dict(
+            head_pos[0],
+            head_pos[1],
+            head_pos[2],
+            head_rot[0],
+            head_rot[1],
+            head_rot[2],
+            head_rot[3],
+            False,
+        )
+
+    if right_valid:
+        rx_q, ry_q, rz_q = struct.unpack("<hhh", data[offset : offset + 6])
+        offset += 6
+        packed_rel = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
+        rel_pos = (
+            _dequantize_signed(rx_q, REL_POS_SCALE),
+            _dequantize_signed(ry_q, REL_POS_SCALE),
+            _dequantize_signed(rz_q, REL_POS_SCALE),
+        )
+        rel_rot = _decompress_quaternion_smallest_three(packed_rel)
+        abs_pos = (
+            head_pos[0] + rel_pos[0],
+            head_pos[1] + rel_pos[1],
+            head_pos[2] + rel_pos[2],
+        )
+        abs_rot = _quaternion_multiply(*head_rot, *rel_rot)
+        abs_rot = _normalize_quaternion(*abs_rot)
+        right = _create_transform_dict(
+            abs_pos[0], abs_pos[1], abs_pos[2], abs_rot[0], abs_rot[1], abs_rot[2], abs_rot[3], False
+        )
+
+    if left_valid:
+        lx_q, ly_q, lz_q = struct.unpack("<hhh", data[offset : offset + 6])
+        offset += 6
+        packed_rel = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
+        rel_pos = (
+            _dequantize_signed(lx_q, REL_POS_SCALE),
+            _dequantize_signed(ly_q, REL_POS_SCALE),
+            _dequantize_signed(lz_q, REL_POS_SCALE),
+        )
+        rel_rot = _decompress_quaternion_smallest_three(packed_rel)
+        abs_pos = (
+            head_pos[0] + rel_pos[0],
+            head_pos[1] + rel_pos[1],
+            head_pos[2] + rel_pos[2],
+        )
+        abs_rot = _quaternion_multiply(*head_rot, *rel_rot)
+        abs_rot = _normalize_quaternion(*abs_rot)
+        left = _create_transform_dict(
+            abs_pos[0], abs_pos[1], abs_pos[2], abs_rot[0], abs_rot[1], abs_rot[2], abs_rot[3], False
+        )
+
     virtual_count = data[offset]
     offset += 1
-
-    # Validate virtual count to prevent memory issues
     if virtual_count > MAX_VIRTUAL_TRANSFORMS:
         virtual_count = MAX_VIRTUAL_TRANSFORMS
 
-    if virtual_count > 0:
-        result["virtuals"] = []
-        for _ in range(virtual_count):
-            vt, offset = _unpack_full_transform(data, offset)
-            result["virtuals"].append(vt)
+    virtuals: list[dict[str, Any]] = []
+    for _ in range(virtual_count):
+        vx_q, vy_q, vz_q = struct.unpack("<hhh", data[offset : offset + 6])
+        offset += 6
+        packed_rel = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
+        if virtual_valid:
+            rel_pos = (
+                _dequantize_signed(vx_q, REL_POS_SCALE),
+                _dequantize_signed(vy_q, REL_POS_SCALE),
+                _dequantize_signed(vz_q, REL_POS_SCALE),
+            )
+            rel_rot = _decompress_quaternion_smallest_three(packed_rel)
+            abs_pos = (
+                head_pos[0] + rel_pos[0],
+                head_pos[1] + rel_pos[1],
+                head_pos[2] + rel_pos[2],
+            )
+            abs_rot = _quaternion_multiply(*head_rot, *rel_rot)
+            abs_rot = _normalize_quaternion(*abs_rot)
+            virtuals.append(
+                _create_transform_dict(
+                    abs_pos[0],
+                    abs_pos[1],
+                    abs_pos[2],
+                    abs_rot[0],
+                    abs_rot[1],
+                    abs_rot[2],
+                    abs_rot[3],
+                    False,
+                )
+            )
 
+    result["physical"] = physical
+    result["head"] = head
+    result["rightHand"] = right
+    result["leftHand"] = left
+    result["virtuals"] = virtuals
+    return result, offset
+
+
+def _deserialize_client_transform(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize client pose (v3) from binary data."""
+    result: dict[str, Any] = {}
+
+    protocol_version = data[offset]
+    result["protocolVersion"] = protocol_version
+    offset += 1
+    if protocol_version != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported protocol version: {protocol_version}")
+
+    # Device ID
+    result["deviceId"], offset = _unpack_string(data, offset)
+    body, offset = _deserialize_client_body(data, offset)
+    result.update(body)
     return result
 
 
@@ -495,11 +896,14 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
 
 
 def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize room pose (v2) with client numbers only."""
+    """Deserialize room pose (v3) with client numbers only."""
     result: dict[str, Any] = {}
 
-    result["protocolVersion"] = data[offset]
+    protocol_version = data[offset]
+    result["protocolVersion"] = protocol_version
     offset += 1
+    if protocol_version != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported protocol version: {protocol_version}")
 
     # Room ID
     result["roomId"], offset = _unpack_string(data, offset)
@@ -524,35 +928,8 @@ def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
         client["poseTime"] = struct.unpack("<d", data[offset : offset + 8])[0]
         offset += 8
 
-        # Pose sequence + flags
-        client["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
-        offset += 2
-        client["flags"] = data[offset]
-        offset += 1
-
-        # Physical pose
-        client["physical"], offset = _unpack_full_transform(
-            data, offset, is_local_space=True
-        )
-
-        # Head, Right hand, Left hand transforms
-        client["head"], offset = _unpack_full_transform(data, offset)
-        client["rightHand"], offset = _unpack_full_transform(data, offset)
-        client["leftHand"], offset = _unpack_full_transform(data, offset)
-
-        # Virtual transforms
-        virtual_count = data[offset]
-        offset += 1
-
-        # Validate virtual count to prevent memory issues
-        if virtual_count > MAX_VIRTUAL_TRANSFORMS:
-            virtual_count = MAX_VIRTUAL_TRANSFORMS
-
-        if virtual_count > 0:
-            client["virtuals"] = []
-            for _ in range(virtual_count):
-                vt, offset = _unpack_full_transform(data, offset)
-                client["virtuals"].append(vt)
+        body, offset = _deserialize_client_body(data, offset)
+        client.update(body)
 
         result["clients"].append(client)
 

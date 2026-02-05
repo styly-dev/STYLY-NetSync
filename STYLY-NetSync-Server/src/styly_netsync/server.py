@@ -1035,7 +1035,7 @@ class NetSyncServer:
                         except UnicodeDecodeError as e:
                             logger.error(f"Failed to decode room ID: {e}")
                             continue
-                        # Try binary first, fallback to JSON for compatibility
+                        # Protocol v3 binary-only handling (no JSON fallback)
                         try:
                             msg_type, data, raw_payload = binary_serializer.deserialize(
                                 message_bytes
@@ -1072,13 +1072,12 @@ class NetSyncServer:
                                 self._monitor_nv_sliding_window(room_id)
                             else:
                                 logger.warning(f"Unknown binary msg_type: {msg_type}")
-                        except Exception:
-                            # Fallback to JSON for backward compatibility
-                            try:
-                                message = message_bytes.decode("utf-8")
-                                self._process_message(client_identity, room_id, message)
-                            except UnicodeDecodeError as e:
-                                logger.error(f"Failed to decode message: {e}")
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to decode protocol v3 message from room %s: %s",
+                                room_id,
+                                e,
+                            )
 
                     else:
                         logger.warning(
@@ -1708,7 +1707,7 @@ class NetSyncServer:
     def _adaptive_broadcast_all_rooms(self, current_time: float) -> None:
         """Broadcast room state with adaptive rates based on activity"""
         rooms_to_broadcast: list[
-            tuple[str, list[tuple[int, dict[str, Any] | None, bytes]]]
+            tuple[str, list[tuple[int, float, dict[str, Any] | None, bytes]]]
         ] = []
 
         with self._rooms_lock:

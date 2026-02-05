@@ -2,7 +2,6 @@
 // Note: This class now reuses MemoryStream/BinaryWriter/NetMQMessage and a pooled byte[] buffer
 // to reduce per-send allocations and GC pressure.
 using System;
-using System.Buffers;
 using System.IO;
 using System.Text;
 using UnityEngine;
@@ -16,6 +15,9 @@ namespace Styly.NetSync
         private int _messagesSent;
         private float _lastSendTime;
         private ushort _poseSeq;
+        private bool _hasLastPoseSignature;
+        private ulong _lastPoseSignature;
+        private float _lastPoseSentTime;
 
         // Reusable pooled buffer + stream + writer
         private readonly ReusableBufferWriter _buf;
@@ -24,6 +26,7 @@ namespace Styly.NetSync
         private const int MAX_VIRTUAL_TRANSFORMS = 50;
         // Initial buffer size chosen to cover typical payloads without resizing
         private const int INITIAL_BUFFER_CAPACITY = 2048;
+        private const float HEARTBEAT_INTERVAL_SECONDS = 1f;
 
         public float SendRate { get; set; } = 10f;
         public int MessagesSent => _messagesSent;
@@ -46,6 +49,17 @@ namespace Styly.NetSync
             try
             {
                 var tx = localAvatar.GetTransformData();
+                var poseSignature = BinarySerializer.ComputePoseSignature(tx);
+                var now = Time.time;
+
+                // Only send on change or heartbeat to reduce traffic while preserving liveness.
+                if (_hasLastPoseSignature &&
+                    poseSignature == _lastPoseSignature &&
+                    now - _lastPoseSentTime < HEARTBEAT_INTERVAL_SECONDS)
+                {
+                    return SendOutcome.Sent();
+                }
+
                 _poseSeq++;
                 tx.poseSeq = _poseSeq;
 
@@ -68,6 +82,9 @@ namespace Styly.NetSync
                 // Use SetLatestTransform for latest-wins semantics
                 // This always succeeds (overwrites previous) - actual send is async in network thread
                 _connectionManager.SetLatestTransform(roomId, payload);
+                _hasLastPoseSignature = true;
+                _lastPoseSignature = poseSignature;
+                _lastPoseSentTime = now;
                 _messagesSent++;
                 return SendOutcome.Sent();
             }
@@ -132,20 +149,48 @@ namespace Styly.NetSync
         /// </summary>
         private static int EstimateClientTransformSize(ClientTransformData data)
         {
-            // 1 (type) + 1 (protocol) + 1 (deviceIdLen) + deviceIdBytes + 2 (poseSeq) + 1 (flags)
-            // + 4x TransformData (7 floats each) + 1 (virtual count) + N * 28
+            // 1(type) + 1(protocol) + 1(deviceLen) + deviceId + 2(poseSeq) + 1(flags) + 1(encodingFlags) + 1(virtualCount)
             var deviceIdBytes = data != null ? Encoding.UTF8.GetByteCount(data.deviceId ?? string.Empty) : 0;
             if (deviceIdBytes > 255) deviceIdBytes = 255; // Length prefix is 1 byte
 
-            var baseSize = 1 + 1 + 1 + deviceIdBytes + 2 + 1 + (4 * 7 * sizeof(float)) + 1;
+            var baseSize = 1 + 1 + 1 + deviceIdBytes + 2 + 1 + 1 + 1;
+            var bodySize = 0;
+
+            var flags = data != null ? data.flags : PoseFlags.None;
+            bool physicalValid = (flags & PoseFlags.PhysicalValid) != 0;
+            bool headValid = (flags & PoseFlags.HeadValid) != 0;
+            bool rightValid = headValid && ((flags & PoseFlags.RightValid) != 0);
+            bool leftValid = headValid && ((flags & PoseFlags.LeftValid) != 0);
+            bool virtualValid = headValid && ((flags & PoseFlags.VirtualsValid) != 0);
+
+            if (physicalValid)
+            {
+                bodySize += (3 * sizeof(short)) + sizeof(short); // pos i16x3 + yaw i16
+            }
+
+            if (headValid)
+            {
+                bodySize += (3 * sizeof(short)) + sizeof(uint); // pos i16x3 + compressed rot
+            }
+
+            if (rightValid)
+            {
+                bodySize += (3 * sizeof(short)) + sizeof(uint); // relative pos + relative rot
+            }
+
+            if (leftValid)
+            {
+                bodySize += (3 * sizeof(short)) + sizeof(uint); // relative pos + relative rot
+            }
+
             var virtualCount = 0;
-            if (data != null && data.virtuals != null)
+            if (virtualValid && data != null && data.virtuals != null)
             {
                 virtualCount = data.virtuals.Count;
                 if (virtualCount > MAX_VIRTUAL_TRANSFORMS) virtualCount = MAX_VIRTUAL_TRANSFORMS;
             }
-            var virtualSize = virtualCount * (7 * sizeof(float));
-            return baseSize + virtualSize;
+            var virtualSize = virtualCount * ((3 * sizeof(short)) + sizeof(uint)); // relative pos + relative rot
+            return baseSize + bodySize + virtualSize;
         }
 
         /// <summary>
@@ -155,9 +200,8 @@ namespace Styly.NetSync
         {
             var deviceIdBytes = deviceId != null ? Encoding.UTF8.GetByteCount(deviceId) : 0;
             if (deviceIdBytes > 255) deviceIdBytes = 255; // Length prefix is 1 byte
-            // 1 (type) + 1 (protocol) + 1 (deviceIdLen) + deviceId + 2 (poseSeq) + 1 (flags)
-            // + 4 * 7 floats + 1 (virtual count 0)
-            return 1 + 1 + 1 + deviceIdBytes + 2 + 1 + (4 * 7 * sizeof(float)) + 1;
+            // 1(type) + 1(protocol) + 1(deviceIdLen) + deviceId + 2(poseSeq) + 1(flags) + 1(encodingFlags) + 1(virtualCount)
+            return 1 + 1 + 1 + deviceIdBytes + 2 + 1 + 1 + 1;
         }
 
         /// <summary>

@@ -87,6 +87,9 @@ class RawZMQClient(INetSyncClient):
         # Callbacks for metrics recording
         self.on_transform_received = None
         self.on_rpc_response_received = None  # Callback for RPC response latency recording
+
+        # One-shot payload size comparison log (legacy v2 estimate vs protocol v3 actual)
+        self._payload_size_logged = False
         
         logger.info(f"RawZMQClient initialized: user_id={self.user_id}, device_id={self.device_id[:8]}...")
     
@@ -227,6 +230,20 @@ class RawZMQClient(INetSyncClient):
             
             # Serialize and send
             message_bytes = serialize_client_transform(transform_data)
+            if not self._payload_size_logged:
+                legacy_size = self._estimate_legacy_v2_transform_size(transform_data)
+                current_size = len(message_bytes)
+                reduction = 0.0
+                if legacy_size > 0:
+                    reduction = (legacy_size - current_size) / legacy_size * 100.0
+                logger.info(
+                    "Transform payload size comparison: legacy_v2=%d bytes, protocol_v3=%d bytes, reduction=%.1f%%",
+                    legacy_size,
+                    current_size,
+                    reduction,
+                )
+                self._payload_size_logged = True
+
             message_id = f"transform_{self.device_id}_{current_time}"
             self.dealer_socket.send_multipart([
                 config.room_id.encode('utf-8'),
@@ -251,6 +268,23 @@ class RawZMQClient(INetSyncClient):
             logger.error(f"Failed to send transform update: {e}")
             self.metrics.record_connection_error()
             return False
+
+    @staticmethod
+    def _estimate_legacy_v2_transform_size(transform_data: Dict[str, Any]) -> int:
+        """Estimate old protocol v2 payload size for before/after benchmark logs."""
+        device_id_bytes = len((transform_data.get("deviceId", "") or "").encode("utf-8"))
+        if device_id_bytes > 255:
+            device_id_bytes = 255
+
+        virtuals = transform_data.get("virtuals", []) or []
+        virtual_count = len(virtuals)
+        if virtual_count > 50:
+            virtual_count = 50
+
+        # v2 body: poseSeq(2) + flags(1) + 4 transforms * 7 floats + virtualCount(1) + N * 7 floats
+        base = 1 + 1 + 1 + device_id_bytes + 2 + 1 + (4 * 7 * 4) + 1
+        virtual_size = virtual_count * (7 * 4)
+        return base + virtual_size
     
     def send_rpc(self, function_name: str, args: List[Any]) -> bool:
         """Send an RPC message with message_id for latency tracking."""

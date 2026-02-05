@@ -302,11 +302,12 @@ namespace Styly.NetSync
                 return flags;
             }
 
-            if (_head != null) { flags |= PoseFlags.HeadValid; }
-            if (_rightHand != null) { flags |= PoseFlags.RightValid; }
-            if (_leftHand != null) { flags |= PoseFlags.LeftValid; }
+            bool hasHead = _head != null;
+            if (hasHead) { flags |= PoseFlags.HeadValid; }
+            if (hasHead && _rightHand != null) { flags |= PoseFlags.RightValid; }
+            if (hasHead && _leftHand != null) { flags |= PoseFlags.LeftValid; }
             if (true) { flags |= PoseFlags.PhysicalValid; }
-            if (_virtualTransforms != null && _virtualTransforms.Length > 0)
+            if (hasHead && _virtualTransforms != null && _virtualTransforms.Length > 0)
             {
                 flags |= PoseFlags.VirtualsValid;
             }
