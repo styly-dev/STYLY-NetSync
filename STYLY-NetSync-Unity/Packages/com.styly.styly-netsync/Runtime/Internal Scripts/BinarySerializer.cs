@@ -28,6 +28,8 @@ namespace Styly.NetSync
         private const float ABS_POS_SCALE = 0.01f;
         private const float REL_POS_SCALE = 0.005f;
         private const float PHYSICAL_YAW_SCALE = 0.1f;
+        private const int ABS_POS_MIN_QUANTIZED = -(1 << 23);
+        private const int ABS_POS_MAX_QUANTIZED = (1 << 23) - 1;
 
         private const byte ENCODING_PHYSICAL_YAW_ONLY = 1 << 0;
         private const byte ENCODING_RIGHT_REL_HEAD = 1 << 1;
@@ -81,6 +83,61 @@ namespace Styly.NetSync
         private static Vector3 QuantizedToVector3(short x, short y, short z, float scale)
         {
             return new Vector3(x * scale, y * scale, z * scale);
+        }
+
+        private static Vector3 QuantizedToVector3(int x, int y, int z, float scale)
+        {
+            return new Vector3(x * scale, y * scale, z * scale);
+        }
+
+        private static int QuantizeSignedInt24(float value, float scale)
+        {
+            if (scale <= 0f)
+            {
+                return 0;
+            }
+
+            var rounded = Mathf.RoundToInt(value / scale);
+            if (rounded > ABS_POS_MAX_QUANTIZED)
+            {
+                return ABS_POS_MAX_QUANTIZED;
+            }
+            if (rounded < ABS_POS_MIN_QUANTIZED)
+            {
+                return ABS_POS_MIN_QUANTIZED;
+            }
+            return rounded;
+        }
+
+        private static void WriteInt24(BinaryWriter writer, int value)
+        {
+            var clamped = value;
+            if (clamped > ABS_POS_MAX_QUANTIZED)
+            {
+                clamped = ABS_POS_MAX_QUANTIZED;
+            }
+            if (clamped < ABS_POS_MIN_QUANTIZED)
+            {
+                clamped = ABS_POS_MIN_QUANTIZED;
+            }
+
+            var unsignedValue = (uint)(clamped & 0xFFFFFF);
+            writer.Write((byte)(unsignedValue & 0xFF));
+            writer.Write((byte)((unsignedValue >> 8) & 0xFF));
+            writer.Write((byte)((unsignedValue >> 16) & 0xFF));
+        }
+
+        private static int ReadInt24(BinaryReader reader)
+        {
+            int b0 = reader.ReadByte();
+            int b1 = reader.ReadByte();
+            int b2 = reader.ReadByte();
+            int value = b0 | (b1 << 8) | (b2 << 16);
+            if ((value & 0x800000) != 0)
+            {
+                value |= unchecked((int)0xFF000000);
+            }
+            return value;
         }
 
         private static float NormalizeYawDegrees(float yaw)
@@ -243,6 +300,20 @@ namespace Styly.NetSync
             }
         }
 
+        private static void HashInt24(ref ulong hash, int value)
+        {
+            unchecked
+            {
+                uint unsignedValue = (uint)(value & 0xFFFFFF);
+                hash ^= (byte)(unsignedValue & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)((unsignedValue >> 8) & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)((unsignedValue >> 16) & 0xFF);
+                hash *= 1099511628211UL;
+            }
+        }
+
         /// <summary>
         /// Computes a stable hash for the quantized pose payload content.
         /// Pose sequence and device ID are intentionally excluded.
@@ -273,17 +344,17 @@ namespace Styly.NetSync
 
             if (physicalValid)
             {
-                HashShort(ref hash, QuantizeSigned(physical.position.x, ABS_POS_SCALE));
-                HashShort(ref hash, QuantizeSigned(physical.position.y, ABS_POS_SCALE));
-                HashShort(ref hash, QuantizeSigned(physical.position.z, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(physical.position.x, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(physical.position.y, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(physical.position.z, ABS_POS_SCALE));
                 HashShort(ref hash, QuantizeSigned(QuaternionToYawDegrees(physical.rotation), PHYSICAL_YAW_SCALE));
             }
 
             if (headValid)
             {
-                HashShort(ref hash, QuantizeSigned(head.position.x, ABS_POS_SCALE));
-                HashShort(ref hash, QuantizeSigned(head.position.y, ABS_POS_SCALE));
-                HashShort(ref hash, QuantizeSigned(head.position.z, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(head.position.x, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(head.position.y, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(head.position.z, ABS_POS_SCALE));
                 HashUInt(ref hash, CompressQuaternionSmallestThree(headRot));
             }
 
@@ -384,9 +455,9 @@ namespace Styly.NetSync
 
             if (physicalValid)
             {
-                writer.Write(QuantizeSigned(physical.position.x, ABS_POS_SCALE));
-                writer.Write(QuantizeSigned(physical.position.y, ABS_POS_SCALE));
-                writer.Write(QuantizeSigned(physical.position.z, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(physical.position.x, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(physical.position.y, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(physical.position.z, ABS_POS_SCALE));
 
                 var yawDegrees = QuaternionToYawDegrees(physical.rotation);
                 writer.Write(QuantizeSigned(yawDegrees, PHYSICAL_YAW_SCALE));
@@ -394,9 +465,9 @@ namespace Styly.NetSync
 
             if (headValid)
             {
-                writer.Write(QuantizeSigned(head.position.x, ABS_POS_SCALE));
-                writer.Write(QuantizeSigned(head.position.y, ABS_POS_SCALE));
-                writer.Write(QuantizeSigned(head.position.z, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(head.position.x, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(head.position.y, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(head.position.z, ABS_POS_SCALE));
                 writer.Write(CompressQuaternionSmallestThree(headRot));
             }
 
@@ -589,9 +660,9 @@ namespace Styly.NetSync
 
                 if (physicalValid)
                 {
-                    short px = reader.ReadInt16();
-                    short py = reader.ReadInt16();
-                    short pz = reader.ReadInt16();
+                    int px = ReadInt24(reader);
+                    int py = ReadInt24(reader);
+                    int pz = ReadInt24(reader);
                     short yawQ = reader.ReadInt16();
                     client.physical.position = QuantizedToVector3(px, py, pz, ABS_POS_SCALE);
                     client.physical.rotation = Quaternion.Euler(0f, yawQ * PHYSICAL_YAW_SCALE, 0f);
@@ -606,9 +677,9 @@ namespace Styly.NetSync
                 var headRot = Quaternion.identity;
                 if (headValid)
                 {
-                    short hx = reader.ReadInt16();
-                    short hy = reader.ReadInt16();
-                    short hz = reader.ReadInt16();
+                    int hx = ReadInt24(reader);
+                    int hy = ReadInt24(reader);
+                    int hz = ReadInt24(reader);
                     uint packedHeadRot = reader.ReadUInt32();
                     headPos = QuantizedToVector3(hx, hy, hz, ABS_POS_SCALE);
                     headRot = DecompressQuaternionSmallestThree(packedHeadRot);

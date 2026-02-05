@@ -32,6 +32,12 @@ ABS_POS_SCALE = 0.01
 REL_POS_SCALE = 0.005
 PHYSICAL_YAW_SCALE = 0.1
 
+# Quantized integer limits
+INT16_MIN = -32768
+INT16_MAX = 32767
+INT24_MIN = -(1 << 23)
+INT24_MAX = (1 << 23) - 1
+
 # Quaternion codec constants
 # 1/sqrt(2) — the maximum magnitude of any non-largest component in a unit quaternion
 QUAT_COMPONENT_MIN = -0.70710677
@@ -185,16 +191,51 @@ def _quantize_signed(value: float, scale: float) -> int:
     if scale <= 0:
         return 0
     scaled = int(round(value / scale))
-    if scaled < -32768:
-        return -32768
-    if scaled > 32767:
-        return 32767
+    if scaled < INT16_MIN:
+        return INT16_MIN
+    if scaled > INT16_MAX:
+        return INT16_MAX
+    return scaled
+
+
+def _quantize_signed_int24(value: float, scale: float) -> int:
+    """Quantize a float to signed int24 with clamping."""
+    if scale <= 0:
+        return 0
+    scaled = int(round(value / scale))
+    if scaled < INT24_MIN:
+        return INT24_MIN
+    if scaled > INT24_MAX:
+        return INT24_MAX
     return scaled
 
 
 def _dequantize_signed(value: int, scale: float) -> float:
     """Restore quantized value to float."""
     return float(value) * scale
+
+
+def _pack_int24_le(buffer: bytearray, value: int) -> None:
+    """Pack signed int24 to little-endian bytes with clamping."""
+    clamped = value
+    if clamped < INT24_MIN:
+        clamped = INT24_MIN
+    if clamped > INT24_MAX:
+        clamped = INT24_MAX
+
+    unsigned = clamped & 0xFFFFFF
+    buffer.append(unsigned & 0xFF)
+    buffer.append((unsigned >> 8) & 0xFF)
+    buffer.append((unsigned >> 16) & 0xFF)
+
+
+def _unpack_int24_le(data: bytes, offset: int) -> tuple[int, int]:
+    """Unpack signed little-endian int24 and return (value, next_offset)."""
+    raw = data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16)
+    offset += 3
+    if raw & 0x800000:
+        raw -= 1 << 24
+    return raw, offset
 
 
 def _compress_quaternion_smallest_three(
@@ -349,26 +390,16 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     head_rot_n = _normalize_quaternion(*head_rot)
 
     if physical_valid:
-        buffer.extend(
-            struct.pack(
-                "<hhh",
-                _quantize_signed(physical_pos[0], ABS_POS_SCALE),
-                _quantize_signed(physical_pos[1], ABS_POS_SCALE),
-                _quantize_signed(physical_pos[2], ABS_POS_SCALE),
-            )
-        )
+        _pack_int24_le(buffer, _quantize_signed_int24(physical_pos[0], ABS_POS_SCALE))
+        _pack_int24_le(buffer, _quantize_signed_int24(physical_pos[1], ABS_POS_SCALE))
+        _pack_int24_le(buffer, _quantize_signed_int24(physical_pos[2], ABS_POS_SCALE))
         yaw_deg = _quaternion_to_yaw_degrees(*physical_rot)
         buffer.extend(struct.pack("<h", _quantize_signed(yaw_deg, PHYSICAL_YAW_SCALE)))
 
     if head_valid:
-        buffer.extend(
-            struct.pack(
-                "<hhh",
-                _quantize_signed(head_pos[0], ABS_POS_SCALE),
-                _quantize_signed(head_pos[1], ABS_POS_SCALE),
-                _quantize_signed(head_pos[2], ABS_POS_SCALE),
-            )
-        )
+        _pack_int24_le(buffer, _quantize_signed_int24(head_pos[0], ABS_POS_SCALE))
+        _pack_int24_le(buffer, _quantize_signed_int24(head_pos[1], ABS_POS_SCALE))
+        _pack_int24_le(buffer, _quantize_signed_int24(head_pos[2], ABS_POS_SCALE))
         head_packed = _compress_quaternion_smallest_three(*head_rot_n)
         buffer.extend(struct.pack("<I", head_packed))
 
@@ -770,8 +801,9 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     head_rot = (0.0, 0.0, 0.0, 1.0)
 
     if physical_valid:
-        px_q, py_q, pz_q = struct.unpack("<hhh", data[offset : offset + 6])
-        offset += 6
+        px_q, offset = _unpack_int24_le(data, offset)
+        py_q, offset = _unpack_int24_le(data, offset)
+        pz_q, offset = _unpack_int24_le(data, offset)
         yaw_q = struct.unpack("<h", data[offset : offset + 2])[0]
         offset += 2
         yaw_deg = _dequantize_signed(yaw_q, PHYSICAL_YAW_SCALE)
@@ -791,8 +823,9 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
         )
 
     if head_valid:
-        hx_q, hy_q, hz_q = struct.unpack("<hhh", data[offset : offset + 6])
-        offset += 6
+        hx_q, offset = _unpack_int24_le(data, offset)
+        hy_q, offset = _unpack_int24_le(data, offset)
+        hz_q, offset = _unpack_int24_le(data, offset)
         packed_head = struct.unpack("<I", data[offset : offset + 4])[0]
         offset += 4
         head_pos = (

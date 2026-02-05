@@ -453,7 +453,7 @@ class TestTransformSerializationV3:
                 assert virtual_err <= 1.0
 
     def test_clamp_boundaries(self) -> None:
-        """Out-of-range values should clamp to int16 range."""
+        """Out-of-range values should clamp to configured quantized ranges."""
         payload = {
             "deviceId": "clamp-test",
             "poseSeq": 10,
@@ -471,10 +471,10 @@ class TestTransformSerializationV3:
         )
         assert decoded is not None
 
-        max_abs = 32767 * binary_serializer.ABS_POS_SCALE
-        min_abs = -32768 * binary_serializer.ABS_POS_SCALE
-        max_rel = 32767 * binary_serializer.REL_POS_SCALE
-        min_rel = -32768 * binary_serializer.REL_POS_SCALE
+        max_abs = binary_serializer.INT24_MAX * binary_serializer.ABS_POS_SCALE
+        min_abs = binary_serializer.INT24_MIN * binary_serializer.ABS_POS_SCALE
+        max_rel = binary_serializer.INT16_MAX * binary_serializer.REL_POS_SCALE
+        min_rel = binary_serializer.INT16_MIN * binary_serializer.REL_POS_SCALE
 
         assert min_abs <= decoded["head"]["posX"] <= max_abs
         assert min_abs <= decoded["head"]["posY"] <= max_abs
@@ -488,6 +488,46 @@ class TestTransformSerializationV3:
         assert min_rel <= rel_right[0] <= max_rel
         assert min_rel <= rel_right[1] <= max_rel
         assert min_rel <= rel_right[2] <= max_rel
+
+    def test_absolute_int24_range_roundtrip(self) -> None:
+        """Absolute positions beyond int16 range should survive without clamp."""
+        payload = {
+            "deviceId": "int24-abs-range",
+            "poseSeq": 33,
+            "flags": 0x3E,
+            "physical": _build_transform((5000.12, -5000.34, 4321.56), (0.0, 0.0, 0.0, 1.0)),
+            "head": _build_transform((5000.78, -5000.9, 4321.01), _random_unit_quaternion(random.Random(31))),
+            "rightHand": _build_transform((5001.0, -5000.5, 4321.2), _random_unit_quaternion(random.Random(32))),
+            "leftHand": _build_transform((5000.5, -5000.5, 4320.8), _random_unit_quaternion(random.Random(33))),
+            "virtuals": [],
+        }
+        _, decoded, _ = binary_serializer.deserialize(
+            binary_serializer.serialize_client_transform(payload)
+        )
+        assert decoded is not None
+        assert abs(decoded["physical"]["posX"] - 5000.12) <= 0.01
+        assert abs(decoded["physical"]["posY"] + 5000.34) <= 0.01
+        assert abs(decoded["physical"]["posZ"] - 4321.56) <= 0.01
+        assert abs(decoded["head"]["posX"] - 5000.78) <= 0.01
+        assert abs(decoded["head"]["posY"] + 5000.9) <= 0.01
+        assert abs(decoded["head"]["posZ"] - 4321.01) <= 0.01
+
+    def test_client_body_size_with_full_pose_no_virtuals(self) -> None:
+        """Full pose body (no virtuals) should match current protocol v3 byte size."""
+        payload = {
+            "deviceId": "size-check",
+            "poseSeq": 1,
+            "flags": 0x1E,  # Physical + Head + Right + Left
+            "physical": _build_transform((1.0, 0.0, 2.0), (0.0, 0.0, 0.0, 1.0)),
+            "head": _build_transform((1.0, 1.6, 2.0), _random_unit_quaternion(random.Random(41))),
+            "rightHand": _build_transform((1.3, 1.2, 2.0), _random_unit_quaternion(random.Random(42))),
+            "leftHand": _build_transform((0.7, 1.2, 2.0), _random_unit_quaternion(random.Random(43))),
+            "virtuals": [],
+        }
+        _, _, raw = binary_serializer.deserialize(
+            binary_serializer.serialize_client_transform(payload)
+        )
+        assert len(raw) == 49
 
     def test_room_relay_integrity(self) -> None:
         """Room serialization should preserve pose sequence, flags, and decoded pose fidelity."""

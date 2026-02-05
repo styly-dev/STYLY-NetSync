@@ -27,6 +27,7 @@ namespace Styly.NetSync
         // Initial buffer size chosen to cover typical payloads without resizing
         private const int INITIAL_BUFFER_CAPACITY = 2048;
         private const float HEARTBEAT_INTERVAL_SECONDS = 1f;
+        private const int ABS_POS_BYTES_PER_AXIS = 3;
 
         public float SendRate { get; set; } = 10f;
         public int MessagesSent => _messagesSent;
@@ -165,12 +166,12 @@ namespace Styly.NetSync
 
             if (physicalValid)
             {
-                bodySize += (3 * sizeof(short)) + sizeof(short); // pos i16x3 + yaw i16
+                bodySize += (3 * ABS_POS_BYTES_PER_AXIS) + sizeof(short); // pos i24x3 + yaw i16
             }
 
             if (headValid)
             {
-                bodySize += (3 * sizeof(short)) + sizeof(uint); // pos i16x3 + compressed rot
+                bodySize += (3 * ABS_POS_BYTES_PER_AXIS) + sizeof(uint); // pos i24x3 + compressed rot
             }
 
             if (rightValid)
