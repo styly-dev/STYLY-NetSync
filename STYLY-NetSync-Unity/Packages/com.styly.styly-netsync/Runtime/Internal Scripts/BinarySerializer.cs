@@ -35,6 +35,10 @@ namespace Styly.NetSync
         private const byte ENCODING_VIRTUAL_REL_HEAD = 1 << 3;
         private const byte ENCODING_FLAGS_DEFAULT = ENCODING_PHYSICAL_YAW_ONLY | ENCODING_RIGHT_REL_HEAD | ENCODING_LEFT_REL_HEAD | ENCODING_VIRTUAL_REL_HEAD;
 
+        // 1/sqrt(2) — the maximum magnitude of any non-largest component in a unit quaternion
+        private const float QUAT_COMPONENT_MIN = -0.70710677f;
+        private const float QUAT_COMPONENT_MAX = 0.70710677f;
+
         #region === Serialization ===
 
         // Maximum allowed virtual transforms to prevent memory issues
@@ -136,8 +140,6 @@ namespace Styly.NetSync
                 values[3] = -values[3];
             }
 
-            const float min = -0.70710677f;
-            const float max = 0.70710677f;
             const int max10 = 1023;
 
             uint packed = (uint)largestIndex << 30;
@@ -149,8 +151,8 @@ namespace Styly.NetSync
                     continue;
                 }
 
-                float clamped = Mathf.Clamp(values[i], min, max);
-                float normalized = (clamped - min) / (max - min);
+                float clamped = Mathf.Clamp(values[i], QUAT_COMPONENT_MIN, QUAT_COMPONENT_MAX);
+                float normalized = (clamped - QUAT_COMPONENT_MIN) / (QUAT_COMPONENT_MAX - QUAT_COMPONENT_MIN);
                 uint scaled = (uint)Mathf.RoundToInt(normalized * max10);
                 if (scaled > max10)
                 {
@@ -172,13 +174,11 @@ namespace Styly.NetSync
             uint b = (packed >> 10) & 0x3FF;
             uint c = packed & 0x3FF;
 
-            const float min = -0.70710677f;
-            const float max = 0.70710677f;
             const float inv = 1f / 1023f;
 
             float Decode(uint v)
             {
-                return min + ((max - min) * (v * inv));
+                return QUAT_COMPONENT_MIN + ((QUAT_COMPONENT_MAX - QUAT_COMPONENT_MIN) * (v * inv));
             }
 
             float[] values = new float[4];
@@ -205,12 +205,18 @@ namespace Styly.NetSync
                 sumSquares += values[i] * values[i];
             }
 
+            if (sumSquares > 1f)
+            {
+                Debug.LogWarning($"[BinarySerializer] Quaternion decompression: sumSquares={sumSquares:F6} exceeds 1.0 (packed=0x{packed:X8})");
+            }
             values[largestIndex] = Mathf.Sqrt(Mathf.Max(0f, 1f - sumSquares));
 
             var result = new Quaternion(values[0], values[1], values[2], values[3]);
             return NormalizeQuaternionSafe(result);
         }
 
+        // FNV-1a hash helpers — unchecked blocks allow intentional integer overflow
+        // which is standard behavior for FNV-1a hash computation.
         private static void HashShort(ref ulong hash, short value)
         {
             unchecked
@@ -678,7 +684,8 @@ namespace Styly.NetSync
                 }
                 else if (virtualCount > 0)
                 {
-                    // If flag is unset but payload still has entries, consume bytes to keep stream aligned.
+                    // Flag is unset but payload still has entries — consume bytes to keep stream aligned.
+                    Debug.LogWarning($"[BinarySerializer] Virtual count {virtualCount} but VirtualsValid flag unset - malformed payload");
                     for (int j = 0; j < virtualCount; j++)
                     {
                         reader.ReadInt16();

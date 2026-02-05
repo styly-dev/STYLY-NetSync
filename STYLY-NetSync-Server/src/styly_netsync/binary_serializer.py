@@ -32,6 +32,12 @@ ABS_POS_SCALE = 0.01
 REL_POS_SCALE = 0.005
 PHYSICAL_YAW_SCALE = 0.1
 
+# Quaternion codec constants
+# 1/sqrt(2) — the maximum magnitude of any non-largest component in a unit quaternion
+QUAT_COMPONENT_MIN = -0.70710677
+QUAT_COMPONENT_MAX = 0.70710677
+QUAT_NORMALIZE_EPSILON = 1e-12
+
 ENCODING_PHYSICAL_YAW_ONLY = 1 << 0
 ENCODING_RIGHT_REL_HEAD = 1 << 1
 ENCODING_LEFT_REL_HEAD = 1 << 2
@@ -108,7 +114,9 @@ def _transform_get_position(transform: dict[str, Any]) -> tuple[float, float, fl
     )
 
 
-def _transform_get_quaternion(transform: dict[str, Any]) -> tuple[float, float, float, float]:
+def _transform_get_quaternion(
+    transform: dict[str, Any],
+) -> tuple[float, float, float, float]:
     """Read quaternion from wire transform dict with defaults."""
     return (
         float(transform.get("rotX", 0.0)),
@@ -123,7 +131,7 @@ def _normalize_quaternion(
 ) -> tuple[float, float, float, float]:
     """Normalize a quaternion and guard against zero-length input."""
     mag_sq = qx * qx + qy * qy + qz * qz + qw * qw
-    if mag_sq <= 1e-12:
+    if mag_sq <= QUAT_NORMALIZE_EPSILON:
         return 0.0, 0.0, 0.0, 1.0
 
     inv_mag = 1.0 / math.sqrt(mag_sq)
@@ -157,9 +165,7 @@ def _quaternion_multiply(
     )
 
 
-def _quaternion_to_yaw_degrees(
-    qx: float, qy: float, qz: float, qw: float
-) -> float:
+def _quaternion_to_yaw_degrees(qx: float, qy: float, qz: float, qw: float) -> float:
     """Extract yaw in degrees from quaternion."""
     nx, ny, nz, nw = _normalize_quaternion(qx, qy, qz, qw)
     siny_cosp = 2.0 * (nw * ny + nz * nx)
@@ -203,8 +209,8 @@ def _compress_quaternion_smallest_three(
     if values[largest_index] < 0.0:
         values = [-v for v in values]
 
-    qmin = -0.70710677
-    qmax = 0.70710677
+    qmin = QUAT_COMPONENT_MIN
+    qmax = QUAT_COMPONENT_MAX
     max_10bit = 1023
 
     packed = largest_index << 30
@@ -227,15 +233,17 @@ def _compress_quaternion_smallest_three(
     return packed
 
 
-def _decompress_quaternion_smallest_three(packed: int) -> tuple[float, float, float, float]:
+def _decompress_quaternion_smallest_three(
+    packed: int,
+) -> tuple[float, float, float, float]:
     """Decompress 32-bit smallest-three quaternion."""
     largest_index = (packed >> 30) & 0x3
     a = (packed >> 20) & 0x3FF
     b = (packed >> 10) & 0x3FF
     c = packed & 0x3FF
 
-    qmin = -0.70710677
-    qmax = 0.70710677
+    qmin = QUAT_COMPONENT_MIN
+    qmax = QUAT_COMPONENT_MAX
     inv = 1.0 / 1023.0
 
     def decode(v: int) -> float:
@@ -255,6 +263,12 @@ def _decompress_quaternion_smallest_three(packed: int) -> tuple[float, float, fl
         if i == largest_index:
             continue
         sum_sq += values[i] * values[i]
+    if sum_sq > 1.0:
+        logger.warning(
+            "Quaternion decompression: sum_sq=%.6f exceeds 1.0 (packed=0x%08X)",
+            sum_sq,
+            packed,
+        )
     values[largest_index] = math.sqrt(max(0.0, 1.0 - sum_sq))
 
     return _normalize_quaternion(values[0], values[1], values[2], values[3])
@@ -314,7 +328,9 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
 
     # Relative transforms require head as anchor.
     if (flags & POSE_FLAG_HEAD_VALID) == 0:
-        flags &= ~(POSE_FLAG_RIGHT_VALID | POSE_FLAG_LEFT_VALID | POSE_FLAG_VIRTUALS_VALID)
+        flags &= ~(
+            POSE_FLAG_RIGHT_VALID | POSE_FLAG_LEFT_VALID | POSE_FLAG_VIRTUALS_VALID
+        )
 
     buffer.extend(struct.pack("<H", pose_seq))
     buffer.append(flags)
@@ -375,9 +391,7 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
                 _quantize_signed(rel_pos[2], REL_POS_SCALE),
             )
         )
-        buffer.extend(
-            struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot))
-        )
+        buffer.extend(struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot)))
 
     if left_valid:
         left_pos = _transform_get_position(left)
@@ -396,9 +410,7 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
                 _quantize_signed(rel_pos[2], REL_POS_SCALE),
             )
         )
-        buffer.extend(
-            struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot))
-        )
+        buffer.extend(struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot)))
 
     virtual_count = 0
     if virtual_valid:
@@ -423,9 +435,7 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
                 _quantize_signed(rel_pos[2], REL_POS_SCALE),
             )
         )
-        buffer.extend(
-            struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot))
-        )
+        buffer.extend(struct.pack("<I", _compress_quaternion_smallest_three(*rel_rot)))
 
 
 def serialize_client_transform(data: dict[str, Any]) -> bytes:
@@ -725,8 +735,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             # Should not reach here due to validation above
             return message_type, None, b""
     except Exception as e:
-        # Log deserialization error at DEBUG level for troubleshooting
-        logger.debug(
+        logger.warning(
             "Deserialization failed for message type %d: %s",
             message_type,
             str(e),
@@ -822,7 +831,14 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
         abs_rot = _quaternion_multiply(*head_rot, *rel_rot)
         abs_rot = _normalize_quaternion(*abs_rot)
         right = _create_transform_dict(
-            abs_pos[0], abs_pos[1], abs_pos[2], abs_rot[0], abs_rot[1], abs_rot[2], abs_rot[3], False
+            abs_pos[0],
+            abs_pos[1],
+            abs_pos[2],
+            abs_rot[0],
+            abs_rot[1],
+            abs_rot[2],
+            abs_rot[3],
+            False,
         )
 
     if left_valid:
@@ -844,7 +860,14 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
         abs_rot = _quaternion_multiply(*head_rot, *rel_rot)
         abs_rot = _normalize_quaternion(*abs_rot)
         left = _create_transform_dict(
-            abs_pos[0], abs_pos[1], abs_pos[2], abs_rot[0], abs_rot[1], abs_rot[2], abs_rot[3], False
+            abs_pos[0],
+            abs_pos[1],
+            abs_pos[2],
+            abs_rot[0],
+            abs_rot[1],
+            abs_rot[2],
+            abs_rot[3],
+            False,
         )
 
     virtual_count = data[offset]
@@ -853,6 +876,11 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
         virtual_count = MAX_VIRTUAL_TRANSFORMS
 
     virtuals: list[dict[str, Any]] = []
+    if not virtual_valid and virtual_count > 0:
+        logger.warning(
+            "Virtual count %d but VirtualsValid flag unset - malformed payload",
+            virtual_count,
+        )
     for _ in range(virtual_count):
         vx_q, vy_q, vz_q = struct.unpack("<hhh", data[offset : offset + 6])
         offset += 6
