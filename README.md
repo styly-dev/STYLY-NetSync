@@ -82,6 +82,11 @@ uvx --from styly-netsync-server@0.8.0 styly-netsync-simulator --clients 10
 ```
 The uvx command automatically downloads the package, creates an isolated virtual environment, installs dependencies, and runs the python server program.
 
+### Version compatibility note
+
+- Keep Unity package and server versions aligned.
+- Transform synchronization uses protocol version `3` and does not provide backward compatibility with older transform protocols.
+
 
 ### Setup Unity scene
 

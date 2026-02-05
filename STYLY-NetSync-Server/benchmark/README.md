@@ -8,6 +8,7 @@ This directory contains Locust-based benchmarking tools for load testing the STY
 ## Features
 
 - **Transform Synchronization**: Simulates VR/MR users moving in circular patterns at configurable rates
+- **Transform Payload Comparison**: Logs one-shot `legacy_v2` estimate vs `protocol_v3` actual payload size and reduction rate
 - **Network Variables**: Tests global and client-specific variable synchronization
 - **RPC Calls**: Tests remote procedure calls
 - **Comprehensive Metrics**: Latency, throughput, packet loss, and connection stability measurements
@@ -469,4 +470,3 @@ def custom_metric_task(self):
         context={}
     )
 ```
-
