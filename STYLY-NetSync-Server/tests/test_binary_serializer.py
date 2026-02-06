@@ -232,8 +232,16 @@ def _build_random_client_pose(
 
     right_rel = (rng.uniform(0.2, 0.7), rng.uniform(-0.4, 0.4), rng.uniform(-0.4, 0.4))
     left_rel = (rng.uniform(-0.7, -0.2), rng.uniform(-0.4, 0.4), rng.uniform(-0.4, 0.4))
-    right_pos = (head_pos[0] + right_rel[0], head_pos[1] + right_rel[1], head_pos[2] + right_rel[2])
-    left_pos = (head_pos[0] + left_rel[0], head_pos[1] + left_rel[1], head_pos[2] + left_rel[2])
+    right_pos = (
+        head_pos[0] + right_rel[0],
+        head_pos[1] + right_rel[1],
+        head_pos[2] + right_rel[2],
+    )
+    left_pos = (
+        head_pos[0] + left_rel[0],
+        head_pos[1] + left_rel[1],
+        head_pos[2] + left_rel[2],
+    )
     right_rot = _random_unit_quaternion(rng)
     left_rot = _random_unit_quaternion(rng)
 
@@ -268,11 +276,19 @@ class TestTransformSerializationV3:
             "deviceId": "infer-flags",
             "poseSeq": 77,
             "physical": _build_transform((1.2, 0.0, -2.3), (0.0, 0.0, 0.0, 1.0)),
-            "head": _build_transform((1.2, 1.6, -2.3), _random_unit_quaternion(random.Random(11))),
-            "rightHand": _build_transform((1.5, 1.2, -2.3), _random_unit_quaternion(random.Random(12))),
-            "leftHand": _build_transform((0.9, 1.2, -2.3), _random_unit_quaternion(random.Random(13))),
+            "head": _build_transform(
+                (1.2, 1.6, -2.3), _random_unit_quaternion(random.Random(11))
+            ),
+            "rightHand": _build_transform(
+                (1.5, 1.2, -2.3), _random_unit_quaternion(random.Random(12))
+            ),
+            "leftHand": _build_transform(
+                (0.9, 1.2, -2.3), _random_unit_quaternion(random.Random(13))
+            ),
             "virtuals": [
-                _build_transform((1.2, 1.0, -1.8), _random_unit_quaternion(random.Random(14)))
+                _build_transform(
+                    (1.2, 1.0, -1.8), _random_unit_quaternion(random.Random(14))
+                )
             ],
         }
 
@@ -308,12 +324,22 @@ class TestTransformSerializationV3:
                 | binary_serializer.POSE_FLAG_LEFT_VALID
                 | binary_serializer.POSE_FLAG_VIRTUALS_VALID
             ),
-            "physical": _build_transform((9.0, 9.0, 9.0), _random_unit_quaternion(random.Random(21))),
-            "head": _build_transform((8.0, 8.0, 8.0), _random_unit_quaternion(random.Random(22))),
-            "rightHand": _build_transform((7.0, 7.0, 7.0), _random_unit_quaternion(random.Random(23))),
-            "leftHand": _build_transform((6.0, 6.0, 6.0), _random_unit_quaternion(random.Random(24))),
+            "physical": _build_transform(
+                (9.0, 9.0, 9.0), _random_unit_quaternion(random.Random(21))
+            ),
+            "head": _build_transform(
+                (8.0, 8.0, 8.0), _random_unit_quaternion(random.Random(22))
+            ),
+            "rightHand": _build_transform(
+                (7.0, 7.0, 7.0), _random_unit_quaternion(random.Random(23))
+            ),
+            "leftHand": _build_transform(
+                (6.0, 6.0, 6.0), _random_unit_quaternion(random.Random(24))
+            ),
             "virtuals": [
-                _build_transform((5.0, 5.0, 5.0), _random_unit_quaternion(random.Random(25)))
+                _build_transform(
+                    (5.0, 5.0, 5.0), _random_unit_quaternion(random.Random(25))
+                )
             ],
         }
 
@@ -458,12 +484,22 @@ class TestTransformSerializationV3:
             "deviceId": "clamp-test",
             "poseSeq": 10,
             "flags": 0x3E,
-            "physical": _build_transform((9999.0, -9999.0, 9999.0), (0.0, 0.0, 0.0, 1.0)),
-            "head": _build_transform((9999.0, -9999.0, 9999.0), _random_unit_quaternion(random.Random(1))),
-            "rightHand": _build_transform((9999.0, 9999.0, 9999.0), _random_unit_quaternion(random.Random(2))),
-            "leftHand": _build_transform((-9999.0, -9999.0, -9999.0), _random_unit_quaternion(random.Random(3))),
+            "physical": _build_transform(
+                (9999.0, -9999.0, 9999.0), (0.0, 0.0, 0.0, 1.0)
+            ),
+            "head": _build_transform(
+                (9999.0, -9999.0, 9999.0), _random_unit_quaternion(random.Random(1))
+            ),
+            "rightHand": _build_transform(
+                (9999.0, 9999.0, 9999.0), _random_unit_quaternion(random.Random(2))
+            ),
+            "leftHand": _build_transform(
+                (-9999.0, -9999.0, -9999.0), _random_unit_quaternion(random.Random(3))
+            ),
             "virtuals": [
-                _build_transform((9999.0, 9999.0, 9999.0), _random_unit_quaternion(random.Random(4)))
+                _build_transform(
+                    (9999.0, 9999.0, 9999.0), _random_unit_quaternion(random.Random(4))
+                )
             ],
         }
         _, decoded, _ = binary_serializer.deserialize(
@@ -495,10 +531,18 @@ class TestTransformSerializationV3:
             "deviceId": "int24-abs-range",
             "poseSeq": 33,
             "flags": 0x3E,
-            "physical": _build_transform((5000.12, -5000.34, 4321.56), (0.0, 0.0, 0.0, 1.0)),
-            "head": _build_transform((5000.78, -5000.9, 4321.01), _random_unit_quaternion(random.Random(31))),
-            "rightHand": _build_transform((5001.0, -5000.5, 4321.2), _random_unit_quaternion(random.Random(32))),
-            "leftHand": _build_transform((5000.5, -5000.5, 4320.8), _random_unit_quaternion(random.Random(33))),
+            "physical": _build_transform(
+                (5000.12, -5000.34, 4321.56), (0.0, 0.0, 0.0, 1.0)
+            ),
+            "head": _build_transform(
+                (5000.78, -5000.9, 4321.01), _random_unit_quaternion(random.Random(31))
+            ),
+            "rightHand": _build_transform(
+                (5001.0, -5000.5, 4321.2), _random_unit_quaternion(random.Random(32))
+            ),
+            "leftHand": _build_transform(
+                (5000.5, -5000.5, 4320.8), _random_unit_quaternion(random.Random(33))
+            ),
             "virtuals": [],
         }
         _, decoded, _ = binary_serializer.deserialize(
@@ -519,9 +563,15 @@ class TestTransformSerializationV3:
             "poseSeq": 1,
             "flags": 0x1E,  # Physical + Head + Right + Left
             "physical": _build_transform((1.0, 0.0, 2.0), (0.0, 0.0, 0.0, 1.0)),
-            "head": _build_transform((1.0, 1.6, 2.0), _random_unit_quaternion(random.Random(41))),
-            "rightHand": _build_transform((1.3, 1.2, 2.0), _random_unit_quaternion(random.Random(42))),
-            "leftHand": _build_transform((0.7, 1.2, 2.0), _random_unit_quaternion(random.Random(43))),
+            "head": _build_transform(
+                (1.0, 1.6, 2.0), _random_unit_quaternion(random.Random(41))
+            ),
+            "rightHand": _build_transform(
+                (1.3, 1.2, 2.0), _random_unit_quaternion(random.Random(42))
+            ),
+            "leftHand": _build_transform(
+                (0.7, 1.2, 2.0), _random_unit_quaternion(random.Random(43))
+            ),
             "virtuals": [],
         }
         _, _, raw = binary_serializer.deserialize(
@@ -562,3 +612,63 @@ class TestTransformSerializationV3:
             assert abs(src_head["posX"] - dst_head["posX"]) <= 0.01
             assert abs(src_head["posY"] - dst_head["posY"]) <= 0.01
             assert abs(src_head["posZ"] - dst_head["posZ"]) <= 0.01
+
+    def test_denormalized_quaternion_roundtrip(self) -> None:
+        """Non-unit quaternions should be normalized and survive roundtrip."""
+        # magnitude = 2.0
+        q = (1.0, 1.0, 1.0, 1.0)
+        packed = binary_serializer._compress_quaternion_smallest_three(*q)
+        result = binary_serializer._decompress_quaternion_smallest_three(packed)
+
+        mag = math.sqrt(sum(x * x for x in result))
+        assert abs(mag - 1.0) < 1e-6
+
+        # Verify it's close to the normalized version of the input
+        inv = 1.0 / math.sqrt(4.0)
+        normalized_input = (inv, inv, inv, inv)
+        err = _quat_angle_error_deg(normalized_input, result)
+        assert err <= 1.0
+
+    def test_nan_quaternion_handling(self) -> None:
+        """NaN input should not crash and should produce a finite quaternion."""
+        q = (float("nan"), 0.0, 0.0, 1.0)
+        packed = binary_serializer._compress_quaternion_smallest_three(*q)
+        result = binary_serializer._decompress_quaternion_smallest_three(packed)
+
+        for component in result:
+            assert math.isfinite(component)
+
+    def test_zero_quaternion_handling(self) -> None:
+        """Zero quaternion input should produce identity quaternion."""
+        q = (0.0, 0.0, 0.0, 0.0)
+        packed = binary_serializer._compress_quaternion_smallest_three(*q)
+        result = binary_serializer._decompress_quaternion_smallest_three(packed)
+
+        mag = math.sqrt(sum(x * x for x in result))
+        assert abs(mag - 1.0) < 1e-6
+
+    def test_max_virtual_transforms_boundary(self) -> None:
+        """Exactly MAX_VIRTUAL_TRANSFORMS should serialize without truncation."""
+        max_vt = binary_serializer.get_max_virtual_transforms()
+        rng = random.Random(9999)
+        payload = _build_random_client_pose(rng, virtual_count=0)
+
+        # Build exactly max_vt virtuals
+        head = payload["head"]
+        virtuals = []
+        for _i in range(max_vt):
+            rel = (
+                rng.uniform(-1.5, 1.5),
+                rng.uniform(-1.5, 1.5),
+                rng.uniform(-1.5, 1.5),
+            )
+            pos = (head["posX"] + rel[0], head["posY"] + rel[1], head["posZ"] + rel[2])
+            virtuals.append(_build_transform(pos, _random_unit_quaternion(rng)))
+        payload["virtuals"] = virtuals
+        payload["flags"] = 0x3E  # All valid including virtuals
+
+        _, decoded, _ = binary_serializer.deserialize(
+            binary_serializer.serialize_client_transform(payload)
+        )
+        assert decoded is not None
+        assert len(decoded["virtuals"]) == max_vt

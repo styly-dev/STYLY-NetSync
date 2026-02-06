@@ -145,6 +145,11 @@ namespace Styly.NetSync
             return Mathf.DeltaAngle(0f, yaw);
         }
 
+        /// <summary>
+        /// Extract yaw in degrees from quaternion.
+        /// Assumes Y-up right-handed coordinate system (Unity standard).
+        /// Yaw is rotation around the Y axis.
+        /// </summary>
         private static float QuaternionToYawDegrees(Quaternion rotation)
         {
             var q = NormalizeQuaternionSafe(rotation);
@@ -155,7 +160,9 @@ namespace Styly.NetSync
 
         private static Quaternion NormalizeQuaternionSafe(Quaternion rotation)
         {
-            if (rotation.x == 0f && rotation.y == 0f && rotation.z == 0f && rotation.w == 0f)
+            float magSq = rotation.x * rotation.x + rotation.y * rotation.y
+                        + rotation.z * rotation.z + rotation.w * rotation.w;
+            if (!float.IsFinite(magSq) || magSq <= 1e-10f)
             {
                 return Quaternion.identity;
             }
@@ -262,7 +269,7 @@ namespace Styly.NetSync
                 sumSquares += values[i] * values[i];
             }
 
-            if (sumSquares > 1f)
+            if (sumSquares > 1f + 1e-6f)
             {
                 Debug.LogWarning($"[BinarySerializer] Quaternion decompression: sumSquares={sumSquares:F6} exceeds 1.0 (packed=0x{packed:X8})");
             }

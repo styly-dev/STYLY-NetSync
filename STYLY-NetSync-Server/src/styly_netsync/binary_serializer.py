@@ -135,9 +135,9 @@ def _transform_get_quaternion(
 def _normalize_quaternion(
     qx: float, qy: float, qz: float, qw: float
 ) -> tuple[float, float, float, float]:
-    """Normalize a quaternion and guard against zero-length input."""
+    """Normalize a quaternion and guard against zero-length or NaN input."""
     mag_sq = qx * qx + qy * qy + qz * qz + qw * qw
-    if mag_sq <= QUAT_NORMALIZE_EPSILON:
+    if not math.isfinite(mag_sq) or mag_sq <= QUAT_NORMALIZE_EPSILON:
         return 0.0, 0.0, 0.0, 1.0
 
     inv_mag = 1.0 / math.sqrt(mag_sq)
@@ -172,7 +172,11 @@ def _quaternion_multiply(
 
 
 def _quaternion_to_yaw_degrees(qx: float, qy: float, qz: float, qw: float) -> float:
-    """Extract yaw in degrees from quaternion."""
+    """Extract yaw in degrees from quaternion.
+
+    Assumes Y-up right-handed coordinate system (Unity standard).
+    Yaw is rotation around the Y axis.
+    """
     nx, ny, nz, nw = _normalize_quaternion(qx, qy, qz, qw)
     siny_cosp = 2.0 * (nw * ny + nz * nx)
     cosy_cosp = 1.0 - 2.0 * (ny * ny + nz * nz)
@@ -304,7 +308,7 @@ def _decompress_quaternion_smallest_three(
         if i == largest_index:
             continue
         sum_sq += values[i] * values[i]
-    if sum_sq > 1.0:
+    if sum_sq > 1.0 + 1e-6:
         logger.warning(
             "Quaternion decompression: sum_sq=%.6f exceeds 1.0 (packed=0x%08X)",
             sum_sq,
