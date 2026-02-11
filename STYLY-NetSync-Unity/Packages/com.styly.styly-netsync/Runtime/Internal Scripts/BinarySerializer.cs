@@ -26,6 +26,7 @@ namespace Styly.NetSync
         // Transform data type identifiers (deprecated - kept for reference)
         // Protocol v3 pose encoding constants
         private const float ABS_POS_SCALE = 0.01f;
+        private const float LOCO_POS_SCALE = 0.01f;
         private const float REL_POS_SCALE = 0.005f;
         private const float PHYSICAL_YAW_SCALE = 0.1f;
         private const int ABS_POS_MIN_QUANTIZED = -(1 << 23);
@@ -35,7 +36,8 @@ namespace Styly.NetSync
         private const byte ENCODING_RIGHT_REL_HEAD = 1 << 1;
         private const byte ENCODING_LEFT_REL_HEAD = 1 << 2;
         private const byte ENCODING_VIRTUAL_REL_HEAD = 1 << 3;
-        private const byte ENCODING_FLAGS_DEFAULT = ENCODING_PHYSICAL_YAW_ONLY | ENCODING_RIGHT_REL_HEAD | ENCODING_LEFT_REL_HEAD | ENCODING_VIRTUAL_REL_HEAD;
+        private const byte ENCODING_PHYSICAL_IS_XRORIGIN_DELTA = 1 << 4;
+        private const byte ENCODING_FLAGS_DEFAULT = ENCODING_PHYSICAL_YAW_ONLY | ENCODING_RIGHT_REL_HEAD | ENCODING_LEFT_REL_HEAD | ENCODING_VIRTUAL_REL_HEAD | ENCODING_PHYSICAL_IS_XRORIGIN_DELTA;
 
         // 1/sqrt(2) — the maximum magnitude of any non-largest component in a unit quaternion
         private const float QUAT_COMPONENT_MIN = -0.70710677f;
@@ -334,7 +336,8 @@ namespace Styly.NetSync
             bool leftValid = headValid && ((flags & PoseFlags.LeftValid) != 0);
             bool virtualValid = headValid && ((flags & PoseFlags.VirtualsValid) != 0);
 
-            var physical = EnsureTransform(data != null ? data.physical : null);
+            var xrOriginDelta = data != null ? data.xrOriginDeltaPosition : Vector3.zero;
+            var xrOriginDeltaYaw = data != null ? data.xrOriginDeltaYaw : 0f;
             var head = EnsureTransform(data != null ? data.head : null);
             var right = EnsureTransform(data != null ? data.rightHand : null);
             var left = EnsureTransform(data != null ? data.leftHand : null);
@@ -351,10 +354,9 @@ namespace Styly.NetSync
 
             if (physicalValid)
             {
-                HashInt24(ref hash, QuantizeSignedInt24(physical.position.x, ABS_POS_SCALE));
-                HashInt24(ref hash, QuantizeSignedInt24(physical.position.y, ABS_POS_SCALE));
-                HashInt24(ref hash, QuantizeSignedInt24(physical.position.z, ABS_POS_SCALE));
-                HashShort(ref hash, QuantizeSigned(QuaternionToYawDegrees(physical.rotation), PHYSICAL_YAW_SCALE));
+                HashShort(ref hash, QuantizeSigned(xrOriginDelta.x, LOCO_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(xrOriginDelta.z, LOCO_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(xrOriginDeltaYaw, PHYSICAL_YAW_SCALE));
             }
 
             if (headValid)
@@ -454,7 +456,8 @@ namespace Styly.NetSync
             var leftValid = headValid && ((flags & PoseFlags.LeftValid) != 0);
             var virtualValid = headValid && ((flags & PoseFlags.VirtualsValid) != 0);
 
-            var physical = EnsureTransform(data != null ? data.physical : null);
+            var xrOriginDelta = data != null ? data.xrOriginDeltaPosition : Vector3.zero;
+            var xrOriginDeltaYaw = data != null ? data.xrOriginDeltaYaw : 0f;
             var head = EnsureTransform(data != null ? data.head : null);
             var right = EnsureTransform(data != null ? data.rightHand : null);
             var left = EnsureTransform(data != null ? data.leftHand : null);
@@ -462,12 +465,9 @@ namespace Styly.NetSync
 
             if (physicalValid)
             {
-                WriteInt24(writer, QuantizeSignedInt24(physical.position.x, ABS_POS_SCALE));
-                WriteInt24(writer, QuantizeSignedInt24(physical.position.y, ABS_POS_SCALE));
-                WriteInt24(writer, QuantizeSignedInt24(physical.position.z, ABS_POS_SCALE));
-
-                var yawDegrees = QuaternionToYawDegrees(physical.rotation);
-                writer.Write(QuantizeSigned(yawDegrees, PHYSICAL_YAW_SCALE));
+                writer.Write(QuantizeSigned(xrOriginDelta.x, LOCO_POS_SCALE));
+                writer.Write(QuantizeSigned(xrOriginDelta.z, LOCO_POS_SCALE));
+                writer.Write(QuantizeSigned(xrOriginDeltaYaw, PHYSICAL_YAW_SCALE));
             }
 
             if (headValid)
@@ -665,19 +665,23 @@ namespace Styly.NetSync
                 bool leftValid = headValid && ((client.flags & PoseFlags.LeftValid) != 0);
                 bool virtualValid = headValid && ((client.flags & PoseFlags.VirtualsValid) != 0);
 
+                short dxQ = 0;
+                short dzQ = 0;
+                short dyawQ = 0;
+                client.xrOriginDeltaPosition = Vector3.zero;
+                client.xrOriginDeltaYaw = 0f;
                 if (physicalValid)
                 {
-                    int px = ReadInt24(reader);
-                    int py = ReadInt24(reader);
-                    int pz = ReadInt24(reader);
-                    short yawQ = reader.ReadInt16();
-                    client.physical.position = QuantizedToVector3(px, py, pz, ABS_POS_SCALE);
-                    client.physical.rotation = Quaternion.Euler(0f, yawQ * PHYSICAL_YAW_SCALE, 0f);
-                }
-                else
-                {
-                    client.physical.position = Vector3.zero;
-                    client.physical.rotation = Quaternion.identity;
+                    if ((encodingFlags & ENCODING_PHYSICAL_IS_XRORIGIN_DELTA) == 0)
+                    {
+                        throw new InvalidDataException("PhysicalValid set but XROrigin delta encoding flag is missing.");
+                    }
+
+                    dxQ = reader.ReadInt16();
+                    dzQ = reader.ReadInt16();
+                    dyawQ = reader.ReadInt16();
+                    client.xrOriginDeltaPosition = new Vector3(dxQ * LOCO_POS_SCALE, 0f, dzQ * LOCO_POS_SCALE);
+                    client.xrOriginDeltaYaw = dyawQ * PHYSICAL_YAW_SCALE;
                 }
 
                 var headPos = Vector3.zero;
@@ -697,6 +701,28 @@ namespace Styly.NetSync
                 {
                     client.head.position = Vector3.zero;
                     client.head.rotation = Quaternion.identity;
+                }
+
+                if (physicalValid && headValid)
+                {
+                    var deltaPos = client.xrOriginDeltaPosition;
+                    var deltaYaw = client.xrOriginDeltaYaw;
+                    var deltaRot = Quaternion.Euler(0f, deltaYaw, 0f);
+                    var invDeltaRot = Quaternion.Inverse(deltaRot);
+
+                    client.physical.position = invDeltaRot * (headPos - deltaPos);
+                    var headYaw = QuaternionToYawDegrees(headRot);
+                    var physicalYaw = NormalizeYawDegrees(headYaw - deltaYaw);
+                    client.physical.rotation = Quaternion.Euler(0f, physicalYaw, 0f);
+                }
+                else
+                {
+                    if (physicalValid && !headValid)
+                    {
+                        Debug.LogWarning("[BinarySerializer] Physical delta received without head pose. Physical pose cannot be reconstructed.");
+                    }
+                    client.physical.position = Vector3.zero;
+                    client.physical.rotation = Quaternion.identity;
                 }
 
                 if (rightValid)

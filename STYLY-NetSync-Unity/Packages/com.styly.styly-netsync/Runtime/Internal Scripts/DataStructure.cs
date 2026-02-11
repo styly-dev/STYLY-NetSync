@@ -60,6 +60,9 @@ namespace Styly.NetSync
         public double poseTime;
         public ushort poseSeq;
         public PoseFlags flags;
+        // XROrigin locomotion delta (SE(2)): x/z translation in meters and yaw delta in degrees.
+        public Vector3 xrOriginDeltaPosition;
+        public float xrOriginDeltaYaw;
         public TransformData physical;
         public TransformData head;
         public TransformData rightHand;

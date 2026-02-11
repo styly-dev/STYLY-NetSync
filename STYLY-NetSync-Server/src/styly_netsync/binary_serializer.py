@@ -29,6 +29,7 @@ MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward co
 
 # Protocol v3 transform encoding constants
 ABS_POS_SCALE = 0.01
+LOCO_POS_SCALE = 0.01
 REL_POS_SCALE = 0.005
 PHYSICAL_YAW_SCALE = 0.1
 
@@ -48,11 +49,13 @@ ENCODING_PHYSICAL_YAW_ONLY = 1 << 0
 ENCODING_RIGHT_REL_HEAD = 1 << 1
 ENCODING_LEFT_REL_HEAD = 1 << 2
 ENCODING_VIRTUAL_REL_HEAD = 1 << 3
+ENCODING_PHYSICAL_IS_XRORIGIN_DELTA = 1 << 4
 ENCODING_FLAGS_DEFAULT = (
     ENCODING_PHYSICAL_YAW_ONLY
     | ENCODING_RIGHT_REL_HEAD
     | ENCODING_LEFT_REL_HEAD
     | ENCODING_VIRTUAL_REL_HEAD
+    | ENCODING_PHYSICAL_IS_XRORIGIN_DELTA
 )
 
 POSE_FLAG_STEALTH = 1 << 0
@@ -188,6 +191,27 @@ def _normalize_yaw_degrees(yaw: float) -> float:
     """Normalize yaw to [-180, 180)."""
     normalized = ((yaw + 180.0) % 360.0) - 180.0
     return normalized
+
+
+def _yaw_degrees_to_quaternion(yaw_deg: float) -> tuple[float, float, float, float]:
+    """Build a yaw-only quaternion from degrees."""
+    yaw_rad = math.radians(yaw_deg)
+    half = yaw_rad * 0.5
+    return 0.0, math.sin(half), 0.0, math.cos(half)
+
+
+def _rotate_yaw_vector(
+    x: float, y: float, z: float, yaw_deg: float
+) -> tuple[float, float, float]:
+    """Rotate vector by yaw degrees around Y axis using Unity-compatible convention."""
+    yaw_rad = math.radians(yaw_deg)
+    cos_y = math.cos(yaw_rad)
+    sin_y = math.sin(yaw_rad)
+    return (
+        (cos_y * x) + (sin_y * z),
+        y,
+        (-sin_y * x) + (cos_y * z),
+    )
 
 
 def _quantize_signed(value: float, scale: float) -> int:
@@ -345,16 +369,20 @@ def _create_transform_dict(
 def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     """Serialize a client body in protocol v3 compact format."""
     pose_seq = int(client.get("poseSeq", 0)) & 0xFFFF
-    physical = client.get("physical", {}) or {}
     head = client.get("head", {}) or {}
     right = client.get("rightHand", {}) or {}
     left = client.get("leftHand", {}) or {}
     virtuals = client.get("virtuals", []) or []
+    has_xr_origin_delta = (
+        "xrOriginDeltaX" in client
+        or "xrOriginDeltaZ" in client
+        or "xrOriginDeltaYaw" in client
+    )
 
     raw_flags = client.get("flags")
     if raw_flags is None:
         flags = 0
-        if physical:
+        if has_xr_origin_delta:
             flags |= POSE_FLAG_PHYSICAL_VALID
         if head:
             flags |= POSE_FLAG_HEAD_VALID
@@ -387,18 +415,22 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
     virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
 
-    physical_pos = _transform_get_position(physical)
-    physical_rot = _transform_get_quaternion(physical)
+    xr_origin_delta_x = float(client.get("xrOriginDeltaX", 0.0))
+    xr_origin_delta_z = float(client.get("xrOriginDeltaZ", 0.0))
+    xr_origin_delta_yaw = float(client.get("xrOriginDeltaYaw", 0.0))
     head_pos = _transform_get_position(head)
     head_rot = _transform_get_quaternion(head)
     head_rot_n = _normalize_quaternion(*head_rot)
 
     if physical_valid:
-        _pack_int24_le(buffer, _quantize_signed_int24(physical_pos[0], ABS_POS_SCALE))
-        _pack_int24_le(buffer, _quantize_signed_int24(physical_pos[1], ABS_POS_SCALE))
-        _pack_int24_le(buffer, _quantize_signed_int24(physical_pos[2], ABS_POS_SCALE))
-        yaw_deg = _quaternion_to_yaw_degrees(*physical_rot)
-        buffer.extend(struct.pack("<h", _quantize_signed(yaw_deg, PHYSICAL_YAW_SCALE)))
+        buffer.extend(
+            struct.pack(
+                "<hhh",
+                _quantize_signed(xr_origin_delta_x, LOCO_POS_SCALE),
+                _quantize_signed(xr_origin_delta_z, LOCO_POS_SCALE),
+                _quantize_signed(xr_origin_delta_yaw, PHYSICAL_YAW_SCALE),
+            )
+        )
 
     if head_valid:
         _pack_int24_le(buffer, _quantize_signed_int24(head_pos[0], ABS_POS_SCALE))
@@ -803,28 +835,20 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
 
     head_pos = (0.0, 0.0, 0.0)
     head_rot = (0.0, 0.0, 0.0, 1.0)
+    xr_origin_delta_x = 0.0
+    xr_origin_delta_z = 0.0
+    xr_origin_delta_yaw = 0.0
 
     if physical_valid:
-        px_q, offset = _unpack_int24_le(data, offset)
-        py_q, offset = _unpack_int24_le(data, offset)
-        pz_q, offset = _unpack_int24_le(data, offset)
-        yaw_q = struct.unpack("<h", data[offset : offset + 2])[0]
-        offset += 2
-        yaw_deg = _dequantize_signed(yaw_q, PHYSICAL_YAW_SCALE)
-        yaw_rad = math.radians(yaw_deg)
-        half = yaw_rad * 0.5
-        qy = math.sin(half)
-        qw = math.cos(half)
-        physical = _create_transform_dict(
-            _dequantize_signed(px_q, ABS_POS_SCALE),
-            _dequantize_signed(py_q, ABS_POS_SCALE),
-            _dequantize_signed(pz_q, ABS_POS_SCALE),
-            0.0,
-            qy,
-            0.0,
-            qw,
-            True,
-        )
+        if (encoding_flags & ENCODING_PHYSICAL_IS_XRORIGIN_DELTA) == 0:
+            raise ValueError(
+                "PhysicalValid set but XROrigin delta encoding flag is missing"
+            )
+        dx_q, dz_q, dyaw_q = struct.unpack("<hhh", data[offset : offset + 6])
+        xr_origin_delta_x = _dequantize_signed(dx_q, LOCO_POS_SCALE)
+        xr_origin_delta_z = _dequantize_signed(dz_q, LOCO_POS_SCALE)
+        xr_origin_delta_yaw = _dequantize_signed(dyaw_q, PHYSICAL_YAW_SCALE)
+        offset += 6
 
     if head_valid:
         hx_q, offset = _unpack_int24_le(data, offset)
@@ -847,6 +871,34 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             head_rot[2],
             head_rot[3],
             False,
+        )
+
+    if physical_valid and head_valid:
+        translated_x = head_pos[0] - xr_origin_delta_x
+        translated_y = head_pos[1]
+        translated_z = head_pos[2] - xr_origin_delta_z
+        physical_pos = _rotate_yaw_vector(
+            translated_x,
+            translated_y,
+            translated_z,
+            -xr_origin_delta_yaw,
+        )
+        head_yaw = _quaternion_to_yaw_degrees(*head_rot)
+        physical_yaw = _normalize_yaw_degrees(head_yaw - xr_origin_delta_yaw)
+        physical_rot = _yaw_degrees_to_quaternion(physical_yaw)
+        physical = _create_transform_dict(
+            physical_pos[0],
+            physical_pos[1],
+            physical_pos[2],
+            physical_rot[0],
+            physical_rot[1],
+            physical_rot[2],
+            physical_rot[3],
+            True,
+        )
+    elif physical_valid:
+        logger.warning(
+            "Physical delta received without head pose; physical reconstruction skipped"
         )
 
     if right_valid:
@@ -950,6 +1002,9 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
                 )
             )
 
+    result["xrOriginDeltaX"] = xr_origin_delta_x
+    result["xrOriginDeltaZ"] = xr_origin_delta_z
+    result["xrOriginDeltaYaw"] = xr_origin_delta_yaw
     result["physical"] = physical
     result["head"] = head
     result["rightHand"] = right

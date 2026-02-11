@@ -219,16 +219,9 @@ def _build_random_client_pose(
         rng.uniform(-20.0, 20.0),
     )
     head_rot = _random_unit_quaternion(rng)
-
-    # Physical is yaw-only by protocol design.
-    physical_pos = (
-        rng.uniform(-20.0, 20.0),
-        rng.uniform(0.0, 2.0),
-        rng.uniform(-20.0, 20.0),
-    )
-    physical_yaw = rng.uniform(-180.0, 180.0)
-    half = math.radians(physical_yaw) * 0.5
-    physical_rot = (0.0, math.sin(half), 0.0, math.cos(half))
+    xr_origin_delta_x = rng.uniform(-20.0, 20.0)
+    xr_origin_delta_z = rng.uniform(-20.0, 20.0)
+    xr_origin_delta_yaw = rng.uniform(-180.0, 180.0)
 
     right_rel = (rng.uniform(0.2, 0.7), rng.uniform(-0.4, 0.4), rng.uniform(-0.4, 0.4))
     left_rel = (rng.uniform(-0.7, -0.2), rng.uniform(-0.4, 0.4), rng.uniform(-0.4, 0.4))
@@ -255,12 +248,38 @@ def _build_random_client_pose(
         "deviceId": f"client-{rng.randint(1, 1_000_000)}",
         "poseSeq": rng.randint(0, 65535),
         "flags": 0x3E,  # Physical + Head + Right + Left + Virtuals
-        "physical": _build_transform(physical_pos, physical_rot),
+        "xrOriginDeltaX": xr_origin_delta_x,
+        "xrOriginDeltaZ": xr_origin_delta_z,
+        "xrOriginDeltaYaw": xr_origin_delta_yaw,
         "head": _build_transform(head_pos, head_rot),
         "rightHand": _build_transform(right_pos, right_rot),
         "leftHand": _build_transform(left_pos, left_rot),
         "virtuals": virtuals,
     }
+
+
+def _reconstruct_physical_from_head_and_delta(
+    head: dict[str, float], delta_x: float, delta_z: float, delta_yaw: float
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    """Reconstruct yaw-only physical pose from head pose and XROrigin delta."""
+    tx = head["posX"] - delta_x
+    ty = head["posY"]
+    tz = head["posZ"] - delta_z
+
+    inv_yaw_rad = math.radians(-delta_yaw)
+    cos_y = math.cos(inv_yaw_rad)
+    sin_y = math.sin(inv_yaw_rad)
+    px = (cos_y * tx) + (sin_y * tz)
+    pz = (-sin_y * tx) + (cos_y * tz)
+
+    head_yaw = _yaw_deg_from_quaternion(
+        (head["rotX"], head["rotY"], head["rotZ"], head["rotW"])
+    )
+    physical_yaw = ((head_yaw - delta_yaw + 180.0) % 360.0) - 180.0
+    half = math.radians(physical_yaw) * 0.5
+    physical_rot = (0.0, math.sin(half), 0.0, math.cos(half))
+
+    return (px, ty, pz), physical_rot
 
 
 class TestTransformSerializationV3:
@@ -275,7 +294,9 @@ class TestTransformSerializationV3:
         payload = {
             "deviceId": "infer-flags",
             "poseSeq": 77,
-            "physical": _build_transform((1.2, 0.0, -2.3), (0.0, 0.0, 0.0, 1.0)),
+            "xrOriginDeltaX": 1.25,
+            "xrOriginDeltaZ": -2.5,
+            "xrOriginDeltaYaw": 33.3,
             "head": _build_transform(
                 (1.2, 1.6, -2.3), _random_unit_quaternion(random.Random(11))
             ),
@@ -309,6 +330,9 @@ class TestTransformSerializationV3:
         assert abs(decoded["head"]["posX"] - 1.2) <= 0.01
         assert abs(decoded["head"]["posY"] - 1.6) <= 0.01
         assert abs(decoded["head"]["posZ"] + 2.3) <= 0.01
+        assert abs(decoded["xrOriginDeltaX"] - 1.25) <= 0.01
+        assert abs(decoded["xrOriginDeltaZ"] + 2.5) <= 0.01
+        assert abs(decoded["xrOriginDeltaYaw"] - 33.3) <= 0.1
         assert len(decoded["virtuals"]) == 1
 
     def test_stealth_flag_sanitizes_transform_valid_bits(self) -> None:
@@ -324,9 +348,9 @@ class TestTransformSerializationV3:
                 | binary_serializer.POSE_FLAG_LEFT_VALID
                 | binary_serializer.POSE_FLAG_VIRTUALS_VALID
             ),
-            "physical": _build_transform(
-                (9.0, 9.0, 9.0), _random_unit_quaternion(random.Random(21))
-            ),
+            "xrOriginDeltaX": 9.0,
+            "xrOriginDeltaZ": 9.0,
+            "xrOriginDeltaYaw": 9.0,
             "head": _build_transform(
                 (8.0, 8.0, 8.0), _random_unit_quaternion(random.Random(22))
             ),
@@ -441,19 +465,28 @@ class TestTransformSerializationV3:
             )
             assert left_err <= 1.0
 
-            o_phys = original["physical"]
+            o_dx = original["xrOriginDeltaX"]
+            o_dz = original["xrOriginDeltaZ"]
+            o_dyaw = original["xrOriginDeltaYaw"]
+            assert abs(o_dx - decoded["xrOriginDeltaX"]) <= 0.01
+            assert abs(o_dz - decoded["xrOriginDeltaZ"]) <= 0.01
+            assert abs(o_dyaw - decoded["xrOriginDeltaYaw"]) <= 0.1
+
+            expected_pos, expected_rot = _reconstruct_physical_from_head_and_delta(
+                decoded["head"],
+                decoded["xrOriginDeltaX"],
+                decoded["xrOriginDeltaZ"],
+                decoded["xrOriginDeltaYaw"],
+            )
             d_phys = decoded["physical"]
-            assert abs(o_phys["posX"] - d_phys["posX"]) <= 0.01
-            assert abs(o_phys["posY"] - d_phys["posY"]) <= 0.01
-            assert abs(o_phys["posZ"] - d_phys["posZ"]) <= 0.01
-            o_yaw = _yaw_deg_from_quaternion(
-                (o_phys["rotX"], o_phys["rotY"], o_phys["rotZ"], o_phys["rotW"])
+            assert abs(expected_pos[0] - d_phys["posX"]) <= 1e-6
+            assert abs(expected_pos[1] - d_phys["posY"]) <= 1e-6
+            assert abs(expected_pos[2] - d_phys["posZ"]) <= 1e-6
+            physical_err = _quat_angle_error_deg(
+                expected_rot,
+                (d_phys["rotX"], d_phys["rotY"], d_phys["rotZ"], d_phys["rotW"]),
             )
-            d_yaw = _yaw_deg_from_quaternion(
-                (d_phys["rotX"], d_phys["rotY"], d_phys["rotZ"], d_phys["rotW"])
-            )
-            yaw_err = abs(((o_yaw - d_yaw + 180.0) % 360.0) - 180.0)
-            assert yaw_err <= 1.0
+            assert physical_err <= 1.0
 
             o_virtuals = original["virtuals"]
             d_virtuals = decoded["virtuals"]
@@ -484,9 +517,9 @@ class TestTransformSerializationV3:
             "deviceId": "clamp-test",
             "poseSeq": 10,
             "flags": 0x3E,
-            "physical": _build_transform(
-                (9999.0, -9999.0, 9999.0), (0.0, 0.0, 0.0, 1.0)
-            ),
+            "xrOriginDeltaX": 9999.0,
+            "xrOriginDeltaZ": -9999.0,
+            "xrOriginDeltaYaw": 9999.0,
             "head": _build_transform(
                 (9999.0, -9999.0, 9999.0), _random_unit_quaternion(random.Random(1))
             ),
@@ -511,10 +544,19 @@ class TestTransformSerializationV3:
         min_abs = binary_serializer.INT24_MIN * binary_serializer.ABS_POS_SCALE
         max_rel = binary_serializer.INT16_MAX * binary_serializer.REL_POS_SCALE
         min_rel = binary_serializer.INT16_MIN * binary_serializer.REL_POS_SCALE
+        max_loco = binary_serializer.INT16_MAX * binary_serializer.LOCO_POS_SCALE
+        min_loco = binary_serializer.INT16_MIN * binary_serializer.LOCO_POS_SCALE
 
         assert min_abs <= decoded["head"]["posX"] <= max_abs
         assert min_abs <= decoded["head"]["posY"] <= max_abs
         assert min_abs <= decoded["head"]["posZ"] <= max_abs
+        assert min_loco <= decoded["xrOriginDeltaX"] <= max_loco
+        assert min_loco <= decoded["xrOriginDeltaZ"] <= max_loco
+        assert (
+            binary_serializer.INT16_MIN * binary_serializer.PHYSICAL_YAW_SCALE
+            <= decoded["xrOriginDeltaYaw"]
+            <= binary_serializer.INT16_MAX * binary_serializer.PHYSICAL_YAW_SCALE
+        )
 
         rel_right = (
             decoded["rightHand"]["posX"] - decoded["head"]["posX"],
@@ -531,9 +573,9 @@ class TestTransformSerializationV3:
             "deviceId": "int24-abs-range",
             "poseSeq": 33,
             "flags": 0x3E,
-            "physical": _build_transform(
-                (5000.12, -5000.34, 4321.56), (0.0, 0.0, 0.0, 1.0)
-            ),
+            "xrOriginDeltaX": 250.12,
+            "xrOriginDeltaZ": -125.34,
+            "xrOriginDeltaYaw": 179.9,
             "head": _build_transform(
                 (5000.78, -5000.9, 4321.01), _random_unit_quaternion(random.Random(31))
             ),
@@ -549,12 +591,12 @@ class TestTransformSerializationV3:
             binary_serializer.serialize_client_transform(payload)
         )
         assert decoded is not None
-        assert abs(decoded["physical"]["posX"] - 5000.12) <= 0.01
-        assert abs(decoded["physical"]["posY"] + 5000.34) <= 0.01
-        assert abs(decoded["physical"]["posZ"] - 4321.56) <= 0.01
         assert abs(decoded["head"]["posX"] - 5000.78) <= 0.01
         assert abs(decoded["head"]["posY"] + 5000.9) <= 0.01
         assert abs(decoded["head"]["posZ"] - 4321.01) <= 0.01
+        assert abs(decoded["xrOriginDeltaX"] - 250.12) <= 0.01
+        assert abs(decoded["xrOriginDeltaZ"] + 125.34) <= 0.01
+        assert abs(decoded["xrOriginDeltaYaw"] - 179.9) <= 0.1
 
     def test_client_body_size_with_full_pose_no_virtuals(self) -> None:
         """Full pose body (no virtuals) should match current protocol v3 byte size."""
@@ -562,7 +604,9 @@ class TestTransformSerializationV3:
             "deviceId": "size-check",
             "poseSeq": 1,
             "flags": 0x1E,  # Physical + Head + Right + Left
-            "physical": _build_transform((1.0, 0.0, 2.0), (0.0, 0.0, 0.0, 1.0)),
+            "xrOriginDeltaX": 1.0,
+            "xrOriginDeltaZ": 2.0,
+            "xrOriginDeltaYaw": 10.0,
             "head": _build_transform(
                 (1.0, 1.6, 2.0), _random_unit_quaternion(random.Random(41))
             ),
@@ -577,7 +621,36 @@ class TestTransformSerializationV3:
         _, _, raw = binary_serializer.deserialize(
             binary_serializer.serialize_client_transform(payload)
         )
-        assert len(raw) == 49
+        assert len(raw) == 44
+
+    def test_physical_requires_delta_encoding_flag(self) -> None:
+        """PhysicalValid frames must carry the XROrigin-delta encoding bit."""
+        payload = {
+            "deviceId": "missing-delta-flag",
+            "poseSeq": 7,
+            "flags": (
+                binary_serializer.POSE_FLAG_PHYSICAL_VALID
+                | binary_serializer.POSE_FLAG_HEAD_VALID
+            ),
+            "xrOriginDeltaX": 1.0,
+            "xrOriginDeltaZ": -2.0,
+            "xrOriginDeltaYaw": 30.0,
+            "head": _build_transform(
+                (1.0, 1.6, 2.0), _random_unit_quaternion(random.Random(77))
+            ),
+            "virtuals": [],
+        }
+        encoded = bytearray(binary_serializer.serialize_client_transform(payload))
+        device_id_len = encoded[2]
+        body_offset = 3 + device_id_len
+        encoding_flags_offset = body_offset + 3
+        encoded[encoding_flags_offset] &= (
+            ~binary_serializer.ENCODING_PHYSICAL_IS_XRORIGIN_DELTA
+        ) & 0xFF
+
+        msg_type, decoded, _ = binary_serializer.deserialize(bytes(encoded))
+        assert msg_type == binary_serializer.MSG_CLIENT_POSE_V2
+        assert decoded is None
 
     def test_room_relay_integrity(self) -> None:
         """Room serialization should preserve pose sequence, flags, and decoded pose fidelity."""

@@ -1124,6 +1124,30 @@ namespace Styly.NetSync
         #endregion ------------------------------------------------------------------------
 
         /// <summary>
+        /// Compute XROrigin locomotion delta in SE(2) form relative to startup origin.
+        /// t = p1 - R(dyaw) * p0, where p0/p1 use XZ plane only.
+        /// </summary>
+        internal void ComputeXrOriginDelta(out Vector3 tXZ, out float dyawDeg)
+        {
+            var p0 = new Vector3(_physicalOffsetPosition.x, 0f, _physicalOffsetPosition.z);
+            var yaw0 = _physicalOffsetRotation.y;
+
+            var p1 = p0;
+            var yaw1 = yaw0;
+            if (_XrOriginTransform != null)
+            {
+                var current = _XrOriginTransform.position;
+                p1 = new Vector3(current.x, 0f, current.z);
+                yaw1 = _XrOriginTransform.eulerAngles.y;
+            }
+
+            dyawDeg = Mathf.DeltaAngle(yaw0, yaw1);
+            var deltaRotation = Quaternion.Euler(0f, dyawDeg, 0f);
+            tXZ = p1 - (deltaRotation * p0);
+            tXZ.y = 0f;
+        }
+
+        /// <summary>
         /// Update a remote client's Human Presence transform from the client's "physical" pose.
         /// The incoming position/rotation are LOCAL to the remote head's parent.
         /// We convert them to WORLD space using the remote avatar hierarchy and apply yaw-only.
@@ -1162,11 +1186,11 @@ namespace Styly.NetSync
                 var localYaw = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
                 worldYaw = parent.rotation * localYaw;
 
-                // Apply XROrigin offset and physical offset to get true world position/rotation
-                var xrOriginPos = _XrOriginTransform != null ? _XrOriginTransform.position : Vector3.zero;
-                var xrOriginEuler = _XrOriginTransform != null ? _XrOriginTransform.eulerAngles : Vector3.zero;
-                worldPos = worldPos + xrOriginPos - _physicalOffsetPosition;
-                worldYaw = Quaternion.Euler(xrOriginEuler - _physicalOffsetRotation) * worldYaw;
+                // Apply local locomotion delta with the same SE(2) definition used on wire.
+                ComputeXrOriginDelta(out var localDeltaPos, out var localDeltaYaw);
+                var localDeltaRot = Quaternion.Euler(0f, localDeltaYaw, 0f);
+                worldPos = localDeltaRot * worldPos + localDeltaPos;
+                worldYaw = localDeltaRot * worldYaw;
             }
             else
             {

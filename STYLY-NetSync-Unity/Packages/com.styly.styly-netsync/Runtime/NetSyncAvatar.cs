@@ -198,6 +198,17 @@ namespace Styly.NetSync
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
             _tx.flags = BuildPoseFlags();
+            if (_netSyncManager != null)
+            {
+                _netSyncManager.ComputeXrOriginDelta(out var deltaPos, out var deltaYaw);
+                _tx.xrOriginDeltaPosition = deltaPos;
+                _tx.xrOriginDeltaYaw = deltaYaw;
+            }
+            else
+            {
+                _tx.xrOriginDeltaPosition = Vector3.zero;
+                _tx.xrOriginDeltaYaw = 0f;
+            }
 
             Fill(
                     _txPhysical,
