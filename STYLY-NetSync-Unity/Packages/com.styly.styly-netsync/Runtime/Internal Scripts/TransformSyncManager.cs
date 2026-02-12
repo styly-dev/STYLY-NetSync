@@ -11,7 +11,7 @@ namespace Styly.NetSync
 {
     internal class TransformSyncManager
     {
-        private readonly ConnectionManager _connectionManager;
+        private readonly IConnectionManager _connectionManager;
         private readonly string _deviceId;
         private int _messagesSent;
         private float _lastSendTime;
@@ -28,7 +28,7 @@ namespace Styly.NetSync
         public float SendRate { get; set; } = 10f;
         public int MessagesSent => _messagesSent;
 
-        public TransformSyncManager(ConnectionManager connectionManager, string deviceId, float sendRate)
+        public TransformSyncManager(IConnectionManager connectionManager, string deviceId, float sendRate)
         {
             _connectionManager = connectionManager;
             _deviceId = deviceId;

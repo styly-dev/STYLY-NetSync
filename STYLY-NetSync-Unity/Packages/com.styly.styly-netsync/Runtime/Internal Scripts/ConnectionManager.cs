@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace Styly.NetSync
 {
-    internal class ConnectionManager
+    internal class ConnectionManager : IConnectionManager
     {
         private DealerSocket _dealerSocket;
         private SubscriberSocket _subSocket;

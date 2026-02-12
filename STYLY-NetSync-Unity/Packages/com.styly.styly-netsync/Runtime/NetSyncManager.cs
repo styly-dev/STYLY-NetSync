@@ -245,7 +245,7 @@ namespace Styly.NetSync
         private static bool _netMqInit;
 
         // Managers
-        private ConnectionManager _connectionManager;
+        private IConnectionManager _connectionManager;
         private AvatarManager _avatarManager;
         private RPCManager _rpcManager;
         private TransformSyncManager _transformSyncManager;
@@ -341,7 +341,7 @@ namespace Styly.NetSync
                 }
             }
         }
-        internal ConnectionManager ConnectionManager => _connectionManager;
+        internal IConnectionManager ConnectionManager => _connectionManager;
         internal AvatarManager AvatarManager => _avatarManager;
         internal RPCManager RPCManager => _rpcManager;
         internal TransformSyncManager TransformSyncManager => _transformSyncManager;

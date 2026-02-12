@@ -13,7 +13,7 @@ namespace Styly.NetSync
 {
     internal class RPCManager
     {
-        private readonly ConnectionManager _connectionManager;
+        private readonly IConnectionManager _connectionManager;
         private readonly string _deviceId;
         private readonly NetSyncManager _netSyncManager;
         private readonly ConcurrentQueue<(int senderClientNo, string fn, string[] args)> _rpcQueue = new();
@@ -130,7 +130,7 @@ namespace Styly.NetSync
             }
         }
 
-        public RPCManager(ConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
+        public RPCManager(IConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
         {
             _connectionManager = connectionManager;
             _deviceId = deviceId;

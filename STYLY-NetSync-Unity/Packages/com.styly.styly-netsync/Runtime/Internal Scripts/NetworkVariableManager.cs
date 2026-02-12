@@ -12,7 +12,7 @@ namespace Styly.NetSync
 {
     internal class NetworkVariableManager
     {
-        private readonly ConnectionManager _connectionManager;
+        private readonly IConnectionManager _connectionManager;
         private readonly string _deviceId;
         private readonly NetSyncManager _netSyncManager;
 
@@ -92,7 +92,7 @@ namespace Styly.NetSync
             }
         }
 
-        public NetworkVariableManager(ConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
+        public NetworkVariableManager(IConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
         {
             _connectionManager = connectionManager;
             _deviceId = deviceId;
