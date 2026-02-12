@@ -100,6 +100,13 @@ namespace Styly.NetSync
                 return false;
             }
 
+            // Standalone mode: loopback RPC to self
+            if (_netSyncManager != null && _netSyncManager.IsStandaloneMode)
+            {
+                EnqueueRPC(_netSyncManager.ClientNo, functionName, args);
+                return true;
+            }
+
             var rpcMsg = new RPCMessage
             {
                 functionName = functionName,
