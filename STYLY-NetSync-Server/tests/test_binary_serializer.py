@@ -316,7 +316,7 @@ class TestTransformSerializationV3:
         msg_type, decoded, _ = binary_serializer.deserialize(
             binary_serializer.serialize_client_transform(payload)
         )
-        assert msg_type == binary_serializer.MSG_CLIENT_POSE_V2
+        assert msg_type == binary_serializer.MSG_CLIENT_POSE
         assert decoded is not None
 
         expected_flags = (
@@ -407,7 +407,7 @@ class TestTransformSerializationV3:
             encoded = binary_serializer.serialize_client_transform(original)
             msg_type, decoded, raw = binary_serializer.deserialize(encoded)
 
-            assert msg_type == binary_serializer.MSG_CLIENT_POSE_V2
+            assert msg_type == binary_serializer.MSG_CLIENT_POSE
             assert decoded is not None
             assert decoded["protocolVersion"] == 3
             assert len(raw) > 0
@@ -649,7 +649,7 @@ class TestTransformSerializationV3:
         ) & 0xFF
 
         msg_type, decoded, _ = binary_serializer.deserialize(bytes(encoded))
-        assert msg_type == binary_serializer.MSG_CLIENT_POSE_V2
+        assert msg_type == binary_serializer.MSG_CLIENT_POSE
         assert decoded is None
 
     def test_room_relay_integrity(self) -> None:
@@ -670,7 +670,7 @@ class TestTransformSerializationV3:
         encoded = binary_serializer.serialize_room_transform(room_payload)
         msg_type, decoded, _ = binary_serializer.deserialize(encoded)
 
-        assert msg_type == binary_serializer.MSG_ROOM_POSE_V2
+        assert msg_type == binary_serializer.MSG_ROOM_POSE
         assert decoded is not None
         assert decoded["protocolVersion"] == 3
         assert decoded["roomId"] == "room-v3"

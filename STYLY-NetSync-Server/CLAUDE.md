@@ -100,7 +100,7 @@ pkill -f styly-netsync  # Kill all STYLY processes
 
 ### Protocol Details
 - **ZeroMQ Patterns**: DEALER→ROUTER (client-server) and PUB→SUB (broadcasting)
-- **Transform Message Types**: `MSG_CLIENT_POSE_V2` (11) and `MSG_ROOM_POSE_V2` (12) with `protocolVersion=3`
+- **Transform Message Types**: `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with `protocolVersion=3`
 - **Encoding**: Compact pose body with absolute head pose and head-relative right/left/virtual transforms
 - **Quantization Ranges**: absolute position uses `int24 @ 0.01m` (`[-83,886.08m, 83,886.07m]` per axis), head-relative position uses `int16 @ 0.005m` (`[-163.84m, 163.835m]` per axis); out-of-range values are clamped
 - **Client Management**: Device ID to client number mapping system (2-byte client IDs)

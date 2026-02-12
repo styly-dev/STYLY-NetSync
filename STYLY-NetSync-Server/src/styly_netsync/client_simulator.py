@@ -45,13 +45,13 @@ import zmq
 
 # Import public APIs from styly_netsync module
 from styly_netsync.binary_serializer import (
-    MSG_CLIENT_POSE_V2,
+    MSG_CLIENT_POSE,
     MSG_CLIENT_VAR_SET,
     MSG_CLIENT_VAR_SYNC,
     MSG_DEVICE_ID_MAPPING,
     MSG_GLOBAL_VAR_SET,
     MSG_GLOBAL_VAR_SYNC,
-    MSG_ROOM_POSE_V2,
+    MSG_ROOM_POSE,
     MSG_RPC,
     deserialize,
     serialize_client_transform,
@@ -82,8 +82,8 @@ def euler_to_quaternion(
 
 
 MESSAGE_TYPE_NAMES: dict[int, str] = {
-    MSG_CLIENT_POSE_V2: "CLIENT_POSE_V2",
-    MSG_ROOM_POSE_V2: "ROOM_POSE_V2",
+    MSG_CLIENT_POSE: "CLIENT_POSE",
+    MSG_ROOM_POSE: "ROOM_POSE",
     MSG_RPC: "RPC",
     MSG_DEVICE_ID_MAPPING: "DEVICE_ID_MAPPING",
     MSG_GLOBAL_VAR_SET: "GLOBAL_VAR_SET",
@@ -1247,9 +1247,9 @@ class SimulatedClient:
         if self.logger.isEnabledFor(logging.DEBUG):
             message_name = MESSAGE_TYPE_NAMES.get(msg_type, f"UNKNOWN_{msg_type}")
             summary = "payload"
-            if msg_type == MSG_CLIENT_POSE_V2 and data:
+            if msg_type == MSG_CLIENT_POSE and data:
                 summary = f"transform from {data.get('deviceId', 'unknown')}"
-            elif msg_type == MSG_ROOM_POSE_V2 and data:
+            elif msg_type == MSG_ROOM_POSE and data:
                 summary = f"room transform with {len(data.get('clients', []))} clients"
             elif msg_type in (MSG_GLOBAL_VAR_SET, MSG_CLIENT_VAR_SET) and data:
                 summary = (

@@ -637,7 +637,7 @@ class net_sync_manager:
             with self._lock:
                 self._stats["messages_received"] += 1
 
-            if msg_type == binary_serializer.MSG_ROOM_POSE_V2:
+            if msg_type == binary_serializer.MSG_ROOM_POSE:
                 self._process_room_transform(msg_data)
             elif msg_type == binary_serializer.MSG_DEVICE_ID_MAPPING:
                 self._process_device_mapping(msg_data)

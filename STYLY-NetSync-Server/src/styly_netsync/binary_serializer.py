@@ -17,8 +17,8 @@ MSG_GLOBAL_VAR_SET = 7  # Set global variable
 MSG_GLOBAL_VAR_SYNC = 8  # Sync global variables
 MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
-MSG_CLIENT_POSE_V2 = 11
-MSG_ROOM_POSE_V2 = 12
+MSG_CLIENT_POSE = 11
+MSG_ROOM_POSE = 12
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -510,7 +510,7 @@ def serialize_client_transform(data: dict[str, Any]) -> bytes:
     buffer = bytearray()
 
     # Message type
-    buffer.append(MSG_CLIENT_POSE_V2)
+    buffer.append(MSG_CLIENT_POSE)
 
     # Protocol version
     buffer.append(PROTOCOL_VERSION)
@@ -533,7 +533,7 @@ def serialize_room_transform(data: dict[str, Any]) -> bytes:
     buffer = bytearray()
 
     # Message type
-    buffer.append(MSG_ROOM_POSE_V2)
+    buffer.append(MSG_ROOM_POSE)
 
     # Protocol version
     buffer.append(PROTOCOL_VERSION)
@@ -759,7 +759,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
 
     Returns:
         Tuple of (message_type, data_dict, raw_payload)
-        raw_payload is the client data portion for MSG_CLIENT_POSE_V2, empty bytes otherwise
+        raw_payload is the client data portion for MSG_CLIENT_POSE, empty bytes otherwise
     """
     if not data:
         return 0, None, b""
@@ -769,12 +769,12 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_ROOM_POSE_V2:
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_ROOM_POSE:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
     try:
-        if message_type == MSG_CLIENT_POSE_V2:
+        if message_type == MSG_CLIENT_POSE:
             device_id_len = data[offset + 1]
             body_offset = offset + 2 + device_id_len
             raw_client_data = data[body_offset:]
@@ -783,7 +783,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
                 _deserialize_client_transform(data, offset),
                 raw_client_data,
             )
-        elif message_type == MSG_ROOM_POSE_V2:
+        elif message_type == MSG_ROOM_POSE:
             return message_type, _deserialize_room_transform(data, offset), b""
         elif message_type == MSG_RPC:
             return message_type, _deserialize_rpc_message(data, offset), b""

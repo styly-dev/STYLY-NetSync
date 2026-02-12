@@ -20,8 +20,8 @@ namespace Styly.NetSync
         public const byte MSG_GLOBAL_VAR_SYNC = 8;  // Sync global variables
         public const byte MSG_CLIENT_VAR_SET = 9;  // Set client variable
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
-        public const byte MSG_CLIENT_POSE_V2 = 11;  // Client pose (quaternion + timestamps)
-        public const byte MSG_ROOM_POSE_V2 = 12;  // Room pose snapshot (quaternion + timestamps)
+        public const byte MSG_CLIENT_POSE = 11;  // Client pose (quaternion + timestamps)
+        public const byte MSG_ROOM_POSE = 12;  // Room pose snapshot (quaternion + timestamps)
 
         // Transform data type identifiers (deprecated - kept for reference)
         // Protocol v3 pose encoding constants
@@ -433,7 +433,7 @@ namespace Styly.NetSync
         public static void SerializeClientTransformInto(BinaryWriter writer, ClientTransformData data)
         {
             // Message type
-            writer.Write(MSG_CLIENT_POSE_V2);
+            writer.Write(MSG_CLIENT_POSE);
 
             // Protocol version
             writer.Write(PROTOCOL_VERSION);
@@ -543,7 +543,7 @@ namespace Styly.NetSync
         public static void SerializeStealthHandshakeInto(BinaryWriter writer, string deviceId)
         {
             // Message type
-            writer.Write(MSG_CLIENT_POSE_V2);
+            writer.Write(MSG_CLIENT_POSE);
 
             // Protocol version
             writer.Write(PROTOCOL_VERSION);
@@ -578,7 +578,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE_V2)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -589,7 +589,7 @@ namespace Styly.NetSync
                 {
                     // case MSG_CLIENT_TRANSFORM:
                     //     return (messageType, DeserializeClientTransform(reader));
-                    case MSG_ROOM_POSE_V2:
+                    case MSG_ROOM_POSE:
                         return (messageType, DeserializeRoomTransform(reader));
                     case MSG_RPC:
                         // RPC message
@@ -651,7 +651,7 @@ namespace Styly.NetSync
                 var encodingFlags = reader.ReadByte();
                 _ = encodingFlags;
 
-                // Note: Device ID is NOT sent in MSG_ROOM_POSE_V2
+                // Note: Device ID is NOT sent in MSG_ROOM_POSE
                 // Device ID will be resolved from client number using mapping table
 
                 client.physical = new TransformData();

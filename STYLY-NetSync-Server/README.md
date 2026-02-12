@@ -43,7 +43,7 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 ## Wire protocol compatibility
 
 - Current transform wire protocol is `protocolVersion = 3`.
-- Transform messages use `MSG_CLIENT_POSE_V2` (11) and `MSG_ROOM_POSE_V2` (12) with the compact V3 pose body.
+- Transform messages use `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with the compact V3 pose body.
 - Legacy transform protocol v2 and JSON transform fallback are not supported.
 - Deploy Unity and Python updates together when changing transform protocol behavior.
 - Protocol v3 position quantization ranges:

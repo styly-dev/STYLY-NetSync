@@ -1043,7 +1043,7 @@ class NetSyncServer:
                             if data is None:
                                 logger.warning("Received message with None data")
                                 continue
-                            if msg_type == binary_serializer.MSG_CLIENT_POSE_V2:
+                            if msg_type == binary_serializer.MSG_CLIENT_POSE:
                                 self._handle_client_transform(
                                     client_identity, room_id, data, raw_payload
                                 )
@@ -1792,7 +1792,7 @@ class NetSyncServer:
             return None
 
         buffer = bytearray()
-        buffer.append(binary_serializer.MSG_ROOM_POSE_V2)
+        buffer.append(binary_serializer.MSG_ROOM_POSE)
         buffer.append(binary_serializer.PROTOCOL_VERSION)
         binary_serializer._pack_string(buffer, room_id)
         buffer.extend(struct.pack("<d", time.monotonic()))

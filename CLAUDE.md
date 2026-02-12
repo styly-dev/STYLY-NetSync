@@ -107,7 +107,7 @@ kill <PID>                          # Kill process using port
 
 - Uses ZeroMQ with DEALER-ROUTER and PUB-SUB patterns
 - Transform protocol is `protocolVersion=3` only (`v2` compatibility removed)
-- Transform message IDs remain `MSG_CLIENT_POSE_V2=11` and `MSG_ROOM_POSE_V2=12`
+- Transform message IDs are `MSG_CLIENT_POSE=11` and `MSG_ROOM_POSE=12`
 - Compact transform encoding: int16 quantized positions, yaw-only physical rotation (`0.1°` units), and 32-bit smallest-three quaternion compression
 - `Head` is absolute; `Right/Left/Virtual` transforms are encoded relative to `Head`
 - Server relays cached raw client pose bodies to minimize reserialization work
