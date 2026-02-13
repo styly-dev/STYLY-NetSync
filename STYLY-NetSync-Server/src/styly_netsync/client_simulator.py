@@ -959,9 +959,9 @@ class SimulatedClient:
     """Represents a single simulated client."""
 
     # Battery simulation constants
-    BATTERY_INITIAL_MIN = 50.0  # %
-    BATTERY_INITIAL_MAX = 100.0  # %
-    BATTERY_DRAIN_RATE = 10.0 / 60.0  # %-points lost per second (10%/min)
+    BATTERY_INITIAL_MIN = 0.5  # Normalized (0.0-1.0)
+    BATTERY_INITIAL_MAX = 1.0  # Normalized (0.0-1.0)
+    BATTERY_DRAIN_RATE = 0.5 / 1200.0  # Normalized units lost per second (50% in 20 mins)
     BATTERY_UPDATE_INTERVAL = 60.0  # Send battery updates every 60 seconds
 
     def __init__(
@@ -1004,7 +1004,7 @@ class SimulatedClient:
             self.client_number = 0
 
             self.logger.info(
-                f"Initialized with battery level: {self.battery_level:.1f}%, awaiting client number assignment"
+                f"Initialized with battery level: {self.battery_level:.2f} (normalized), awaiting client number assignment"
             )
         else:
             self.battery_level = 0.0
@@ -1076,7 +1076,7 @@ class SimulatedClient:
             self.transport.disconnect()
             if self.simulate_battery:
                 self.logger.info(
-                    f"Client stopped with final battery level: {self.battery_level:.1f}%"
+                    f"Client stopped with final battery level: {self.battery_level:.2f} (normalized)"
                 )
             else:
                 self.logger.info("Client stopped")
@@ -1112,11 +1112,11 @@ class SimulatedClient:
             elapsed_since_send >= self.BATTERY_UPDATE_INTERVAL
             and self.client_number > 0
         ):
-            battery_value = f"{self.battery_level:.1f}"
+            battery_value = f"{self.battery_level:.2f}"
             if self.transport.send_client_variable(
                 self.room_id, self.client_number, "BatteryLevel", battery_value
             ):
-                self.logger.debug(f"Sent battery level: {battery_value}%")
+                self.logger.debug(f"Sent battery level: {battery_value} (normalized)")
             else:
                 self.logger.warning("Failed to send battery level update")
             self.last_battery_send = current_time
