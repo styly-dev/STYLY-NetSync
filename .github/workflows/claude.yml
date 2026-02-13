@@ -44,5 +44,5 @@ jobs:
           # prompt: 'Update the pull request description to include a summary of changes.'
 
           # Allow Claude to run quality checks and tests
-          allowed_tools: "Bash(pip install:*),Bash(cd:*),Bash(black:*),Bash(ruff:*),Bash(mypy:*),Bash(pytest:*)"
+          claude_args: '--allowedTools "Bash(pip install:*)" "Bash(cd:*)" "Bash(black:*)" "Bash(ruff:*)" "Bash(mypy:*)" "Bash(pytest:*)"'
 
