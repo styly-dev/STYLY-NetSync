@@ -43,6 +43,5 @@ jobs:
           # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
           # prompt: 'Update the pull request description to include a summary of changes.'
 
-          # Allow Claude to run quality checks and tests
-          claude_args: '--allowedTools "Bash(pip install:*)" "Bash(cd:*)" "Bash(black:*)" "Bash(ruff:*)" "Bash(mypy:*)" "Bash(pytest:*)"'
-
+          # Allow Claude to run quality checks and git automation commands
+          claude_args: '--allowedTools "Bash(git add:*)" "Bash(git commit:*)" "Bash(git push:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)" "Bash(git rm:*)" "Bash(pip install:*)" "Bash(cd:*)" "Bash(black:*)" "Bash(ruff:*)" "Bash(mypy:*)" "Bash(pytest:*)"'
