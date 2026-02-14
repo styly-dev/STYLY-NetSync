@@ -1,1 +1,0 @@
-"""Client implementations for STYLY NetSync Benchmark."""
