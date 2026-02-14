@@ -82,6 +82,16 @@ uvx --from styly-netsync-server@0.8.0 styly-netsync-simulator --clients 10
 ```
 The uvx command automatically downloads the package, creates an isolated virtual environment, installs dependencies, and runs the python server program.
 
+### Version compatibility note
+
+- Keep Unity package and server versions aligned.
+- Transform synchronization uses protocol version `3` and does not provide backward compatibility with older transform protocols.
+- Protocol v3 position quantization uses:
+  - Absolute scale (`Head`/`Physical`): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
+  - Head-relative scale (`Right`/`Left`/`Virtual`): `0.005 m` per unit, per-axis range `[-163.84 m, 163.835 m]`.
+- This is an encoding range, not a hard world-size limit. Large virtual worlds are supported as long as each encoded value stays in range (out-of-range values are clamped).
+- Coordinate range expansion options (range + bandwidth delta comparison) are documented in `STYLY-NetSync-Server/README.md`.
+
 
 ### Setup Unity scene
 

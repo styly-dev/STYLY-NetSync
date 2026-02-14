@@ -13,9 +13,9 @@ STYLY-NetSync is a Unity multiplayer framework for Location-Based Entertainment 
 
 STYLY-NetSync is designed exclusively for XR (VR/MR/AR) applications. This has important implications:
 
-- **Continuous Transform Updates**: Unlike traditional games where characters move only with controller input, XR applications track users' head and hand positions continuously. Transform data (Position/Rotation) changes every frame.
-- **Always-Active Synchronization**: The server's adaptive broadcasting system assumes rooms are always "dirty" (have new transform data) when clients are connected, since XR tracking never stops.
-- **Bandwidth Planning**: Network bandwidth requirements should account for constant data flow, not intermittent bursts.
+- **High-Frequency Tracking Inputs**: XR head and hand poses can change every frame, but outgoing network data is quantized and filtered before sending.
+- **Motion-Adaptive Sending**: Transform sending uses `SendRate` as an upper bound with `Only-on-change` filtering plus a `1Hz` heartbeat while idle.
+- **Bandwidth Planning**: Capacity planning should assume motion-dependent traffic with an idle heartbeat floor, not continuous full-payload flow.
 
 ## Development Commands
 
@@ -69,7 +69,7 @@ kill <PID>                          # Kill process using port
 
 **Server (Python):**
 - `server.py` - Main server with multi-threaded architecture and room management
-- `binary_serializer.py` - Binary protocol implementation (~60% bandwidth reduction)
+- `binary_serializer.py` - Protocol v3 binary serializer (quantized positions + 32-bit smallest-three quaternion compression + head-relative pose encoding)
 - `client.py` - Python client API (`net_sync_manager` class) for non-Unity clients
 - `client_simulator.py` - Load testing tool for performance validation
 - `rest_bridge.py` - FastAPI-based REST API bridge for external integrations
@@ -83,7 +83,7 @@ kill <PID>                          # Kill process using port
 - `Internal Scripts/` - Core networking components:
   - `ConnectionManager.cs` - ZeroMQ socket management and threading
   - `MessageProcessor.cs` - Binary protocol message handling
-  - `TransformSyncManager.cs` - Position/rotation synchronization (1-120Hz)
+  - `TransformSyncManager.cs` - Position/rotation synchronization with SendRate cap, only-on-change filtering, and 1Hz idle heartbeat
   - `RPCManager.cs` - Remote procedure call system with priority-based sending
   - `NetworkVariableManager.cs` - Synchronized key-value storage
   - `AvatarManager.cs` - Player spawn/despawn management
@@ -106,7 +106,11 @@ kill <PID>                          # Kill process using port
 ### Protocol Details
 
 - Uses ZeroMQ with DEALER-ROUTER and PUB-SUB patterns
-- Binary serialization with client number system (2-byte IDs)
+- Transform protocol is `protocolVersion=3` only (`v2` compatibility removed)
+- Transform message IDs are `MSG_CLIENT_POSE=11` and `MSG_ROOM_POSE=12`
+- Compact transform encoding: int16 quantized positions, yaw-only physical rotation (`0.1°` units), and 32-bit smallest-three quaternion compression
+- `Head` is absolute; `Right/Left/Virtual` transforms are encoded relative to `Head`
+- Server relays cached raw client pose bodies to minimize reserialization work
 - UDP discovery service for automatic server finding (port 9999)
 - Adaptive broadcasting (1-120Hz) with thread-safe design
 - Priority-based sending: Control messages (RPC, Network Variables) prioritized over Transform updates
@@ -172,5 +176,5 @@ Before submitting code:
 
 **Both:**
 - Commit with descriptive messages
-- Verify backward compatibility
+- For protocol changes, verify full Unity+Server rollout instead of backward compatibility
 - Test server-client integration

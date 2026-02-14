@@ -86,7 +86,7 @@ namespace Styly.NetSync
 
                 switch (msgType)
                 {
-                    case BinarySerializer.MSG_ROOM_POSE_V2 when data is RoomTransformData room:
+                    case BinarySerializer.MSG_ROOM_POSE when data is RoomTransformData room:
                         // Drop-old strategy: keep only the latest few room updates.
                         // NOTE: We use a dedicated queue so we never discard non-room messages.
                         while (_roomTransformQueue.Count >= MaxRoomTransformUpdatesQueueSize)

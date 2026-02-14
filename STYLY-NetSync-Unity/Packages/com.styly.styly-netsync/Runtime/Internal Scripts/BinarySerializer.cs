@@ -1,13 +1,13 @@
 using System;
-using System.IO;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace Styly.NetSync
 {
     internal static class BinarySerializer
     {
-        public const byte PROTOCOL_VERSION = 2;
+        public const byte PROTOCOL_VERSION = 3;
 
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
@@ -20,28 +20,396 @@ namespace Styly.NetSync
         public const byte MSG_GLOBAL_VAR_SYNC = 8;  // Sync global variables
         public const byte MSG_CLIENT_VAR_SET = 9;  // Set client variable
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
-        public const byte MSG_CLIENT_POSE_V2 = 11;  // Client pose (quaternion + timestamps)
-        public const byte MSG_ROOM_POSE_V2 = 12;  // Room pose snapshot (quaternion + timestamps)
+        public const byte MSG_CLIENT_POSE = 11;  // Client pose (quaternion + timestamps)
+        public const byte MSG_ROOM_POSE = 12;  // Room pose snapshot (quaternion + timestamps)
 
         // Transform data type identifiers (deprecated - kept for reference)
-        // All transforms now use 6 floats for consistency
+        // Protocol v3 pose encoding constants
+        private const float ABS_POS_SCALE = 0.01f;
+        private const float LOCO_POS_SCALE = 0.01f;
+        private const float REL_POS_SCALE = 0.005f;
+        private const float PHYSICAL_YAW_SCALE = 0.1f;
+        private const int ABS_POS_MIN_QUANTIZED = -(1 << 23);
+        private const int ABS_POS_MAX_QUANTIZED = (1 << 23) - 1;
+
+        private const byte ENCODING_PHYSICAL_YAW_ONLY = 1 << 0;
+        private const byte ENCODING_RIGHT_REL_HEAD = 1 << 1;
+        private const byte ENCODING_LEFT_REL_HEAD = 1 << 2;
+        private const byte ENCODING_VIRTUAL_REL_HEAD = 1 << 3;
+        private const byte ENCODING_PHYSICAL_IS_XRORIGIN_DELTA = 1 << 4;
+        private const byte ENCODING_FLAGS_DEFAULT = ENCODING_PHYSICAL_YAW_ONLY | ENCODING_RIGHT_REL_HEAD | ENCODING_LEFT_REL_HEAD | ENCODING_VIRTUAL_REL_HEAD | ENCODING_PHYSICAL_IS_XRORIGIN_DELTA;
+
+        // 1/sqrt(2) — the maximum magnitude of any non-largest component in a unit quaternion
+        private const float QUAT_COMPONENT_MIN = -0.70710677f;
+        private const float QUAT_COMPONENT_MAX = 0.70710677f;
+
         #region === Serialization ===
 
-        // Helper to write TransformData as 7 floats (pos + quaternion)
-        private static void WriteTransformData(BinaryWriter writer, TransformData data)
+        // Maximum allowed virtual transforms to prevent memory issues
+        private const int MAX_VIRTUAL_TRANSFORMS = 50;
+
+        private static TransformData EnsureTransform(TransformData data)
         {
-            if (data == null)
+            return data ?? new TransformData();
+        }
+
+        private static PoseFlags SanitizePoseFlags(PoseFlags flags)
+        {
+            if ((flags & PoseFlags.HeadValid) == 0)
             {
-                for (int i = 0; i < 7; i++) writer.Write(0f);
-                return;
+                flags &= ~(PoseFlags.RightValid | PoseFlags.LeftValid | PoseFlags.VirtualsValid);
             }
-            writer.Write(data.position.x);
-            writer.Write(data.position.y);
-            writer.Write(data.position.z);
-            writer.Write(data.rotation.x);
-            writer.Write(data.rotation.y);
-            writer.Write(data.rotation.z);
-            writer.Write(data.rotation.w);
+            return flags;
+        }
+
+        private static short QuantizeSigned(float value, float scale)
+        {
+            if (scale <= 0f)
+            {
+                return 0;
+            }
+
+            var scaled = value / scale;
+            var rounded = Mathf.RoundToInt(scaled);
+            if (rounded > short.MaxValue)
+            {
+                return short.MaxValue;
+            }
+            if (rounded < short.MinValue)
+            {
+                return short.MinValue;
+            }
+            return (short)rounded;
+        }
+
+        private static Vector3 QuantizedToVector3(short x, short y, short z, float scale)
+        {
+            return new Vector3(x * scale, y * scale, z * scale);
+        }
+
+        private static Vector3 QuantizedToVector3(int x, int y, int z, float scale)
+        {
+            return new Vector3(x * scale, y * scale, z * scale);
+        }
+
+        private static int QuantizeSignedInt24(float value, float scale)
+        {
+            if (scale <= 0f)
+            {
+                return 0;
+            }
+
+            var rounded = Mathf.RoundToInt(value / scale);
+            if (rounded > ABS_POS_MAX_QUANTIZED)
+            {
+                return ABS_POS_MAX_QUANTIZED;
+            }
+            if (rounded < ABS_POS_MIN_QUANTIZED)
+            {
+                return ABS_POS_MIN_QUANTIZED;
+            }
+            return rounded;
+        }
+
+        private static void WriteInt24(BinaryWriter writer, int value)
+        {
+            var clamped = value;
+            if (clamped > ABS_POS_MAX_QUANTIZED)
+            {
+                clamped = ABS_POS_MAX_QUANTIZED;
+            }
+            if (clamped < ABS_POS_MIN_QUANTIZED)
+            {
+                clamped = ABS_POS_MIN_QUANTIZED;
+            }
+
+            var unsignedValue = (uint)(clamped & 0xFFFFFF);
+            writer.Write((byte)(unsignedValue & 0xFF));
+            writer.Write((byte)((unsignedValue >> 8) & 0xFF));
+            writer.Write((byte)((unsignedValue >> 16) & 0xFF));
+        }
+
+        private static int ReadInt24(BinaryReader reader)
+        {
+            int b0 = reader.ReadByte();
+            int b1 = reader.ReadByte();
+            int b2 = reader.ReadByte();
+            int value = b0 | (b1 << 8) | (b2 << 16);
+            if ((value & 0x800000) != 0)
+            {
+                value |= unchecked((int)0xFF000000);
+            }
+            return value;
+        }
+
+        private static float NormalizeYawDegrees(float yaw)
+        {
+            return Mathf.DeltaAngle(0f, yaw);
+        }
+
+        /// <summary>
+        /// Extract yaw in degrees from quaternion.
+        /// Assumes Y-up right-handed coordinate system (Unity standard).
+        /// Yaw is rotation around the Y axis.
+        /// </summary>
+        private static float QuaternionToYawDegrees(Quaternion rotation)
+        {
+            var q = NormalizeQuaternionSafe(rotation);
+            float sinyCosp = 2f * (q.w * q.y + q.z * q.x);
+            float cosyCosp = 1f - 2f * (q.y * q.y + q.z * q.z);
+            return NormalizeYawDegrees(Mathf.Atan2(sinyCosp, cosyCosp) * Mathf.Rad2Deg);
+        }
+
+        private static Quaternion NormalizeQuaternionSafe(Quaternion rotation)
+        {
+            float magSq = rotation.x * rotation.x + rotation.y * rotation.y
+                        + rotation.z * rotation.z + rotation.w * rotation.w;
+            if (!float.IsFinite(magSq) || magSq <= 1e-10f)
+            {
+                return Quaternion.identity;
+            }
+            return Quaternion.Normalize(rotation);
+        }
+
+        private static uint CompressQuaternionSmallestThree(Quaternion rotation)
+        {
+            var q = NormalizeQuaternionSafe(rotation);
+
+            float ax = Mathf.Abs(q.x);
+            float ay = Mathf.Abs(q.y);
+            float az = Mathf.Abs(q.z);
+            float aw = Mathf.Abs(q.w);
+
+            int largestIndex = 0;
+            float largest = ax;
+            if (ay > largest)
+            {
+                largestIndex = 1;
+                largest = ay;
+            }
+            if (az > largest)
+            {
+                largestIndex = 2;
+                largest = az;
+            }
+            if (aw > largest)
+            {
+                largestIndex = 3;
+            }
+
+            var values = new float[] { q.x, q.y, q.z, q.w };
+            if (values[largestIndex] < 0f)
+            {
+                values[0] = -values[0];
+                values[1] = -values[1];
+                values[2] = -values[2];
+                values[3] = -values[3];
+            }
+
+            const int max10 = 1023;
+
+            uint packed = (uint)largestIndex << 30;
+            int writeIndex = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                if (i == largestIndex)
+                {
+                    continue;
+                }
+
+                float clamped = Mathf.Clamp(values[i], QUAT_COMPONENT_MIN, QUAT_COMPONENT_MAX);
+                float normalized = (clamped - QUAT_COMPONENT_MIN) / (QUAT_COMPONENT_MAX - QUAT_COMPONENT_MIN);
+                uint scaled = (uint)Mathf.RoundToInt(normalized * max10);
+                if (scaled > max10)
+                {
+                    scaled = max10;
+                }
+
+                int shift = 20 - (writeIndex * 10);
+                packed |= scaled << shift;
+                writeIndex++;
+            }
+
+            return packed;
+        }
+
+        private static Quaternion DecompressQuaternionSmallestThree(uint packed)
+        {
+            int largestIndex = (int)((packed >> 30) & 0x3);
+            uint a = (packed >> 20) & 0x3FF;
+            uint b = (packed >> 10) & 0x3FF;
+            uint c = packed & 0x3FF;
+
+            const float inv = 1f / 1023f;
+
+            float Decode(uint v)
+            {
+                return QUAT_COMPONENT_MIN + ((QUAT_COMPONENT_MAX - QUAT_COMPONENT_MIN) * (v * inv));
+            }
+
+            float[] values = new float[4];
+            int readIndex = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                if (i == largestIndex)
+                {
+                    continue;
+                }
+
+                uint quantized = readIndex == 0 ? a : readIndex == 1 ? b : c;
+                values[i] = Decode(quantized);
+                readIndex++;
+            }
+
+            float sumSquares = 0f;
+            for (int i = 0; i < 4; i++)
+            {
+                if (i == largestIndex)
+                {
+                    continue;
+                }
+                sumSquares += values[i] * values[i];
+            }
+
+            if (sumSquares > 1f + 1e-6f)
+            {
+                Debug.LogWarning($"[BinarySerializer] Quaternion decompression: sumSquares={sumSquares:F6} exceeds 1.0 (packed=0x{packed:X8})");
+            }
+            values[largestIndex] = Mathf.Sqrt(Mathf.Max(0f, 1f - sumSquares));
+
+            var result = new Quaternion(values[0], values[1], values[2], values[3]);
+            return NormalizeQuaternionSafe(result);
+        }
+
+        // FNV-1a hash helpers — unchecked blocks allow intentional integer overflow
+        // which is standard behavior for FNV-1a hash computation.
+        private static void HashShort(ref ulong hash, short value)
+        {
+            unchecked
+            {
+                hash ^= (byte)(value & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)((value >> 8) & 0xFF);
+                hash *= 1099511628211UL;
+            }
+        }
+
+        private static void HashUInt(ref ulong hash, uint value)
+        {
+            unchecked
+            {
+                hash ^= (byte)(value & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)((value >> 8) & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)((value >> 16) & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)((value >> 24) & 0xFF);
+                hash *= 1099511628211UL;
+            }
+        }
+
+        private static void HashInt24(ref ulong hash, int value)
+        {
+            unchecked
+            {
+                uint unsignedValue = (uint)(value & 0xFFFFFF);
+                hash ^= (byte)(unsignedValue & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)((unsignedValue >> 8) & 0xFF);
+                hash *= 1099511628211UL;
+                hash ^= (byte)((unsignedValue >> 16) & 0xFF);
+                hash *= 1099511628211UL;
+            }
+        }
+
+        /// <summary>
+        /// Computes a stable hash for the quantized pose payload content.
+        /// Pose sequence and device ID are intentionally excluded.
+        /// </summary>
+        internal static ulong ComputePoseSignature(ClientTransformData data)
+        {
+            var flags = SanitizePoseFlags(data != null ? data.flags : PoseFlags.None);
+            bool physicalValid = (flags & PoseFlags.PhysicalValid) != 0;
+            bool headValid = (flags & PoseFlags.HeadValid) != 0;
+            bool rightValid = headValid && ((flags & PoseFlags.RightValid) != 0);
+            bool leftValid = headValid && ((flags & PoseFlags.LeftValid) != 0);
+            bool virtualValid = headValid && ((flags & PoseFlags.VirtualsValid) != 0);
+
+            var xrOriginDelta = data != null ? data.xrOriginDeltaPosition : Vector3.zero;
+            var xrOriginDeltaYaw = data != null ? data.xrOriginDeltaYaw : 0f;
+            var head = EnsureTransform(data != null ? data.head : null);
+            var right = EnsureTransform(data != null ? data.rightHand : null);
+            var left = EnsureTransform(data != null ? data.leftHand : null);
+            var headRot = NormalizeQuaternionSafe(head.rotation);
+
+            ulong hash = 1469598103934665603UL; // FNV-1a 64 offset basis
+            unchecked
+            {
+                hash ^= (byte)flags;
+                hash *= 1099511628211UL;
+                hash ^= ENCODING_FLAGS_DEFAULT;
+                hash *= 1099511628211UL;
+            }
+
+            if (physicalValid)
+            {
+                HashShort(ref hash, QuantizeSigned(xrOriginDelta.x, LOCO_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(xrOriginDelta.z, LOCO_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(xrOriginDeltaYaw, PHYSICAL_YAW_SCALE));
+            }
+
+            if (headValid)
+            {
+                HashInt24(ref hash, QuantizeSignedInt24(head.position.x, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(head.position.y, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(head.position.z, ABS_POS_SCALE));
+                HashUInt(ref hash, CompressQuaternionSmallestThree(headRot));
+            }
+
+            if (rightValid)
+            {
+                var relPos = right.position - head.position;
+                var relRot = Quaternion.Inverse(headRot) * NormalizeQuaternionSafe(right.rotation);
+                HashShort(ref hash, QuantizeSigned(relPos.x, REL_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(relPos.y, REL_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(relPos.z, REL_POS_SCALE));
+                HashUInt(ref hash, CompressQuaternionSmallestThree(relRot));
+            }
+
+            if (leftValid)
+            {
+                var relPos = left.position - head.position;
+                var relRot = Quaternion.Inverse(headRot) * NormalizeQuaternionSafe(left.rotation);
+                HashShort(ref hash, QuantizeSigned(relPos.x, REL_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(relPos.y, REL_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(relPos.z, REL_POS_SCALE));
+                HashUInt(ref hash, CompressQuaternionSmallestThree(relRot));
+            }
+
+            int virtualCount = 0;
+            if (virtualValid && data != null && data.virtuals != null)
+            {
+                virtualCount = Mathf.Min(data.virtuals.Count, MAX_VIRTUAL_TRANSFORMS);
+            }
+            unchecked
+            {
+                hash ^= (byte)virtualCount;
+                hash *= 1099511628211UL;
+            }
+
+            for (int i = 0; i < virtualCount; i++)
+            {
+                var vt = EnsureTransform(data.virtuals[i]);
+                var relPos = vt.position - head.position;
+                var relRot = Quaternion.Inverse(headRot) * NormalizeQuaternionSafe(vt.rotation);
+                HashShort(ref hash, QuantizeSigned(relPos.x, REL_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(relPos.y, REL_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(relPos.z, REL_POS_SCALE));
+                HashUInt(ref hash, CompressQuaternionSmallestThree(relRot));
+            }
+
+            return hash;
         }
 
         /// <summary>
@@ -65,47 +433,92 @@ namespace Styly.NetSync
         public static void SerializeClientTransformInto(BinaryWriter writer, ClientTransformData data)
         {
             // Message type
-            writer.Write(MSG_CLIENT_POSE_V2);
+            writer.Write(MSG_CLIENT_POSE);
 
             // Protocol version
             writer.Write(PROTOCOL_VERSION);
 
             // Device ID (as UTF8 bytes with length prefix)
-            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data.deviceId ?? "");
-            writer.Write((byte)deviceIdBytes.Length);
-            writer.Write(deviceIdBytes);
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data != null ? data.deviceId ?? string.Empty : string.Empty);
+            var deviceIdLength = Mathf.Min(deviceIdBytes.Length, byte.MaxValue);
+            writer.Write((byte)deviceIdLength);
+            writer.Write(deviceIdBytes, 0, deviceIdLength);
 
             // Pose sequence and flags
-            writer.Write(data.poseSeq);
-            writer.Write((byte)data.flags);
+            var flags = SanitizePoseFlags(data != null ? data.flags : PoseFlags.None);
+            writer.Write(data != null ? data.poseSeq : (ushort)0);
+            writer.Write((byte)flags);
+            writer.Write(ENCODING_FLAGS_DEFAULT);
 
-            // Physical transform (pos + quaternion)
-            WriteTransformData(writer, data.physical);
+            var physicalValid = (flags & PoseFlags.PhysicalValid) != 0;
+            var headValid = (flags & PoseFlags.HeadValid) != 0;
+            var rightValid = headValid && ((flags & PoseFlags.RightValid) != 0);
+            var leftValid = headValid && ((flags & PoseFlags.LeftValid) != 0);
+            var virtualValid = headValid && ((flags & PoseFlags.VirtualsValid) != 0);
 
-            // Head transform
-            WriteTransformData(writer, data.head);
+            var xrOriginDelta = data != null ? data.xrOriginDeltaPosition : Vector3.zero;
+            var xrOriginDeltaYaw = data != null ? data.xrOriginDeltaYaw : 0f;
+            var head = EnsureTransform(data != null ? data.head : null);
+            var right = EnsureTransform(data != null ? data.rightHand : null);
+            var left = EnsureTransform(data != null ? data.leftHand : null);
+            var headRot = NormalizeQuaternionSafe(head.rotation);
 
-            // Right hand transform
-            WriteTransformData(writer, data.rightHand);
-
-            // Left hand transform
-            WriteTransformData(writer, data.leftHand);
-
-            // Virtual transforms count
-            var virtualCount = data.virtuals != null ? data.virtuals.Count : 0;
-            if (virtualCount > MAX_VIRTUAL_TRANSFORMS)
+            if (physicalValid)
             {
-                virtualCount = MAX_VIRTUAL_TRANSFORMS;
+                writer.Write(QuantizeSigned(xrOriginDelta.x, LOCO_POS_SCALE));
+                writer.Write(QuantizeSigned(xrOriginDelta.z, LOCO_POS_SCALE));
+                writer.Write(QuantizeSigned(xrOriginDeltaYaw, PHYSICAL_YAW_SCALE));
+            }
+
+            if (headValid)
+            {
+                WriteInt24(writer, QuantizeSignedInt24(head.position.x, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(head.position.y, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(head.position.z, ABS_POS_SCALE));
+                writer.Write(CompressQuaternionSmallestThree(headRot));
+            }
+
+            if (rightValid)
+            {
+                var relPos = right.position - head.position;
+                var rightRot = NormalizeQuaternionSafe(right.rotation);
+                var relRot = Quaternion.Inverse(headRot) * rightRot;
+
+                writer.Write(QuantizeSigned(relPos.x, REL_POS_SCALE));
+                writer.Write(QuantizeSigned(relPos.y, REL_POS_SCALE));
+                writer.Write(QuantizeSigned(relPos.z, REL_POS_SCALE));
+                writer.Write(CompressQuaternionSmallestThree(relRot));
+            }
+
+            if (leftValid)
+            {
+                var relPos = left.position - head.position;
+                var leftRot = NormalizeQuaternionSafe(left.rotation);
+                var relRot = Quaternion.Inverse(headRot) * leftRot;
+
+                writer.Write(QuantizeSigned(relPos.x, REL_POS_SCALE));
+                writer.Write(QuantizeSigned(relPos.y, REL_POS_SCALE));
+                writer.Write(QuantizeSigned(relPos.z, REL_POS_SCALE));
+                writer.Write(CompressQuaternionSmallestThree(relRot));
+            }
+
+            var virtualCount = 0;
+            if (virtualValid && data != null && data.virtuals != null)
+            {
+                virtualCount = Mathf.Min(data.virtuals.Count, MAX_VIRTUAL_TRANSFORMS);
             }
             writer.Write((byte)virtualCount);
 
-            // Virtual transforms (always full 6DOF)
-            if (data.virtuals != null && virtualCount > 0)
+            for (int i = 0; i < virtualCount; i++)
             {
-                for (int i = 0; i < virtualCount; i++)
-                {
-                    WriteTransformData(writer, data.virtuals[i]);
-                }
+                var vt = EnsureTransform(data.virtuals[i]);
+                var relPos = vt.position - head.position;
+                var relRot = Quaternion.Inverse(headRot) * NormalizeQuaternionSafe(vt.rotation);
+
+                writer.Write(QuantizeSigned(relPos.x, REL_POS_SCALE));
+                writer.Write(QuantizeSigned(relPos.y, REL_POS_SCALE));
+                writer.Write(QuantizeSigned(relPos.z, REL_POS_SCALE));
+                writer.Write(CompressQuaternionSmallestThree(relRot));
             }
         }
 
@@ -130,31 +543,27 @@ namespace Styly.NetSync
         public static void SerializeStealthHandshakeInto(BinaryWriter writer, string deviceId)
         {
             // Message type
-            writer.Write(MSG_CLIENT_POSE_V2);
+            writer.Write(MSG_CLIENT_POSE);
 
             // Protocol version
             writer.Write(PROTOCOL_VERSION);
 
             // Device ID (as UTF8 bytes with length prefix)
             var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
-            writer.Write((byte)deviceIdBytes.Length);
-            writer.Write(deviceIdBytes);
+            var deviceIdLength = Mathf.Min(deviceIdBytes.Length, byte.MaxValue);
+            writer.Write((byte)deviceIdLength);
+            writer.Write(deviceIdBytes, 0, deviceIdLength);
 
             // Pose sequence and flags (stealth, invalid poses)
             writer.Write((ushort)0);
             writer.Write((byte)PoseFlags.IsStealth);
-
-            // Physical, Head, Right, Left — write 4 * 7 zeroed floats
-            for (int i = 0; i < 28; i++) { writer.Write(0f); }
+            writer.Write(ENCODING_FLAGS_DEFAULT);
 
             // No virtual transforms for stealth handshake
             writer.Write((byte)0);
         }
 
         #region === Deserialization ===
-
-        // Maximum allowed virtual transforms to prevent memory issues
-        private const int MAX_VIRTUAL_TRANSFORMS = 50;
 
         public static (byte messageType, object data) Deserialize(byte[] bytes)
         {
@@ -169,7 +578,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE_V2)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -180,7 +589,7 @@ namespace Styly.NetSync
                 {
                     // case MSG_CLIENT_TRANSFORM:
                     //     return (messageType, DeserializeClientTransform(reader));
-                    case MSG_ROOM_POSE_V2:
+                    case MSG_ROOM_POSE:
                         return (messageType, DeserializeRoomTransform(reader));
                     case MSG_RPC:
                         // RPC message
@@ -203,26 +612,16 @@ namespace Styly.NetSync
         }
 
 
-        // Helper to read TransformData as 7 floats (pos + quaternion)
-        private static TransformData ReadTransformData(BinaryReader reader)
-        {
-            var data = new TransformData();
-            data.position.x = reader.ReadSingle();
-            data.position.y = reader.ReadSingle();
-            data.position.z = reader.ReadSingle();
-            data.rotation.x = reader.ReadSingle();
-            data.rotation.y = reader.ReadSingle();
-            data.rotation.z = reader.ReadSingle();
-            data.rotation.w = reader.ReadSingle();
-            return data;
-        }
-
         private static RoomTransformData DeserializeRoomTransform(BinaryReader reader)
         {
             var data = new RoomTransformData();
 
             // Protocol version
-            _ = reader.ReadByte();
+            var protocolVersion = reader.ReadByte();
+            if (protocolVersion != PROTOCOL_VERSION)
+            {
+                throw new InvalidDataException($"Unsupported room pose protocol version: {protocolVersion}");
+            }
 
             // Room ID
             var roomIdLength = reader.ReadByte();
@@ -249,21 +648,116 @@ namespace Styly.NetSync
                 // Pose sequence and flags
                 client.poseSeq = reader.ReadUInt16();
                 client.flags = (PoseFlags)reader.ReadByte();
+                var encodingFlags = reader.ReadByte();
+                _ = encodingFlags;
 
-                // Note: Device ID is NOT sent in MSG_ROOM_POSE_V2
+                // Note: Device ID is NOT sent in MSG_ROOM_POSE
                 // Device ID will be resolved from client number using mapping table
 
-                // Physical transform (pos + quaternion)
-                client.physical = ReadTransformData(reader);
+                client.physical = new TransformData();
+                client.head = new TransformData();
+                client.rightHand = new TransformData();
+                client.leftHand = new TransformData();
 
-                // Head transform
-                client.head = ReadTransformData(reader);
+                bool physicalValid = (client.flags & PoseFlags.PhysicalValid) != 0;
+                bool headValid = (client.flags & PoseFlags.HeadValid) != 0;
+                bool rightValid = headValid && ((client.flags & PoseFlags.RightValid) != 0);
+                bool leftValid = headValid && ((client.flags & PoseFlags.LeftValid) != 0);
+                bool virtualValid = headValid && ((client.flags & PoseFlags.VirtualsValid) != 0);
 
-                // Right hand transform
-                client.rightHand = ReadTransformData(reader);
+                short dxQ = 0;
+                short dzQ = 0;
+                short dyawQ = 0;
+                client.xrOriginDeltaPosition = Vector3.zero;
+                client.xrOriginDeltaYaw = 0f;
+                if (physicalValid)
+                {
+                    if ((encodingFlags & ENCODING_PHYSICAL_IS_XRORIGIN_DELTA) == 0)
+                    {
+                        throw new InvalidDataException("PhysicalValid set but XROrigin delta encoding flag is missing.");
+                    }
 
-                // Left hand transform
-                client.leftHand = ReadTransformData(reader);
+                    dxQ = reader.ReadInt16();
+                    dzQ = reader.ReadInt16();
+                    dyawQ = reader.ReadInt16();
+                    client.xrOriginDeltaPosition = new Vector3(dxQ * LOCO_POS_SCALE, 0f, dzQ * LOCO_POS_SCALE);
+                    client.xrOriginDeltaYaw = dyawQ * PHYSICAL_YAW_SCALE;
+                }
+
+                var headPos = Vector3.zero;
+                var headRot = Quaternion.identity;
+                if (headValid)
+                {
+                    int hx = ReadInt24(reader);
+                    int hy = ReadInt24(reader);
+                    int hz = ReadInt24(reader);
+                    uint packedHeadRot = reader.ReadUInt32();
+                    headPos = QuantizedToVector3(hx, hy, hz, ABS_POS_SCALE);
+                    headRot = DecompressQuaternionSmallestThree(packedHeadRot);
+                    client.head.position = headPos;
+                    client.head.rotation = headRot;
+                }
+                else
+                {
+                    client.head.position = Vector3.zero;
+                    client.head.rotation = Quaternion.identity;
+                }
+
+                if (physicalValid && headValid)
+                {
+                    var deltaPos = client.xrOriginDeltaPosition;
+                    var deltaYaw = client.xrOriginDeltaYaw;
+                    var deltaRot = Quaternion.Euler(0f, deltaYaw, 0f);
+                    var invDeltaRot = Quaternion.Inverse(deltaRot);
+
+                    client.physical.position = invDeltaRot * (headPos - deltaPos);
+                    var headYaw = QuaternionToYawDegrees(headRot);
+                    var physicalYaw = NormalizeYawDegrees(headYaw - deltaYaw);
+                    client.physical.rotation = Quaternion.Euler(0f, physicalYaw, 0f);
+                }
+                else
+                {
+                    if (physicalValid && !headValid)
+                    {
+                        Debug.LogWarning("[BinarySerializer] Physical delta received without head pose. Physical pose cannot be reconstructed.");
+                    }
+                    client.physical.position = Vector3.zero;
+                    client.physical.rotation = Quaternion.identity;
+                }
+
+                if (rightValid)
+                {
+                    short rx = reader.ReadInt16();
+                    short ry = reader.ReadInt16();
+                    short rz = reader.ReadInt16();
+                    uint packedRightRelRot = reader.ReadUInt32();
+                    var relPos = QuantizedToVector3(rx, ry, rz, REL_POS_SCALE);
+                    var relRot = DecompressQuaternionSmallestThree(packedRightRelRot);
+                    client.rightHand.position = headPos + relPos;
+                    client.rightHand.rotation = NormalizeQuaternionSafe(headRot * relRot);
+                }
+                else
+                {
+                    client.rightHand.position = Vector3.zero;
+                    client.rightHand.rotation = Quaternion.identity;
+                }
+
+                if (leftValid)
+                {
+                    short lx = reader.ReadInt16();
+                    short ly = reader.ReadInt16();
+                    short lz = reader.ReadInt16();
+                    uint packedLeftRelRot = reader.ReadUInt32();
+                    var relPos = QuantizedToVector3(lx, ly, lz, REL_POS_SCALE);
+                    var relRot = DecompressQuaternionSmallestThree(packedLeftRelRot);
+                    client.leftHand.position = headPos + relPos;
+                    client.leftHand.rotation = NormalizeQuaternionSafe(headRot * relRot);
+                }
+                else
+                {
+                    client.leftHand.position = Vector3.zero;
+                    client.leftHand.rotation = Quaternion.identity;
+                }
 
                 // Virtual transforms
                 var virtualCount = reader.ReadByte();
@@ -274,12 +768,34 @@ namespace Styly.NetSync
                     virtualCount = MAX_VIRTUAL_TRANSFORMS;
                 }
 
-                if (virtualCount > 0)
+                if (virtualCount > 0 && virtualValid)
                 {
                     client.virtuals = new List<TransformData>(virtualCount);
                     for (int j = 0; j < virtualCount; j++)
                     {
-                        client.virtuals.Add(ReadTransformData(reader));
+                        short vx = reader.ReadInt16();
+                        short vy = reader.ReadInt16();
+                        short vz = reader.ReadInt16();
+                        uint packedRelRot = reader.ReadUInt32();
+                        var relPos = QuantizedToVector3(vx, vy, vz, REL_POS_SCALE);
+                        var relRot = DecompressQuaternionSmallestThree(packedRelRot);
+                        client.virtuals.Add(new TransformData
+                        {
+                            position = headPos + relPos,
+                            rotation = NormalizeQuaternionSafe(headRot * relRot)
+                        });
+                    }
+                }
+                else if (virtualCount > 0)
+                {
+                    // Flag is unset but payload still has entries — consume bytes to keep stream aligned.
+                    Debug.LogWarning($"[BinarySerializer] Virtual count {virtualCount} but VirtualsValid flag unset - malformed payload");
+                    for (int j = 0; j < virtualCount; j++)
+                    {
+                        reader.ReadInt16();
+                        reader.ReadInt16();
+                        reader.ReadInt16();
+                        reader.ReadUInt32();
                     }
                 }
 

@@ -40,12 +40,12 @@ ls Assets/Samples_Dev/                          # Test scenes and examples
 
 ### Key Internal Scripts
 - **ConnectionManager**: ZeroMQ socket management and threading
-- **TransformSyncManager**: Position/rotation synchronization (1-120Hz)
+- **TransformSyncManager**: Transform synchronization with SendRate upper bound, only-on-change filtering, and 1Hz idle heartbeat
 - **RPCManager**: Remote procedure call system with priority-based sending
 - **NetworkVariableManager**: Synchronized key-value storage
 - **AvatarManager**: Player spawn/despawn management
 - **MessageProcessor**: Binary protocol message handling
-- **BinarySerializer**: Binary protocol serialization/deserialization
+- **BinarySerializer**: Protocol v3 pose serialization/deserialization (absolute int24 positions, head-relative int16 positions, and 32-bit smallest-three quaternion compression)
 - **ServerDiscoveryManager**: UDP discovery service client
 - **HumanPresenceManager**: Collision avoidance visualization
 - **OutboundPacket**: Outbound send queue with priority lanes
@@ -69,6 +69,14 @@ ls Assets/Samples_Dev/                          # Test scenes and examples
 - STYLY XR Rig
 - STYLY Shader Collection URP
 - Device ID Provider
+
+### Transform Protocol Notes
+- Transform wire format is `protocolVersion=3` only.
+- Message IDs for transform traffic are `MSG_CLIENT_POSE=11` and `MSG_ROOM_POSE=12`.
+- `Head` is serialized in absolute space; `Right/Left/Virtual` are serialized relative to `Head`.
+- Position quantization ranges are per-axis: absolute (`Head`/`Physical`) is `int24 @ 0.01m` (`[-83,886.08m, 83,886.07m]`), and head-relative (`Right`/`Left`/`Virtual`) is `int16 @ 0.005m` (`[-163.84m, 163.835m]`).
+- These ranges are wire-encoding limits, not a hard world-size cap; out-of-range encoded values are clamped.
+- Idle clients still send heartbeat updates at 1Hz.
 
 ## Unity C# Coding Rules (CRITICAL)
 

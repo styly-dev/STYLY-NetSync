@@ -198,6 +198,17 @@ namespace Styly.NetSync
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
             _tx.flags = BuildPoseFlags();
+            if (_netSyncManager != null)
+            {
+                _netSyncManager.ComputeXrOriginDelta(out var deltaPos, out var deltaYaw);
+                _tx.xrOriginDeltaPosition = deltaPos;
+                _tx.xrOriginDeltaYaw = deltaYaw;
+            }
+            else
+            {
+                _tx.xrOriginDeltaPosition = Vector3.zero;
+                _tx.xrOriginDeltaYaw = 0f;
+            }
 
             Fill(
                     _txPhysical,
@@ -302,11 +313,12 @@ namespace Styly.NetSync
                 return flags;
             }
 
-            if (_head != null) { flags |= PoseFlags.HeadValid; }
-            if (_rightHand != null) { flags |= PoseFlags.RightValid; }
-            if (_leftHand != null) { flags |= PoseFlags.LeftValid; }
+            bool hasHead = _head != null;
+            if (hasHead) { flags |= PoseFlags.HeadValid; }
+            if (hasHead && _rightHand != null) { flags |= PoseFlags.RightValid; }
+            if (hasHead && _leftHand != null) { flags |= PoseFlags.LeftValid; }
             if (true) { flags |= PoseFlags.PhysicalValid; }
-            if (_virtualTransforms != null && _virtualTransforms.Length > 0)
+            if (hasHead && _virtualTransforms != null && _virtualTransforms.Length > 0)
             {
                 flags |= PoseFlags.VirtualsValid;
             }

@@ -81,7 +81,7 @@ pkill -f styly-netsync  # Kill all STYLY processes
   - Receive Thread: Client message processing
   - Periodic Thread: Broadcasting and cleanup
   - Discovery Thread: UDP server discovery service
-- **BinarySerializer** (`binary_serializer.py`): Custom binary protocol (~60% bandwidth reduction vs JSON)
+- **BinarySerializer** (`binary_serializer.py`): Protocol v3 transform serializer (absolute int24 positions, head-relative int16 positions, and 32-bit smallest-three quaternion compression)
 - **Python Client API** (`client.py`): `net_sync_manager` class for Python clients
 - **REST Bridge** (`rest_bridge.py`): FastAPI-based REST API for external integrations
 - **Configuration** (`default.toml`): TOML-based server configuration
@@ -100,8 +100,12 @@ pkill -f styly-netsync  # Kill all STYLY processes
 
 ### Protocol Details
 - **ZeroMQ Patterns**: DEALER→ROUTER (client-server) and PUB→SUB (broadcasting)
-- **Message Types**: Binary message identifiers (MSG_CLIENT_TRANSFORM, MSG_RPC, etc.)
+- **Transform Message Types**: `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with `protocolVersion=3`
+- **Encoding**: Compact pose body with absolute head pose and head-relative right/left/virtual transforms
+- **Quantization Ranges**: absolute position uses `int24 @ 0.01m` (`[-83,886.08m, 83,886.07m]` per axis), head-relative position uses `int16 @ 0.005m` (`[-163.84m, 163.835m]` per axis); out-of-range values are clamped
 - **Client Management**: Device ID to client number mapping system (2-byte client IDs)
+- **Relay Path**: Server caches raw client pose body bytes and rebroadcasts with minimal reserialization
+- **Compatibility**: Legacy v2/JSON transform fallback is removed; deploy server and clients together
 - **UDP Discovery**: Automatic server discovery service
 
 ### Threading Model

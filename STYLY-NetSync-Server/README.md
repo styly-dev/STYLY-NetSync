@@ -40,6 +40,35 @@ styly-netsync-simulator --clients 50
 styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 ```
 
+## Wire protocol compatibility
+
+- Current transform wire protocol is `protocolVersion = 3`.
+- Transform messages use `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with the compact V3 pose body.
+- Legacy transform protocol v2 and JSON transform fallback are not supported.
+- Deploy Unity and Python updates together when changing transform protocol behavior.
+- Protocol v3 position quantization ranges:
+  - Absolute (`physicalPos`, `headPosAbs`): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
+  - Head-relative (`right/left/virtual`): signed `int16` at `0.005 m` per unit, per-axis range `[-163.84 m, 163.835 m]`.
+- These are encoding limits, not a hard world-size cap. Worlds can be larger, but encoded axis values are clamped if they exceed the representable range.
+
+### Coordinate Range Expansion Options (Design Notes)
+
+The following options summarize trade-offs when expanding absolute-position range.
+
+Assumed baseline (`protocolVersion=3`):
+- Client pose body with `Physical+Head+Right+Left` valid and `virtualCount=0`: `49 bytes`
+- Room per-client entry (`clientNo + poseTime + clientBody`): `59 bytes`
+
+| Option | Absolute Position Encoding | Per-axis Range | Client Body Delta | Room Per-client Delta |
+|---|---|---:|---:|---:|
+| A. Coarser scale (current integer width) | `int24 @ 0.02m` | `[-167,772.16m, 167,772.14m]` | `+0B` (`49 -> 49`) | `+0B` (`59 -> 59`) |
+| B. Cell + local | `cell(i16, 256m) + local(int24 @ 0.01m)` | `[-8,472,494.08m, 8,472,238.07m]` | `+6B` (`49 -> 55`, `+12.2%`) | `+6B` (`59 -> 65`, `+10.2%`) |
+| C. Cell + local (large cell) | `cell(i16, 1024m) + local(int24 @ 0.01m)` | `[-33,638,318.08m, 33,637,294.07m]` | `+6B` (`49 -> 55`, `+12.2%`) | `+6B` (`59 -> 65`, `+10.2%`) |
+
+Notes:
+- Option B/C deltas assume both absolute transforms are present (`physicalPos` and `headPosAbs`).
+- Option B/C can reduce average overhead if `cell` is transmitted only when changed, but that requires extra state and flags in the wire format.
+
 ## Configuration
 
 The server uses TOML configuration files. Default values are bundled in `src/styly_netsync/default.toml`.
