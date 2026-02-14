@@ -16,7 +16,7 @@ on:
 jobs:
   set-version-and-release:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,6 +28,8 @@ jobs:
       - name: Validate version format
         run: |
           VERSION="${{ github.event.inputs.version }}"
+          # Strip leading 'v' or 'V' prefix if present
+          VERSION="${VERSION#[vV]}"
           # Check semantic versioning format (including pre-release versions)
           if ! echo "$VERSION" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$' > /dev/null; then
             echo "❌ Error: Invalid version format: $VERSION"
@@ -35,6 +37,8 @@ jobs:
             exit 1
           fi
           echo "✅ Version format is valid: $VERSION"
+          # Export normalized version for subsequent steps
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Configure Git
         run: |
@@ -59,68 +63,63 @@ jobs:
           PACKAGE_FILE="STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json"
           CURRENT_VERSION=$(jq -r '.version' "$PACKAGE_FILE")
           echo "📦 Current version: $CURRENT_VERSION"
-          echo "🎯 Target version: ${{ github.event.inputs.version }}"
+          echo "🎯 Target version: $VERSION"
           echo ""
-          echo "This workflow will update all version files from $CURRENT_VERSION to ${{ github.event.inputs.version }}"
+          echo "This workflow will update all version files from $CURRENT_VERSION to $VERSION"
 
           # Save current version to environment variable for use in Summary
           echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
 
       - name: Update Unity package.json version
         run: |
-          VERSION="${{ github.event.inputs.version }}"
           PACKAGE_FILE="STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json"
-          
+
           if [ ! -f "$PACKAGE_FILE" ]; then
             echo "❌ Error: Unity package.json not found at $PACKAGE_FILE"
             exit 1
           fi
-          
+
           # Update version using jq (precise JSON manipulation)
           jq --arg ver "$VERSION" '.version = $ver' "$PACKAGE_FILE" > tmp.json && mv tmp.json "$PACKAGE_FILE"
-          
+
           echo "✅ Updated Unity package.json version to $VERSION"
           echo "Updated content:"
           cat "$PACKAGE_FILE"
 
       - name: Update Unity version.txt file
         run: |
-          VERSION="${{ github.event.inputs.version }}"
           VERSION_FILE="STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt"
-          
+
           if [ ! -f "$VERSION_FILE" ]; then
             echo "❌ Error: Unity version.txt not found at $VERSION_FILE"
             exit 1
           fi
-          
+
           # Update version.txt file
           echo "$VERSION" > "$VERSION_FILE"
-          
+
           echo "✅ Updated Unity version.txt file to $VERSION"
           echo "Updated content:"
           cat "$VERSION_FILE"
 
       - name: Update Python pyproject.toml version
         run: |
-          VERSION="${{ github.event.inputs.version }}"
           PYPROJECT_FILE="STYLY-NetSync-Server/pyproject.toml"
-          
+
           if [ ! -f "$PYPROJECT_FILE" ]; then
             echo "❌ Error: Python pyproject.toml not found at $PYPROJECT_FILE"
             exit 1
           fi
-          
+
           # Update version line in pyproject.toml
           sed -i "s/^version = .*/version = \"$VERSION\"/" "$PYPROJECT_FILE"
-          
+
           echo "✅ Updated Python pyproject.toml version to $VERSION"
           echo "Updated version line:"
           grep "^version = " "$PYPROJECT_FILE"
 
       - name: Update version in .md files
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-
           echo "📝 Updating version numbers in .md files..."
 
           # Find all .md files in the repository
@@ -184,8 +183,6 @@ jobs:
 
       - name: Commit version changes
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-
           # Add all version files
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt
@@ -223,13 +220,13 @@ jobs:
         run: |
           # Fetch all remote branches to ensure latest refs
           git fetch origin
-          
+
           # Checkout main branch
           git checkout main
-          
+
           # Fast-forward merge origin/develop into main
           git merge --ff-only origin/develop
-          
+
           echo "✅ Successfully fast-forward merged origin/develop into main"
 
       - name: Push main branch
@@ -241,36 +238,34 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.event.inputs.version }}"
           TAG_NAME="v$VERSION"
-          
+
           echo "Creating release draft for $TAG_NAME..."
-          
+
           # Create release draft using GitHub CLI
           gh release create "$TAG_NAME" \
             --draft \
             --target main \
             --title "$TAG_NAME" \
             --notes "## What's Changed
-          
-          
+
+
           ---
           **Full Changelog**: https://github.com/${{ github.repository }}/compare/previous-tag...$TAG_NAME"
-          
+
           echo "✅ Release draft created: $TAG_NAME"
           echo "📝 Please edit the release notes at: https://github.com/${{ github.repository }}/releases"
 
       - name: Summary
         if: always()
         run: |
-          VERSION="${{ github.event.inputs.version }}"
           TAG_NAME="v$VERSION"
-          
+
           # Write to GitHub Step Summary
           {
             echo "# 📦 Version Release Workflow Summary"
             echo ""
-            
+
             if [ "${{ job.status }}" == "success" ]; then
               echo "## ✅ Status: Success"
               echo ""
@@ -330,7 +325,7 @@ jobs:
               echo "- Git branch status"
               echo "- GitHub Actions permissions"
             fi
-            
+
             echo ""
             echo "---"
             echo "*Generated at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*"
