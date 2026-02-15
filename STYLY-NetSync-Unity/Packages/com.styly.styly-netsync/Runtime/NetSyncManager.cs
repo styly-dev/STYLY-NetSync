@@ -610,10 +610,9 @@ namespace Styly.NetSync
 
             if (_offlineMode)
             {
-                _clientNo = 1;
+                OnLocalClientNoAssigned(1);
                 _networkVariableManager?.MarkInitialSyncComplete();
-                _shouldCheckReady = true;
-                DebugLog("Offline mode: client number set to 1, initial sync marked complete");
+                DebugLog("Offline mode: client number set to 1 via OnLocalClientNoAssigned, initial sync marked complete");
                 return;
             }
 
