@@ -424,17 +424,17 @@ namespace Styly.NetSync
     [Serializable]
     internal sealed class NetSyncSmoothingSettings
     {
-        public double BaseBufferMultiplier = 1.5;
+        public double BaseBufferMultiplier = 0.45;
         public bool DynamicBuffer = true;
-        public double DynamicTolerance = 0.6;
+        public double DynamicTolerance = 0.1;
         public double MinBufferMultiplier = 1.1;
-        public double MaxBufferMultiplier = 4.0;
+        public double MaxBufferMultiplier = 1.2;
 
-        public PoseChannelSettings Physical = new PoseChannelSettings { MaxExtrapolationSeconds = 0.03, TauMinSeconds = 0.02f, TauMaxSeconds = 0.06f };
-        public PoseChannelSettings Head = new PoseChannelSettings { MaxExtrapolationSeconds = 0.04, TauMinSeconds = 0.02f, TauMaxSeconds = 0.05f };
-        public PoseChannelSettings Right = new PoseChannelSettings { MaxExtrapolationSeconds = 0.05, TauMinSeconds = 0.03f, TauMaxSeconds = 0.07f };
-        public PoseChannelSettings Left = new PoseChannelSettings { MaxExtrapolationSeconds = 0.05, TauMinSeconds = 0.03f, TauMaxSeconds = 0.07f };
-        public PoseChannelSettings Virtual = new PoseChannelSettings { MaxExtrapolationSeconds = 0.03, TauMinSeconds = 0.05f, TauMaxSeconds = 0.12f };
+        public PoseChannelSettings Physical = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.02f, TauMaxSeconds = 0.06f };
+        public PoseChannelSettings Head = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, EnableSecondPhaseSmoothing = false, TauMinSeconds = 0.02f, TauMaxSeconds = 0.05f };
+        public PoseChannelSettings Right = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.01f, TauMaxSeconds = 0.03f };
+        public PoseChannelSettings Left = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.01f, TauMaxSeconds = 0.03f };
+        public PoseChannelSettings Virtual = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.05f, TauMaxSeconds = 0.12f };
     }
 
     internal sealed class PoseChannel
