@@ -1,9 +1,9 @@
-// StandaloneConnectionManager.cs - No-op IConnectionManager for standalone testing without a server
+// OfflineConnectionManager.cs - No-op IConnectionManager for offline testing without a server
 using System;
 
 namespace Styly.NetSync
 {
-    internal class StandaloneConnectionManager : IConnectionManager
+    internal class OfflineConnectionManager : IConnectionManager
     {
         private bool _isConnected;
 

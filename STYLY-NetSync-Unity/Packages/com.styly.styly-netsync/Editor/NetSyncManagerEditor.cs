@@ -12,7 +12,7 @@ namespace Styly.NetSync.Editor
         private bool _showGlobalVariables = true;
         private static readonly string[] AdvancedPropertyOrder =
         {
-            "_standaloneMode",
+            "_offlineMode",
             "_transformSendRate",
             "_serverDiscoveryPort",
             "_syncBatteryLevel"

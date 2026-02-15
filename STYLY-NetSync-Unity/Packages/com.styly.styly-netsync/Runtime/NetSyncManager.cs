@@ -46,8 +46,8 @@ namespace Styly.NetSync
         public UnityEvent<string, string> OnVersionMismatch = new UnityEvent<string, string>();
 
         // Advanced Options (drawn by NetSyncManagerEditor in a foldout)
-        [SerializeField, Tooltip("Enable standalone mode for testing without a server.")]
-        private bool _standaloneMode = false;
+        [SerializeField, Tooltip("Enable offline mode for testing without a server.")]
+        private bool _offlineMode = false;
         [SerializeField, Range(0.5f, 60), Tooltip("Transform sync frequency in Hz (sends per second). Higher values provide smoother movement but increase network traffic.")]
         private float _transformSendRate = 10f;
         [Tooltip("UDP port used for server discovery.")]
@@ -350,7 +350,7 @@ namespace Styly.NetSync
         internal MessageProcessor MessageProcessor => _messageProcessor;
         internal NetSyncTimeEstimator TimeEstimator => _timeEstimator;
         internal bool IsStealthMode => _isStealthMode;
-        public bool IsStandaloneMode => _standaloneMode;
+        public bool IsOfflineMode => _offlineMode;
         public bool HasServerConnection => _connectionManager?.IsConnected == true && !_connectionManager.IsConnectionError;
         public bool HasHandshake => _clientNo > 0;
         public bool HasNetworkVariablesSync => _networkVariableManager?.HasReceivedInitialSync == true;
@@ -562,8 +562,8 @@ namespace Styly.NetSync
             _messageProcessor.SetNetSyncManager(this);
             _messageProcessor.OnLocalClientNoAssigned += OnLocalClientNoAssigned;
             _messageProcessor.OnVersionMismatch += HandleVersionMismatch;
-            if (_standaloneMode)
-                _connectionManager = new StandaloneConnectionManager();
+            if (_offlineMode)
+                _connectionManager = new OfflineConnectionManager();
             else
                 _connectionManager = new ConnectionManager(this, _messageProcessor, _enableDebugLogs, _logNetworkTraffic);
             _avatarManager = new AvatarManager(_enableDebugLogs);
@@ -608,12 +608,12 @@ namespace Styly.NetSync
             // Notify network variable manager about connection
             _networkVariableManager?.OnConnectionEstablished();
 
-            if (_standaloneMode)
+            if (_offlineMode)
             {
                 _clientNo = 1;
                 _networkVariableManager?.MarkInitialSyncComplete();
                 _shouldCheckReady = true;
-                DebugLog("Standalone mode: client number set to 1, initial sync marked complete");
+                DebugLog("Offline mode: client number set to 1, initial sync marked complete");
                 return;
             }
 
@@ -801,7 +801,7 @@ namespace Styly.NetSync
         #region === Networking ===
         private void StartNetworking()
         {
-            if (_standaloneMode)
+            if (_offlineMode)
             {
                 _connectionManager.Connect("", 0, 0, _roomId);
                 return;

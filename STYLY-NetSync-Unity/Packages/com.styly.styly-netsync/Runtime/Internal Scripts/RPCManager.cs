@@ -100,8 +100,8 @@ namespace Styly.NetSync
                 return false;
             }
 
-            // Standalone mode: loopback RPC to self
-            if (_netSyncManager != null && _netSyncManager.IsStandaloneMode)
+            // Offline mode: loopback RPC to self
+            if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
             {
                 EnqueueRPC(_netSyncManager.ClientNo, functionName, args);
                 return true;

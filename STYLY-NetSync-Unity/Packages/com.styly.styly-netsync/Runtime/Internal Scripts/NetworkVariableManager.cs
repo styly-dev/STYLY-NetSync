@@ -60,7 +60,7 @@ namespace Styly.NetSync
         public bool HasReceivedInitialSync => _hasReceivedInitialSync;
 
         /// <summary>
-        /// Mark initial sync as complete (used in standalone mode)
+        /// Mark initial sync as complete (used in offline mode)
         /// </summary>
         public void MarkInitialSyncComplete()
         {
@@ -120,8 +120,8 @@ namespace Styly.NetSync
                 return false;
             }
 
-            // Standalone mode: write locally and fire event without server round-trip
-            if (_netSyncManager != null && _netSyncManager.IsStandaloneMode)
+            // Offline mode: write locally and fire event without server round-trip
+            if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
             {
                 var oldValue = _globalVariables.TryGetValue(name, out var existing) ? existing : null;
                 if (!string.Equals(oldValue, value))
@@ -227,8 +227,8 @@ namespace Styly.NetSync
                 return false;
             }
 
-            // Standalone mode: write locally and fire event without server round-trip
-            if (_netSyncManager != null && _netSyncManager.IsStandaloneMode)
+            // Offline mode: write locally and fire event without server round-trip
+            if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
             {
                 var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
                 if (!string.Equals(oldValue, value))
