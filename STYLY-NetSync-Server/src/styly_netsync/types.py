@@ -35,6 +35,9 @@ class client_transform_data:
     right_hand: transform_data | None = None
     left_hand: transform_data | None = None
     virtuals: list[transform_data] | None = None
+    xr_origin_delta_x: float = 0.0
+    xr_origin_delta_z: float = 0.0
+    xr_origin_delta_yaw: float = 0.0
 
 
 @dataclass
