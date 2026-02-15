@@ -12,7 +12,7 @@ namespace Styly.NetSync
 {
     internal class NetworkVariableManager
     {
-        private readonly ConnectionManager _connectionManager;
+        private readonly IConnectionManager _connectionManager;
         private readonly string _deviceId;
         private readonly NetSyncManager _netSyncManager;
 
@@ -60,6 +60,14 @@ namespace Styly.NetSync
         public bool HasReceivedInitialSync => _hasReceivedInitialSync;
 
         /// <summary>
+        /// Mark initial sync as complete (used in offline mode)
+        /// </summary>
+        public void MarkInitialSyncComplete()
+        {
+            _hasReceivedInitialSync = true;
+        }
+
+        /// <summary>
         /// Reset the initial sync flag (called when connection is lost)
         /// </summary>
         public void ResetInitialSyncFlag()
@@ -92,7 +100,7 @@ namespace Styly.NetSync
             }
         }
 
-        public NetworkVariableManager(ConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
+        public NetworkVariableManager(IConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
         {
             _connectionManager = connectionManager;
             _deviceId = deviceId;
@@ -110,6 +118,18 @@ namespace Styly.NetSync
             {
                 Debug.LogWarning($"Global variable limit ({MAX_GLOBAL_VARS}) reached");
                 return false;
+            }
+
+            // Offline mode: write locally and fire event without server round-trip
+            if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
+            {
+                var oldValue = _globalVariables.TryGetValue(name, out var existing) ? existing : null;
+                if (!string.Equals(oldValue, value))
+                {
+                    _globalVariables[name] = value;
+                    OnGlobalVariableChanged?.Invoke(name, oldValue, value);
+                }
+                return true;
             }
 
             // Dedupe: same as the last actually sent value -> skip, but treat as success
@@ -205,6 +225,18 @@ namespace Styly.NetSync
             {
                 Debug.LogWarning($"Client variable limit ({MAX_CLIENT_VARS}) reached for client {targetClientNo}");
                 return false;
+            }
+
+            // Offline mode: write locally and fire event without server round-trip
+            if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
+            {
+                var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
+                if (!string.Equals(oldValue, value))
+                {
+                    clientVars[name] = value;
+                    OnClientVariableChanged?.Invoke(targetClientNo, name, oldValue, value);
+                }
+                return true;
             }
 
             var key = (targetClientNo, name);
