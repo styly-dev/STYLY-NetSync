@@ -1,0 +1,199 @@
+# Unity C# Code Review Rules
+
+## Table of Contents
+- Null Safety (CRITICAL)
+- Thread Safety (CRITICAL)
+- Namespace Conventions
+- Private Field Naming
+- Region Organization
+- UnityEvent Initialization
+- Memory & GC Pressure
+- SerializeField Attributes
+- XML Documentation
+- File Structure
+
+---
+
+## Null Safety (CRITICAL)
+
+Never use null propagation (`?.`) or null coalescing (`??`) with `UnityEngine.Object` types.
+
+Affected types: `Transform`, `GameObject`, `Component`, `MonoBehaviour`, `ScriptableObject`, `Collider`, `Rigidbody`, `Renderer`, `Camera`, `AudioSource`, `Animator`, and all other `UnityEngine.Object` subclasses.
+
+```csharp
+// BAD
+return transform?.position;
+var go = target ?? defaultTarget;
+callback?.Invoke(); // OK only if callback is System.Action, NOT UnityEvent
+
+// GOOD
+return transform != null ? transform.position : Vector3.zero;
+var go = target != null ? target : defaultTarget;
+```
+
+Note: `?.` and `??` are safe on plain C# types (`string`, `Action`, `Func<>`, etc.). Only flag when used on Unity-derived types.
+
+## Thread Safety (CRITICAL)
+
+All UnityEngine API calls must execute on the main thread.
+
+```csharp
+// BAD — accessing Transform from background thread
+new Thread(() => {
+    var pos = transform.position; // CRITICAL violation
+}).Start();
+
+// GOOD — queue data for main thread consumption
+private ConcurrentQueue<Vector3> _positionQueue = new();
+
+// Background thread:
+_positionQueue.Enqueue(newPosition);
+
+// Main thread (Update):
+while (_positionQueue.TryDequeue(out var pos)) {
+    transform.position = pos;
+}
+```
+
+Background threads should:
+- Set `IsBackground = true`
+- Have a descriptive `Name` (e.g., `"STYLY_NetworkThread"`)
+- Only read/write thread-safe data structures
+
+## Namespace Conventions
+
+- Public API: `namespace Styly.NetSync`
+- Internal implementation: `namespace Styly.NetSync.Internal`
+- Use `internal` access modifier for non-public classes
+- Assembly definition: `com.styly.styly-netsync`
+
+## Private Field Naming
+
+Private fields use `_camelCase` prefix:
+
+```csharp
+// GOOD
+private DealerSocket _dealerSocket;
+private bool _shouldStop;
+private ConcurrentQueue<byte[]> _messageQueue;
+
+// BAD
+private DealerSocket dealerSocket;
+private bool m_shouldStop;
+```
+
+Public properties use `PascalCase`.
+
+## Region Organization
+
+Large classes should use regions with descriptive headers:
+
+```csharp
+#region === Inspector ===
+[SerializeField] private string _serverAddress;
+#endregion --------
+
+#region === Runtime Fields ===
+private bool _isConnected;
+#endregion --------
+
+#region === Unity Callbacks ===
+private void Awake() { }
+private void Update() { }
+#endregion --------
+```
+
+Standard region names:
+- `=== Inspector ===`
+- `=== Singleton & Public API ===`
+- `=== Runtime Fields ===`
+- `=== Public Properties ===`
+- `=== Unity Callbacks ===`
+- `=== Initialization ===`
+- `=== Networking ===`
+- `=== Update Logic ===`
+- `=== Utility ===`
+
+## UnityEvent Initialization
+
+Initialize UnityEvent fields at declaration to prevent NullReferenceException:
+
+```csharp
+// GOOD
+public UnityEvent<int> OnAvatarConnected = new UnityEvent<int>();
+
+// BAD — may cause NRE if no listeners assigned in inspector
+public UnityEvent<int> OnAvatarConnected;
+```
+
+## Memory & GC Pressure
+
+Minimize allocations in hot paths (Update, FixedUpdate, LateUpdate):
+
+- Reuse `List<T>` and `Dictionary<K,V>` instances
+- Cache transform references
+- Use `Array.Empty<T>()` instead of `new T[0]`
+- Pre-allocate buffers (see `ReusableBufferWriter`)
+- Avoid LINQ in Update loops
+- Avoid string concatenation in Update loops (use `StringBuilder` or interpolation only when needed)
+
+```csharp
+// GOOD — pre-allocated, reused each frame
+private ClientTransformData _tx = new();
+
+private void Update() {
+    _tx.Reset();
+    _tx.Position = transform.position;
+    Send(_tx);
+}
+
+// BAD — new allocation every frame
+private void Update() {
+    var tx = new ClientTransformData(); // GC pressure
+    Send(tx);
+}
+```
+
+## SerializeField Attributes
+
+Use appropriate attributes for inspector fields:
+
+```csharp
+[Header("Connection Settings")]
+[SerializeField, Tooltip("Server IP address")]
+private string _serverAddress = "localhost";
+
+[SerializeField, Range(1, 120)]
+private int _sendRate = 30;
+
+[SerializeField, Min(0)]
+private float _timeout = 5f;
+
+[SerializeField, ReadOnly]
+private string _connectionStatus;
+```
+
+## XML Documentation
+
+Public API members should have XML documentation:
+
+```csharp
+/// <summary>
+/// Connect to the NetSync server at the specified address.
+/// </summary>
+/// <param name="address">Server IP address or hostname.</param>
+/// <param name="port">Server port number.</param>
+public void Connect(string address, int port) { }
+```
+
+## File Structure
+
+- One public class per file
+- File name matches class name exactly
+- Using statements order: `System` > `UnityEngine` > `Styly.NetSync`
+- Internal implementations in `Internal Scripts/` folder
+
+## .meta Files
+
+- Never generate or commit Unity `.meta` files manually
+- They are auto-generated by Unity Editor
