@@ -92,6 +92,26 @@ namespace Styly.NetSync
             }
         }
 
+        public void RpcTo(int targetClientNo, string functionName, string[] args = null)
+        {
+            RpcTo(new[] { targetClientNo }, functionName, args);
+        }
+
+        public void RpcTo(int[] targetClientNos, string functionName, string[] args = null)
+        {
+            if (targetClientNos == null || targetClientNos.Length == 0)
+            {
+                return;
+            }
+
+            if (args == null) { args = Array.Empty<string>(); }
+
+            if (_rpcManager != null)
+            {
+                _rpcManager.SendTo(_roomId, targetClientNos, functionName, args);
+            }
+        }
+
         internal void Rpc_SystemRPC(string functionName, string[] args = null)
         {
             functionName = PrefixForSystem + functionName;
@@ -706,6 +726,15 @@ namespace Styly.NetSync
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
         {
             string argsStr = args != null && args.Length > 0 ? string.Join(", ", args) : "none";
+
+            if (RPCManager.TryExtractTargetedFunction(functionName, out var decodedFunctionName, out var targetClientNos))
+            {
+                functionName = decodedFunctionName;
+                if (!targetClientNos.Contains(_clientNo))
+                {
+                    return;
+                }
+            }
 
             // Route system RPCs to internal handler, others to public event
             if (functionName.StartsWith(PrefixForSystem))

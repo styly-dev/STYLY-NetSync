@@ -13,6 +13,9 @@ namespace Styly.NetSync
 {
     internal class RPCManager
     {
+        private const string TargetPrefix = "@target[";
+        private const string TargetSeparator = "]|";
+
         private readonly IConnectionManager _connectionManager;
         private readonly string _deviceId;
         private readonly NetSyncManager _netSyncManager;
@@ -164,6 +167,80 @@ namespace Styly.NetSync
             }
 
             TrySendNow(roomId, functionName, args);
+        }
+
+        public void SendTo(string roomId, int[] targetClientNos, string functionName, string[] args)
+        {
+            if (targetClientNos == null || targetClientNos.Length == 0)
+            {
+                return;
+            }
+
+            var uniqueTargets = new HashSet<int>();
+            foreach (var targetClientNo in targetClientNos)
+            {
+                if (targetClientNo > 0)
+                {
+                    uniqueTargets.Add(targetClientNo);
+                }
+            }
+
+            if (uniqueTargets.Count == 0)
+            {
+                return;
+            }
+
+            var targetedFunctionName = BuildTargetedFunctionName(uniqueTargets, functionName);
+            Send(roomId, targetedFunctionName, args);
+        }
+
+        internal static string BuildTargetedFunctionName(IEnumerable<int> targetClientNos, string functionName)
+        {
+            var functionNameOrEmpty = functionName ?? string.Empty;
+            return $"{TargetPrefix}{string.Join(",", targetClientNos)}{TargetSeparator}{functionNameOrEmpty}";
+        }
+
+        internal static bool TryExtractTargetedFunction(string encodedFunctionName, out string decodedFunctionName, out HashSet<int> targetClientNos)
+        {
+            decodedFunctionName = encodedFunctionName;
+            targetClientNos = null;
+
+            if (string.IsNullOrEmpty(encodedFunctionName) || !encodedFunctionName.StartsWith(TargetPrefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var separatorStart = encodedFunctionName.IndexOf(TargetSeparator, StringComparison.Ordinal);
+            if (separatorStart <= TargetPrefix.Length)
+            {
+                return false;
+            }
+
+            var targetPart = encodedFunctionName.Substring(TargetPrefix.Length, separatorStart - TargetPrefix.Length);
+            var decodedNameStart = separatorStart + TargetSeparator.Length;
+            if (decodedNameStart >= encodedFunctionName.Length)
+            {
+                return false;
+            }
+
+            var targets = new HashSet<int>();
+            var rawTargets = targetPart.Split(',');
+            foreach (var rawTarget in rawTargets)
+            {
+                if (int.TryParse(rawTarget, out var clientNo) && clientNo > 0)
+                {
+                    targets.Add(clientNo);
+                }
+            }
+
+            if (targets.Count == 0)
+            {
+                return false;
+            }
+
+            decodedFunctionName = encodedFunctionName.Substring(decodedNameStart);
+            targetClientNos = targets;
+            return true;
         }
 
         /// <summary>
