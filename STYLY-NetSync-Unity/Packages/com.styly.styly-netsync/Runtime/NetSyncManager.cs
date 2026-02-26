@@ -92,6 +92,21 @@ namespace Styly.NetSync
             }
         }
 
+        public void RpcTo(int targetClientNo, string functionName, string[] args = null)
+        {
+            RpcTo(new[] { targetClientNo }, functionName, args);
+        }
+
+        public void RpcTo(int[] targetClientNos, string functionName, string[] args = null)
+        {
+            if (args == null) { args = Array.Empty<string>(); }
+
+            if (_rpcManager != null)
+            {
+                _rpcManager.SendTo(_roomId, targetClientNos, functionName, args);
+            }
+        }
+
         internal void Rpc_SystemRPC(string functionName, string[] args = null)
         {
             functionName = PrefixForSystem + functionName;

@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.Events;
@@ -137,6 +138,67 @@ namespace Styly.NetSync
             }
         }
 
+
+        private const string TargetPrefix = "@target:";
+
+        private static string BuildTargetedFunctionName(int[] targetClientNos, string functionName)
+        {
+            if (targetClientNos == null || targetClientNos.Length == 0)
+            {
+                return functionName;
+            }
+
+            var uniqueTargets = targetClientNos.Where(clientNo => clientNo > 0).Distinct().ToArray();
+            if (uniqueTargets.Length == 0)
+            {
+                return functionName;
+            }
+
+            return $"{TargetPrefix}{string.Join(",", uniqueTargets)}:{functionName}";
+        }
+
+        public static bool TryResolveTargetedFunctionName(string encodedFunctionName, int localClientNo, out string resolvedFunctionName)
+        {
+            resolvedFunctionName = encodedFunctionName;
+
+            if (string.IsNullOrEmpty(encodedFunctionName) || !encodedFunctionName.StartsWith(TargetPrefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var separatorIndex = encodedFunctionName.IndexOf(':', TargetPrefix.Length);
+            if (separatorIndex < 0)
+            {
+                return false;
+            }
+
+            var targetsText = encodedFunctionName.Substring(TargetPrefix.Length, separatorIndex - TargetPrefix.Length);
+            var functionName = encodedFunctionName.Substring(separatorIndex + 1);
+            if (string.IsNullOrEmpty(functionName) || string.IsNullOrEmpty(targetsText))
+            {
+                return false;
+            }
+
+            bool isTarget = false;
+            var targets = targetsText.Split(',');
+            foreach (var targetText in targets)
+            {
+                if (int.TryParse(targetText, out var targetClientNo) && targetClientNo == localClientNo)
+                {
+                    isTarget = true;
+                    break;
+                }
+            }
+
+            if (!isTarget)
+            {
+                return false;
+            }
+
+            resolvedFunctionName = functionName;
+            return true;
+        }
+
         public RPCManager(IConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
         {
             _connectionManager = connectionManager;
@@ -147,11 +209,18 @@ namespace Styly.NetSync
 
         public void Send(string roomId, string functionName, string[] args)
         {
+            SendTo(roomId, null, functionName, args);
+        }
+
+        public void SendTo(string roomId, int[] targetClientNos, string functionName, string[] args)
+        {
+            var encodedFunctionName = BuildTargetedFunctionName(targetClientNos, functionName);
+
             if (!_netSyncManager.IsReady)
             {
                 // Queue for later when ready
-                _pendingOut.Enqueue((functionName, args, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0));
-                
+                _pendingOut.Enqueue((encodedFunctionName, args, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0));
+
                 // Check if queue is too large
                 while (_pendingOut.Count > _maxPendingRpc)
                 {
@@ -163,7 +232,7 @@ namespace Styly.NetSync
                 return;
             }
 
-            TrySendNow(roomId, functionName, args);
+            TrySendNow(roomId, encodedFunctionName, args);
         }
 
         /// <summary>

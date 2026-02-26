@@ -99,11 +99,16 @@ namespace Styly.NetSync
 
                     case BinarySerializer.MSG_RPC when data is RPCMessage rpc:
                         // Avoid JSON round-trip: parse args once and pass object via dataObj
+                        if (!RPCManager.TryResolveTargetedFunctionName(rpc.functionName, _localClientNo, out var resolvedFunctionName))
+                        {
+                            break;
+                        }
+
                         var args = JsonConvert.DeserializeObject<string[]>(rpc.argumentsJson);
                         _messageQueue.Enqueue(new NetworkMessage
                         {
                             type = "rpc",
-                            dataObj = new RpcMessageData { senderClientNo = rpc.senderClientNo, functionName = rpc.functionName, args = args }
+                            dataObj = new RpcMessageData { senderClientNo = rpc.senderClientNo, functionName = resolvedFunctionName, args = args }
                         });
                         _messagesReceived++;
                         break;
