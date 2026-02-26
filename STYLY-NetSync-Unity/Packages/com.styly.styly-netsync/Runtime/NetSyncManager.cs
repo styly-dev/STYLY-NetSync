@@ -1,6 +1,7 @@
 // NetSyncManager.cs
 using System;
 using System.Collections.Generic;
+using Newtonsoft.Json;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
@@ -58,6 +59,15 @@ namespace Styly.NetSync
         private float _discoveryTimeout = 10f;
 
         internal const string PrefixForSystem = "@system:"; // Prefix for system-only message names
+        private const string SystemRpcToFunctionName = "rpc_to";
+
+        [Serializable]
+        private class TargetedRpcPayload
+        {
+            public int[] targetClientNos;
+            public string functionName;
+            public string[] args;
+        }
 
         #endregion ------------------------------------------------------------------------
 
@@ -90,6 +100,31 @@ namespace Styly.NetSync
             {
                 _rpcManager.Send(_roomId, functionName, args);
             }
+        }
+
+        public void RpcTo(int targetClientNo, string functionName, string[] args = null)
+        {
+            RpcTo(new[] { targetClientNo }, functionName, args);
+        }
+
+        public void RpcTo(int[] targetClientNos, string functionName, string[] args = null)
+        {
+            if (targetClientNos == null || targetClientNos.Length == 0)
+            {
+                Debug.LogWarning("[NetSyncManager] RpcTo called without target clients.");
+                return;
+            }
+
+            if (args == null) { args = Array.Empty<string>(); }
+
+            var payload = new TargetedRpcPayload
+            {
+                targetClientNos = targetClientNos,
+                functionName = functionName,
+                args = args
+            };
+
+            Rpc_SystemRPC(SystemRpcToFunctionName, new[] { JsonConvert.SerializeObject(payload) });
         }
 
         internal void Rpc_SystemRPC(string functionName, string[] args = null)
@@ -726,10 +761,56 @@ namespace Styly.NetSync
             // Handle known system RPCs
             switch (functionName)
             {
+                case SystemRpcToFunctionName:
+                    HandleTargetedRpc(senderClientNo, args);
+                    break;
                 default:
                     DebugLog($"Unknown system RPC received: {functionName}");
                     break;
             }
+        }
+
+        private void HandleTargetedRpc(int senderClientNo, string[] args)
+        {
+            if (args == null || args.Length == 0 || string.IsNullOrEmpty(args[0]))
+            {
+                DebugLog("Targeted RPC payload is empty.");
+                return;
+            }
+
+            TargetedRpcPayload payload;
+            try
+            {
+                payload = JsonConvert.DeserializeObject<TargetedRpcPayload>(args[0]);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[NetSyncManager] Failed to parse targeted RPC payload: {ex.Message}");
+                return;
+            }
+
+            if (payload == null || payload.targetClientNos == null || payload.targetClientNos.Length == 0)
+            {
+                DebugLog("Targeted RPC payload does not include target clients.");
+                return;
+            }
+
+            bool isTarget = false;
+            for (int i = 0; i < payload.targetClientNos.Length; i++)
+            {
+                if (payload.targetClientNos[i] == _clientNo)
+                {
+                    isTarget = true;
+                    break;
+                }
+            }
+
+            if (!isTarget)
+            {
+                return;
+            }
+
+            OnRPCReceived?.Invoke(senderClientNo, payload.functionName, payload.args ?? Array.Empty<string>());
         }
 
         private void OnGlobalVariableChangedHandler(string name, string oldValue, string newValue)
