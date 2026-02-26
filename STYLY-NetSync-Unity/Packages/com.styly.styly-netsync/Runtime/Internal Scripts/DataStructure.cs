@@ -94,6 +94,8 @@ namespace Styly.NetSync
     {
         // Client number of the sender
         public int senderClientNo;
+        // Target client numbers. Empty means broadcast.
+        public int[] targetClientNos;
         // Name of function to call
         public string functionName;
         // JSON-serialized function arguments array

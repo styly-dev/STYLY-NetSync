@@ -32,7 +32,7 @@ namespace Styly.NetSync
         private double _lastWarnAt = -999.0;                 // last warning time
         private double _warnCooldown = 0.5;                  // min seconds between warnings
         // Outgoing RPC queue for pre-ready state
-        private readonly ConcurrentQueue<(string fn, string[] args, double enqueuedAt)> _pendingOut = new ConcurrentQueue<(string fn, string[] args, double enqueuedAt)>();
+        private readonly ConcurrentQueue<(string fn, string[] args, int[] targetClientNos, double enqueuedAt)> _pendingOut = new ConcurrentQueue<(string fn, string[] args, int[] targetClientNos, double enqueuedAt)>();
         [SerializeField] private int _maxPendingRpc = 100;     // drop oldest beyond this
         [SerializeField] private double _rpcTtlSeconds = 5.0;  // drop when too old
         [SerializeField] private int _maxFlushPerFrame = 10;   // to avoid burst on first ready frame
@@ -86,7 +86,7 @@ namespace Styly.NetSync
             }
         }
 
-        private bool TrySendNow(string roomId, string functionName, string[] args)
+        private bool TrySendNow(string roomId, string functionName, string[] args, int[] targetClientNos = null)
         {
             // === Rate limit preflight (single global cap) ===
             if (!TryConsumeQuota(out var retryAfter, out var count))
@@ -103,7 +103,10 @@ namespace Styly.NetSync
             // Offline mode: loopback RPC to self
             if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
             {
-                EnqueueRPC(_netSyncManager.ClientNo, functionName, args);
+                if (targetClientNos == null || targetClientNos.Length == 0 || Array.IndexOf(targetClientNos, _netSyncManager.ClientNo) >= 0)
+                {
+                    EnqueueRPC(_netSyncManager.ClientNo, functionName, args);
+                }
                 return true;
             }
 
@@ -111,7 +114,8 @@ namespace Styly.NetSync
             {
                 functionName = functionName,
                 argumentsJson = JsonConvert.SerializeObject(args),
-                senderClientNo = _netSyncManager.ClientNo
+                senderClientNo = _netSyncManager.ClientNo,
+                targetClientNos = targetClientNos ?? Array.Empty<int>()
             };
             // Estimate and ensure capacity
             var required = EstimateRpcSize(rpcMsg);
@@ -147,10 +151,15 @@ namespace Styly.NetSync
 
         public void Send(string roomId, string functionName, string[] args)
         {
+            SendTo(roomId, null, functionName, args);
+        }
+
+        public void SendTo(string roomId, int[] targetClientNos, string functionName, string[] args)
+        {
             if (!_netSyncManager.IsReady)
             {
                 // Queue for later when ready
-                _pendingOut.Enqueue((functionName, args, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0));
+                _pendingOut.Enqueue((functionName, args, targetClientNos, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0));
                 
                 // Check if queue is too large
                 while (_pendingOut.Count > _maxPendingRpc)
@@ -163,7 +172,7 @@ namespace Styly.NetSync
                 return;
             }
 
-            TrySendNow(roomId, functionName, args);
+            TrySendNow(roomId, functionName, args, targetClientNos);
         }
 
         /// <summary>
@@ -180,7 +189,7 @@ namespace Styly.NetSync
 
             while (sentThisFrame < _maxFlushPerFrame && _pendingOut.TryPeek(out var item))
             {
-                var (fn, args, enqAt) = item;
+                var (fn, args, targetClientNos, enqAt) = item;
 
                 // TTL check
                 if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 - enqAt > _rpcTtlSeconds)
@@ -191,7 +200,7 @@ namespace Styly.NetSync
                 }
 
                 // Try to send with rate limit
-                if (TrySendNow(roomId, fn, args))
+                if (TrySendNow(roomId, fn, args, targetClientNos))
                 {
                     _pendingOut.TryDequeue(out _);
                     sentThisFrame++;
@@ -231,7 +240,8 @@ namespace Styly.NetSync
             var nameLen = msg != null && msg.functionName != null ? Encoding.UTF8.GetByteCount(msg.functionName) : 0;
             if (nameLen > 255) nameLen = 255; // capped by serializer
             var argsLen = msg != null && msg.argumentsJson != null ? Encoding.UTF8.GetByteCount(msg.argumentsJson) : 0;
-            return 1 + 2 + 1 + nameLen + 2 + argsLen;
+            var targetCount = msg != null && msg.targetClientNos != null ? msg.targetClientNos.Length : 0;
+            return 1 + 2 + 1 + (2 * targetCount) + 1 + nameLen + 2 + argsLen;
         }
 
         /// <summary>

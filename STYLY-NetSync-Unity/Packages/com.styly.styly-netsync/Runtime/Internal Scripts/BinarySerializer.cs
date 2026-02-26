@@ -827,6 +827,23 @@ namespace Styly.NetSync
             writer.Write(MSG_RPC);
             // Sender client number (2 bytes)
             writer.Write((ushort)msg.senderClientNo);
+            // Target client numbers (count + each clientNo as ushort). 0 count means broadcast.
+            var targets = msg.targetClientNos;
+            var targetCount = targets != null ? targets.Length : 0;
+            if (targetCount > byte.MaxValue)
+            {
+                throw new ArgumentException("Target client count is too large. Maximum count is 255.");
+            }
+            writer.Write((byte)targetCount);
+            for (int i = 0; i < targetCount; i++)
+            {
+                var clientNo = targets[i];
+                if (clientNo < 0 || clientNo > ushort.MaxValue)
+                {
+                    throw new ArgumentException($"Target client number out of range: {clientNo}");
+                }
+                writer.Write((ushort)clientNo);
+            }
             // Function name (length-prefixed byte)
             var nameBytes = System.Text.Encoding.UTF8.GetBytes(msg.functionName);
             if (nameBytes.Length > 255)
@@ -937,6 +954,13 @@ namespace Styly.NetSync
         {
             // Sender client number (2 bytes)
             var senderClientNo = reader.ReadUInt16();
+            // Target client numbers
+            var targetCount = reader.ReadByte();
+            var targetClientNos = targetCount == 0 ? Array.Empty<int>() : new int[targetCount];
+            for (int i = 0; i < targetCount; i++)
+            {
+                targetClientNos[i] = reader.ReadUInt16();
+            }
             // Function name
             var nameLen = reader.ReadByte();
             var name = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
@@ -946,6 +970,7 @@ namespace Styly.NetSync
             return new RPCMessage
             {
                 senderClientNo = senderClientNo,
+                targetClientNos = targetClientNos,
                 functionName = name,
                 argumentsJson = argsJson
             };

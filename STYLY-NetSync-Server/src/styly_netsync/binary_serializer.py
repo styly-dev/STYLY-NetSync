@@ -575,6 +575,14 @@ def _serialize_rpc_base(buffer: bytearray, data: dict[str, Any], msg_type: int) 
     sender_client_no = data.get("senderClientNo", 0)
     buffer.extend(struct.pack("<H", sender_client_no))
 
+    # Target client numbers (count + each clientNo as ushort). 0 count means broadcast.
+    target_client_nos = data.get("targetClientNos", [])
+    if len(target_client_nos) > 255:
+        raise ValueError("targetClientNos length must be <= 255")
+    buffer.append(len(target_client_nos))
+    for client_no in target_client_nos:
+        buffer.extend(struct.pack("<H", client_no))
+
     _pack_string(buffer, data.get("functionName", ""))
     _pack_string(buffer, data.get("argumentsJson", ""), use_ushort=True)
 
@@ -1037,6 +1045,14 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
     # Sender client number (2 bytes)
     result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
+
+    target_count = data[offset]
+    offset += 1
+    target_client_nos: list[int] = []
+    for _ in range(target_count):
+        target_client_nos.append(struct.unpack("<H", data[offset : offset + 2])[0])
+        offset += 2
+    result["targetClientNos"] = target_client_nos
 
     result["functionName"], offset = _unpack_string(data, offset)
     result["argumentsJson"], offset = _unpack_string(data, offset, use_ushort=True)
