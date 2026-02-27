@@ -29,3 +29,6 @@ __pycache__/
 
 .gemini/
 gha-creds-*.json
+
+# Misc
+nanobanana-output/*
