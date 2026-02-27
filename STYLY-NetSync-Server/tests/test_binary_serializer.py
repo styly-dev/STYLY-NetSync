@@ -745,3 +745,127 @@ class TestTransformSerializationV3:
         )
         assert decoded is not None
         assert len(decoded["virtuals"]) == max_vt
+
+
+class TestRPCMessageSerialization:
+    """Tests for RPC message serialization/deserialization round-trip."""
+
+    def test_roundtrip_broadcast(self) -> None:
+        """Broadcast RPC: 0 targets round-trips correctly."""
+        data = {
+            "senderClientNo": 42,
+            "targetClientNos": [],
+            "functionName": "SayHello",
+            "argumentsJson": '["arg1","arg2"]',
+        }
+
+        serialized = binary_serializer.serialize_rpc_message(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_RPC
+        assert result["senderClientNo"] == 42
+        assert result["targetClientNos"] == []
+        assert result["functionName"] == "SayHello"
+        assert result["argumentsJson"] == '["arg1","arg2"]'
+
+    def test_roundtrip_single_target(self) -> None:
+        """Single-target RPC round-trips correctly."""
+        data = {
+            "senderClientNo": 1,
+            "targetClientNos": [7],
+            "functionName": "Ping",
+            "argumentsJson": "[]",
+        }
+
+        serialized = binary_serializer.serialize_rpc_message(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_RPC
+        assert result["senderClientNo"] == 1
+        assert result["targetClientNos"] == [7]
+        assert result["functionName"] == "Ping"
+        assert result["argumentsJson"] == "[]"
+
+    def test_roundtrip_multiple_targets(self) -> None:
+        """Multi-target RPC round-trips correctly."""
+        targets = [1, 2, 50, 65535]
+        data = {
+            "senderClientNo": 100,
+            "targetClientNos": targets,
+            "functionName": "Broadcast",
+            "argumentsJson": '["hello"]',
+        }
+
+        serialized = binary_serializer.serialize_rpc_message(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_RPC
+        assert result["targetClientNos"] == targets
+
+    def test_roundtrip_max_255_targets(self) -> None:
+        """Exactly 255 targets (max) round-trips correctly."""
+        targets = list(range(255))
+        data = {
+            "senderClientNo": 0,
+            "targetClientNos": targets,
+            "functionName": "F",
+            "argumentsJson": "",
+        }
+
+        serialized = binary_serializer.serialize_rpc_message(data)
+        _, result, _ = binary_serializer.deserialize(serialized)
+
+        assert result["targetClientNos"] == targets
+
+    def test_over_255_targets_raises(self) -> None:
+        """>255 targets raises ValueError."""
+        data = {
+            "senderClientNo": 0,
+            "targetClientNos": list(range(256)),
+            "functionName": "F",
+            "argumentsJson": "",
+        }
+
+        with pytest.raises(ValueError, match="255"):
+            binary_serializer.serialize_rpc_message(data)
+
+    def test_none_targets_treated_as_broadcast(self) -> None:
+        """targetClientNos=None treated as broadcast (0 targets)."""
+        data = {
+            "senderClientNo": 5,
+            "targetClientNos": None,
+            "functionName": "Test",
+            "argumentsJson": "[]",
+        }
+
+        serialized = binary_serializer.serialize_rpc_message(data)
+        _, result, _ = binary_serializer.deserialize(serialized)
+
+        assert result["targetClientNos"] == []
+
+    def test_missing_targets_treated_as_broadcast(self) -> None:
+        """Omitted targetClientNos key treated as broadcast."""
+        data = {
+            "senderClientNo": 5,
+            "functionName": "Test",
+            "argumentsJson": "[]",
+        }
+
+        serialized = binary_serializer.serialize_rpc_message(data)
+        _, result, _ = binary_serializer.deserialize(serialized)
+
+        assert result["targetClientNos"] == []
+
+    def test_roundtrip_utf8_function_name(self) -> None:
+        """UTF-8 function name round-trips correctly."""
+        data = {
+            "senderClientNo": 1,
+            "targetClientNos": [],
+            "functionName": "OnDamage_テスト",
+            "argumentsJson": "[]",
+        }
+
+        serialized = binary_serializer.serialize_rpc_message(data)
+        _, result, _ = binary_serializer.deserialize(serialized)
+
+        assert result["functionName"] == "OnDamage_テスト"
