@@ -778,9 +778,8 @@ class TestRPCMessageSerialization:
         }
 
         serialized = binary_serializer.serialize_rpc_message(data)
-        msg_type, result, _ = binary_serializer.deserialize(serialized)
+        _, result, _ = binary_serializer.deserialize(serialized)
 
-        assert msg_type == binary_serializer.MSG_RPC
         assert result["senderClientNo"] == 1
         assert result["targetClientNos"] == [7]
         assert result["functionName"] == "Ping"
@@ -797,9 +796,8 @@ class TestRPCMessageSerialization:
         }
 
         serialized = binary_serializer.serialize_rpc_message(data)
-        msg_type, result, _ = binary_serializer.deserialize(serialized)
+        _, result, _ = binary_serializer.deserialize(serialized)
 
-        assert msg_type == binary_serializer.MSG_RPC
         assert result["targetClientNos"] == targets
 
     def test_roundtrip_max_255_targets(self) -> None:

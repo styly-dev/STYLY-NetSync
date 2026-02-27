@@ -886,14 +886,27 @@ class net_sync_manager:
             logger.error(f"Error sending stealth handshake: {e}")
             return False
 
-    def rpc(self, function_name: str, args: list[str]) -> bool:
-        """Queue RPC to be sent to all clients in room (via control queue)."""
+    def rpc(
+        self,
+        function_name: str,
+        args: list[str],
+        target_client_nos: list[int] | None = None,
+    ) -> bool:
+        """Queue RPC to be sent to clients in room (via control queue).
+
+        Args:
+            function_name: Name of the remote function to call.
+            args: List of string arguments.
+            target_client_nos: Client numbers to target. Empty or None
+                means broadcast to all clients in the room.
+        """
         if not self._running or not self._dealer_socket or self._client_no is None:
             return False
 
         try:
             rpc_data = {
                 "senderClientNo": self._client_no,
+                "targetClientNos": target_client_nos or [],
                 "functionName": function_name,
                 "argumentsJson": json.dumps(args),
             }
