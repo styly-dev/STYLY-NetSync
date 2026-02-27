@@ -92,12 +92,12 @@ namespace Styly.NetSync
             }
         }
 
-        public void RpcTo(int targetClientNo, string functionName, string[] args = null)
+        public void Rpc(string functionName, string[] args, int targetClientNo)
         {
-            RpcTo(new[] { targetClientNo }, functionName, args);
+            Rpc(functionName, args, new[] { targetClientNo });
         }
 
-        public void RpcTo(int[] targetClientNos, string functionName, string[] args = null)
+        public void Rpc(string functionName, string[] args, int[] targetClientNos)
         {
             if (args == null) { args = Array.Empty<string>(); }
             if (targetClientNos == null || targetClientNos.Length == 0)
