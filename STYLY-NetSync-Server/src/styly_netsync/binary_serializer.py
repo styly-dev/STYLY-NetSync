@@ -576,7 +576,7 @@ def _serialize_rpc_base(buffer: bytearray, data: dict[str, Any], msg_type: int) 
     buffer.extend(struct.pack("<H", sender_client_no))
 
     # Target client numbers (count + each clientNo as ushort). 0 count means broadcast.
-    target_client_nos = data.get("targetClientNos", [])
+    target_client_nos = data.get("targetClientNos") or []
     if len(target_client_nos) > 255:
         raise ValueError("targetClientNos length must be <= 255")
     buffer.append(len(target_client_nos))
