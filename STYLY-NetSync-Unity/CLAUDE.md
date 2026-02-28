@@ -41,7 +41,7 @@ ls Assets/Samples_Dev/                          # Test scenes and examples
 ### Key Internal Scripts
 - **ConnectionManager**: ZeroMQ socket management and threading
 - **TransformSyncManager**: Transform synchronization with SendRate upper bound, only-on-change filtering, and 1Hz idle heartbeat
-- **RPCManager**: Remote procedure call system with priority-based sending
+- **RPCManager**: Remote procedure call system with priority-based sending and targeted delivery by client number
 - **NetworkVariableManager**: Synchronized key-value storage
 - **AvatarManager**: Player spawn/despawn management
 - **MessageProcessor**: Binary protocol message handling

@@ -166,10 +166,17 @@ using Styly.NetSync;
 
 ### RPC
 All RPC arguments are strings for simplicity.
+RPCs can be broadcast to all clients or sent to specific clients by client number.
 
 ```csharp
 // Broadcast to all clients in the room
 NetSyncManager.Instance.Rpc("FunctionName", new string[] { "arg1", "arg2" });
+
+// Send to a single client by client number
+NetSyncManager.Instance.Rpc("FunctionName", new string[] { "arg1", "arg2" }, targetClientNo);
+
+// Send to multiple clients by their client numbers
+NetSyncManager.Instance.Rpc("FunctionName", new string[] { "arg1", "arg2" }, new int[] { 1, 3, 7 });
 
 // Receive RPCs
 NetSyncManager.Instance.OnRPCReceived.AddListener((senderClientNo, functionName, args) =>
@@ -215,10 +222,10 @@ NetSyncManager.Instance.OnClientVariableChanged.AddListener((clientNo, name, old
 
 ### Testing with a Specific Branch
 
-Unity: Install package with git URL.  
+Unity: Install package with git URL.
 `https://github.com/styly-dev/STYLY-NetSync.git?path=STYLY-NetSync-Unity/Packages/com.styly.styly-netsync#develop`
 
-Server:  
+Server:
 `uvx --from "git+https://github.com/styly-dev/STYLY-NetSync@develop#subdirectory=STYLY-NetSync-Server" styly-netsync-server`
 
 ### Release Workflow

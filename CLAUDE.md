@@ -84,7 +84,7 @@ kill <PID>                          # Kill process using port
   - `ConnectionManager.cs` - ZeroMQ socket management and threading
   - `MessageProcessor.cs` - Binary protocol message handling
   - `TransformSyncManager.cs` - Position/rotation synchronization with SendRate cap, only-on-change filtering, and 1Hz idle heartbeat
-  - `RPCManager.cs` - Remote procedure call system with priority-based sending
+  - `RPCManager.cs` - Remote procedure call system with priority-based sending and targeted delivery by client number
   - `NetworkVariableManager.cs` - Synchronized key-value storage
   - `AvatarManager.cs` - Player spawn/despawn management
   - `ServerDiscoveryManager.cs` - UDP discovery service client
@@ -114,6 +114,7 @@ kill <PID>                          # Kill process using port
 - UDP discovery service for automatic server finding (port 9999)
 - Adaptive broadcasting (1-120Hz) with thread-safe design
 - Priority-based sending: Control messages (RPC, Network Variables) prioritized over Transform updates
+- RPC targeting: RPCs can be broadcast to all clients (default) or sent to specific clients by client number
 
 #### ZeroMQ Important Notes
 

@@ -1222,24 +1222,40 @@ class NetSyncServer:
         return raw_payload or b""
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]) -> None:
-        """Send RPC to all clients in room via ROUTER unicast.
+        """Send RPC to target clients in room via ROUTER unicast.
 
-        RPC messages are sent via ROUTER for reliable delivery to each client,
-        rather than via PUB which can drop messages under load.
+        If targetClientNos is empty, the RPC is broadcast to all clients in room.
         """
-        # Log RPC
         sender_client_no = rpc_data.get("senderClientNo", 0)
         function_name = rpc_data.get("functionName", "unknown")
         args = rpc_data.get("args", [])
+        target_client_nos = rpc_data.get("targetClientNos", [])
         logger.info(
-            f"RPC: sender={sender_client_no}, function={function_name}, args={args}, room={room_id}"
+            f"RPC: sender={sender_client_no}, targets={target_client_nos}, function={function_name}, args={args}, room={room_id}"
         )
 
-        # Serialize the RPC message
         message_bytes = binary_serializer.serialize_rpc_message(rpc_data)
 
-        # Send via ROUTER unicast to all clients in the room
-        self._send_ctrl_to_room_via_router(room_id, message_bytes)
+        if not target_client_nos:
+            self._send_ctrl_to_room_via_router(room_id, message_bytes)
+            return
+
+        target_set = set(target_client_nos)
+        identities_to_send: list[bytes] = []
+        with self._rooms_lock:
+            if room_id not in self.rooms:
+                return
+            for _device_id, client_data in self.rooms[room_id].items():
+                client_no = client_data.get("client_no")
+                if client_no not in target_set:
+                    continue
+                identity = client_data.get("identity")
+                if identity is None:
+                    continue
+                identities_to_send.append(identity)
+
+        for identity in identities_to_send:
+            self._enqueue_router(identity, room_id, message_bytes)
 
     def _monitor_nv_sliding_window(self, room_id: str) -> None:
         """Monitor NV request rate for logging only (no gating)"""
