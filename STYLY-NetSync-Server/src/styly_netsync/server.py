@@ -1594,15 +1594,18 @@ class NetSyncServer:
             if room_id not in self.room_device_id_to_client_no:
                 return
 
-            # Collect all mappings for the room (including stealth clients with their flag)
+            # Collect mappings only for clients still connected in the room
             mappings = []
+            room_clients = self.rooms.get(room_id, {})
             for device_id, client_no in self.room_device_id_to_client_no[
                 room_id
             ].items():
-                # Get stealth status from client data
-                client_data = self.rooms.get(room_id, {}).get(device_id, {})
+                # Skip clients that have been cleaned up from self.rooms
+                # (their mapping entry is kept for device ID reuse)
+                if device_id not in room_clients:
+                    continue
+                client_data = room_clients[device_id]
                 is_stealth = client_data.get("is_stealth", False)
-                # Include all clients with their stealth flag
                 mappings.append((client_no, device_id, is_stealth))
 
             if mappings:
