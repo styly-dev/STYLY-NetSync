@@ -1807,9 +1807,6 @@ class NetSyncServer:
         room_id: str,
         client_snapshot: list[tuple[int, float, dict[str, Any] | None, bytes]],
     ) -> bytes | None:
-        if not client_snapshot:
-            return None
-
         buffer = bytearray()
         buffer.append(binary_serializer.MSG_ROOM_POSE)
         buffer.append(binary_serializer.PROTOCOL_VERSION)
@@ -1831,9 +1828,6 @@ class NetSyncServer:
                 transform_data["poseTime"] = pose_time
                 binary_serializer._serialize_client_data_short(buffer, transform_data)
                 count += 1
-
-        if count == 0:
-            return None
 
         struct.pack_into("<H", buffer, count_offset, count)
         return bytes(buffer)
