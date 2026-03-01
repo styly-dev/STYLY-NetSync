@@ -1608,18 +1608,18 @@ class NetSyncServer:
                 is_stealth = client_data.get("is_stealth", False)
                 mappings.append((client_no, device_id, is_stealth))
 
-            if mappings:
-                # Serialize and broadcast the mappings with server version
-                server_version = binary_serializer.parse_version(get_version())
-                message_bytes = binary_serializer.serialize_device_id_mapping(
-                    mappings, server_version
-                )
-                # Send via ROUTER unicast (lock is held, but _send_ctrl_to_room_via_router
-                # will acquire the lock again - RLock allows this)
-                self._send_ctrl_to_room_via_router(room_id, message_bytes)
-                logger.info(
-                    f"Broadcasted {len(mappings)} ID mappings to room {room_id} via ROUTER"
-                )
+            # Always broadcast, including an empty mapping payload. This allows
+            # clients to clear stale state when the final mapped client leaves.
+            server_version = binary_serializer.parse_version(get_version())
+            message_bytes = binary_serializer.serialize_device_id_mapping(
+                mappings, server_version
+            )
+            # Send via ROUTER unicast (lock is held, but _send_ctrl_to_room_via_router
+            # will acquire the lock again - RLock allows this)
+            self._send_ctrl_to_room_via_router(room_id, message_bytes)
+            logger.info(
+                f"Broadcasted {len(mappings)} ID mappings to room {room_id} via ROUTER"
+            )
 
     def _flush_debounced_id_mapping_broadcasts(self, current_time: float) -> None:
         """Flush ID mapping broadcasts that have been debounced long enough."""
