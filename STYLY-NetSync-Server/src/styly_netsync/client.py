@@ -141,6 +141,7 @@ class net_sync_manager:
         room: str = "default_room",
         auto_dispatch: bool = True,
         queue_max: int = 10000,
+        source_address: str | None = None,
     ):
         """
         Initialize NetSync client manager.
@@ -152,6 +153,7 @@ class net_sync_manager:
             room: Room topic to subscribe to
             auto_dispatch: If True, callbacks fire on receive thread
             queue_max: Max queued events for RPC/NV
+            source_address: Local IP to bind outgoing connections (NIC selection)
         """
         self._server = server
         self._dealer_port = dealer_port
@@ -159,6 +161,7 @@ class net_sync_manager:
         self._room = room
         self._auto_dispatch = auto_dispatch
         self._queue_max = queue_max
+        self._source_address = source_address
 
         # ZeroMQ context and sockets
         self._context: zmq.Context | None = None
@@ -227,6 +230,15 @@ class net_sync_manager:
             "ctrl_queue_drops": 0,
         }
 
+    # Internal helpers
+    def _build_connect_addr(self, port: int) -> str:
+        """Build ZeroMQ connect address, optionally with source address binding."""
+        if self._source_address:
+            # ZeroMQ extended TCP: tcp://source_ip:0;dest_host:port
+            dest_host = self._server.replace("tcp://", "")
+            return f"tcp://{self._source_address}:0;{dest_host}:{port}"
+        return f"{self._server}:{port}"
+
     # Properties
     @property
     def is_running(self) -> bool:
@@ -288,7 +300,7 @@ class net_sync_manager:
                     zmq.RCVHWM, 10
                 )  # Bound receive queue for control messages
                 self._dealer_socket.setsockopt(zmq.RCVTIMEO, 0)  # Non-blocking receive
-                dealer_addr = f"{self._server}:{self._dealer_port}"
+                dealer_addr = self._build_connect_addr(self._dealer_port)
                 self._dealer_socket.connect(dealer_addr)
 
                 # SUB socket for downlink (transform broadcasts)
@@ -296,7 +308,7 @@ class net_sync_manager:
                 self._sub_socket = self._context.socket(zmq.SUB)
                 self._sub_socket.setsockopt(zmq.LINGER, 0)
                 self._sub_socket.setsockopt(zmq.RCVHWM, 2)  # TransformRcvHwm
-                sub_addr = f"{self._server}:{self._sub_port}"
+                sub_addr = self._build_connect_addr(self._sub_port)
                 self._sub_socket.connect(sub_addr)
                 self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
 
@@ -307,8 +319,11 @@ class net_sync_manager:
                 )
                 self._receive_thread.start()
 
+                source_info = (
+                    f", source={self._source_address}" if self._source_address else ""
+                )
                 logger.info(
-                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
+                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}{source_info}"
                 )
 
             except Exception as e:
@@ -1070,6 +1085,8 @@ class net_sync_manager:
             self._discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self._discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             self._discovery_socket.settimeout(1.0)
+            if self._source_address:
+                self._discovery_socket.bind((self._source_address, 0))
 
             self._discovery_running = True
             self._discovery_thread = threading.Thread(
