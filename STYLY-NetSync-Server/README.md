@@ -110,12 +110,13 @@ Rotation & retention: default is 10 MB or 7 days, keeping the newest 20 files. O
 
 Bridging: stdlib `logging` is routed to loguru automatically.
 
-## REST bridge for client variables
+## REST bridge
 
-Starting with this version the server launches an embedded FastAPI application that exposes a REST endpoint for pre-seeding and updating per-client Network Variables by `deviceId`.
+The server launches an embedded FastAPI application that exposes REST endpoints for managing Network Variables. Default port: `8800` (override with environment variable `NETSYNC_REST_PORT`).
+
+### Client variables
 
 - Endpoint: `POST /v1/rooms/{roomId}/devices/{deviceId}/client-variables`
-- Default port: `8800` (override with environment variable `NETSYNC_REST_PORT`)
 - Payload body:
 
 ```json
@@ -127,14 +128,14 @@ Starting with this version the server launches an embedded FastAPI application t
 }
 ```
 
-- Constraints enforced by the bridge:
+- Constraints:
   - Variable names: 1–64 characters
   - Values: up to 1024 characters
   - Total variables per client: 20 (additional keys return HTTP 409)
 - Behavior:
   - If a device has not connected yet, the values are queued in an in-memory preseed store and automatically applied once the server assigns a `clientNo`.
   - If the device is already connected, the variables are sent immediately through the existing ZeroMQ pathway.
-- Typical usage (curl example):
+- Example:
 
 ```bash
 curl -sS -X POST "http://127.0.0.1:8800/v1/rooms/default_room/devices/00000000-0000-0000-0000-000000000000/client-variables" \
@@ -142,4 +143,35 @@ curl -sS -X POST "http://127.0.0.1:8800/v1/rooms/default_room/devices/00000000-0
   -d '{"vars":{"name":"Jack","lang":"EN"}}'
 ```
 
-The response includes the current mapping status (`clientNo` or `null`) and whether each key was queued or applied.
+The response includes the current mapping status (`clientNo` or `null`) and whether each key was `"applied"` or `"queued"`.
+
+### Global variables
+
+- Endpoint: `POST /v1/rooms/{roomId}/global-variables`
+- Payload body:
+
+```json
+{
+  "vars": {
+    "score": "42",
+    "stage": "lobby"
+  }
+}
+```
+
+- Constraints:
+  - Variable names: 1–64 characters
+  - Values: up to 1024 characters
+  - Total global variables per room: 100 (additional keys return HTTP 409)
+- Behavior:
+  - If the bridge client for the room is connected, variables are applied immediately via `set_global_variable`.
+  - If not yet connected, variables are queued and automatically flushed once the bridge connects. Successfully applied variables are removed from the queue; failed variables are re-queued for the next flush cycle.
+- Example:
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8800/v1/rooms/default_room/global-variables" \
+  -H "Content-Type: application/json" \
+  -d '{"vars":{"score":"42","stage":"lobby"}}'
+```
+
+The response includes the room ID and whether each key was `"applied"`, `"queued"`, or `"failed"`.
