@@ -98,6 +98,11 @@ class GlobalVarStore:
         with self._lock:
             return dict(self._data.get(room_id, {}))
 
+    def pop(self, room_id: str) -> dict[str, str]:
+        """Atomically retrieve and remove stored global variables for a room."""
+        with self._lock:
+            return self._data.pop(room_id, {})
+
 
 global_store = GlobalVarStore()
 
@@ -247,9 +252,14 @@ class RoomBridge:
 
     def flush_global_vars(self) -> None:
         """Flush queued global variables for this room."""
-        pending = global_store.get(self.room_id)
-        if pending:
-            self._apply_global(pending)
+        pending = global_store.pop(self.room_id)
+        if not pending:
+            return
+        applied = self._apply_global(pending)
+        # Re-queue only variables that failed to apply
+        failed = {name: value for name, value in pending.items() if name not in applied}
+        if failed:
+            global_store.upsert(self.room_id, failed)
 
 
 class BridgeManager:
@@ -320,13 +330,21 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
     def upsert_global(room_id: str, body: UpsertBody) -> dict[str, object]:
         if not body.vars:
             raise HTTPException(status_code=400, detail="vars must not be empty")
-        try:
-            global_store.upsert(room_id, body.vars)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         bridge = manager.get(room_id)
         statuses = bridge.apply_global_now_or_queue(body.vars)
+
+        # Only store variables that were queued (not applied immediately)
+        queued = {
+            name: body.vars[name]
+            for name, state in statuses.items()
+            if state != "applied"
+        }
+        if queued:
+            try:
+                global_store.upsert(room_id, queued)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         return {
             "roomId": room_id,
