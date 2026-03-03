@@ -13,7 +13,8 @@ namespace Styly.NetSync
 {
     internal class ServerDiscoveryManager
     {
-        private UdpClient _discoveryClient;
+        private UdpClient _discoveryClient; // Legacy: points to first client for backward compat
+        private List<UdpClient> _discoveryClients = new List<UdpClient>();
         private Thread _discoveryThread;
         private bool _isDiscovering;
         private bool _enableDebugLogs;
@@ -74,9 +75,41 @@ namespace Styly.NetSync
                 // Read cached IP on main thread before starting background thread
                 string cachedServerIp = GetCachedServerIp();
 
-                _discoveryClient = new UdpClient();
-                _discoveryClient.EnableBroadcast = true;
-                _discoveryClient.Client.ReceiveTimeout = 500; // 500ms timeout for responses
+                // Create one UdpClient per physical NIC for multi-NIC broadcast
+                _discoveryClients.Clear();
+                var bindAddresses = NetworkUtils.GetAllLocalIpAddresses();
+
+                if (bindAddresses.Count > 0)
+                {
+                    foreach (var addr in bindAddresses)
+                    {
+                        try
+                        {
+                            var client = new UdpClient(new IPEndPoint(IPAddress.Parse(addr), 0));
+                            client.EnableBroadcast = true;
+                            client.Client.ReceiveTimeout = 500;
+                            _discoveryClients.Add(client);
+                            DebugLog($"Discovery socket bound to {addr}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"[ServerDiscovery] Failed to create discovery socket on {addr}: {ex.Message}");
+                        }
+                    }
+                }
+
+                // Fallback: if no NIC-bound sockets could be created, use a single unbound socket
+                if (_discoveryClients.Count == 0)
+                {
+                    var fallback = new UdpClient();
+                    fallback.EnableBroadcast = true;
+                    fallback.Client.ReceiveTimeout = 500;
+                    _discoveryClients.Add(fallback);
+                    DebugLog("Using fallback unbound discovery socket");
+                }
+
+                // Keep legacy field pointing to first client
+                _discoveryClient = _discoveryClients[0];
 
                 // Start discovery thread that sends requests and waits for responses
                 _discoveryThread = new Thread(() =>
@@ -108,33 +141,64 @@ namespace Styly.NetSync
                     DebugLog("Proceeding with UDP broadcast discovery.");
 
                     var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
-                    var broadcastEndpoint = new IPEndPoint(IPAddress.Broadcast, ServerDiscoveryPort);
                     var lastRequestTime = DateTime.MinValue;
 
                     while (_isDiscovering)
                     {
                         try
                         {
-                            // Send discovery request at specified interval
+                            // Send discovery broadcast on every NIC socket
                             if ((DateTime.Now - lastRequestTime).TotalSeconds >= DiscoveryInterval)
                             {
-                                _discoveryClient.Send(discoveryMessage, discoveryMessage.Length, broadcastEndpoint);
+                                foreach (var client in _discoveryClients)
+                                {
+                                    try
+                                    {
+                                        // Determine directed broadcast address for this socket's NIC
+                                        var boundAddr = ((IPEndPoint)client.Client.LocalEndPoint).Address;
+                                        string bcastAddr;
+                                        if (boundAddr.Equals(IPAddress.Any))
+                                        {
+                                            bcastAddr = "255.255.255.255";
+                                        }
+                                        else
+                                        {
+                                            bcastAddr = NetworkUtils.GetBroadcastAddress(boundAddr.ToString());
+                                        }
+
+                                        var endpoint = new IPEndPoint(IPAddress.Parse(bcastAddr), ServerDiscoveryPort);
+                                        client.Send(discoveryMessage, discoveryMessage.Length, endpoint);
+                                    }
+                                    catch (SocketException sex)
+                                    {
+                                        if (_isDiscovering)
+                                        {
+                                            DebugLog($"Discovery send error: {sex.Message}");
+                                        }
+                                    }
+                                }
                                 lastRequestTime = DateTime.Now;
-                                DebugLog("Sent UDP discovery request");
+                                DebugLog($"Sent UDP discovery request on {_discoveryClients.Count} interface(s)");
                             }
 
-                            // Try to receive response (with timeout)
-                            IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
-                            byte[] data = _discoveryClient.Receive(ref remoteEP);
-                            ProcessDiscoveryResponse(data, remoteEP);
-                        }
-                        catch (SocketException ex)
-                        {
-                            // Timeout is normal - just continue
-                            if (ex.SocketErrorCode != SocketError.TimedOut && _isDiscovering)
+                            // Receive responses from all clients (short timeout per client)
+                            foreach (var client in _discoveryClients)
                             {
-                                Debug.LogWarning($"Discovery socket error: {ex.Message}");
-                                Thread.Sleep(1000);
+                                try
+                                {
+                                    IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
+                                    byte[] data = client.Receive(ref remoteEP);
+                                    ProcessDiscoveryResponse(data, remoteEP);
+                                    if (!_isDiscovering) break; // Server found
+                                }
+                                catch (SocketException ex)
+                                {
+                                    // Timeout is normal - continue to next client
+                                    if (ex.SocketErrorCode != SocketError.TimedOut && _isDiscovering)
+                                    {
+                                        Debug.LogWarning($"Discovery socket error: {ex.Message}");
+                                    }
+                                }
                             }
                         }
                         catch (Exception ex)
@@ -153,7 +217,8 @@ namespace Styly.NetSync
                 };
                 _discoveryThread.Start();
 
-                DebugLog($"Started UDP discovery service on port {ServerDiscoveryPort}");
+                int nicCount = _discoveryClients.Count;
+                DebugLog($"Started UDP discovery on port {ServerDiscoveryPort} ({nicCount} interface{(nicCount != 1 ? "s" : "")})");
             }
             catch (Exception ex)
             {
@@ -467,13 +532,18 @@ namespace Styly.NetSync
 
             try
             {
-                // Close UDP client if it exists
-                if (_discoveryClient != null)
+                // Close all UDP clients
+                foreach (var client in _discoveryClients)
                 {
-                    _discoveryClient.Close();
-                    _discoveryClient.Dispose();
-                    _discoveryClient = null;
+                    try
+                    {
+                        client.Close();
+                        client.Dispose();
+                    }
+                    catch (Exception) { /* best-effort cleanup */ }
                 }
+                _discoveryClients.Clear();
+                _discoveryClient = null;
 
                 // Wait for discovery thread to exit
                 if (_discoveryThread != null)
