@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 MAX_NAME = 64
 MAX_VALUE = 1024
 MAX_CLIENT_VARS = 20
+MAX_GLOBAL_VARS = 100
 
 # Constrained string types for variable names and values
 VarName = Annotated[str, StringConstraints(min_length=1, max_length=MAX_NAME)]
@@ -26,7 +27,7 @@ VarValue = Annotated[str, StringConstraints(max_length=MAX_VALUE)]
 
 
 class UpsertBody(BaseModel):
-    """Request body for client variable upsert."""
+    """Request body for client or global variable upsert."""
 
     vars: dict[VarName, VarValue] = Field(default_factory=dict)
 
@@ -70,6 +71,35 @@ class PreseedStore:
 
 
 store = PreseedStore()
+
+
+class GlobalVarStore:
+    """In-memory storage for queued room-level global variables."""
+
+    def __init__(self) -> None:
+        self._data: dict[str, dict[str, str]] = {}
+        self._lock = threading.RLock()
+
+    def upsert(self, room_id: str, kvs: dict[str, str]) -> dict[str, str]:
+        """Merge incoming key-values for a room."""
+        with self._lock:
+            current = self._data.get(room_id, {})
+            new_keys = [name for name in kvs if name not in current]
+            if len(current) + len(new_keys) > MAX_GLOBAL_VARS:
+                raise ValueError(
+                    f"Too many global variables (> {MAX_GLOBAL_VARS}) for room {room_id}"
+                )
+            current.update(kvs)
+            self._data[room_id] = current
+            return dict(current)
+
+    def get(self, room_id: str) -> dict[str, str]:
+        """Return a copy of stored global variables for a room."""
+        with self._lock:
+            return dict(self._data.get(room_id, {}))
+
+
+global_store = GlobalVarStore()
 
 
 class RoomBridge:
@@ -123,6 +153,7 @@ class RoomBridge:
                 else:
                     try:
                         self.flush_all_known_mappings()
+                        self.flush_global_vars()
                     except Exception as exc:
                         logger.debug("Flush failed: %s", exc)
                 time.sleep(0.1)
@@ -173,6 +204,39 @@ class RoomBridge:
                     applied.add(name)
         return applied
 
+    def apply_global_now_or_queue(self, kvs: dict[str, str]) -> dict[str, str]:
+        """Attempt to apply global variables immediately, otherwise mark them queued."""
+        statuses: dict[str, str] = {}
+        if self._manager.client_no:
+            applied = self._apply_global(kvs)
+            for name in kvs:
+                statuses[name] = "applied" if name in applied else "failed"
+        else:
+            for name in kvs:
+                statuses[name] = "queued"
+        return statuses
+
+    def _apply_global(self, kvs: dict[str, str]) -> set[str]:
+        """Apply global variables via set_global_variable."""
+        applied: set[str] = set()
+        if not self._manager.client_no:
+            return applied
+        with self._apply_lock:
+            for name, value in kvs.items():
+                ok = False
+                try:
+                    ok = self._manager.set_global_variable(name, value)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "set_global_variable failed (room=%s, key=%s): %s",
+                        self.room_id,
+                        name,
+                        exc,
+                    )
+                if ok:
+                    applied.add(name)
+        return applied
+
     def flush_all_known_mappings(self) -> None:
         """Flush queued variables for devices whose client numbers are known."""
         pending = store.all_for_room(self.room_id)
@@ -180,6 +244,12 @@ class RoomBridge:
             client_no = self.get_client_no(device_id)
             if client_no:
                 self._apply_to_client(client_no, kvs)
+
+    def flush_global_vars(self) -> None:
+        """Flush queued global variables for this room."""
+        pending = global_store.get(self.room_id)
+        if pending:
+            self._apply_global(pending)
 
 
 class BridgeManager:
@@ -243,6 +313,23 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
             "roomId": room_id,
             "deviceId": device_id,
             "mapping": {"clientNo": client_no},
+            "result": {name: {"state": state} for name, state in statuses.items()},
+        }
+
+    @app.post("/v1/rooms/{room_id}/global-variables")
+    def upsert_global(room_id: str, body: UpsertBody) -> dict[str, object]:
+        if not body.vars:
+            raise HTTPException(status_code=400, detail="vars must not be empty")
+        try:
+            global_store.upsert(room_id, body.vars)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        bridge = manager.get(room_id)
+        statuses = bridge.apply_global_now_or_queue(body.vars)
+
+        return {
+            "roomId": room_id,
             "result": {name: {"state": state} for name, state in statuses.items()},
         }
 
