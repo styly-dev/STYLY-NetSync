@@ -887,8 +887,10 @@ class net_sync_manager:
         if not self._running or not self._dealer_socket:
             return False
 
-        self._is_stealth_mode = True
-        return self._send_stealth_heartbeat()
+        result = self._send_stealth_heartbeat()
+        if result:
+            self._is_stealth_mode = True
+        return result
 
     def _send_stealth_heartbeat(self) -> bool:
         """Serialize and enqueue one stealth heartbeat packet.
@@ -922,6 +924,7 @@ class net_sync_manager:
             return
         now = time.monotonic()
         if now - self._last_stealth_heartbeat_time >= STEALTH_HEARTBEAT_INTERVAL:
+            self._last_stealth_heartbeat_time = now
             self._send_stealth_heartbeat()
 
     def rpc(
