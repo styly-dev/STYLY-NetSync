@@ -158,6 +158,7 @@ class TestStealthHeartbeatIntegration(unittest.TestCase):
         server_thread.start()
         time.sleep(0.3)  # wait for server to bind
 
+        client = None
         try:
             client = net_sync_manager(
                 server="tcp://localhost",
@@ -192,7 +193,8 @@ class TestStealthHeartbeatIntegration(unittest.TestCase):
             )
 
         finally:
-            client.stop()
+            if client is not None:
+                client.stop()
             server.stop()
 
 
