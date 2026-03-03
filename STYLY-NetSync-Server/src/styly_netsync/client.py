@@ -1141,6 +1141,17 @@ class net_sync_manager:
             # Keep legacy field pointing to the first socket for stop_discovery
             self._discovery_socket = self._discovery_sockets[0]
 
+            # Pre-compute broadcast addresses so _discovery_loop avoids
+            # calling psutil.net_if_addrs() on every iteration.
+            self._broadcast_cache: dict[str, str] = {}
+            for sock in self._discovery_sockets:
+                try:
+                    addr = sock.getsockname()[0]
+                    if addr and addr != "0.0.0.0":
+                        self._broadcast_cache[addr] = self._get_broadcast_address(addr)
+                except Exception:
+                    pass
+
             self._discovery_running = True
             self._discovery_thread = threading.Thread(
                 target=self._discovery_loop, args=(server_discovery_port,), daemon=True
@@ -1155,6 +1166,14 @@ class net_sync_manager:
 
         except Exception as e:
             logger.error(f"Error starting discovery: {e}")
+            for sock in getattr(self, "_discovery_sockets", []):
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+            self._discovery_sockets = []
+            self._discovery_socket = None
+            self._discovery_running = False
 
     def stop_discovery(self) -> None:
         """Stop UDP discovery."""
@@ -1209,11 +1228,15 @@ class net_sync_manager:
 
                 # Send discovery broadcast on every NIC socket
                 for sock in sockets:
+                    bound_addr = "unknown"
                     try:
                         # Determine broadcast target for this socket
                         bound_addr = sock.getsockname()[0]
                         if bound_addr and bound_addr != "0.0.0.0":
-                            bcast = self._get_broadcast_address(bound_addr)
+                            bcast = self._broadcast_cache.get(
+                                bound_addr,
+                                self._get_broadcast_address(bound_addr),
+                            )
                         else:
                             bcast = "<broadcast>"
                         sock.sendto(message, (bcast, server_discovery_port))
@@ -1225,37 +1248,33 @@ class net_sync_manager:
                         if self._discovery_running:
                             logger.debug(f"Discovery send error on {bound_addr}: {e}")
 
-                # Collect responses from all sockets (non-blocking pass)
-                deadline = time.monotonic() + 1.0
-                while time.monotonic() < deadline:
-                    remaining = max(deadline - time.monotonic(), 0.0)
-                    for sock in sockets:
-                        try:
-                            sock.settimeout(remaining / max(len(sockets), 1))
-                            data, addr = sock.recvfrom(1024)
-                            response = data.decode("utf-8")
+                # Collect responses from all sockets (single pass)
+                per_sock_timeout = 1.0 / max(len(sockets), 1)
+                for sock in sockets:
+                    try:
+                        sock.settimeout(per_sock_timeout)
+                        data, addr = sock.recvfrom(1024)
+                        response = data.decode("utf-8")
 
-                            if response.startswith("STYLY-NETSYNC|"):
-                                parts = response.split("|")
-                                if len(parts) >= 4:
-                                    dealer_port = int(parts[1])
-                                    sub_port = int(parts[2])
-                                    server_name = parts[3]
+                        if response.startswith("STYLY-NETSYNC|"):
+                            parts = response.split("|")
+                            if len(parts) >= 4:
+                                dealer_port = int(parts[1])
+                                sub_port = int(parts[2])
+                                server_name = parts[3]
 
-                                    logger.info(
-                                        f"Discovered server: {server_name} at "
-                                        f"{addr[0]}:{dealer_port}/{sub_port}"
-                                    )
-                                    server_address = f"tcp://{addr[0]}"
-                                    self.on_server_discovered.invoke(
-                                        server_address, dealer_port, sub_port
-                                    )
-                        except TimeoutError:
-                            pass
-                        except Exception:
-                            pass
-                    # After one pass over all sockets, break out
-                    break
+                                logger.info(
+                                    f"Discovered server: {server_name} at "
+                                    f"{addr[0]}:{dealer_port}/{sub_port}"
+                                )
+                                server_address = f"tcp://{addr[0]}"
+                                self.on_server_discovered.invoke(
+                                    server_address, dealer_port, sub_port
+                                )
+                    except TimeoutError:
+                        pass
+                    except Exception:
+                        pass
 
                 time.sleep(5.0)  # Discovery interval
 
