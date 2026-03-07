@@ -34,11 +34,25 @@ namespace Styly.NetSync.Editor
 
         private static int GetDefaultServerDiscoveryPort()
         {
-            // Try to find NetSyncManager in the active scene
-            Scene activeScene = SceneManager.GetActiveScene();
-            if (activeScene.isLoaded)
+            // Try to find NetSyncManager in the active scene first, then other loaded scenes
+            for (int i = -1; i < SceneManager.sceneCount; i++)
             {
-                GameObject[] rootObjects = activeScene.GetRootGameObjects();
+                Scene scene;
+                if (i == -1)
+                {
+                    scene = SceneManager.GetActiveScene();
+                }
+                else
+                {
+                    scene = SceneManager.GetSceneAt(i);
+                    if (scene == SceneManager.GetActiveScene())
+                        continue; // Already checked
+                }
+
+                if (!scene.isLoaded)
+                    continue;
+
+                GameObject[] rootObjects = scene.GetRootGameObjects();
                 foreach (GameObject rootObject in rootObjects)
                 {
                     NetSyncManager manager = rootObject.GetComponentInChildren<NetSyncManager>(true);
