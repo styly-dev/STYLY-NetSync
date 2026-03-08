@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using UnityEditor;
@@ -34,11 +35,22 @@ namespace Styly.NetSync.Editor
 
         private static int GetDefaultServerDiscoveryPort()
         {
-            // Try to find NetSyncManager in the active scene
+            // Try to find NetSyncManager in the active scene first, then other loaded scenes
             Scene activeScene = SceneManager.GetActiveScene();
-            if (activeScene.isLoaded)
+            var scenesToSearch = new List<Scene> { activeScene };
+            for (int i = 0; i < SceneManager.sceneCount; i++)
             {
-                GameObject[] rootObjects = activeScene.GetRootGameObjects();
+                Scene s = SceneManager.GetSceneAt(i);
+                if (s != activeScene)
+                    scenesToSearch.Add(s);
+            }
+
+            foreach (Scene scene in scenesToSearch)
+            {
+                if (!scene.isLoaded)
+                    continue;
+
+                GameObject[] rootObjects = scene.GetRootGameObjects();
                 foreach (GameObject rootObject in rootObjects)
                 {
                     NetSyncManager manager = rootObject.GetComponentInChildren<NetSyncManager>(true);
