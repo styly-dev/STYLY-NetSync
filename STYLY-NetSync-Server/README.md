@@ -77,7 +77,7 @@ To customize settings:
 
 1. Get the default config file:
    - From local clone: `cp src/styly_netsync/default.toml my-config.toml`
-   - Or download from GitHub: [default.toml](https://github.com/psychic-vr-lab/STYLY-NetSync/blob/main/STYLY-NetSync-Server/src/styly_netsync/default.toml)
+   - Or download from GitHub: [default.toml](https://github.com/styly-dev/STYLY-NetSync/blob/develop/STYLY-NetSync-Server/src/styly_netsync/default.toml)
 
 2. Edit `my-config.toml` and keep only the settings you want to change (delete the rest)
 
