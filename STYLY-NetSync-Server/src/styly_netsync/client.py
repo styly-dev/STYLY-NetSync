@@ -44,6 +44,9 @@ from .types import client_transform_data, room_transform_data
 
 logger = logging.getLogger(__name__)
 
+# Heartbeat interval for stealth clients (matches Unity TransformSyncManager.HEARTBEAT_INTERVAL_SECONDS)
+STEALTH_HEARTBEAT_INTERVAL = 1.0
+
 
 class SendStatus(Enum):
     """Status of a send operation."""
@@ -215,6 +218,10 @@ class net_sync_manager:
         self._ctrl_ttl_seconds = 5.0  # TTL for control messages
         self._ctrl_drain_batch = 64  # Max control messages to drain per loop
 
+        # Stealth mode heartbeat (mirrors Unity TransformSyncManager)
+        self._is_stealth_mode: bool = False
+        self._last_stealth_heartbeat_time: float = 0.0
+
         # Statistics
         self._stats = {
             "messages_received": 0,
@@ -379,6 +386,9 @@ class net_sync_manager:
 
         while self._running:
             try:
+                # Send stealth heartbeat if in stealth mode and interval elapsed
+                self._maybe_send_stealth_heartbeat()
+
                 # Flush outgoing messages first (priority-based)
                 sent_any = self._flush_outgoing()
 
@@ -868,10 +878,25 @@ class net_sync_manager:
             return False
 
     def send_stealth_handshake(self) -> bool:
-        """Send stealth handshake to become invisible client.
+        """Enter stealth mode: register as invisible client and start keepalive heartbeat.
 
-        Note: Stealth handshake is sent via control queue (reliable) instead of
-        latest-wins transform queue to ensure it's delivered.
+        After calling this once, the client automatically sends a 1 Hz heartbeat to the
+        server (matching Unity's HEARTBEAT_INTERVAL_SECONDS) so the connection is
+        maintained without any further action from the caller.
+        """
+        if not self._running or not self._dealer_socket:
+            return False
+
+        result = self._send_stealth_heartbeat()
+        if result:
+            self._is_stealth_mode = True
+        return result
+
+    def _send_stealth_heartbeat(self) -> bool:
+        """Serialize and enqueue one stealth heartbeat packet.
+
+        Uses the control queue (matching Unity's TryEnqueueControl for stealth handshakes).
+        Updates _last_stealth_heartbeat_time on success to drive the 1 Hz interval.
         """
         stealth_tx = create_stealth_transform()
         stealth_tx.device_id = self._device_id
@@ -879,12 +904,28 @@ class net_sync_manager:
         try:
             wire_data = client_transform_to_wire(stealth_tx)
             message = binary_serializer.serialize_client_transform(wire_data)
-            return self._enqueue_control(
-                self._room, message, msg_type="stealth_handshake"
+            result = self._enqueue_control(
+                self._room, message, msg_type="stealth_heartbeat"
             )
+            if result:
+                self._last_stealth_heartbeat_time = time.monotonic()
+            return result
         except Exception as e:
-            logger.error(f"Error sending stealth handshake: {e}")
+            logger.error(f"Error sending stealth heartbeat: {e}")
             return False
+
+    def _maybe_send_stealth_heartbeat(self) -> None:
+        """Send a stealth heartbeat if in stealth mode and the interval has elapsed.
+
+        Called each receive loop iteration. Mirrors Unity's NetSyncManager.Update()
+        which calls SendStealthHandshake() periodically via ShouldSendTransform().
+        """
+        if not self._is_stealth_mode:
+            return
+        now = time.monotonic()
+        if now - self._last_stealth_heartbeat_time >= STEALTH_HEARTBEAT_INTERVAL:
+            self._last_stealth_heartbeat_time = now
+            self._send_stealth_heartbeat()
 
     def rpc(
         self,
