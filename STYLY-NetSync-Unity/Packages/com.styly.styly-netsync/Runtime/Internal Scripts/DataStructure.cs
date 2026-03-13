@@ -121,4 +121,39 @@ namespace Styly.NetSync
         public int serverVersionPatch;
         public List<DeviceIdMapping> mappings;
     }
+
+    // Object sync data structures
+    [Serializable]
+    internal class ObjectStateData
+    {
+        public string objectId;
+        public int ownerClientNo;
+        public ushort poseSeq;
+        public double poseTime;
+        public Vector3 position;
+        public Quaternion rotation;
+    }
+
+    [Serializable]
+    internal class RoomObjectsData
+    {
+        public double broadcastTime;
+        public List<ObjectStateData> objects;
+    }
+
+    [Serializable]
+    internal class OwnershipChangedData
+    {
+        public string objectId;
+        public int newOwnerClientNo;
+        public int previousOwnerClientNo;
+    }
+
+    [Serializable]
+    internal class OwnershipRejectedData
+    {
+        public string objectId;
+        public int currentOwnerClientNo;
+        public byte reasonCode;
+    }
 }

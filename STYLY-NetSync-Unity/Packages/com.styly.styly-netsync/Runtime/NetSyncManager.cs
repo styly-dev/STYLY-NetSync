@@ -215,6 +215,30 @@ namespace Styly.NetSync
             return arr;
         }
 
+        internal void RegisterNetSyncObject(NetSyncObject obj)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.Register(obj);
+            }
+        }
+
+        internal void UnregisterNetSyncObject(NetSyncObject obj)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.Unregister(obj);
+            }
+        }
+
+        public void RequestObjectOwnership(byte operationType, string objectId)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.SendOwnershipRequest(_roomId, operationType, objectId);
+            }
+        }
+
         /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and
@@ -250,6 +274,7 @@ namespace Styly.NetSync
 
             // Clear room-scoped state to prevent leaks across rooms
             _messageProcessor?.ClearRoomScopedState();
+            _objectSyncManager?.ClearRoomScopedState();
             _timeEstimator.Reset();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
@@ -276,6 +301,7 @@ namespace Styly.NetSync
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
+        private ObjectSyncManager _objectSyncManager;
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -586,6 +612,13 @@ namespace Styly.NetSync
 
                 // Send transform updates (lower priority, can be dropped if backpressured)
                 SendTransformUpdates();
+
+                // Object sync: send owned object transforms and apply received transforms
+                if (_objectSyncManager != null)
+                {
+                    _objectSyncManager.Tick(_roomId, Time.time, _clientNo);
+                    _objectSyncManager.TickTransformAppliers(Time.deltaTime, NetSyncClock.NowSeconds());
+                }
             }
 
             // Check for initial sync timeout (important for rooms with no variables)
@@ -648,6 +681,7 @@ namespace Styly.NetSync
             _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
+            _objectSyncManager = new ObjectSyncManager(_connectionManager, _messageProcessor, _timeEstimator, _enableDebugLogs);
 
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
@@ -1174,6 +1208,8 @@ namespace Styly.NetSync
             _transformSyncManager = null;
             _networkVariableManager?.Dispose();
             _networkVariableManager = null;
+            _objectSyncManager?.Dispose();
+            _objectSyncManager = null;
         }
 
         /// <summary>
