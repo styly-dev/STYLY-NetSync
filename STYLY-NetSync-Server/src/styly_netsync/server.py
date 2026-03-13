@@ -332,6 +332,13 @@ class NetSyncServer:
         self.nv_monitor_window_size = config.nv_monitor_window_size
         self.nv_monitor_threshold = config.nv_monitor_threshold
 
+        # Object sync state
+        # room_id -> objectId -> {"owner_client_no": int, "pose_time": float,
+        #                         "pose_seq": int, "body_bytes": bytes}
+        self.room_objects: dict[str, dict[str, dict[str, Any]]] = {}
+        self.room_object_dirty: dict[str, bool] = {}
+        self._room_last_object_broadcast: dict[str, float] = {}
+
         # Network Variables limits (from config)
         self.MAX_GLOBAL_VARS = config.max_global_vars
         self.MAX_CLIENT_VARS = config.max_client_vars
@@ -761,6 +768,10 @@ class NetSyncServer:
             # Initialize monitoring window
             self.nv_monitor_window[room_id] = []
 
+            # Initialize object sync for the room
+            self.room_objects[room_id] = {}
+            self.room_object_dirty[room_id] = False
+
             logger.info(f"Created new room: {room_id}")
 
     def _get_device_id_from_identity(
@@ -1070,6 +1081,38 @@ class NetSyncServer:
                                 # Buffer client variable set request (no rate limit drops)
                                 self._buffer_client_var_set(room_id, data)
                                 self._monitor_nv_sliding_window(room_id)
+                            elif msg_type == binary_serializer.MSG_OBJECT_POSE:
+                                sender_device_id = self._get_device_id_from_identity(
+                                    client_identity, room_id
+                                )
+                                if sender_device_id:
+                                    sender_client_no = (
+                                        self._get_client_no_for_device_id(
+                                            room_id, sender_device_id
+                                        )
+                                    )
+                                    self._handle_object_pose(
+                                        room_id, sender_client_no, data
+                                    )
+                            elif (
+                                msg_type
+                                == binary_serializer.MSG_OBJECT_OWNERSHIP_REQUEST
+                            ):
+                                sender_device_id = self._get_device_id_from_identity(
+                                    client_identity, room_id
+                                )
+                                if sender_device_id:
+                                    sender_client_no = (
+                                        self._get_client_no_for_device_id(
+                                            room_id, sender_device_id
+                                        )
+                                    )
+                                    self._handle_object_ownership_request(
+                                        client_identity,
+                                        room_id,
+                                        sender_client_no,
+                                        data,
+                                    )
                             else:
                                 logger.warning(f"Unknown binary msg_type: {msg_type}")
                         except Exception as e:
@@ -1216,10 +1259,152 @@ class NetSyncServer:
         # Sync network variables to new client (outside lock to avoid deadlocks)
         if is_new_client:
             self._sync_network_variables_to_new_client(room_id)
+            # Sync object ownership state to new client
+            self._sync_objects_to_new_client(client_identity, room_id)
 
     def _extract_transform_body(self, raw_payload: bytes) -> bytes:
         """Extract the transform body without device ID from raw payload."""
         return raw_payload or b""
+
+    def _handle_object_pose(
+        self, room_id: str, sender_client_no: int, data: dict[str, Any]
+    ) -> None:
+        """Handle object pose update from client."""
+        object_id = data.get("objectId", "")
+        if not object_id:
+            return
+        body_bytes = data.get("bodyBytes", b"")
+        pose_seq = int(data.get("poseSeq", 0))
+
+        with self._rooms_lock:
+            objects = self.room_objects.get(room_id)
+            if objects is None:
+                return
+            obj_state = objects.get(object_id)
+            if obj_state is None:
+                # Object not yet known - auto-register with this sender as owner
+                # This is for the case where Claim hasn't been received yet
+                return
+            if obj_state["owner_client_no"] != sender_client_no:
+                # Not the owner, ignore
+                return
+            obj_state["pose_time"] = time.monotonic()
+            obj_state["pose_seq"] = pose_seq
+            if body_bytes:
+                obj_state["body_bytes"] = body_bytes
+            self.room_object_dirty[room_id] = True
+
+    def _handle_object_ownership_request(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        sender_client_no: int,
+        data: dict[str, Any],
+    ) -> None:
+        """Handle object ownership request (Claim/Release/ForceClaim)."""
+        operation_type = data.get("operationType", 0)
+        object_id = data.get("objectId", "")
+        if not object_id:
+            return
+
+        with self._rooms_lock:
+            if room_id not in self.room_objects:
+                self._initialize_room(room_id)
+            objects = self.room_objects[room_id]
+
+            if object_id not in objects:
+                # Auto-create object entry
+                objects[object_id] = {
+                    "owner_client_no": 0,
+                    "pose_time": 0.0,
+                    "pose_seq": 0,
+                    "body_bytes": b"",
+                }
+
+            obj_state = objects[object_id]
+            previous_owner = obj_state["owner_client_no"]
+
+            if operation_type == 0:  # Claim
+                if previous_owner == 0:
+                    # Accept
+                    obj_state["owner_client_no"] = sender_client_no
+                    logger.info(
+                        f"Object '{object_id}' claimed by client {sender_client_no} "
+                        f"in room {room_id}"
+                    )
+                    changed_msg = binary_serializer.serialize_object_ownership_changed(
+                        object_id, sender_client_no, previous_owner
+                    )
+                    self._send_ctrl_to_room_via_router(room_id, changed_msg)
+                    self.room_object_dirty[room_id] = True
+                else:
+                    # Reject
+                    rejected_msg = (
+                        binary_serializer.serialize_object_ownership_rejected(
+                            object_id, previous_owner, 0  # reason: already_owned
+                        )
+                    )
+                    self._enqueue_router(client_identity, room_id, rejected_msg)
+
+            elif operation_type == 1:  # Release
+                if previous_owner == sender_client_no:
+                    obj_state["owner_client_no"] = 0
+                    logger.info(
+                        f"Object '{object_id}' released by client "
+                        f"{sender_client_no} in room {room_id}"
+                    )
+                    changed_msg = binary_serializer.serialize_object_ownership_changed(
+                        object_id, 0, previous_owner
+                    )
+                    self._send_ctrl_to_room_via_router(room_id, changed_msg)
+                    self.room_object_dirty[room_id] = True
+                else:
+                    # Not the owner
+                    rejected_msg = (
+                        binary_serializer.serialize_object_ownership_rejected(
+                            object_id, previous_owner, 1  # reason: not_owner
+                        )
+                    )
+                    self._enqueue_router(client_identity, room_id, rejected_msg)
+
+            elif operation_type == 2:  # ForceClaim
+                obj_state["owner_client_no"] = sender_client_no
+                logger.info(
+                    f"Object '{object_id}' force-claimed by client "
+                    f"{sender_client_no} in room {room_id}"
+                )
+                changed_msg = binary_serializer.serialize_object_ownership_changed(
+                    object_id, sender_client_no, previous_owner
+                )
+                self._send_ctrl_to_room_via_router(room_id, changed_msg)
+                self.room_object_dirty[room_id] = True
+
+    def _sync_objects_to_new_client(self, client_identity: bytes, room_id: str) -> None:
+        """Send all object ownership states to a newly joined client."""
+        with self._rooms_lock:
+            objects = self.room_objects.get(room_id)
+            if not objects:
+                return
+            for obj_id, obj_state in objects.items():
+                changed_msg = binary_serializer.serialize_object_ownership_changed(
+                    obj_id, obj_state["owner_client_no"], 0
+                )
+                self._enqueue_router(client_identity, room_id, changed_msg)
+
+    def _broadcast_room_objects(
+        self,
+        room_id: str,
+        obj_snapshot: list[dict[str, Any]],
+    ) -> None:
+        """Broadcast room object states via PUB."""
+        message_bytes = binary_serializer.serialize_room_objects(
+            room_id, time.monotonic(), obj_snapshot
+        )
+        if not message_bytes:
+            return
+        # Use separate topic for objects: roomId + "\x00obj"
+        topic_bytes = room_id.encode("utf-8") + b"\x00obj"
+        self._enqueue_pub_latest(topic_bytes, message_bytes)
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]) -> None:
         """Send RPC to target clients in room via ROUTER unicast.
@@ -1776,6 +1961,37 @@ class NetSyncServer:
         for room_id, client_snapshot in rooms_to_broadcast:
             self._broadcast_room(room_id, client_snapshot)
 
+        # Broadcast object states for dirty rooms
+        object_rooms_to_broadcast: list[tuple[str, list[dict[str, Any]]]] = []
+        with self._rooms_lock:
+            for room_id, objects in self.room_objects.items():
+                if not objects:
+                    continue
+                if not self.room_object_dirty.get(room_id, False):
+                    # Check idle broadcast for objects too
+                    last_obj_broadcast = self._room_last_object_broadcast.get(
+                        room_id, 0.0
+                    )
+                    if current_time - last_obj_broadcast < self.idle_broadcast_interval:
+                        continue
+                obj_snapshot: list[dict[str, Any]] = []
+                for obj_id, obj_state in objects.items():
+                    obj_snapshot.append(
+                        {
+                            "objectId": obj_id,
+                            "ownerClientNo": obj_state["owner_client_no"],
+                            "poseSeq": obj_state["pose_seq"],
+                            "poseTime": obj_state["pose_time"],
+                            "bodyBytes": obj_state["body_bytes"],
+                        }
+                    )
+                object_rooms_to_broadcast.append((room_id, obj_snapshot))
+                self.room_object_dirty[room_id] = False
+                self._room_last_object_broadcast[room_id] = current_time
+
+        for room_id, obj_snapshot in object_rooms_to_broadcast:
+            self._broadcast_room_objects(room_id, obj_snapshot)
+
     def _enqueue_pub_latest(self, topic_bytes: bytes, message_bytes: bytes) -> None:
         """Latest-only coalescing enqueue for high-rate topics (e.g., room transforms)."""
         with self._coalesce_lock:
@@ -1849,8 +2065,11 @@ class NetSyncServer:
 
                 # Remove timed out clients in batch
                 if clients_to_remove:
+                    removed_client_nos: list[int] = []
                     for device_id in clients_to_remove:
                         client_no = clients[device_id].get("client_no")
+                        if client_no is not None:
+                            removed_client_nos.append(client_no)
                         del clients[device_id]
                         # Clean up binary cache by client number
                         if client_no and client_no in self.client_transform_body_cache:
@@ -1860,6 +2079,23 @@ class NetSyncServer:
                         logger.info(
                             f"Client {device_id[:8]}... (client number: {client_no}) removed (timeout)"
                         )
+
+                    # Release objects owned by removed clients
+                    if room_id in self.room_objects and removed_client_nos:
+                        removed_set = set(removed_client_nos)
+                        for obj_id, obj_state in self.room_objects[room_id].items():
+                            if obj_state["owner_client_no"] in removed_set:
+                                previous_owner = obj_state["owner_client_no"]
+                                obj_state["owner_client_no"] = 0
+                                logger.info(
+                                    f"Object '{obj_id}' auto-released "
+                                    f"(owner client {previous_owner} disconnected)"
+                                )
+                                changed_msg = binary_serializer.serialize_object_ownership_changed(
+                                    obj_id, 0, previous_owner
+                                )
+                                self._send_ctrl_to_room_via_router(room_id, changed_msg)
+                        self.room_object_dirty[room_id] = True
 
                     # Mark room as dirty since clients were removed
                     self.room_dirty_flags[room_id] = True
@@ -1929,6 +2165,14 @@ class NetSyncServer:
                         del self.room_last_nv_flush[room_id]
                     if room_id in self.nv_monitor_window:
                         del self.nv_monitor_window[room_id]
+
+                    # Clean up object sync structures
+                    if room_id in self.room_objects:
+                        del self.room_objects[room_id]
+                    if room_id in self.room_object_dirty:
+                        del self.room_object_dirty[room_id]
+                    if room_id in self._room_last_object_broadcast:
+                        del self._room_last_object_broadcast[room_id]
 
                     logger.info(f"Removed empty room: {room_id}")
 

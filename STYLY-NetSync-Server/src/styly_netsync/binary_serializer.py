@@ -19,6 +19,11 @@ MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 MSG_CLIENT_POSE = 11
 MSG_ROOM_POSE = 12
+MSG_OBJECT_POSE = 13  # Client → Server: owned object Transform
+MSG_ROOM_OBJECTS = 14  # Server → Clients (PUB): room object states
+MSG_OBJECT_OWNERSHIP_REQUEST = 15  # Client → Server: Claim/Release/ForceClaim
+MSG_OBJECT_OWNERSHIP_CHANGED = 16  # Server → Clients (ROUTER): ownership changed
+MSG_OBJECT_OWNERSHIP_REJECTED = 17  # Server → Client (ROUTER): request rejected
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -777,7 +782,10 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_ROOM_POSE:
+    if (
+        message_type < MSG_CLIENT_TRANSFORM
+        or message_type > MSG_OBJECT_OWNERSHIP_REJECTED
+    ):
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -806,6 +814,28 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_set(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_SYNC:
             return message_type, _deserialize_client_var_sync(data, offset), b""
+        elif message_type == MSG_OBJECT_POSE:
+            return message_type, _deserialize_object_pose(data, offset), b""
+        elif message_type == MSG_ROOM_OBJECTS:
+            return message_type, _deserialize_room_objects(data, offset), b""
+        elif message_type == MSG_OBJECT_OWNERSHIP_REQUEST:
+            return (
+                message_type,
+                _deserialize_object_ownership_request(data, offset),
+                b"",
+            )
+        elif message_type == MSG_OBJECT_OWNERSHIP_CHANGED:
+            return (
+                message_type,
+                _deserialize_object_ownership_changed(data, offset),
+                b"",
+            )
+        elif message_type == MSG_OBJECT_OWNERSHIP_REJECTED:
+            return (
+                message_type,
+                _deserialize_object_ownership_rejected(data, offset),
+                b"",
+            )
         else:
             # Should not reach here due to validation above
             return message_type, None, b""
@@ -1224,4 +1254,211 @@ def _deserialize_client_var_sync(data: bytes, offset: int) -> dict[str, Any]:
 
         result["clientVariables"][str(client_no)] = variables
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# NetSyncObject serialization / deserialization
+# ---------------------------------------------------------------------------
+
+
+def serialize_object_pose(data: dict[str, Any]) -> bytes:
+    """Serialize object pose message (Client -> Server)."""
+    buffer = bytearray()
+    buffer.append(MSG_OBJECT_POSE)
+    buffer.append(PROTOCOL_VERSION)
+    object_id = data.get("objectId", "")
+    object_id_bytes = object_id.encode("utf-8")[:64]
+    buffer.append(len(object_id_bytes))
+    buffer.extend(object_id_bytes)
+    buffer.extend(struct.pack("<H", int(data.get("poseSeq", 0)) & 0xFFFF))
+    # Position: int24 x3
+    _pack_int24_le(
+        buffer, _quantize_signed_int24(float(data.get("posX", 0.0)), ABS_POS_SCALE)
+    )
+    _pack_int24_le(
+        buffer, _quantize_signed_int24(float(data.get("posY", 0.0)), ABS_POS_SCALE)
+    )
+    _pack_int24_le(
+        buffer, _quantize_signed_int24(float(data.get("posZ", 0.0)), ABS_POS_SCALE)
+    )
+    # Rotation: smallest-three 32-bit
+    qx = float(data.get("rotX", 0.0))
+    qy = float(data.get("rotY", 0.0))
+    qz = float(data.get("rotZ", 0.0))
+    qw = float(data.get("rotW", 1.0))
+    packed_rot = _compress_quaternion_smallest_three(qx, qy, qz, qw)
+    buffer.extend(struct.pack("<I", packed_rot))
+    return bytes(buffer)
+
+
+def serialize_room_objects(
+    room_id: str, broadcast_time: float, objects: list[dict[str, Any]]
+) -> bytes:
+    """Serialize room objects broadcast message (Server -> Clients via PUB)."""
+    buffer = bytearray()
+    buffer.append(MSG_ROOM_OBJECTS)
+    buffer.append(PROTOCOL_VERSION)
+    buffer.extend(struct.pack("<d", broadcast_time))
+    buffer.extend(struct.pack("<H", len(objects)))
+    for obj in objects:
+        object_id = obj.get("objectId", "")
+        object_id_bytes = object_id.encode("utf-8")[:64]
+        buffer.append(len(object_id_bytes))
+        buffer.extend(object_id_bytes)
+        buffer.extend(struct.pack("<H", int(obj.get("ownerClientNo", 0)) & 0xFFFF))
+        buffer.extend(struct.pack("<H", int(obj.get("poseSeq", 0)) & 0xFFFF))
+        buffer.extend(struct.pack("<d", float(obj.get("poseTime", 0.0))))
+        # body_bytes already contains pos(9B) + rot(4B) = 13 bytes
+        body = obj.get("bodyBytes", b"")
+        if body:
+            buffer.extend(body)
+        else:
+            # Fallback: serialize from individual fields
+            _pack_int24_le(
+                buffer,
+                _quantize_signed_int24(float(obj.get("posX", 0.0)), ABS_POS_SCALE),
+            )
+            _pack_int24_le(
+                buffer,
+                _quantize_signed_int24(float(obj.get("posY", 0.0)), ABS_POS_SCALE),
+            )
+            _pack_int24_le(
+                buffer,
+                _quantize_signed_int24(float(obj.get("posZ", 0.0)), ABS_POS_SCALE),
+            )
+            qx = float(obj.get("rotX", 0.0))
+            qy = float(obj.get("rotY", 0.0))
+            qz = float(obj.get("rotZ", 0.0))
+            qw = float(obj.get("rotW", 1.0))
+            buffer.extend(
+                struct.pack("<I", _compress_quaternion_smallest_three(qx, qy, qz, qw))
+            )
+    return bytes(buffer)
+
+
+def serialize_object_ownership_changed(
+    object_id: str, new_owner: int, previous_owner: int
+) -> bytes:
+    """Serialize ownership changed notification (Server -> Clients via ROUTER)."""
+    buffer = bytearray()
+    buffer.append(MSG_OBJECT_OWNERSHIP_CHANGED)
+    object_id_bytes = object_id.encode("utf-8")[:64]
+    buffer.append(len(object_id_bytes))
+    buffer.extend(object_id_bytes)
+    buffer.extend(struct.pack("<H", new_owner & 0xFFFF))
+    buffer.extend(struct.pack("<H", previous_owner & 0xFFFF))
+    return bytes(buffer)
+
+
+def serialize_object_ownership_rejected(
+    object_id: str, current_owner: int, reason_code: int
+) -> bytes:
+    """Serialize ownership rejected notification (Server -> Client via ROUTER)."""
+    buffer = bytearray()
+    buffer.append(MSG_OBJECT_OWNERSHIP_REJECTED)
+    object_id_bytes = object_id.encode("utf-8")[:64]
+    buffer.append(len(object_id_bytes))
+    buffer.extend(object_id_bytes)
+    buffer.extend(struct.pack("<H", current_owner & 0xFFFF))
+    buffer.append(reason_code & 0xFF)
+    return bytes(buffer)
+
+
+def _deserialize_object_pose(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize object pose (Client -> Server)."""
+    result: dict[str, Any] = {}
+    protocol_version = data[offset]
+    offset += 1
+    if protocol_version != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported protocol version: {protocol_version}")
+    result["objectId"], offset = _unpack_string(data, offset)
+    result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    # Extract body bytes (pos 9B + rot 4B = 13 bytes) for caching
+    body_start = offset
+    px, offset = _unpack_int24_le(data, offset)
+    py, offset = _unpack_int24_le(data, offset)
+    pz, offset = _unpack_int24_le(data, offset)
+    packed_rot = struct.unpack("<I", data[offset : offset + 4])[0]
+    offset += 4
+    result["bodyBytes"] = data[body_start:offset]
+    result["posX"] = _dequantize_signed(px, ABS_POS_SCALE)
+    result["posY"] = _dequantize_signed(py, ABS_POS_SCALE)
+    result["posZ"] = _dequantize_signed(pz, ABS_POS_SCALE)
+    qx, qy, qz, qw = _decompress_quaternion_smallest_three(packed_rot)
+    result["rotX"] = qx
+    result["rotY"] = qy
+    result["rotZ"] = qz
+    result["rotW"] = qw
+    return result
+
+
+def _deserialize_room_objects(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize room objects broadcast."""
+    result: dict[str, Any] = {}
+    protocol_version = data[offset]
+    offset += 1
+    if protocol_version != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported protocol version: {protocol_version}")
+    result["broadcastTime"] = struct.unpack("<d", data[offset : offset + 8])[0]
+    offset += 8
+    object_count = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    objects: list[dict[str, Any]] = []
+    for _ in range(object_count):
+        obj: dict[str, Any] = {}
+        obj["objectId"], offset = _unpack_string(data, offset)
+        obj["ownerClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+        offset += 2
+        obj["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
+        offset += 2
+        obj["poseTime"] = struct.unpack("<d", data[offset : offset + 8])[0]
+        offset += 8
+        px, offset = _unpack_int24_le(data, offset)
+        py, offset = _unpack_int24_le(data, offset)
+        pz, offset = _unpack_int24_le(data, offset)
+        packed_rot = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
+        obj["posX"] = _dequantize_signed(px, ABS_POS_SCALE)
+        obj["posY"] = _dequantize_signed(py, ABS_POS_SCALE)
+        obj["posZ"] = _dequantize_signed(pz, ABS_POS_SCALE)
+        qx, qy, qz, qw = _decompress_quaternion_smallest_three(packed_rot)
+        obj["rotX"] = qx
+        obj["rotY"] = qy
+        obj["rotZ"] = qz
+        obj["rotW"] = qw
+        objects.append(obj)
+    result["objects"] = objects
+    return result
+
+
+def _deserialize_object_ownership_request(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize ownership request (Client -> Server)."""
+    result: dict[str, Any] = {}
+    result["operationType"] = data[offset]
+    offset += 1
+    result["objectId"], offset = _unpack_string(data, offset)
+    return result
+
+
+def _deserialize_object_ownership_changed(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize ownership changed notification."""
+    result: dict[str, Any] = {}
+    result["objectId"], offset = _unpack_string(data, offset)
+    result["newOwnerClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    result["previousOwnerClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    return result
+
+
+def _deserialize_object_ownership_rejected(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize ownership rejected notification."""
+    result: dict[str, Any] = {}
+    result["objectId"], offset = _unpack_string(data, offset)
+    result["currentOwnerClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    result["reasonCode"] = data[offset]
+    offset += 1
     return result
