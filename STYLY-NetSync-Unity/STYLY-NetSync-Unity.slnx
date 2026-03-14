@@ -1,0 +1,13 @@
+﻿<Solution>
+  <Project Path="Assembly-CSharp.csproj" />
+  <Project Path="Unity.XR.Hands.Samples.VisualizerSample.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.StarterAssets.csproj" />
+  <Project Path="com.styly.styly-netsync.csproj" />
+  <Project Path="com.styly.styly-netsync.Editor.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.Hands.Editor.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.Hands.csproj" />
+  <Project Path="AvatarAdjust.csproj" />
+  <Project Path="Unity.XR.Hands.Samples.Gestures.csproj" />
+  <Project Path="Unity.XR.Hands.Samples.Gestures.Editor.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.StarterAssets.Editor.csproj" />
+</Solution>
