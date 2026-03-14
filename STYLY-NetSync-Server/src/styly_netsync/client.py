@@ -1437,7 +1437,11 @@ class net_sync_manager:
         self._discovery_sockets = []
         self._discovery_socket = None
 
-        if self._discovery_thread and self._discovery_thread.is_alive():
+        if (
+            self._discovery_thread
+            and self._discovery_thread.is_alive()
+            and self._discovery_thread is not threading.current_thread()
+        ):
             self._discovery_thread.join(timeout=1.0)
 
         logger.info("Stopped UDP discovery")
@@ -1522,19 +1526,21 @@ class net_sync_manager:
                                     server_address, dealer_port, sub_port
                                 )
 
-                                # Auto-connect: update internal state and start connection
-                                self._server = server_address
-                                self._dealer_port = dealer_port
-                                self._sub_port = sub_port
-                                self._stop_discovery_internal()
+                                # Auto-connect after discovery
                                 if not self._running:
+                                    self._server = server_address
+                                    self._dealer_port = dealer_port
+                                    self._sub_port = sub_port
                                     try:
                                         self.start()
                                     except Exception as e:
                                         logger.error(
                                             f"Auto-connect after discovery failed: {e}"
                                         )
-                                return  # Discovery complete
+                                        # Retry discovery on next round
+                                        break
+                                self._stop_discovery_internal()
+                                return
                     except TimeoutError:
                         pass
                     except Exception:
