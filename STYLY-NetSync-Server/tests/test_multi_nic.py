@@ -1,6 +1,7 @@
 """Tests for multi-NIC discovery and _build_connect_addr."""
 
 import socket
+import threading
 from unittest.mock import MagicMock, patch
 
 from styly_netsync.client import net_sync_manager
@@ -108,4 +109,118 @@ class TestDiscoverySocketsCleanup:
         mock_sock.close.assert_called()
         assert mgr._discovery_sockets == []
         assert mgr._discovery_socket is None
+        assert mgr._discovery_running is False
+
+
+class TestDiscoveryAutoConnect:
+    """Tests for auto-connect after server discovery."""
+
+    def test_auto_connect_updates_state_and_starts(self) -> None:
+        """Discovery should update address/ports and call start()."""
+        mgr = _make_manager()
+        mgr._discovery_running = True
+        mgr._discovery_sockets = []
+
+        # Simulate a discovery response via a mock socket
+        mock_sock = MagicMock(spec=socket.socket)
+        mock_sock.getsockname.return_value = ("192.168.1.10", 0)
+        mock_sock.recvfrom.return_value = (
+            b"STYLY-NETSYNC|6666|7777|TestServer",
+            ("10.0.0.1", 9999),
+        )
+        mgr._discovery_sockets = [mock_sock]
+        mgr._broadcast_cache = {"192.168.1.10": "192.168.1.255"}
+
+        with patch.object(mgr, "start") as mock_start:
+            mgr._discovery_loop(9999)
+
+        assert mgr._server == "tcp://10.0.0.1"
+        assert mgr._dealer_port == 6666
+        assert mgr._sub_port == 7777
+        mock_start.assert_called_once()
+        assert mgr._discovery_running is False
+
+    def test_auto_connect_skips_when_already_running(self) -> None:
+        """When already connected, discovery should stop without updating state."""
+        mgr = _make_manager()
+        original_server = mgr._server
+        original_dealer = mgr._dealer_port
+        original_sub = mgr._sub_port
+        mgr._running = True
+        mgr._discovery_running = True
+
+        mock_sock = MagicMock(spec=socket.socket)
+        mock_sock.getsockname.return_value = ("192.168.1.10", 0)
+        mock_sock.recvfrom.return_value = (
+            b"STYLY-NETSYNC|6666|7777|TestServer",
+            ("10.0.0.1", 9999),
+        )
+        mgr._discovery_sockets = [mock_sock]
+        mgr._broadcast_cache = {"192.168.1.10": "192.168.1.255"}
+
+        with patch.object(mgr, "start") as mock_start:
+            mgr._discovery_loop(9999)
+
+        # Address/ports should NOT be updated
+        assert mgr._server == original_server
+        assert mgr._dealer_port == original_dealer
+        assert mgr._sub_port == original_sub
+        mock_start.assert_not_called()
+        # Discovery should still be stopped
+        assert mgr._discovery_running is False
+
+    def test_no_self_join_error(self) -> None:
+        """_stop_discovery_internal called from discovery thread should not raise."""
+        mgr = _make_manager()
+        mgr._discovery_running = True
+
+        # Set _discovery_thread to the current thread to simulate
+        # calling from within the discovery thread
+        mgr._discovery_thread = threading.current_thread()
+
+        # Should not raise RuntimeError("cannot join current thread")
+        mgr._stop_discovery_internal()
+        assert mgr._discovery_running is False
+
+    def test_discovery_continues_on_start_failure(self) -> None:
+        """When start() fails, discovery should NOT be stopped so it can retry."""
+        mgr = _make_manager()
+        mgr._discovery_running = True
+
+        mock_sock = MagicMock(spec=socket.socket)
+        mock_sock.getsockname.return_value = ("192.168.1.10", 0)
+        # First recvfrom: return discovery response, second: timeout to exit loop
+        mock_sock.recvfrom.side_effect = [
+            (b"STYLY-NETSYNC|6666|7777|TestServer", ("10.0.0.1", 9999)),
+            TimeoutError(),
+        ]
+        mgr._discovery_sockets = [mock_sock]
+        mgr._broadcast_cache = {"192.168.1.10": "192.168.1.255"}
+
+        call_count = 0
+
+        def failing_start() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("connection refused")
+            # Second call: succeed and stop the loop
+            mgr._running = True
+
+        with (
+            patch.object(mgr, "start", side_effect=failing_start),
+            patch("time.sleep"),  # Skip sleep to avoid slow test
+        ):
+            # Re-supply socket for second round (after break + retry)
+            def reset_socket(*args: object, **kwargs: object) -> None:
+                mock_sock.recvfrom.side_effect = [
+                    (b"STYLY-NETSYNC|6666|7777|TestServer", ("10.0.0.1", 9999)),
+                ]
+
+            mock_sock.sendto.side_effect = reset_socket
+            mgr._discovery_loop(9999)
+
+        # start() should have been called twice (first failed, second succeeded)
+        assert call_count == 2
+        # Discovery should be stopped after successful connection
         assert mgr._discovery_running is False
