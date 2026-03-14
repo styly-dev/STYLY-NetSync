@@ -2126,6 +2126,18 @@ def main() -> None:
         "--no-server-discovery", action="store_true", help="Disable server discovery"
     )
     parser.add_argument(
+        "--dealer-port",
+        type=valid_port,
+        metavar="PORT",
+        help="TCP port for DEALER-ROUTER socket (default: 5555)",
+    )
+    parser.add_argument(
+        "--pub-port",
+        type=valid_port,
+        metavar="PORT",
+        help="TCP port for PUB-SUB socket (default: 5556)",
+    )
+    parser.add_argument(
         "--server-discovery-port",
         type=valid_port,
         metavar="PORT",

@@ -528,11 +528,41 @@ class TestValidateConfig:
 class TestMergeCliArgs:
     """Tests for merge_cli_args function."""
 
+    def test_cli_overrides_dealer_port(self, default_config: ServerConfig) -> None:
+        """Test that CLI dealer_port overrides config."""
+        args = argparse.Namespace(
+            dealer_port=6000,
+            pub_port=None,
+            server_discovery_port=None,
+            no_server_discovery=False,
+        )
+
+        merged = merge_cli_args(default_config, args)
+        assert merged.dealer_port == 6000
+        # Original config unchanged
+        assert default_config.dealer_port == 5555
+
+    def test_cli_overrides_pub_port(self, default_config: ServerConfig) -> None:
+        """Test that CLI pub_port overrides config."""
+        args = argparse.Namespace(
+            dealer_port=None,
+            pub_port=6001,
+            server_discovery_port=None,
+            no_server_discovery=False,
+        )
+
+        merged = merge_cli_args(default_config, args)
+        assert merged.pub_port == 6001
+        # Original config unchanged
+        assert default_config.pub_port == 5556
+
     def test_cli_overrides_server_discovery_port(
         self, default_config: ServerConfig
     ) -> None:
         """Test that CLI server_discovery_port overrides config."""
         args = argparse.Namespace(
+            dealer_port=None,
+            pub_port=None,
             server_discovery_port=8888,
             no_server_discovery=False,
         )
