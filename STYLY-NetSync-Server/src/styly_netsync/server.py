@@ -2129,13 +2129,13 @@ def main() -> None:
         "--dealer-port",
         type=valid_port,
         metavar="PORT",
-        help="TCP port for DEALER-ROUTER socket (default: 5555)",
+        help="TCP port for DEALER-ROUTER socket (see default.toml for default)",
     )
     parser.add_argument(
         "--pub-port",
         type=valid_port,
         metavar="PORT",
-        help="TCP port for PUB-SUB socket (default: 5556)",
+        help="TCP port for PUB-SUB socket (see default.toml for default)",
     )
     parser.add_argument(
         "--server-discovery-port",
