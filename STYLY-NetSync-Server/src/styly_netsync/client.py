@@ -1271,6 +1271,7 @@ class net_sync_manager:
                                 self.on_server_discovered.invoke(
                                     server_address, dealer_port, sub_port
                                 )
+                                break  # One callback per round is enough
                     except TimeoutError:
                         pass
                     except Exception:
