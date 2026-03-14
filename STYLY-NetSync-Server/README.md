@@ -112,7 +112,7 @@ Bridging: stdlib `logging` is routed to loguru automatically.
 
 ## REST bridge
 
-The server launches an embedded FastAPI application that exposes REST endpoints for managing Network Variables. Default port: `8800` (override with environment variable `NETSYNC_REST_PORT`).
+The server launches an embedded FastAPI application that exposes REST endpoints for managing Network Variables. Default port: `8800` (override with `--rest-api-port` CLI argument or `rest_api_port` in config file).
 
 ### Client variables
 

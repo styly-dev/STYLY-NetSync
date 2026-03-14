@@ -40,6 +40,7 @@ class TestLoadDefaultConfig:
         assert config.dealer_port == 5555
         assert config.pub_port == 5556
         assert config.server_discovery_port == 9999
+        assert config.rest_api_port == 8800
         assert config.server_name == "STYLY-NetSync-Server"
         assert config.enable_server_discovery is True
         # Timing
@@ -118,6 +119,7 @@ class TestServerConfig:
         assert config.dealer_port == 6666
         assert config.pub_port == 6667
         assert config.server_discovery_port == 8888
+        assert config.rest_api_port == 9900
         assert config.server_name == "Custom Server"
         assert config.enable_server_discovery is False
 
@@ -565,6 +567,7 @@ class TestMergeCliArgs:
             dealer_port=None,
             pub_port=None,
             server_discovery_port=8888,
+            rest_api_port=None,
             no_server_discovery=False,
         )
 
@@ -572,6 +575,21 @@ class TestMergeCliArgs:
         assert merged.server_discovery_port == 8888
         # Original config unchanged
         assert default_config.server_discovery_port == 9999
+
+    def test_cli_overrides_rest_api_port(self, default_config: ServerConfig) -> None:
+        """Test that CLI rest_api_port overrides config."""
+        args = argparse.Namespace(
+            dealer_port=None,
+            pub_port=None,
+            server_discovery_port=None,
+            rest_api_port=9900,
+            no_server_discovery=False,
+        )
+
+        merged = merge_cli_args(default_config, args)
+        assert merged.rest_api_port == 9900
+        # Original config unchanged
+        assert default_config.rest_api_port == 8800
 
     def test_no_server_discovery_flag(self, default_config: ServerConfig) -> None:
         """Test that --no-server-discovery disables discovery."""

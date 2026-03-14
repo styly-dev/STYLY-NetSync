@@ -90,7 +90,7 @@ pkill -f styly-netsync  # Kill all STYLY processes
 - `default.toml` contains all available settings with defaults
 - User config overrides: `--config user.toml`
 - Priority: CLI args > user config > default config
-- Environment variable: `NETSYNC_REST_PORT` (default: 8800)
+- REST API port: `--rest-api-port` CLI argument or `rest_api_port` in config (default: 8800)
 - REST endpoint: `POST /v1/rooms/{roomId}/devices/{deviceId}/client-variables`
 
 ### Key Data Types (`types.py`)
