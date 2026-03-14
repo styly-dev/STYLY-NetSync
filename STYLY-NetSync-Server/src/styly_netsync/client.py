@@ -1422,8 +1422,12 @@ class net_sync_manager:
         Permanently disables discovery auto-restart on reconnect.
         Call ``start_discovery()`` again to re-enable it after a reconnect.
         """
-        self._discovery_running = False
         self._discovery_port = None  # clear so reconnect does not auto-restart
+        self._stop_discovery_internal()
+
+    def _stop_discovery_internal(self) -> None:
+        """Stop discovery sockets and thread without clearing auto-restart port."""
+        self._discovery_running = False
 
         for sock in getattr(self, "_discovery_sockets", []):
             try:
@@ -1517,7 +1521,20 @@ class net_sync_manager:
                                 self.on_server_discovered.invoke(
                                     server_address, dealer_port, sub_port
                                 )
-                                break  # One callback per round is enough
+
+                                # Auto-connect: update internal state and start connection
+                                self._server = server_address
+                                self._dealer_port = dealer_port
+                                self._sub_port = sub_port
+                                self._stop_discovery_internal()
+                                if not self._running:
+                                    try:
+                                        self.start()
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Auto-connect after discovery failed: {e}"
+                                        )
+                                return  # Discovery complete
                     except TimeoutError:
                         pass
                     except Exception:
