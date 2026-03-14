@@ -66,6 +66,19 @@ Review git diff output against all project-specific coding rules and conventions
 - Message IDs: `MSG_CLIENT_POSE=11`, `MSG_ROOM_POSE=12`
 - Severity: **CRITICAL**
 
+### Unity–Python Feature Parity
+- When a feature is added or modified on one side (Unity C# or Python client), the other side must also be updated if it shares that functionality
+- **Key counterpart mappings:**
+  - `NetSyncManager.cs` ↔ `client.py` (`net_sync_manager`)
+  - `ConnectionManager.cs` ↔ connection logic in `client.py`
+  - `ServerDiscoveryManager.cs` ↔ discovery logic in `client.py`
+  - `BinarySerializer.cs` ↔ `binary_serializer.py`
+  - `RPCManager.cs` / `NetworkVariableManager.cs` ↔ RPC/NV logic in `client.py`
+  - `server.py` has no Unity counterpart (server-only)
+- **Shared functionality areas:** connection, discovery, transform sync, RPC, network variables, stealth mode
+- If only one side is updated for shared functionality, flag the missing counterpart update
+- Severity: **WARNING** (unless it's a protocol/serialization change, which is already covered as CRITICAL under Protocol Change Detection)
+
 ### Language — English Comments
 - All comments and documentation must be written in English
 - Severity: **WARNING**
@@ -113,7 +126,12 @@ Load only the references relevant to the files in the diff. If the diff contains
    - Read the trigger files (both Python and C# serializers) to verify parity
    - Check each item in the protocol checklist against the diff
    - List all files that SHOULD have been updated but are NOT in the diff as CRITICAL "Missing Update"
-5. After checking all files, compile the report in the output format above
-6. List rules that were checked but had no violations under "Passed Checks"
-7. If Python files changed, remind the user to run: `black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest`
-8. If C# files changed, remind the user to verify compilation in Unity Editor
+5. **Check Unity–Python feature parity:**
+   - If the diff modifies shared-functionality code on only one side (Unity or Python), check whether the counterpart file needs a matching update
+   - Counterpart mappings: `NetSyncManager.cs` ↔ `client.py`, `ConnectionManager.cs` ↔ `client.py`, `ServerDiscoveryManager.cs` ↔ `client.py`, `BinarySerializer.cs` ↔ `binary_serializer.py`, `RPCManager.cs`/`NetworkVariableManager.cs` ↔ RPC/NV in `client.py`
+   - `server.py` is server-only and has no Unity counterpart — skip parity check for server-only logic
+   - Flag missing counterpart updates as WARNING (or CRITICAL if it's a serialization/protocol change)
+6. After checking all files, compile the report in the output format above
+7. List rules that were checked but had no violations under "Passed Checks"
+8. If Python files changed, remind the user to run: `black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest`
+9. If C# files changed, remind the user to verify compilation in Unity Editor

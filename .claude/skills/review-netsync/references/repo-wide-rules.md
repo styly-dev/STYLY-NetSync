@@ -62,6 +62,35 @@ Protocol version: **3 only** (v2 removed).
 - **Non-networking code should avoid unnecessary breaking changes**
 - **Always notify users of breaking changes** clearly
 
+## Unity–Python Feature Parity
+
+The Python client (`net_sync_manager` in `client.py`) and the Unity client (`NetSyncManager.cs` + internal managers) must maintain feature parity for all shared functionality.
+
+### Shared Functionality Areas
+- Connection management
+- Server discovery
+- Transform synchronization
+- RPC (Remote Procedure Calls)
+- Network variables
+- Stealth mode
+
+### Counterpart Mappings
+
+| Unity (C#) | Python | Scope |
+|---|---|---|
+| `NetSyncManager.cs` | `client.py` (`net_sync_manager`) | Main API surface |
+| `ConnectionManager.cs` | connection logic in `client.py` | Connect/disconnect/reconnect |
+| `ServerDiscoveryManager.cs` | discovery logic in `client.py` | UDP discovery |
+| `BinarySerializer.cs` | `binary_serializer.py` | Serialization (CRITICAL parity) |
+| `RPCManager.cs` | RPC logic in `client.py` | RPC send/receive |
+| `NetworkVariableManager.cs` | NV logic in `client.py` | Network variable sync |
+| `server.py` | *(no counterpart)* | Server-only, skip parity check |
+
+### Review Rules
+- When a feature is added or modified on one side, check whether the other side needs the same change
+- If parity is missing, flag as **WARNING** (or **CRITICAL** for serialization/protocol changes)
+- `server.py` is server-only — changes to server-only logic do not require Unity updates
+
 ## Threading Architecture
 
 ### Server (Python)
