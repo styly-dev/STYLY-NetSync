@@ -312,6 +312,118 @@ def test_stealth_mode():
         server.stop()
 
 
+def test_connection_error_event_exists():
+    """Test that on_connection_error event handler is available on the manager."""
+    from styly_netsync.events import EventHandler
+
+    manager = net_sync_manager()
+    assert hasattr(
+        manager, "on_connection_error"
+    ), "on_connection_error event handler missing"
+    assert isinstance(
+        manager.on_connection_error, EventHandler
+    ), "on_connection_error should be an EventHandler"
+    print("✓ on_connection_error event handler present")
+
+
+def test_reconnect_parameters():
+    """Test that reconnect_delay and receive_timeout constructor parameters work."""
+    m1 = net_sync_manager(reconnect_delay=3.0, receive_timeout=10.0)
+    assert m1._reconnect_delay == 3.0
+    assert m1._receive_timeout == 10.0
+
+    m2 = net_sync_manager(receive_timeout=None)
+    assert m2._receive_timeout is None
+
+    print("✓ reconnect_delay and receive_timeout constructor parameters work")
+
+
+def test_receive_timeout_triggers_connection_error():
+    """Test that silence from server triggers on_connection_error after receive_timeout."""
+    print("\n=== Testing Receive Timeout / Connection Error Event ===")
+
+    # Use an unused port so the client starts but never receives any messages
+    manager = net_sync_manager(
+        server="tcp://localhost",
+        dealer_port=15997,
+        sub_port=15998,
+        room="error_test",
+        receive_timeout=0.3,  # Very short: trigger after 0.3s of silence
+        reconnect_delay=99.0,  # Long: don't actually reconnect during test
+    )
+
+    errors: list[str] = []
+    manager.on_connection_error.add_listener(errors.append)
+    manager.start()
+
+    # Silence detection is only armed after the first inbound message.
+    # Simulate that by setting the clock manually.
+    manager._last_message_time = time.monotonic()
+
+    try:
+        # Wait long enough for the silence timeout to fire (0.3s) + margin
+        time.sleep(1.2)
+        assert (
+            len(errors) > 0
+        ), "Expected on_connection_error to fire after receive_timeout"
+        print(f"✓ on_connection_error fired: {errors[0]}")
+    finally:
+        manager.stop()
+
+
+def test_reconnect_count_in_stats():
+    """Test that reconnect_count is present in get_stats()."""
+    manager = net_sync_manager()
+    stats = manager.get_stats()
+    assert "reconnect_count" in stats, "reconnect_count missing from stats"
+    assert stats["reconnect_count"] == 0
+    print("✓ reconnect_count present in stats")
+
+
+def test_stop_from_connection_error_listener():
+    """Test that calling stop() from an on_connection_error listener doesn't leak resources."""
+    print("\n=== Testing stop() from on_connection_error listener ===")
+
+    manager = net_sync_manager(
+        server="tcp://localhost",
+        dealer_port=15999,
+        sub_port=16000,
+        room="self_join_test",
+        receive_timeout=0.3,
+        reconnect_delay=99.0,
+    )
+
+    errors: list[str] = []
+    stop_errors: list[Exception] = []
+
+    def on_error(error: str) -> None:
+        errors.append(error)
+        try:
+            manager.stop()
+        except Exception as e:
+            stop_errors.append(e)
+
+    manager.on_connection_error.add_listener(on_error)
+    manager.start()
+
+    # Arm silence detection (only active after first inbound message)
+    manager._last_message_time = time.monotonic()
+
+    try:
+        # Wait for silence timeout (0.3s) + margin for stop() to complete
+        time.sleep(1.5)
+        assert len(errors) > 0, "Expected on_connection_error to fire"
+        assert len(stop_errors) == 0, f"stop() raised from listener: {stop_errors}"
+        # Verify cleanup ran (context should be None after _cleanup)
+        assert manager._context is None, "ZMQ context was not cleaned up"
+        print(f"✓ stop() from on_connection_error listener succeeded: {errors[0]}")
+    finally:
+        try:
+            manager.stop()
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     print("Python NetSync Client - Acceptance Criteria Tests")
     print("=" * 50)
