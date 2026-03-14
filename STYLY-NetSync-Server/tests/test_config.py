@@ -45,7 +45,7 @@ class TestLoadDefaultConfig:
         # Timing
         assert config.idle_broadcast_interval == 2.0
         assert config.transform_broadcast_rate == 10
-        assert config.client_timeout == 2.5
+        assert config.client_timeout == 5
         assert config.cleanup_interval == 1.0
         assert config.device_id_expiry_time == 86400.0
         assert config.empty_room_expiry_time == 86400.0
@@ -867,7 +867,7 @@ dealer_port = 7777
 dealer_port = 7777
 pub_port = 7778
 server_name = "Custom Server"
-client_timeout = 5.0
+client_timeout = 10.0
 """
         config_file = tmp_path / "user.toml"
         config_file.write_text(toml_content)
