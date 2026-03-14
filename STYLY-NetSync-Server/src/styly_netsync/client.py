@@ -234,6 +234,45 @@ class net_sync_manager:
             "ctrl_queue_drops": 0,
         }
 
+    # Internal helpers
+    @staticmethod
+    def _resolve_source_address(dest_host: str, dest_port: int) -> str | None:
+        """Auto-detect the local IP that the OS would use to reach *dest_host*.
+
+        Opens a temporary UDP socket and ``connect()``s it to the destination
+        (no actual packet is sent).  The OS populates the socket's local
+        address according to its routing table, giving us the correct
+        source NIC for that destination.
+
+        Returns the local IP string, or ``None`` on failure / localhost
+        destinations.
+        """
+        if dest_host in ("localhost", "127.0.0.1", "::1"):
+            return None
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.connect((dest_host, dest_port))
+                local_ip: str = probe.getsockname()[0]
+                if local_ip and local_ip not in ("0.0.0.0", "127.0.0.1"):
+                    return local_ip
+        except Exception:
+            pass
+        return None
+
+    def _build_connect_addr(self, port: int) -> str:
+        """Build ZeroMQ connect address with automatic source-NIC binding.
+
+        When the destination is a remote host and the OS routing table
+        resolves a specific local IP, the ZeroMQ extended TCP format
+        (``tcp://source_ip:0;dest_host:port``) is used so that the
+        connection is bound to the correct NIC.
+        """
+        dest_host = self._server.replace("tcp://", "")
+        source_ip = self._resolve_source_address(dest_host, port)
+        if source_ip:
+            return f"tcp://{source_ip}:0;{dest_host}:{port}"
+        return f"{self._server}:{port}"
+
     # Properties
     @property
     def is_running(self) -> bool:
@@ -295,7 +334,7 @@ class net_sync_manager:
                     zmq.RCVHWM, 10
                 )  # Bound receive queue for control messages
                 self._dealer_socket.setsockopt(zmq.RCVTIMEO, 0)  # Non-blocking receive
-                dealer_addr = f"{self._server}:{self._dealer_port}"
+                dealer_addr = self._build_connect_addr(self._dealer_port)
                 self._dealer_socket.connect(dealer_addr)
 
                 # SUB socket for downlink (transform broadcasts)
@@ -303,7 +342,7 @@ class net_sync_manager:
                 self._sub_socket = self._context.socket(zmq.SUB)
                 self._sub_socket.setsockopt(zmq.LINGER, 0)
                 self._sub_socket.setsockopt(zmq.RCVHWM, 2)  # TransformRcvHwm
-                sub_addr = f"{self._server}:{self._sub_port}"
+                sub_addr = self._build_connect_addr(self._sub_port)
                 self._sub_socket.connect(sub_addr)
                 self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
 
@@ -1103,14 +1142,56 @@ class net_sync_manager:
 
     # Discovery API
     def start_discovery(self, server_discovery_port: int = 9999) -> None:
-        """Start UDP discovery for servers."""
+        """Start UDP discovery for servers.
+
+        Creates one UDP socket per physical NIC and broadcasts discovery
+        messages on all of them so that servers on any reachable subnet
+        can be found.
+        """
         if self._discovery_running:
             return
 
         try:
-            self._discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self._discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            self._discovery_socket.settimeout(1.0)
+            self._discovery_sockets: list[socket.socket] = []
+
+            from .network_utils import get_local_ip_addresses
+
+            bind_addresses = get_local_ip_addresses()
+            if not bind_addresses:
+                # Fallback: unbound socket with generic broadcast
+                bind_addresses = [""]
+
+            for addr in bind_addresses:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    sock.settimeout(1.0)
+                    if addr:
+                        sock.bind((addr, 0))
+                    self._discovery_sockets.append(sock)
+                    label = addr if addr else "default"
+                    logger.debug(f"Discovery socket bound to {label}")
+                except Exception as e:
+                    label = addr if addr else "default"
+                    logger.warning(f"Failed to create discovery socket on {label}: {e}")
+
+            if not self._discovery_sockets:
+                logger.error("No discovery sockets could be created")
+                return
+
+            # Keep legacy field pointing to the first socket for stop_discovery
+            self._discovery_socket = self._discovery_sockets[0]
+
+            # Pre-compute broadcast addresses so _discovery_loop avoids
+            # calling psutil.net_if_addrs() on every iteration.
+            self._broadcast_cache: dict[str, str] = {}
+            for sock in self._discovery_sockets:
+                try:
+                    addr = sock.getsockname()[0]
+                    if addr and addr != "0.0.0.0":
+                        self._broadcast_cache[addr] = self._get_broadcast_address(addr)
+                except Exception:
+                    pass
 
             self._discovery_running = True
             self._discovery_thread = threading.Thread(
@@ -1118,70 +1199,127 @@ class net_sync_manager:
             )
             self._discovery_thread.start()
 
-            logger.info(f"Started UDP discovery on port {server_discovery_port}")
+            nic_count = len(self._discovery_sockets)
+            logger.info(
+                f"Started UDP discovery on port {server_discovery_port} "
+                f"({nic_count} interface{'s' if nic_count != 1 else ''})"
+            )
 
         except Exception as e:
             logger.error(f"Error starting discovery: {e}")
+            for sock in getattr(self, "_discovery_sockets", []):
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+            self._discovery_sockets = []
+            self._discovery_socket = None
+            self._discovery_running = False
 
     def stop_discovery(self) -> None:
         """Stop UDP discovery."""
         self._discovery_running = False
 
-        if self._discovery_socket:
-            self._discovery_socket.close()
-            self._discovery_socket = None
+        for sock in getattr(self, "_discovery_sockets", []):
+            try:
+                sock.close()
+            except Exception:
+                pass
+        self._discovery_sockets = []
+        self._discovery_socket = None
 
         if self._discovery_thread and self._discovery_thread.is_alive():
             self._discovery_thread.join(timeout=1.0)
 
         logger.info("Stopped UDP discovery")
 
+    def _get_broadcast_address(self, local_ip: str) -> str:
+        """Compute the directed broadcast address for a local IP.
+
+        Uses psutil to find the netmask for *local_ip* and derives the
+        subnet broadcast address.  Falls back to ``255.255.255.255`` if the
+        netmask cannot be determined.
+        """
+        try:
+            import psutil
+
+            for _name, addrs in psutil.net_if_addrs().items():
+                for addr in addrs:
+                    if addr.family == socket.AF_INET and addr.address == local_ip:
+                        if addr.netmask:
+                            ip_int = int.from_bytes(socket.inet_aton(local_ip), "big")
+                            mask_int = int.from_bytes(
+                                socket.inet_aton(addr.netmask), "big"
+                            )
+                            bcast_int = ip_int | (~mask_int & 0xFFFFFFFF)
+                            return socket.inet_ntoa(bcast_int.to_bytes(4, "big"))
+        except Exception:
+            pass
+        return "255.255.255.255"
+
     def _discovery_loop(self, server_discovery_port: int) -> None:
-        """UDP discovery loop."""
+        """UDP discovery loop - broadcasts on all NIC sockets."""
         while self._discovery_running:
             try:
-                # Check if socket is still valid
-                if self._discovery_socket is None:
+                sockets = list(self._discovery_sockets)
+                if not sockets:
                     break
 
-                # Send discovery request
-                message = "STYLY-NETSYNC-DISCOVER"
-                self._discovery_socket.sendto(
-                    message.encode(), ("<broadcast>", server_discovery_port)
-                )
+                message = b"STYLY-NETSYNC-DISCOVER"
 
-                # Listen for response
-                try:
-                    data, addr = self._discovery_socket.recvfrom(1024)
-                    response = data.decode("utf-8")
-
-                    if response.startswith("STYLY-NETSYNC|"):
-                        parts = response.split("|")
-                        if len(parts) >= 4:
-                            dealer_port = int(parts[1])
-                            sub_port = int(parts[2])
-                            server_name = parts[3]
-
-                            logger.info(
-                                f"Discovered server: {server_name} at {addr[0]}:{dealer_port}/{sub_port}"
+                # Send discovery broadcast on every NIC socket
+                for sock in sockets:
+                    bound_addr = "unknown"
+                    try:
+                        # Determine broadcast target for this socket
+                        bound_addr = sock.getsockname()[0]
+                        if bound_addr and bound_addr != "0.0.0.0":
+                            bcast = self._broadcast_cache.get(
+                                bound_addr,
+                                self._get_broadcast_address(bound_addr),
                             )
-                            server_address = f"tcp://{addr[0]}"
-                            self.on_server_discovered.invoke(
-                                server_address, dealer_port, sub_port
-                            )
-                            # Could auto-reconnect here if desired
+                        else:
+                            bcast = "<broadcast>"
+                        sock.sendto(message, (bcast, server_discovery_port))
+                    except PermissionError:
+                        logger.debug(
+                            "Discovery broadcast not permitted (sandboxed environment)"
+                        )
+                    except Exception as e:
+                        if self._discovery_running:
+                            logger.debug(f"Discovery send error on {bound_addr}: {e}")
 
-                except TimeoutError:
-                    pass
+                # Collect responses from all sockets (single pass)
+                per_sock_timeout = 1.0 / max(len(sockets), 1)
+                for sock in sockets:
+                    try:
+                        sock.settimeout(per_sock_timeout)
+                        data, addr = sock.recvfrom(1024)
+                        response = data.decode("utf-8")
+
+                        if response.startswith("STYLY-NETSYNC|"):
+                            parts = response.split("|")
+                            if len(parts) >= 4:
+                                dealer_port = int(parts[1])
+                                sub_port = int(parts[2])
+                                server_name = parts[3]
+
+                                logger.info(
+                                    f"Discovered server: {server_name} at "
+                                    f"{addr[0]}:{dealer_port}/{sub_port}"
+                                )
+                                server_address = f"tcp://{addr[0]}"
+                                self.on_server_discovered.invoke(
+                                    server_address, dealer_port, sub_port
+                                )
+                                break  # One callback per round is enough
+                    except TimeoutError:
+                        pass
+                    except Exception:
+                        pass
 
                 time.sleep(5.0)  # Discovery interval
 
-            except PermissionError:
-                # Broadcast not permitted in sandboxed environment - this is expected
-                logger.debug(
-                    "Discovery broadcast not permitted (sandboxed environment)"
-                )
-                time.sleep(1.0)
             except Exception as e:
                 if self._discovery_running:
                     logger.error(f"Discovery error: {e}")

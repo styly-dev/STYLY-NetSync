@@ -7,6 +7,7 @@ using System.Text;
 using NetMQ;
 using NetMQ.Sockets;
 using UnityEngine;
+using Styly.NetSync.Utils;
 
 namespace Styly.NetSync
 {
@@ -216,6 +217,30 @@ namespace Styly.NetSync
             Volatile.Write(ref _latestTransform, packet);
         }
 
+        /// <summary>
+        /// Build a ZeroMQ connect address with automatic source-NIC binding.
+        /// When the destination is a remote host, the OS routing table is queried
+        /// to find the correct source NIC, and the ZeroMQ extended TCP format
+        /// (tcp://source_ip:0;dest_host:port) is used.
+        /// </summary>
+        private static string BuildConnectAddress(string serverAddress, int port)
+        {
+            // Extract host from "tcp://host" format
+            string host = serverAddress;
+            if (host.StartsWith("tcp://"))
+            {
+                host = host.Substring(6);
+            }
+
+            string sourceIp = NetworkUtils.ResolveSourceAddress(host, port);
+            if (sourceIp != null)
+            {
+                return $"tcp://{sourceIp}:0;{host}:{port}";
+            }
+
+            return $"{serverAddress}:{port}";
+        }
+
         private void NetworkLoop(string serverAddress, int dealerPort, int subPort, string roomId)
         {
             try
@@ -224,22 +249,24 @@ namespace Styly.NetSync
                 using var dealer = new DealerSocket();
                 dealer.Options.Linger = TimeSpan.Zero;
                 dealer.Options.SendHighWatermark = 10;
-                dealer.Connect($"{serverAddress}:{dealerPort}");
+                var dealerAddr = BuildConnectAddress(serverAddress, dealerPort);
+                dealer.Connect(dealerAddr);
                 _dealerSocket = dealer;
 
-                DebugLog($"[Thread] DEALER connected → {serverAddress}:{dealerPort}");
+                DebugLog($"[Thread] DEALER connected → {dealerAddr}");
 
                 // Subscriber (for receiving)
                 using var sub = new SubscriberSocket();
                 sub.Options.Linger = TimeSpan.Zero;
                 sub.Options.ReceiveHighWatermark = TransformRcvHwm;
-                sub.Connect($"{serverAddress}:{subPort}");
+                var subAddr = BuildConnectAddress(serverAddress, subPort);
+                sub.Connect(subAddr);
                 // Subscribe with topic. Using string here is one-time and acceptable.
                 // Note: NetMQ also offers byte[] overloads, but subscription happens once per connection.
                 sub.Subscribe(roomId);
                 _subSocket = sub;
 
-                DebugLog($"[Thread] SUB connected    → {serverAddress}:{subPort}");
+                DebugLog($"[Thread] SUB connected    → {subAddr}");
 
                 var roomIdBytes = Encoding.UTF8.GetBytes(roomId);
 
