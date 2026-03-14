@@ -394,8 +394,14 @@ class net_sync_manager:
             # Stop discovery if running
             self.stop_discovery()
 
-            # Wait for receive thread
-            if self._receive_thread and self._receive_thread.is_alive():
+            # Wait for receive thread (skip join if called from the receive
+            # thread itself, e.g. from an on_connection_error listener —
+            # the thread will exit naturally because _running is now False).
+            if (
+                self._receive_thread
+                and self._receive_thread.is_alive()
+                and self._receive_thread is not threading.current_thread()
+            ):
                 self._receive_thread.join(timeout=1.0)
 
             self._cleanup()

@@ -376,6 +376,47 @@ def test_reconnect_count_in_stats():
     print("✓ reconnect_count present in stats")
 
 
+def test_stop_from_connection_error_listener():
+    """Test that calling stop() from an on_connection_error listener doesn't leak resources."""
+    print("\n=== Testing stop() from on_connection_error listener ===")
+
+    manager = net_sync_manager(
+        server="tcp://localhost",
+        dealer_port=15999,
+        sub_port=16000,
+        room="self_join_test",
+        receive_timeout=0.3,
+        reconnect_delay=99.0,
+    )
+
+    errors: list[str] = []
+    stop_errors: list[Exception] = []
+
+    def on_error(error: str) -> None:
+        errors.append(error)
+        try:
+            manager.stop()
+        except Exception as e:
+            stop_errors.append(e)
+
+    manager.on_connection_error.add_listener(on_error)
+    manager.start()
+
+    try:
+        # Wait for silence timeout (0.3s) + margin for stop() to complete
+        time.sleep(1.5)
+        assert len(errors) > 0, "Expected on_connection_error to fire"
+        assert len(stop_errors) == 0, f"stop() raised from listener: {stop_errors}"
+        # Verify cleanup ran (context should be None after _cleanup)
+        assert manager._context is None, "ZMQ context was not cleaned up"
+        print(f"✓ stop() from on_connection_error listener succeeded: {errors[0]}")
+    finally:
+        try:
+            manager.stop()
+        except Exception:
+            pass
+
+
 if __name__ == "__main__":
     print("Python NetSync Client - Acceptance Criteria Tests")
     print("=" * 50)
