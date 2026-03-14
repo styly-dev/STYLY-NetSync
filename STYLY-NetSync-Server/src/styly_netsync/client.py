@@ -363,6 +363,7 @@ class net_sync_manager:
 
                 # Start receive thread
                 self._running = True
+                self._reconnect_at = None  # Clear stale reconnect state
                 self._last_message_time = time.monotonic()
                 self._receive_thread = threading.Thread(
                     target=self._receive_loop, daemon=True
@@ -435,10 +436,10 @@ class net_sync_manager:
         self._is_ready = False
         self._client_no = None
 
-        # Save port before stop_discovery clears it, so reconnect can restart
+        # Stop discovery properly (join thread to avoid duplicates on restart),
+        # but preserve the port so reconnect can auto-restart discovery.
         saved_port = self._discovery_port
         if self._discovery_running:
-            # Temporarily stop discovery (internal stop; we restore the port)
             self._discovery_running = False
             for sock in getattr(self, "_discovery_sockets", []):
                 try:
@@ -447,6 +448,9 @@ class net_sync_manager:
                     pass
             self._discovery_sockets = []
             self._discovery_socket = None
+            # Join the old discovery thread to ensure it exits before reconnect
+            if self._discovery_thread and self._discovery_thread.is_alive():
+                self._discovery_thread.join(timeout=2.0)
         self._discovery_port = saved_port  # restore for reconnect
 
         self.on_connection_error.invoke(error)
@@ -587,7 +591,7 @@ class net_sync_manager:
                 if now - self._last_message_time > self._receive_timeout:
                     self._trigger_reconnect(
                         f"Server unresponsive: no messages for "
-                        f">{self._receive_timeout:.0f}s"
+                        f">{self._receive_timeout:g}s"
                     )
                     continue
 
