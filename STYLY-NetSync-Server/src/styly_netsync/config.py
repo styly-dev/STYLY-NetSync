@@ -357,6 +357,10 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
     updates: dict[str, Any] = {}
 
     # Network settings from CLI
+    if hasattr(args, "dealer_port") and args.dealer_port is not None:
+        updates["dealer_port"] = args.dealer_port
+    if hasattr(args, "pub_port") and args.pub_port is not None:
+        updates["pub_port"] = args.pub_port
     if (
         hasattr(args, "server_discovery_port")
         and args.server_discovery_port is not None

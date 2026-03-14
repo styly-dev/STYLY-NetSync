@@ -2115,6 +2115,13 @@ CgobWzM4OzU7MjE2bSDilojilojilojilojilojilojilojilZcg4paI4paIG1szODs1OzIxMG3iloji
 
 
 def main() -> None:
+    # Load defaults early so help text can show actual default values
+    try:
+        defaults = load_default_config()
+    except DefaultConfigError as e:
+        print(f"FATAL: {e}")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description="STYLY NetSync Server")
     parser.add_argument(
         "--config",
@@ -2126,10 +2133,22 @@ def main() -> None:
         "--no-server-discovery", action="store_true", help="Disable server discovery"
     )
     parser.add_argument(
+        "--dealer-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"TCP port for DEALER-ROUTER socket (default: {defaults.dealer_port})",
+    )
+    parser.add_argument(
+        "--pub-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"TCP port for PUB-SUB socket (default: {defaults.pub_port})",
+    )
+    parser.add_argument(
         "--server-discovery-port",
         type=valid_port,
         metavar="PORT",
-        help="UDP port used for server discovery (see default.toml for default)",
+        help=f"UDP port used for server discovery (default: {defaults.server_discovery_port})",
     )
     parser.add_argument(
         "-V",
