@@ -910,12 +910,14 @@ class NetSyncServer:
                     dealer_port=self.dealer_port,
                     sub_port=self.pub_port,
                 )
-                rest_port = int(os.getenv("NETSYNC_REST_PORT", "8800"))
+                rest_api_port = self._config.rest_api_port
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
-                    app, host="0.0.0.0", port=rest_port
+                    app, host="0.0.0.0", port=rest_api_port
                 )
                 display_ip = ip_addresses[0] if ip_addresses else "0.0.0.0"
-                logger.info(f"REST bridge started on http://{display_ip}:{rest_port}")
+                logger.info(
+                    f"REST bridge started on http://{display_ip}:{rest_api_port}"
+                )
                 # Display logo after all initialization is complete
                 display_logo()
             except Exception as rest_exc:
@@ -2133,36 +2135,48 @@ def main() -> None:
         "--no-server-discovery", action="store_true", help="Disable server discovery"
     )
     parser.add_argument(
-        "--dealer-port",
-        type=valid_port,
-        metavar="PORT",
-        help=f"TCP port for DEALER-ROUTER socket (default: {defaults.dealer_port})",
-    )
-    parser.add_argument(
-        "--pub-port",
-        type=valid_port,
-        metavar="PORT",
-        help=f"TCP port for PUB-SUB socket (default: {defaults.pub_port})",
-    )
-    parser.add_argument(
-        "--server-discovery-port",
-        type=valid_port,
-        metavar="PORT",
-        help=f"UDP port used for server discovery (default: {defaults.server_discovery_port})",
-    )
-    parser.add_argument(
         "-V",
         "--version",
         action="version",
         version=f"%(prog)s {get_version()}",
         help="Show version and exit",
     )
-    parser.add_argument(
+
+    # Port settings group
+    port_group = parser.add_argument_group("port settings")
+    port_group.add_argument(
+        "--dealer-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"TCP port for DEALER-ROUTER socket (default: {defaults.dealer_port})",
+    )
+    port_group.add_argument(
+        "--pub-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"TCP port for PUB-SUB socket (default: {defaults.pub_port})",
+    )
+    port_group.add_argument(
+        "--server-discovery-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"UDP port used for server discovery (default: {defaults.server_discovery_port})",
+    )
+    port_group.add_argument(
+        "--rest-api-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"HTTP port for REST API bridge (default: {defaults.rest_api_port})",
+    )
+
+    # Logging group
+    log_group = parser.add_argument_group("logging")
+    log_group.add_argument(
         "--log-dir",
         type=Path,
         help="Directory for log files (enables file logging with rotation)",
     )
-    parser.add_argument(
+    log_group.add_argument(
         "--log-rotation",
         type=str,
         help=(
@@ -2170,7 +2184,7 @@ def main() -> None:
             "'12:00'); default triggers at 10MB or 7 days"
         ),
     )
-    parser.add_argument(
+    log_group.add_argument(
         "--log-retention",
         type=str,
         help=(
@@ -2178,12 +2192,12 @@ def main() -> None:
             "'keep 10 files'); default keeps newest 20 files"
         ),
     )
-    parser.add_argument(
+    log_group.add_argument(
         "--log-json-console",
         action="store_true",
         help="Emit console logs as JSON instead of text",
     )
-    parser.add_argument(
+    log_group.add_argument(
         "--log-level-console",
         default=None,
         help="Console log level (default: INFO)",
