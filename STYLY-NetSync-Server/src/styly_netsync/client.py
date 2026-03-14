@@ -144,6 +144,8 @@ class net_sync_manager:
         room: str = "default_room",
         auto_dispatch: bool = True,
         queue_max: int = 10000,
+        reconnect_delay: float = 5.0,
+        receive_timeout: float | None = 30.0,
     ):
         """
         Initialize NetSync client manager.
@@ -155,6 +157,9 @@ class net_sync_manager:
             room: Room topic to subscribe to
             auto_dispatch: If True, callbacks fire on receive thread
             queue_max: Max queued events for RPC/NV
+            reconnect_delay: Seconds to wait before a reconnect attempt (default: 5.0)
+            receive_timeout: Seconds of server silence before triggering reconnect
+                (default: 30.0; pass None to disable silence detection)
         """
         self._server = server
         self._dealer_port = dealer_port
@@ -162,6 +167,8 @@ class net_sync_manager:
         self._room = room
         self._auto_dispatch = auto_dispatch
         self._queue_max = queue_max
+        self._reconnect_delay = reconnect_delay
+        self._receive_timeout = receive_timeout
 
         # ZeroMQ context and sockets
         self._context: zmq.Context | None = None
@@ -202,11 +209,18 @@ class net_sync_manager:
         self.on_avatar_connected = EventHandler()
         self.on_client_disconnected = EventHandler()
         self.on_server_discovered = EventHandler()
+        self.on_connection_error = EventHandler()
 
         # Discovery
         self._discovery_socket: socket.socket | None = None
+        self._discovery_sockets: list[socket.socket] = []
         self._discovery_thread: threading.Thread | None = None
         self._discovery_running = False
+        self._discovery_port: int | None = None  # stored for auto-restart on reconnect
+
+        # Reconnection state
+        self._reconnect_at: float | None = None  # scheduled reconnect (monotonic time)
+        self._last_message_time: float = 0.0  # monotonic time of last received message
 
         # Priority-based sending (mirroring Unity ConnectionManager)
         # Control messages (RPC, NV) have priority over transforms
@@ -232,6 +246,7 @@ class net_sync_manager:
             "would_block_count": 0,
             "dropped_transform_frames": 0,
             "ctrl_queue_drops": 0,
+            "reconnect_count": 0,
         }
 
     # Internal helpers
@@ -348,6 +363,7 @@ class net_sync_manager:
 
                 # Start receive thread
                 self._running = True
+                self._last_message_time = time.monotonic()
                 self._receive_thread = threading.Thread(
                     target=self._receive_loop, daemon=True
                 )
@@ -400,6 +416,112 @@ class net_sync_manager:
             self._context.term()
             self._context = None
 
+    def _trigger_reconnect(self, error: str) -> None:
+        """Schedule a reconnect after a connection error.
+
+        Sets a reconnect timer, resets client-ready state, stops discovery
+        (to be restarted after reconnect), and fires ``on_connection_error``.
+        Safe to call from the receive thread.
+        """
+        if self._reconnect_at is not None:
+            return  # already scheduled
+
+        logger.error(
+            f"Connection error, scheduling reconnect in {self._reconnect_delay}s: {error}"
+        )
+        self._reconnect_at = time.monotonic() + self._reconnect_delay
+
+        # Reset client-ready state; will be re-established via device mapping
+        self._is_ready = False
+        self._client_no = None
+
+        # Save port before stop_discovery clears it, so reconnect can restart
+        saved_port = self._discovery_port
+        if self._discovery_running:
+            # Temporarily stop discovery (internal stop; we restore the port)
+            self._discovery_running = False
+            for sock in getattr(self, "_discovery_sockets", []):
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+            self._discovery_sockets = []
+            self._discovery_socket = None
+        self._discovery_port = saved_port  # restore for reconnect
+
+        self.on_connection_error.invoke(error)
+
+    def _perform_socket_reconnect(self) -> bool:
+        """Tear down and recreate ZMQ sockets.
+
+        Called from the receive loop when the reconnect timer fires.
+        Returns True on success, False on failure (caller should reschedule).
+        """
+        logger.info("Attempting socket reconnect...")
+
+        # Close old sockets
+        for sock_attr in ("_dealer_socket", "_sub_socket"):
+            sock = getattr(self, sock_attr, None)
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                setattr(self, sock_attr, None)
+
+        # Recreate context if it was terminated
+        if not self._context:
+            try:
+                self._context = zmq.Context()
+            except Exception as e:
+                logger.error(f"Failed to create ZMQ context during reconnect: {e}")
+                return False
+
+        try:
+            # DEALER socket (same options as start())
+            self._dealer_socket = self._context.socket(zmq.DEALER)
+            self._dealer_socket.setsockopt(zmq.LINGER, 0)
+            self._dealer_socket.setsockopt(zmq.SNDHWM, 10)
+            self._dealer_socket.setsockopt(zmq.RCVHWM, 10)
+            self._dealer_socket.setsockopt(zmq.RCVTIMEO, 0)
+            dealer_addr = self._build_connect_addr(self._dealer_port)
+            self._dealer_socket.connect(dealer_addr)
+
+            # SUB socket (same options as start())
+            self._sub_socket = self._context.socket(zmq.SUB)
+            self._sub_socket.setsockopt(zmq.LINGER, 0)
+            self._sub_socket.setsockopt(zmq.RCVHWM, 2)
+            sub_addr = self._build_connect_addr(self._sub_port)
+            self._sub_socket.connect(sub_addr)
+            self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
+
+            with self._lock:
+                self._stats["reconnect_count"] += 1
+
+            logger.info(
+                f"Reconnected (#{self._stats['reconnect_count']}): "
+                f"{dealer_addr}, {sub_addr}, room={self._room}"
+            )
+
+            # Restart discovery if it was active before the connection error
+            if self._discovery_port is not None:
+                self.start_discovery(self._discovery_port)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Socket reconnect failed: {e}")
+            # Cleanup partial setup
+            for sock_attr in ("_dealer_socket", "_sub_socket"):
+                sock = getattr(self, sock_attr, None)
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
+                    setattr(self, sock_attr, None)
+            return False
+
     def _clear_outgoing_buffers(self) -> None:
         """Clear pending outgoing packets."""
         # Clear control outbox
@@ -414,7 +536,18 @@ class net_sync_manager:
             self._latest_transform = None
 
     def _receive_loop(self) -> None:
-        """Main receive loop for processing server messages and flushing outgoing."""
+        """Main receive loop for processing server messages and flushing outgoing.
+
+        Handles:
+        - Priority-based outgoing flush (control > transform)
+        - SUB drain (latest-wins) and DEALER control receive
+        - Reconnect timer: sleeps until ``_reconnect_at`` then calls
+          ``_perform_socket_reconnect`` and rebuilds the poller
+        - Server-silence detection: triggers reconnect when no message is
+          received within ``_receive_timeout`` seconds
+        - Terminal ZMQ errors: propagated to reconnect flow instead of
+          silently continuing with a broken socket
+        """
         poller = zmq.Poller()
         if self._sub_socket:
             poller.register(self._sub_socket, zmq.POLLIN)
@@ -424,6 +557,40 @@ class net_sync_manager:
         room_id_bytes = self._room.encode("utf-8")
 
         while self._running:
+            # ------------------------------------------------------------------
+            # Reconnect timer handling
+            # ------------------------------------------------------------------
+            if self._reconnect_at is not None:
+                if time.monotonic() >= self._reconnect_at:
+                    self._reconnect_at = None
+                    if self._perform_socket_reconnect():
+                        # Rebuild poller with fresh sockets
+                        poller = zmq.Poller()
+                        if self._sub_socket:
+                            poller.register(self._sub_socket, zmq.POLLIN)
+                        if self._dealer_socket:
+                            poller.register(self._dealer_socket, zmq.POLLIN)
+                        # Reset silence clock so we don't immediately re-trigger
+                        self._last_message_time = time.monotonic()
+                    else:
+                        # Reconnect failed; retry after the configured delay
+                        self._reconnect_at = time.monotonic() + self._reconnect_delay
+                else:
+                    time.sleep(0.1)
+                continue
+
+            # ------------------------------------------------------------------
+            # Server-silence detection
+            # ------------------------------------------------------------------
+            if self._receive_timeout is not None:
+                now = time.monotonic()
+                if now - self._last_message_time > self._receive_timeout:
+                    self._trigger_reconnect(
+                        f"Server unresponsive: no messages for "
+                        f">{self._receive_timeout:.0f}s"
+                    )
+                    continue
+
             try:
                 # Send stealth heartbeat if in stealth mode and interval elapsed
                 self._maybe_send_stealth_heartbeat()
@@ -435,6 +602,7 @@ class net_sync_manager:
                     poller.poll(1 if sent_any else 10)
                 )  # Short timeout if actively sending
                 received_any = False
+                fatal_error: str | None = None
 
                 # SUB receive with drain: process only the last payload
                 if self._sub_socket is not None and self._sub_socket in socks:
@@ -457,12 +625,11 @@ class net_sync_manager:
                             # No more messages available on SUB socket
                             break
                         except zmq.ZMQError as e:
-                            # Handle ZMQ-specific errors
-                            # Terminal errors: stop draining this socket
+                            # Terminal errors: escalate to reconnect flow
                             if e.errno in (zmq.ETERM, zmq.ENOTSOCK):
                                 if self._running:
-                                    logger.error(
-                                        f"ZMQ error while draining SUB socket: {e}"
+                                    fatal_error = (
+                                        f"Terminal ZMQ error on SUB socket: {e}"
                                     )
                                 break
                             if self._running:
@@ -478,6 +645,10 @@ class net_sync_manager:
                                 )
                             continue
 
+                    if fatal_error:
+                        self._trigger_reconnect(fatal_error)
+                        continue
+
                     if last_payload is not None:
                         # Track dropped frames for diagnostics
                         if frames_received > 1:
@@ -492,7 +663,11 @@ class net_sync_manager:
                 # DEALER receive: control messages (RPC, NV, ID mapping) from ROUTER
                 # Server sends control messages via ROUTER->DEALER instead of PUB/SUB
                 # Limit drain to prevent starvation of SUB processing and outgoing sends
-                if self._dealer_socket is not None and self._dealer_socket in socks:
+                if (
+                    fatal_error is None
+                    and self._dealer_socket is not None
+                    and self._dealer_socket in socks
+                ):
                     dealer_drained = 0
                     max_dealer_drain = 64  # Limit drain iterations
                     while dealer_drained < max_dealer_drain:
@@ -526,11 +701,11 @@ class net_sync_manager:
                         except zmq.Again:
                             break
                         except zmq.ZMQError as e:
-                            # Terminal errors: stop draining
+                            # Terminal errors: escalate to reconnect flow
                             if e.errno in (zmq.ETERM, zmq.ENOTSOCK):
                                 if self._running:
-                                    logger.error(
-                                        f"ZMQ error in DEALER receive drain: {e}"
+                                    fatal_error = (
+                                        f"Terminal ZMQ error on DEALER socket: {e}"
                                     )
                                 break
                             if self._running:
@@ -542,6 +717,14 @@ class net_sync_manager:
                             # Unexpected error while draining DEALER; log and continue
                             logger.warning(f"Error in DEALER receive drain loop: {e}")
                             continue
+
+                    if fatal_error:
+                        self._trigger_reconnect(fatal_error)
+                        continue
+
+                # Update silence clock whenever at least one message was processed
+                if received_any:
+                    self._last_message_time = time.monotonic()
 
                 # Sleep briefly if idle to avoid busy-waiting
                 if not received_any and not sent_any:
@@ -1147,12 +1330,18 @@ class net_sync_manager:
         Creates one UDP socket per physical NIC and broadcasts discovery
         messages on all of them so that servers on any reachable subnet
         can be found.
+
+        The port is stored so that discovery is automatically restarted
+        after a reconnect. Call ``stop_discovery()`` to permanently
+        disable discovery (including auto-restart).
         """
         if self._discovery_running:
             return
 
+        self._discovery_port = server_discovery_port
+
         try:
-            self._discovery_sockets: list[socket.socket] = []
+            self._discovery_sockets = []
 
             from .network_utils import get_local_ip_addresses
 
@@ -1217,8 +1406,13 @@ class net_sync_manager:
             self._discovery_running = False
 
     def stop_discovery(self) -> None:
-        """Stop UDP discovery."""
+        """Stop UDP discovery.
+
+        Permanently disables discovery auto-restart on reconnect.
+        Call ``start_discovery()`` again to re-enable it after a reconnect.
+        """
         self._discovery_running = False
+        self._discovery_port = None  # clear so reconnect does not auto-restart
 
         for sock in getattr(self, "_discovery_sockets", []):
             try:
