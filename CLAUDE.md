@@ -133,6 +133,19 @@ kill <PID>                          # Kill process using port
 - **Networking**: Binary protocol with efficient serialization
 - **Synchronization**: Transform, RPC, Network Variables, Device ID Mapping
 
+### Unity–Python Feature Parity
+
+The Python client (`net_sync_manager` in `client.py`) and the Unity client (`NetSyncManager.cs` + internal managers) must maintain feature parity for all shared functionality (connection, discovery, transform sync, RPC, network variables, stealth mode, etc.).
+
+- **When adding or modifying a feature on one side, check whether the other side needs the same change.** If parity is missing, implement it or file an issue.
+- **Key counterpart mappings:**
+  - `NetSyncManager.cs` ↔ `client.py` (`net_sync_manager`)
+  - `ConnectionManager.cs` ↔ connection logic in `client.py`
+  - `ServerDiscoveryManager.cs` ↔ discovery logic in `client.py`
+  - `BinarySerializer.cs` ↔ `binary_serializer.py`
+  - `RPCManager.cs` / `NetworkVariableManager.cs` ↔ RPC/NV logic in `client.py`
+  - `server.py` has no Unity counterpart (server-only)
+
 ## Technology Stack
 
 ### Server
