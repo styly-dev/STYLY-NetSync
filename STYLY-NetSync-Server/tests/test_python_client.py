@@ -356,6 +356,10 @@ def test_receive_timeout_triggers_connection_error():
     manager.on_connection_error.add_listener(errors.append)
     manager.start()
 
+    # Silence detection is only armed after the first inbound message.
+    # Simulate that by setting the clock manually.
+    manager._last_message_time = time.monotonic()
+
     try:
         # Wait long enough for the silence timeout to fire (0.3s) + margin
         time.sleep(1.2)
@@ -401,6 +405,9 @@ def test_stop_from_connection_error_listener():
 
     manager.on_connection_error.add_listener(on_error)
     manager.start()
+
+    # Arm silence detection (only active after first inbound message)
+    manager._last_message_time = time.monotonic()
 
     try:
         # Wait for silence timeout (0.3s) + margin for stop() to complete

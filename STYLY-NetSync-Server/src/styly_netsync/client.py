@@ -364,7 +364,7 @@ class net_sync_manager:
                 # Start receive thread
                 self._running = True
                 self._reconnect_at = None  # Clear stale reconnect state
-                self._last_message_time = time.monotonic()
+                self._last_message_time = 0.0  # Armed on first inbound message
                 self._receive_thread = threading.Thread(
                     target=self._receive_loop, daemon=True
                 )
@@ -580,8 +580,8 @@ class net_sync_manager:
                             poller.register(self._sub_socket, zmq.POLLIN)
                         if self._dealer_socket:
                             poller.register(self._dealer_socket, zmq.POLLIN)
-                        # Reset silence clock so we don't immediately re-trigger
-                        self._last_message_time = time.monotonic()
+                        # Disarm silence detection until first inbound message
+                        self._last_message_time = 0.0
                     else:
                         # Reconnect failed; retry after the configured delay
                         self._reconnect_at = time.monotonic() + self._reconnect_delay
@@ -590,9 +590,10 @@ class net_sync_manager:
                 continue
 
             # ------------------------------------------------------------------
-            # Server-silence detection
+            # Server-silence detection (armed only after the first inbound
+            # message, so an empty room doesn't cause false-positive reconnects)
             # ------------------------------------------------------------------
-            if self._receive_timeout is not None:
+            if self._receive_timeout is not None and self._last_message_time > 0:
                 now = time.monotonic()
                 if now - self._last_message_time > self._receive_timeout:
                     self._trigger_reconnect(
