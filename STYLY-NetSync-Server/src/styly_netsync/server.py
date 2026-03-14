@@ -910,12 +910,14 @@ class NetSyncServer:
                     dealer_port=self.dealer_port,
                     sub_port=self.pub_port,
                 )
-                rest_port = int(os.getenv("NETSYNC_REST_PORT", "8800"))
+                rest_api_port = self._config.rest_api_port
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
-                    app, host="0.0.0.0", port=rest_port
+                    app, host="0.0.0.0", port=rest_api_port
                 )
                 display_ip = ip_addresses[0] if ip_addresses else "0.0.0.0"
-                logger.info(f"REST bridge started on http://{display_ip}:{rest_port}")
+                logger.info(
+                    f"REST bridge started on http://{display_ip}:{rest_api_port}"
+                )
                 # Display logo after all initialization is complete
                 display_logo()
             except Exception as rest_exc:
@@ -2149,6 +2151,12 @@ def main() -> None:
         type=valid_port,
         metavar="PORT",
         help=f"UDP port used for server discovery (default: {defaults.server_discovery_port})",
+    )
+    parser.add_argument(
+        "--rest-api-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"HTTP port for REST bridge (default: {defaults.rest_api_port})",
     )
     parser.add_argument(
         "-V",

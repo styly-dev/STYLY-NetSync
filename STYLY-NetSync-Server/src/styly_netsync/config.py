@@ -65,6 +65,7 @@ class ServerConfig:
     dealer_port: int
     pub_port: int
     server_discovery_port: int
+    rest_api_port: int
     server_name: str
     enable_server_discovery: bool
 
@@ -107,6 +108,7 @@ _VALID_KEYS: set[str] = {
     "dealer_port",
     "pub_port",
     "server_discovery_port",
+    "rest_api_port",
     "server_name",
     "enable_server_discovery",
     # Timing settings
@@ -233,7 +235,7 @@ def validate_config(config: ServerConfig) -> list[str]:
     errors: list[str] = []
 
     # Port validation (1-65535)
-    port_fields = ["dealer_port", "pub_port", "server_discovery_port"]
+    port_fields = ["dealer_port", "pub_port", "server_discovery_port", "rest_api_port"]
     for field_name in port_fields:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
@@ -366,6 +368,8 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
         and args.server_discovery_port is not None
     ):
         updates["server_discovery_port"] = args.server_discovery_port
+    if hasattr(args, "rest_api_port") and args.rest_api_port is not None:
+        updates["rest_api_port"] = args.rest_api_port
 
     # Special handling for --no-server-discovery flag
     if hasattr(args, "no_server_discovery") and args.no_server_discovery:

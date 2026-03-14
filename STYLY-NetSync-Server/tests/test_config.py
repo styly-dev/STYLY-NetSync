@@ -87,6 +87,7 @@ class TestServerConfig:
             dealer_port=6666,
             pub_port=6667,
             server_discovery_port=8888,
+            rest_api_port=9900,
             server_name="Custom Server",
             enable_server_discovery=False,
             idle_broadcast_interval=default_config.idle_broadcast_interval,
