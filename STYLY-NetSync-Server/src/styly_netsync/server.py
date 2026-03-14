@@ -1696,25 +1696,12 @@ class NetSyncServer:
                             else:
                                 normal_clients += 1
 
-                    dirty_rooms = sum(
-                        1 for flag in self.room_dirty_flags.values() if flag
-                    )
                     total_device_ids = len(self.device_id_last_seen)
-
-                    # Get FD information for status log
-                    open_fds, soft, _ = self._get_fd_snapshot()
-                    fd_part = ""
-                    if open_fds is not None:
-                        if soft is not None:
-                            fd_part = f", FD {open_fds}/{soft}"
-                        else:
-                            fd_part = f", FD {open_fds}"
 
                     logger.info(
                         f"Status: {len(self.rooms)} rooms, {normal_clients} normal clients, "
                         f"{stealth_clients} stealth clients, "
-                        f"{dirty_rooms} dirty rooms, {total_device_ids} tracked device IDs"
-                        f"{fd_part}"
+                        f"{total_device_ids} tracked device IDs"
                     )
                     last_log = current_time
 
