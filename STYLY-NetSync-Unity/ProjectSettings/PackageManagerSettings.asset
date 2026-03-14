@@ -34,6 +34,7 @@ MonoBehaviour:
     m_Name: package.openupm.com
     m_Url: https://package.openupm.com
     m_Scopes:
+    - com.styly.device-id-provider
     - com.styly.styly-xr-rig
     - com.styly.shader-collection.urp
     - org.nuget.asyncio
@@ -56,6 +57,6 @@ MonoBehaviour:
   m_RegistryInfoDraft:
     m_Modified: 0
     m_ErrorMessage: 
-    m_UserModificationsInstanceId: -888
-    m_OriginalInstanceId: -890
+    m_UserModificationsInstanceId: -874
+    m_OriginalInstanceId: -878
   m_LoadAssets: 0

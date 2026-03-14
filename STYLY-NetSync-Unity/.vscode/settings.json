@@ -30,5 +30,5 @@
         "**/Logs/**": true,
         "**/Build/**": true
     },
-    "dotnet.defaultSolution": "STYLY-NetSync-Unity.sln"
+    "dotnet.defaultSolution": "STYLY-NetSync-Unity.slnx"
 }
