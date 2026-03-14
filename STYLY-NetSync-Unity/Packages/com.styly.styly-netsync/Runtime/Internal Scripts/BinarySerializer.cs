@@ -22,6 +22,11 @@ namespace Styly.NetSync
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
         public const byte MSG_CLIENT_POSE = 11;  // Client pose (quaternion + timestamps)
         public const byte MSG_ROOM_POSE = 12;  // Room pose snapshot (quaternion + timestamps)
+        public const byte MSG_OBJECT_POSE = 13;              // Client → Server: owned object Transform
+        public const byte MSG_ROOM_OBJECTS = 14;             // Server → Clients (PUB): room object states
+        public const byte MSG_OBJECT_OWNERSHIP_REQUEST = 15; // Client → Server: Claim/Release/ForceClaim
+        public const byte MSG_OBJECT_OWNERSHIP_CHANGED = 16; // Server → Clients: ownership changed
+        public const byte MSG_OBJECT_OWNERSHIP_REJECTED = 17; // Server → Client: request rejected
 
         // Transform data type identifiers (deprecated - kept for reference)
         // Protocol v3 pose encoding constants
@@ -563,6 +568,31 @@ namespace Styly.NetSync
             writer.Write((byte)0);
         }
 
+        public static void SerializeObjectPoseInto(BinaryWriter writer, string objectId, ushort poseSeq, Vector3 position, Quaternion rotation)
+        {
+            writer.Write(MSG_OBJECT_POSE);
+            writer.Write(PROTOCOL_VERSION);
+            var objectIdBytes = System.Text.Encoding.UTF8.GetBytes(objectId ?? string.Empty);
+            var idLen = Mathf.Min(objectIdBytes.Length, 64);
+            writer.Write((byte)idLen);
+            writer.Write(objectIdBytes, 0, idLen);
+            writer.Write(poseSeq);
+            WriteInt24(writer, QuantizeSignedInt24(position.x, ABS_POS_SCALE));
+            WriteInt24(writer, QuantizeSignedInt24(position.y, ABS_POS_SCALE));
+            WriteInt24(writer, QuantizeSignedInt24(position.z, ABS_POS_SCALE));
+            writer.Write(CompressQuaternionSmallestThree(NormalizeQuaternionSafe(rotation)));
+        }
+
+        public static void SerializeObjectOwnershipRequestInto(BinaryWriter writer, byte operationType, string objectId)
+        {
+            writer.Write(MSG_OBJECT_OWNERSHIP_REQUEST);
+            writer.Write(operationType);
+            var objectIdBytes = System.Text.Encoding.UTF8.GetBytes(objectId ?? string.Empty);
+            var idLen = Mathf.Min(objectIdBytes.Length, 64);
+            writer.Write((byte)idLen);
+            writer.Write(objectIdBytes, 0, idLen);
+        }
+
         #region === Deserialization ===
 
         public static (byte messageType, object data) Deserialize(byte[] bytes)
@@ -578,7 +608,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_OBJECT_OWNERSHIP_REJECTED)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -604,6 +634,12 @@ namespace Styly.NetSync
                     case MSG_CLIENT_VAR_SYNC:
                         // Client variables sync from server
                         return (messageType, DeserializeClientVarSync(reader));
+                    case MSG_ROOM_OBJECTS:
+                        return (messageType, DeserializeRoomObjects(reader));
+                    case MSG_OBJECT_OWNERSHIP_CHANGED:
+                        return (messageType, DeserializeObjectOwnershipChanged(reader));
+                    case MSG_OBJECT_OWNERSHIP_REJECTED:
+                        return (messageType, DeserializeObjectOwnershipRejected(reader));
                     default:
                         // This should not happen due to validation above, but keep as safety
                         return (messageType, null);
@@ -804,6 +840,54 @@ namespace Styly.NetSync
             return data;
         }
 
+        private static RoomObjectsData DeserializeRoomObjects(BinaryReader reader)
+        {
+            var data = new RoomObjectsData();
+            var protocolVersion = reader.ReadByte();
+            if (protocolVersion != PROTOCOL_VERSION)
+            {
+                throw new InvalidDataException($"Unsupported room objects protocol version: {protocolVersion}");
+            }
+            data.broadcastTime = reader.ReadDouble();
+            var objectCount = reader.ReadUInt16();
+            data.objects = new List<ObjectStateData>(objectCount);
+            for (int i = 0; i < objectCount; i++)
+            {
+                var obj = new ObjectStateData();
+                var idLen = reader.ReadByte();
+                obj.objectId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(idLen));
+                obj.ownerClientNo = reader.ReadUInt16();
+                obj.poseSeq = reader.ReadUInt16();
+                obj.poseTime = reader.ReadDouble();
+                int px = ReadInt24(reader);
+                int py = ReadInt24(reader);
+                int pz = ReadInt24(reader);
+                obj.position = QuantizedToVector3(px, py, pz, ABS_POS_SCALE);
+                obj.rotation = DecompressQuaternionSmallestThree(reader.ReadUInt32());
+                data.objects.Add(obj);
+            }
+            return data;
+        }
+
+        private static OwnershipChangedData DeserializeObjectOwnershipChanged(BinaryReader reader)
+        {
+            var data = new OwnershipChangedData();
+            var idLen = reader.ReadByte();
+            data.objectId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(idLen));
+            data.newOwnerClientNo = reader.ReadUInt16();
+            data.previousOwnerClientNo = reader.ReadUInt16();
+            return data;
+        }
+
+        private static OwnershipRejectedData DeserializeObjectOwnershipRejected(BinaryReader reader)
+        {
+            var data = new OwnershipRejectedData();
+            var idLen = reader.ReadByte();
+            data.objectId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(idLen));
+            data.currentOwnerClientNo = reader.ReadUInt16();
+            data.reasonCode = reader.ReadByte();
+            return data;
+        }
 
         #endregion
 

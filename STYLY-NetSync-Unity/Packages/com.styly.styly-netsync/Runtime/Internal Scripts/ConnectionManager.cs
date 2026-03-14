@@ -281,9 +281,11 @@ namespace Styly.NetSync
                     var sentAny = FlushOutgoing(dealer);
                     bool receivedAny = false;
 
-                    byte[] lastPayload = null;
-                    bool gotPayload = false;
-                    int framesReceived = 0;
+                    byte[] lastAvatarPayload = null;
+                    byte[] lastObjectPayload = null;
+                    bool gotAvatar = false;
+                    bool gotObject = false;
+                    int avatarFramesReceived = 0;
 
                     while (sub.TryReceiveFrameBytes(TimeSpan.Zero, out var topicBytes))
                     {
@@ -291,27 +293,50 @@ namespace Styly.NetSync
 
                         if (TopicMatches(topicBytes, roomIdBytes))
                         {
-                            lastPayload = payload;
-                            gotPayload = true;
-                            framesReceived++;
+                            // Distinguish avatar vs object by checking if topic is exactly roomId or roomId + suffix
+                            if (topicBytes.Length == roomIdBytes.Length)
+                            {
+                                // Avatar payload
+                                lastAvatarPayload = payload;
+                                gotAvatar = true;
+                                avatarFramesReceived++;
+                            }
+                            else
+                            {
+                                // Object payload (roomId + suffix)
+                                lastObjectPayload = payload;
+                                gotObject = true;
+                            }
                         }
                     }
 
-                    if (gotPayload)
+                    if (gotAvatar)
                     {
-                        // Track dropped frames for diagnostics (only process the last one)
-                        if (framesReceived > 1)
+                        if (avatarFramesReceived > 1)
                         {
-                            Interlocked.Add(ref _droppedTransformFrames, framesReceived - 1);
+                            Interlocked.Add(ref _droppedTransformFrames, avatarFramesReceived - 1);
                         }
 
                         try
                         {
-                            _messageProcessor.ProcessIncomingMessage(lastPayload);
+                            _messageProcessor.ProcessIncomingMessage(lastAvatarPayload);
                         }
                         catch (Exception ex)
                         {
                             Debug.LogError($"Transform parse error: {ex.Message}");
+                        }
+                        receivedAny = true;
+                    }
+
+                    if (gotObject)
+                    {
+                        try
+                        {
+                            _messageProcessor.ProcessIncomingMessage(lastObjectPayload);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogError($"Object sync parse error: {ex.Message}");
                         }
                         receivedAny = true;
                     }
@@ -497,7 +522,7 @@ namespace Styly.NetSync
         private static bool TopicMatches(byte[] topicBytes, byte[] roomIdBytes)
         {
             if (topicBytes == null || roomIdBytes == null) { return false; }
-            if (topicBytes.Length != roomIdBytes.Length) { return false; }
+            if (topicBytes.Length < roomIdBytes.Length) { return false; }
 
             for (int i = 0; i < roomIdBytes.Length; i++)
             {

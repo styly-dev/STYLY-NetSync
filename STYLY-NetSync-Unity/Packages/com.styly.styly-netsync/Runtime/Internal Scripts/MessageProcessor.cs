@@ -35,6 +35,9 @@ namespace Styly.NetSync
 
         public int MessagesReceived => _messagesReceived;
         public event System.Action<int> OnLocalClientNoAssigned;
+        public event System.Action<RoomObjectsData> OnRoomObjectsReceived;
+        public event System.Action<OwnershipChangedData> OnOwnershipChanged;
+        public event System.Action<OwnershipRejectedData> OnOwnershipRejected;
 
         /// <summary>
         /// Event fired when server version does not match client version.
@@ -125,6 +128,21 @@ namespace Styly.NetSync
                         _messageQueue.Enqueue(new NetworkMessage { type = "client_var_sync", dataObj = clientVarData });
                         _messagesReceived++;
                         // Client variable sync data received
+                        break;
+
+                    case BinarySerializer.MSG_ROOM_OBJECTS when data is RoomObjectsData roomObjects:
+                        _messageQueue.Enqueue(new NetworkMessage { type = "room_objects", dataObj = roomObjects });
+                        _messagesReceived++;
+                        break;
+
+                    case BinarySerializer.MSG_OBJECT_OWNERSHIP_CHANGED when data is OwnershipChangedData ownerChanged:
+                        _messageQueue.Enqueue(new NetworkMessage { type = "ownership_changed", dataObj = ownerChanged });
+                        _messagesReceived++;
+                        break;
+
+                    case BinarySerializer.MSG_OBJECT_OWNERSHIP_REJECTED when data is OwnershipRejectedData ownerRejected:
+                        _messageQueue.Enqueue(new NetworkMessage { type = "ownership_rejected", dataObj = ownerRejected });
+                        _messagesReceived++;
                         break;
 
                     default:
@@ -218,6 +236,36 @@ namespace Styly.NetSync
                         else
                         {
                             Debug.LogError("[MessageProcessor] id_mapping without valid dataObj (unexpected)");
+                        }
+                        break;
+
+                    case "room_objects":
+                        if (msg.dataObj is RoomObjectsData roomObjectsData)
+                        {
+                            if (OnRoomObjectsReceived != null)
+                            {
+                                OnRoomObjectsReceived.Invoke(roomObjectsData);
+                            }
+                        }
+                        break;
+
+                    case "ownership_changed":
+                        if (msg.dataObj is OwnershipChangedData ownerChangedData)
+                        {
+                            if (OnOwnershipChanged != null)
+                            {
+                                OnOwnershipChanged.Invoke(ownerChangedData);
+                            }
+                        }
+                        break;
+
+                    case "ownership_rejected":
+                        if (msg.dataObj is OwnershipRejectedData ownerRejectedData)
+                        {
+                            if (OnOwnershipRejected != null)
+                            {
+                                OnOwnershipRejected.Invoke(ownerRejectedData);
+                            }
                         }
                         break;
                 }
