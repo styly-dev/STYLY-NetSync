@@ -15,7 +15,8 @@ namespace Styly.NetSync.Editor
             "_offlineMode",
             "_transformSendRate",
             "_serverDiscoveryPort",
-            "_syncBatteryLevel"
+            "_syncBatteryLevel",
+            "_enableDebugLogs"
         };
         private static readonly HashSet<string> AdvancedProperties = new HashSet<string>(AdvancedPropertyOrder);
 

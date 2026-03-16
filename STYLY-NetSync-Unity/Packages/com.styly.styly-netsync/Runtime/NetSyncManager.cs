@@ -27,7 +27,8 @@ namespace Styly.NetSync
         [SerializeField, Tooltip("Prefab shown at each remote user's physical position")] private GameObject _humanPresencePrefab;
 
         // [Header("Debug Settings")]
-        private bool _enableDebugLogs = true;
+        [SerializeField, Tooltip("Enable debug log output to the console.")]
+        private bool _enableDebugLogs = false;
         private bool _logTransformDetail = false;
         private bool _logNetworkTraffic = false;
 
