@@ -218,27 +218,20 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Build a ZeroMQ connect address with automatic source-NIC binding.
-        /// When the destination is a remote host, the OS routing table is queried
-        /// to find the correct source NIC, and the ZeroMQ extended TCP format
-        /// (tcp://source_ip:0;dest_host:port) is used.
+        /// Build a ZeroMQ connect address from a server address and port.
+        /// Note: NetMQ (pure C# ZeroMQ) does not support the libzmq extended TCP
+        /// format (tcp://source:0;dest:port) for source-NIC binding, so we use
+        /// the plain tcp://host:port format.
         /// </summary>
         private static string BuildConnectAddress(string serverAddress, int port)
         {
-            // Extract host from "tcp://host" format
             string host = serverAddress;
             if (host.StartsWith("tcp://"))
             {
                 host = host.Substring(6);
             }
 
-            string sourceIp = NetworkUtils.ResolveSourceAddress(host, port);
-            if (sourceIp != null)
-            {
-                return $"tcp://{sourceIp}:0;{host}:{port}";
-            }
-
-            return $"{serverAddress}:{port}";
+            return $"tcp://{host}:{port}";
         }
 
         private void NetworkLoop(string serverAddress, int dealerPort, int subPort, string roomId)
