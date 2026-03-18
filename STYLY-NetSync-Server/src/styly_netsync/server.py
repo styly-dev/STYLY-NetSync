@@ -1199,7 +1199,13 @@ class NetSyncServer:
                     f"New client {device_id[:8]}... (client number: {client_no}){stealth_text} joined room {room_id}"
                 )
             else:
-                # Update existing client and mark room as dirty
+                # Update existing client and mark room as dirty.
+                # Always update identity: when a client reconnects (e.g. after
+                # sleep/wake) before the timeout removes it from rooms, the
+                # DEALER socket is recreated with a new ZMQ identity.  Without
+                # this update the server would send ROUTER control messages
+                # (RPC, NV sync) to the stale identity, silently losing them.
+                self.rooms[room_id][device_id]["identity"] = client_identity
                 self.rooms[room_id][device_id]["transform_data"] = data_with_client_no
                 self.rooms[room_id][device_id]["last_update"] = time.monotonic()
                 self.rooms[room_id][device_id]["client_no"] = client_no
