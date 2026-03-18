@@ -459,6 +459,18 @@ namespace Styly.NetSync
             else
             {
                 DebugLog("Application resumed - restarting network");
+
+                // Reset handshake/ready state so the client waits for a fresh
+                // handshake and NV initial sync from the server before reporting
+                // IsReady.  Without this, stale state from the previous session
+                // lets IsReady remain true while the new connection is still
+                // being established.
+                _clientNo = 0;
+                _hasInvokedReady = false;
+                _shouldCheckReady = false;
+                _shouldSendHandshake = false;
+                _networkVariableManager?.ResetInitialSyncFlag();
+
                 StartNetworking();
             }
         }
