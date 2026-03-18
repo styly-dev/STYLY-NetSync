@@ -6,8 +6,8 @@ Test monotonic timing behavior to verify WSL timing fix
 import time
 
 
-def test_monotonic_time_always_increases():
-    """Test that monotonic time always increases and never goes backwards"""
+def test_monotonic_time_never_decreases():
+    """Test that monotonic time never decreases"""
     times = []
 
     # Collect multiple time measurements
@@ -22,7 +22,7 @@ def test_monotonic_time_always_increases():
             times[i] >= times[i - 1]
         ), f"Monotonic time went backwards: {times[i-1]} -> {times[i]}"
 
-    print(f"✓ Collected {len(times)} monotonic timestamps, all strictly increasing")
+    print(f"✓ Collected {len(times)} monotonic timestamps, all non-decreasing")
 
 
 def test_timing_interval_calculation():
@@ -64,7 +64,7 @@ def test_monotonic_vs_system_time():
 
 
 if __name__ == "__main__":
-    test_monotonic_time_always_increases()
+    test_monotonic_time_never_decreases()
     test_timing_interval_calculation()
     test_monotonic_vs_system_time()
     print("All timing tests passed!")
