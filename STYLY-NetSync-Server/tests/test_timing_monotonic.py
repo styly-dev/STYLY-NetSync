@@ -15,10 +15,11 @@ def test_monotonic_time_always_increases():
         times.append(time.monotonic())
         time.sleep(0.001)  # Small delay
 
-    # Verify all times are strictly increasing
+    # Verify all times are non-decreasing (on Windows, timer resolution may
+    # cause consecutive monotonic() calls to return the same value).
     for i in range(1, len(times)):
         assert (
-            times[i] > times[i - 1]
+            times[i] >= times[i - 1]
         ), f"Monotonic time went backwards: {times[i-1]} -> {times[i]}"
 
     print(f"✓ Collected {len(times)} monotonic timestamps, all strictly increasing")

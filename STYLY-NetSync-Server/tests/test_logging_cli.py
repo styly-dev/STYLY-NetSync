@@ -112,7 +112,7 @@ def test_main_logging_args_with_log_dir(monkeypatch, tmp_path):
         time.sleep(0.05)
 
     assert log_file.exists()
-    first_line = log_file.read_text().splitlines()[0]
+    first_line = log_file.read_text(encoding="utf-8").splitlines()[0]
     assert first_line.lstrip().startswith("{")
 
 
