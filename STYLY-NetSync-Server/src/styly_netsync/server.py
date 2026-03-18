@@ -1183,6 +1183,7 @@ class NetSyncServer:
 
             # Update or create client (using device ID as key for backward compatibility)
             is_new_client = device_id not in self.rooms[room_id]
+            is_reconnect = False
             if is_new_client:
                 self.rooms[room_id][device_id] = {
                     "identity": client_identity,
@@ -1200,11 +1201,14 @@ class NetSyncServer:
                 )
             else:
                 # Update existing client and mark room as dirty.
-                # Always update identity: when a client reconnects (e.g. after
+                # Detect reconnection: when a client reconnects (e.g. after
                 # sleep/wake) before the timeout removes it from rooms, the
                 # DEALER socket is recreated with a new ZMQ identity.  Without
-                # this update the server would send ROUTER control messages
-                # (RPC, NV sync) to the stale identity, silently losing them.
+                # updating the identity the server would send ROUTER control
+                # messages (RPC, NV sync) to the stale identity, silently
+                # losing them.
+                old_identity = self.rooms[room_id][device_id].get("identity")
+                is_reconnect = old_identity != client_identity
                 self.rooms[room_id][device_id]["identity"] = client_identity
                 self.rooms[room_id][device_id]["transform_data"] = data_with_client_no
                 self.rooms[room_id][device_id]["last_update"] = time.monotonic()
@@ -1217,12 +1221,22 @@ class NetSyncServer:
                 # Mark room as dirty since transform data has arrived
                 self.room_dirty_flags[room_id] = True
 
+                if is_reconnect:
+                    # Re-broadcast ID mapping so the reconnected client gets
+                    # the current device-to-clientNo table.
+                    self.room_id_mapping_dirty[room_id] = True
+                    logger.info(
+                        f"Client {device_id[:8]}... reconnected with new identity in room {room_id}"
+                    )
+
             # Mark room for debounced ID mapping broadcast when a new client joins
             if is_new_client:
                 self.room_id_mapping_dirty[room_id] = True
 
-        # Sync network variables to new client (outside lock to avoid deadlocks)
-        if is_new_client:
+        # Sync network variables to new/reconnected client (outside lock to
+        # avoid deadlocks).  On reconnect the client has a fresh DEALER socket
+        # and may have missed NV changes that occurred during sleep.
+        if is_new_client or is_reconnect:
             self._sync_network_variables_to_new_client(room_id)
 
     def _extract_transform_body(self, raw_payload: bytes) -> bytes:
