@@ -68,12 +68,31 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Reset the initial sync flag (called when connection is lost)
+        /// Reset the initial sync flag and clear all NV caches (called when connection is lost
+        /// or on sleep/wake resume). Clearing the caches ensures the next server sync is a
+        /// full refresh: all values are treated as new so change events always fire, and
+        /// send-side dedupe/throttle state does not suppress re-sends.
         /// </summary>
         public void ResetInitialSyncFlag()
         {
             _hasReceivedInitialSync = false;
             _connectionEstablishedTime = DateTime.MinValue;
+
+            // Clear local NV caches so the next sync is a full refresh
+            _globalVariables.Clear();
+            _clientVariables.Clear();
+
+            // Clear send-side dedupe caches so NVs can be re-sent after reconnect
+            _lastSentGlobal.Clear();
+            _lastSentClient.Clear();
+
+            // Clear throttle/debounce state
+            _nextAllowedGlobal.Clear();
+            _nextAllowedClient.Clear();
+            _pendingGlobal.Clear();
+            _dueGlobal.Clear();
+            _pendingClient.Clear();
+            _dueClient.Clear();
         }
 
         /// <summary>

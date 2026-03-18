@@ -112,3 +112,88 @@ def test_reconnect_updates_identity_and_resyncs_nv() -> None:
         except Exception:
             pass
         server.stop()
+
+
+def test_reconnect_receives_nv_updated_during_sleep() -> None:
+    """NVs updated by another client while a client is sleeping are received on reconnect."""
+    server = NetSyncServer(
+        dealer_port=DEALER_PORT,
+        pub_port=PUB_PORT,
+        enable_server_discovery=False,
+    )
+    server_thread = threading.Thread(target=server.start, daemon=True)
+    server_thread.start()
+    time.sleep(0.5)
+
+    client_a: net_sync_manager | None = None
+    client_b: net_sync_manager | None = None
+    client_b2: net_sync_manager | None = None
+
+    try:
+        # --- Phase 1: two clients join, client A sets an NV ---
+        client_a = net_sync_manager(
+            server="tcp://localhost",
+            dealer_port=DEALER_PORT,
+            sub_port=PUB_PORT,
+            room=ROOM,
+        )
+        client_b = net_sync_manager(
+            server="tcp://localhost",
+            dealer_port=DEALER_PORT,
+            sub_port=PUB_PORT,
+            room=ROOM,
+        )
+        device_id_b = client_b._device_id
+
+        client_a.start()
+        client_b.start()
+
+        client_a.send_transform(_make_transform(client_a._device_id))
+        client_b.send_transform(_make_transform(device_id_b))
+        time.sleep(0.5)
+
+        # Client A sets initial NV value
+        client_a.set_global_variable("score", "10")
+        time.sleep(0.3)
+
+        # Verify client B received it
+        assert (
+            client_b.get_global_variable("score") == "10"
+        ), "Client B should have initial NV"
+
+        # --- Phase 2: client B goes to sleep ---
+        client_b.stop()
+        time.sleep(0.1)
+
+        # --- Phase 3: client A updates the NV while client B is sleeping ---
+        client_a.set_global_variable("score", "42")
+        time.sleep(0.3)
+
+        # --- Phase 4: client B wakes up (new DEALER socket, same device_id) ---
+        client_b2 = net_sync_manager(
+            server="tcp://localhost",
+            dealer_port=DEALER_PORT,
+            sub_port=PUB_PORT,
+            room=ROOM,
+        )
+        client_b2._device_id = device_id_b
+        client_b2.start()
+
+        # Send transform to trigger reconnect detection on server
+        client_b2.send_transform(_make_transform(device_id_b))
+        time.sleep(0.5)
+
+        # --- Assertions ---
+        nv_value = client_b2.get_global_variable("score")
+        assert (
+            nv_value == "42"
+        ), f"Reconnected client should see NV updated during sleep, got: {nv_value}"
+
+    finally:
+        for c in (client_a, client_b, client_b2):
+            if c is not None:
+                try:
+                    c.stop()
+                except Exception:
+                    pass
+        server.stop()
