@@ -80,6 +80,12 @@ namespace Styly.NetSync
         private volatile OutboundPacket _latestTransform;
 
         /// <summary>
+        /// Latest object transform packet to send (latest-wins semantics).
+        /// Separate from avatar transforms to prevent mutual overwrite.
+        /// </summary>
+        private volatile OutboundPacket _latestObjectTransform;
+
+        /// <summary>
         /// Counter for tracking backpressure events (EAGAIN/would-block).
         /// Incremented when a send fails due to HWM being reached.
         /// </summary>
@@ -215,6 +221,27 @@ namespace Styly.NetSync
 
             // Atomic overwrite - latest-wins semantics
             Volatile.Write(ref _latestTransform, packet);
+        }
+
+        /// <summary>
+        /// Set the latest object transform packet to send (latest-wins semantics).
+        /// Separate slot from avatar transforms so they don't overwrite each other.
+        /// </summary>
+        public void SetLatestObjectTransform(string roomId, byte[] payload)
+        {
+            if (_receiveThread == null || _shouldStop || _connectionError) { return; }
+            if (_dealerSocket == null) { return; }
+
+            var packet = new OutboundPacket
+            {
+                Lane = OutboundLane.Transform,
+                RoomId = roomId,
+                Payload = payload,
+                EnqueuedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0,
+                Attempts = 0
+            };
+
+            Volatile.Write(ref _latestObjectTransform, packet);
         }
 
         /// <summary>
@@ -380,11 +407,13 @@ namespace Styly.NetSync
             bool didWork = false;
 
             // Priority-based send drain:
-            // 1. Drain control messages first (higher priority)
-            // 2. Then try to send latest transform (lower priority)
+            // 1. Drain control messages first (highest priority)
+            // 2. Send latest avatar transform
+            // 3. Send latest object transforms
 
             didWork |= DrainControlSends(dealer, maxBatch: 64);
             didWork |= TrySendLatestTransform(dealer);
+            didWork |= TrySendLatestObjectTransform(dealer);
 
             return didWork;
         }
@@ -472,6 +501,30 @@ namespace Styly.NetSync
             }
         }
 
+        /// <summary>
+        /// Try to send the latest object transform packet.
+        /// Uses latest-wins semantics identical to avatar transforms.
+        /// </summary>
+        private bool TrySendLatestObjectTransform(DealerSocket dealer)
+        {
+            var packet = Volatile.Read(ref _latestObjectTransform);
+            if (packet == null)
+            {
+                return false;
+            }
+
+            if (TrySendDealer(dealer, packet.RoomId, packet.Payload))
+            {
+                Interlocked.CompareExchange(ref _latestObjectTransform, null, packet);
+                return true;
+            }
+            else
+            {
+                Interlocked.Increment(ref _wouldBlockCount);
+                return false;
+            }
+        }
+
         private static bool TrySendDealer(DealerSocket dealer, string roomId, byte[] payload)
         {
             var msg = new NetMQMessage();
@@ -508,6 +561,7 @@ namespace Styly.NetSync
 
             // Clear latest transform
             Volatile.Write(ref _latestTransform, null);
+            Volatile.Write(ref _latestObjectTransform, null);
         }
 
         private static void WaitThreadExit(Thread t, int ms)

@@ -124,7 +124,16 @@ namespace Styly.NetSync
                     case BinarySerializer.MSG_CLIENT_VAR_SYNC when data is Dictionary<string, object> clientVarData:
                         _messageQueue.Enqueue(new NetworkMessage { type = "client_var_sync", dataObj = clientVarData });
                         _messagesReceived++;
-                        // Client variable sync data received
+                        break;
+
+                    case BinarySerializer.MSG_ROOM_OBJECTS when data is RoomObjectData roomObjects:
+                        _messageQueue.Enqueue(new NetworkMessage { type = "room_objects", dataObj = roomObjects });
+                        _messagesReceived++;
+                        break;
+
+                    case BinarySerializer.MSG_OBJECT_OWNER when data is OwnershipChangeData ownerData:
+                        _messageQueue.Enqueue(new NetworkMessage { type = "object_owner", dataObj = ownerData });
+                        _messagesReceived++;
                         break;
 
                     default:
@@ -218,6 +227,20 @@ namespace Styly.NetSync
                         else
                         {
                             Debug.LogError("[MessageProcessor] id_mapping without valid dataObj (unexpected)");
+                        }
+                        break;
+
+                    case "room_objects":
+                        if (msg.dataObj is RoomObjectData roomObjects && _netSyncManager != null)
+                        {
+                            _netSyncManager.ProcessRoomObjects(roomObjects);
+                        }
+                        break;
+
+                    case "object_owner":
+                        if (msg.dataObj is OwnershipChangeData ownerData && _netSyncManager != null)
+                        {
+                            _netSyncManager.ProcessOwnershipChange(ownerData);
                         }
                         break;
                 }

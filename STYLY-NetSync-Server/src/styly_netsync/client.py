@@ -39,6 +39,10 @@ from .adapters import (
     create_stealth_transform,
     is_stealth_transform,
 )
+from .binary_serializer import (
+    serialize_client_objects,
+    serialize_object_owner,
+)
 from .events import EventHandler
 from .types import client_transform_data, room_transform_data
 
@@ -235,6 +239,13 @@ class net_sync_manager:
         # Stealth mode heartbeat (mirrors Unity TransformSyncManager)
         self._is_stealth_mode: bool = False
         self._last_stealth_heartbeat_time: float = 0.0
+
+        # Object sync state
+        self._object_pose_seq: int = 0
+        self._ownership_seq: int = 0
+        self._latest_object_transform: OutboundPacket | None = None
+        self.on_room_objects: EventHandler = EventHandler()
+        self.on_object_owner_changed: EventHandler = EventHandler()
 
         # Statistics
         self._stats = {
@@ -541,9 +552,10 @@ class net_sync_manager:
             except Empty:
                 break
 
-        # Clear latest transform
+        # Clear latest transform and object transform
         with self._transform_lock:
             self._latest_transform = None
+            self._latest_object_transform = None
 
     def _receive_loop(self) -> None:
         """Main receive loop for processing server messages and flushing outgoing.
@@ -760,8 +772,10 @@ class net_sync_manager:
         # Priority-based send drain:
         # 1. Drain control messages first (higher priority)
         # 2. Then try to send latest transform (lower priority)
+        # 3. Then try to send latest object transform
         did_work |= self._drain_control_sends()
         did_work |= self._try_send_latest_transform()
+        did_work |= self._try_send_latest_object_transform()
 
         return did_work
 
@@ -850,6 +864,31 @@ class net_sync_manager:
                 logger.error(f"Fatal send error: {outcome.error}")
                 return False
 
+    def _try_send_latest_object_transform(self) -> bool:
+        """Try to send the latest object transform packet (latest-wins semantics).
+
+        Returns True if an object transform was sent.
+        """
+        if not self._dealer_socket:
+            return False
+
+        with self._transform_lock:
+            packet = self._latest_object_transform
+            if packet is None:
+                return False
+
+            outcome = self._try_send_dealer(packet.room_id, packet.payload)
+            if outcome.is_sent:
+                self._latest_object_transform = None
+                return True
+            elif outcome.is_backpressure:
+                with self._lock:
+                    self._stats["would_block_count"] += 1
+                return False
+            else:
+                logger.error(f"Fatal send error: {outcome.error}")
+                return False
+
     def _try_send_dealer(self, room_id: str, payload: bytes) -> SendOutcome:
         """Try to send a message via DEALER socket.
 
@@ -890,6 +929,10 @@ class net_sync_manager:
                 self._process_global_var_sync(msg_data)
             elif msg_type == binary_serializer.MSG_CLIENT_VAR_SYNC:
                 self._process_client_var_sync(msg_data)
+            elif msg_type == binary_serializer.MSG_ROOM_OBJECTS:
+                self._process_room_objects(msg_data)
+            elif msg_type == binary_serializer.MSG_OBJECT_OWNER:
+                self._process_object_owner(msg_data)
 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
@@ -1069,6 +1112,22 @@ class net_sync_manager:
         except Exception as e:
             logger.error(f"Error processing client var sync: {e}")
 
+    def _process_room_objects(self, msg_data: dict[str, Any]) -> None:
+        """Process room objects broadcast."""
+        try:
+            if self._auto_dispatch:
+                self.on_room_objects.invoke(msg_data)
+        except Exception as e:
+            logger.error(f"Error processing room objects: {e}")
+
+    def _process_object_owner(self, msg_data: dict[str, Any]) -> None:
+        """Process object ownership change."""
+        try:
+            if self._auto_dispatch:
+                self.on_object_owner_changed.invoke(msg_data)
+        except Exception as e:
+            logger.error(f"Error processing object owner: {e}")
+
     # Transform API (pull-based)
     def get_room_transform_data(self) -> room_transform_data | None:
         """Get the latest room snapshot (pull-based consumption)."""
@@ -1159,6 +1218,104 @@ class net_sync_manager:
         if now - self._last_stealth_heartbeat_time >= STEALTH_HEARTBEAT_INTERVAL:
             self._last_stealth_heartbeat_time = now
             self._send_stealth_heartbeat()
+
+    # Object Sync API
+    def send_object_transforms(
+        self,
+        objects: list[tuple[int, float, float, float, float, float, float, float]],
+    ) -> bool:
+        """Queue object transforms to be sent (latest-wins semantics).
+
+        Args:
+            objects: List of (objectId, px, py, pz, rx, ry, rz, rw) tuples.
+
+        Returns:
+            True if enqueued successfully.
+        """
+        if not self._running or not self._dealer_socket:
+            return False
+
+        try:
+            self._object_pose_seq = (self._object_pose_seq + 1) & 0xFFFF
+            payload = serialize_client_objects(self._object_pose_seq, objects)
+
+            # Use latest-wins semantics like transform sending
+            with self._transform_lock:
+                self._latest_object_transform = OutboundPacket(
+                    lane=OutboundLane.TRANSFORM,
+                    room_id=self._room,
+                    payload=payload,
+                )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error queueing object transforms: {e}")
+            return False
+
+    def request_ownership(self, object_id: int) -> bool:
+        """Request ownership of an object.
+
+        Args:
+            object_id: The object identifier.
+
+        Returns:
+            True if enqueued successfully.
+        """
+        if not self._running or not self._dealer_socket or self._client_no is None:
+            return False
+
+        try:
+            self._ownership_seq = (self._ownership_seq + 1) & 0xFFFF
+            payload = serialize_object_owner(
+                object_id, self._client_no, self._ownership_seq
+            )
+            return self._enqueue_control(self._room, payload, msg_type="object_owner")
+        except Exception as e:
+            logger.error(f"Error requesting ownership: {e}")
+            return False
+
+    def release_ownership(self, object_id: int) -> bool:
+        """Release ownership of an object.
+
+        Args:
+            object_id: The object identifier.
+
+        Returns:
+            True if enqueued successfully.
+        """
+        if not self._running or not self._dealer_socket:
+            return False
+
+        try:
+            self._ownership_seq = (self._ownership_seq + 1) & 0xFFFF
+            payload = serialize_object_owner(object_id, 0, self._ownership_seq)
+            return self._enqueue_control(self._room, payload, msg_type="object_owner")
+        except Exception as e:
+            logger.error(f"Error releasing ownership: {e}")
+            return False
+
+    def transfer_ownership(self, object_id: int, target_client_no: int) -> bool:
+        """Transfer ownership of an object to a specific client.
+
+        Args:
+            object_id: The object identifier.
+            target_client_no: New owner's client number.
+
+        Returns:
+            True if enqueued successfully.
+        """
+        if not self._running or not self._dealer_socket:
+            return False
+
+        try:
+            self._ownership_seq = (self._ownership_seq + 1) & 0xFFFF
+            payload = serialize_object_owner(
+                object_id, target_client_no, self._ownership_seq
+            )
+            return self._enqueue_control(self._room, payload, msg_type="object_owner")
+        except Exception as e:
+            logger.error(f"Error transferring ownership: {e}")
+            return False
 
     def rpc(
         self,

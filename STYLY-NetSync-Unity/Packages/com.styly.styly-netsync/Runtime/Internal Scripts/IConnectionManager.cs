@@ -21,6 +21,7 @@ namespace Styly.NetSync
         // Sending
         bool TryEnqueueControl(string roomId, byte[] payload);
         void SetLatestTransform(string roomId, byte[] payload);
+        void SetLatestObjectTransform(string roomId, byte[] payload);
 
         // Discovery
         void StartDiscovery(ServerDiscoveryManager discoveryManager, string roomId);

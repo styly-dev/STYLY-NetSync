@@ -19,6 +19,9 @@ MSG_CLIENT_VAR_SET = 9  # Set client variable
 MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 MSG_CLIENT_POSE = 11
 MSG_ROOM_POSE = 12
+MSG_CLIENT_OBJECTS = 13  # Client object transforms (batch)
+MSG_ROOM_OBJECTS = 14  # Room object transforms broadcast
+MSG_OBJECT_OWNER = 19  # Object ownership change
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -762,6 +765,100 @@ def serialize_client_var_sync(data: dict[str, Any]) -> bytes:
     return bytes(buffer)
 
 
+def serialize_room_objects(
+    broadcast_time: float, objects: list[tuple[int, int, bytes]]
+) -> bytes:
+    """Serialize MSG_ROOM_OBJECTS for server broadcast.
+
+    Args:
+        broadcast_time: Server broadcast timestamp.
+        objects: List of (object_id, owner_client_no, body_bytes_13B).
+
+    Returns:
+        Serialized message bytes.
+    """
+    buf = bytearray()
+    buf.append(MSG_ROOM_OBJECTS)
+    buf.append(PROTOCOL_VERSION)
+    buf.extend(struct.pack("<d", broadcast_time))
+    buf.append(len(objects) & 0xFF)
+
+    for object_id, owner_client_no, body_bytes in objects:
+        buf.extend(struct.pack("<H", object_id))
+        buf.extend(struct.pack("<H", owner_client_no))
+        buf.extend(body_bytes)  # 13B opaque pose data
+
+    return bytes(buf)
+
+
+def serialize_object_owner(object_id: int, new_owner_client_no: int, seq: int) -> bytes:
+    """Serialize MSG_OBJECT_OWNER message.
+
+    Args:
+        object_id: The object identifier.
+        new_owner_client_no: New owner's client number (0 = unowned).
+        seq: Monotonic ownership sequence number.
+
+    Returns:
+        Serialized message bytes.
+    """
+    buf = bytearray(7)
+    buf[0] = MSG_OBJECT_OWNER
+    struct.pack_into("<H", buf, 1, object_id)
+    struct.pack_into("<H", buf, 3, new_owner_client_no)
+    struct.pack_into("<H", buf, 5, seq)
+    return bytes(buf)
+
+
+def serialize_client_objects(
+    pose_seq: int,
+    objects: list[tuple[int, float, float, float, float, float, float, float]],
+) -> bytes:
+    """Serialize MSG_CLIENT_OBJECTS for Python client.
+
+    Args:
+        pose_seq: Pose sequence number.
+        objects: List of (objectId, px, py, pz, rx, ry, rz, rw).
+
+    Returns:
+        Serialized message bytes.
+    """
+    buf = bytearray()
+    buf.append(MSG_CLIENT_OBJECTS)
+    buf.append(PROTOCOL_VERSION)
+    buf.extend(struct.pack("<H", pose_seq & 0xFFFF))
+    buf.append(len(objects) & 0xFF)
+
+    for obj_id, px, py, pz, rx, ry, rz, rw in objects:
+        buf.extend(struct.pack("<H", obj_id))
+        _pack_int24_le(buf, _quantize_signed_int24(px, ABS_POS_SCALE))
+        _pack_int24_le(buf, _quantize_signed_int24(py, ABS_POS_SCALE))
+        _pack_int24_le(buf, _quantize_signed_int24(pz, ABS_POS_SCALE))
+        packed_rot = _compress_quaternion_smallest_three(rx, ry, rz, rw)
+        buf.extend(struct.pack("<I", packed_rot))
+
+    return bytes(buf)
+
+
+_VALID_MSG_TYPES = {
+    MSG_CLIENT_TRANSFORM,
+    MSG_ROOM_TRANSFORM,
+    MSG_RPC,
+    MSG_RPC_SERVER,
+    MSG_RPC_CLIENT,
+    MSG_DEVICE_ID_MAPPING,
+    MSG_GLOBAL_VAR_SET,
+    MSG_GLOBAL_VAR_SYNC,
+    MSG_CLIENT_VAR_SET,
+    MSG_CLIENT_VAR_SYNC,
+    MSG_CLIENT_POSE,
+    MSG_ROOM_POSE,
+    MSG_CLIENT_OBJECTS,
+    MSG_ROOM_OBJECTS,
+    MSG_OBJECT_OWNER,
+}
+
+
 def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     """Deserialize binary data to message type, data, and raw payload
 
@@ -777,7 +874,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_ROOM_POSE:
+    if message_type not in _VALID_MSG_TYPES:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -806,6 +903,13 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_set(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_SYNC:
             return message_type, _deserialize_client_var_sync(data, offset), b""
+        elif message_type == MSG_CLIENT_OBJECTS:
+            header, obj_list = _deserialize_client_objects(data, offset)
+            return message_type, {"header": header, "objects": obj_list}, b""
+        elif message_type == MSG_ROOM_OBJECTS:
+            return message_type, _deserialize_room_objects(data, offset), b""
+        elif message_type == MSG_OBJECT_OWNER:
+            return message_type, _deserialize_object_owner(data, offset), b""
         else:
             # Should not reach here due to validation above
             return message_type, None, b""
@@ -1225,3 +1329,91 @@ def _deserialize_client_var_sync(data: bytes, offset: int) -> dict[str, Any]:
         result["clientVariables"][str(client_no)] = variables
 
     return result
+
+
+def _deserialize_client_objects(
+    data: bytes, offset: int
+) -> tuple[dict[str, Any], list[tuple[int, bytes]]]:
+    """Deserialize MSG_CLIENT_OBJECTS from client.
+
+    Returns:
+        Tuple of (header_dict, object_list).
+        header_dict contains poseSeq.
+        object_list is list of (objectId, body_bytes) where body_bytes is 13B opaque pose data.
+    """
+    protocol = data[offset]
+    offset += 1
+    if protocol != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported object protocol version: {protocol}")
+
+    pose_seq = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    obj_count = data[offset]
+    offset += 1
+
+    header: dict[str, Any] = {"poseSeq": pose_seq}
+    objects: list[tuple[int, bytes]] = []
+
+    for _ in range(obj_count):
+        object_id = struct.unpack("<H", data[offset : offset + 2])[0]
+        offset += 2
+        # 13 bytes: 3x int24 position (9B) + uint32 quaternion (4B)
+        body_bytes = data[offset : offset + 13]
+        offset += 13
+        objects.append((object_id, body_bytes))
+
+    return header, objects
+
+
+def _deserialize_room_objects(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize MSG_ROOM_OBJECTS broadcast."""
+    protocol = data[offset]
+    offset += 1
+    if protocol != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported object protocol version: {protocol}")
+
+    broadcast_time = struct.unpack("<d", data[offset : offset + 8])[0]
+    offset += 8
+    obj_count = data[offset]
+    offset += 1
+
+    objects: list[dict[str, Any]] = []
+    for _ in range(obj_count):
+        object_id = struct.unpack("<H", data[offset : offset + 2])[0]
+        offset += 2
+        owner_client_no = struct.unpack("<H", data[offset : offset + 2])[0]
+        offset += 2
+
+        # Decode position (3x int24 @ ABS_POS_SCALE)
+        px_q, offset = _unpack_int24_le(data, offset)
+        py_q, offset = _unpack_int24_le(data, offset)
+        pz_q, offset = _unpack_int24_le(data, offset)
+        px = _dequantize_signed(px_q, ABS_POS_SCALE)
+        py = _dequantize_signed(py_q, ABS_POS_SCALE)
+        pz = _dequantize_signed(pz_q, ABS_POS_SCALE)
+
+        # Decode rotation (uint32 smallest-three)
+        packed_rot = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
+        rx, ry, rz, rw = _decompress_quaternion_smallest_three(packed_rot)
+
+        objects.append(
+            {
+                "objectId": object_id,
+                "ownerClientNo": owner_client_no,
+                "position": {"x": px, "y": py, "z": pz},
+                "rotation": {"x": rx, "y": ry, "z": rz, "w": rw},
+            }
+        )
+
+    return {"broadcastTime": broadcast_time, "objects": objects}
+
+
+def _deserialize_object_owner(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize MSG_OBJECT_OWNER message."""
+    object_id = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    new_owner = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+    seq = struct.unpack("<H", data[offset : offset + 2])[0]
+    return {"objectId": object_id, "newOwnerClientNo": new_owner, "seq": seq}

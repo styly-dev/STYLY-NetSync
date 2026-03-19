@@ -214,6 +214,34 @@ namespace Styly.NetSync
             return arr;
         }
 
+        // === Object Sync Public API ===
+
+        /// <summary>
+        /// Register a NetSyncObject with the object sync system.
+        /// Called automatically by NetSyncObject.OnEnable.
+        /// </summary>
+        public void RegisterNetSyncObject(NetSyncObject obj)
+        {
+            _objectSyncManager?.Register(obj);
+        }
+
+        /// <summary>
+        /// Unregister a NetSyncObject from the object sync system.
+        /// Called automatically by NetSyncObject.OnDisable.
+        /// </summary>
+        public void UnregisterNetSyncObject(NetSyncObject obj)
+        {
+            _objectSyncManager?.Unregister(obj);
+        }
+
+        /// <summary>
+        /// Get a registered NetSyncObject by its object ID.
+        /// </summary>
+        public NetSyncObject GetNetSyncObject(ushort objectId)
+        {
+            return _objectSyncManager?.GetObject(objectId);
+        }
+
         /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and
@@ -271,6 +299,7 @@ namespace Styly.NetSync
         private AvatarManager _avatarManager;
         private RPCManager _rpcManager;
         private TransformSyncManager _transformSyncManager;
+        private ObjectSyncManager _objectSyncManager;
         private MessageProcessor _messageProcessor;
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
@@ -536,6 +565,9 @@ namespace Styly.NetSync
 
                 // Send transform updates (lower priority, can be dropped if backpressured)
                 SendTransformUpdates();
+
+                // Send object transform updates (same priority as avatar, after avatar)
+                SendObjectTransformUpdates();
             }
 
             // Check for initial sync timeout (important for rooms with no variables)
@@ -601,6 +633,7 @@ namespace Styly.NetSync
             _avatarManager = new AvatarManager(_enableDebugLogs);
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _transformSendRate);
+            _objectSyncManager = new ObjectSyncManager(_connectionManager, _transformSendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
             _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
@@ -733,6 +766,13 @@ namespace Styly.NetSync
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
             OnAvatarDisconnected?.Invoke(clientNo);
+
+            // Release objects owned by the disconnected client (host-only cleanup)
+            if (_objectSyncManager != null)
+            {
+                var aliveClients = GetAliveClients(true);
+                _objectSyncManager.HandleClientDisconnect(clientNo, _roomId, _clientNo, aliveClients);
+            }
         }
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
@@ -980,6 +1020,41 @@ namespace Styly.NetSync
             }
         }
 
+        // === Object Sync Internal Methods ===
+
+        private void SendObjectTransformUpdates()
+        {
+            if (!_connectionManager.IsConnected || _connectionManager.IsConnectionError) return;
+            if (_objectSyncManager == null || _clientNo <= 0) return;
+
+            _objectSyncManager.SendOwnedObjects(_roomId, _clientNo);
+        }
+
+        /// <summary>
+        /// Send an ownership change to the server. Called by NetSyncObject.
+        /// </summary>
+        internal void SendObjectOwnershipChange(ushort objectId, ushort newOwnerClientNo, ushort seq)
+        {
+            if (_objectSyncManager == null) return;
+            _objectSyncManager.SendOwnershipChange(_roomId, objectId, newOwnerClientNo, seq);
+        }
+
+        /// <summary>
+        /// Process incoming room object transforms from server. Called by MessageProcessor.
+        /// </summary>
+        internal void ProcessRoomObjects(RoomObjectData roomData)
+        {
+            _objectSyncManager?.ProcessRoomObjects(roomData);
+        }
+
+        /// <summary>
+        /// Process incoming ownership change from server. Called by MessageProcessor.
+        /// </summary>
+        internal void ProcessOwnershipChange(OwnershipChangeData data)
+        {
+            _objectSyncManager?.ProcessOwnershipChange(data);
+        }
+
         private void LogStatistics()
         {
             // Statistics logging is currently disabled
@@ -1129,6 +1204,8 @@ namespace Styly.NetSync
             _rpcManager = null;
             _transformSyncManager?.Dispose();
             _transformSyncManager = null;
+            _objectSyncManager?.Dispose();
+            _objectSyncManager = null;
             _networkVariableManager?.Dispose();
             _networkVariableManager = null;
         }

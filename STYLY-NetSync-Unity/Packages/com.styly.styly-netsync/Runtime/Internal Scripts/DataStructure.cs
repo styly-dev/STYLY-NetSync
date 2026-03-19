@@ -103,6 +103,47 @@ namespace Styly.NetSync
     }
 
 
+    // Object ownership modes for NetSyncObject
+    public enum ObjectOwnershipMode
+    {
+        /// Ownership transfers to whoever interacts (grabs) the object.
+        LastTouch,
+        /// Ownership transfers only via explicit API call.
+        Explicit
+    }
+
+    // Object transform entry for batch serialization/deserialization
+    internal struct ObjectTransformEntry
+    {
+        public ushort objectId;
+        public ushort ownerClientNo;
+        public Vector3 position;
+        public Quaternion rotation;
+
+        public ObjectTransformEntry(ushort objectId, ushort ownerClientNo, Vector3 position, Quaternion rotation)
+        {
+            this.objectId = objectId;
+            this.ownerClientNo = ownerClientNo;
+            this.position = position;
+            this.rotation = rotation;
+        }
+    }
+
+    // Ownership change data for MSG_OBJECT_OWNER
+    internal struct OwnershipChangeData
+    {
+        public ushort objectId;
+        public ushort newOwnerClientNo;
+        public ushort seq;
+    }
+
+    // Room object data from server (MSG_ROOM_OBJECTS)
+    internal class RoomObjectData
+    {
+        public double broadcastTime;
+        public List<ObjectTransformEntry> objects;
+    }
+
     // Device ID mapping data
     [Serializable]
     internal class DeviceIdMapping

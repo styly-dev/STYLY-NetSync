@@ -22,6 +22,9 @@ namespace Styly.NetSync
         public const byte MSG_CLIENT_VAR_SYNC = 10;  // Sync client variables
         public const byte MSG_CLIENT_POSE = 11;  // Client pose (quaternion + timestamps)
         public const byte MSG_ROOM_POSE = 12;  // Room pose snapshot (quaternion + timestamps)
+        public const byte MSG_CLIENT_OBJECTS = 13;  // Client object transforms (batch)
+        public const byte MSG_ROOM_OBJECTS = 14;    // Room object transforms broadcast
+        public const byte MSG_OBJECT_OWNER = 19;    // Object ownership change
 
         // Transform data type identifiers (deprecated - kept for reference)
         // Protocol v3 pose encoding constants
@@ -563,6 +566,85 @@ namespace Styly.NetSync
             writer.Write((byte)0);
         }
 
+        #region === Object Sync Serialization ===
+
+        // Maximum allowed synced objects per batch
+        private const int MAX_SYNCED_OBJECTS = 255;
+
+        /// <summary>
+        /// Serialize client object transforms into an existing BinaryWriter.
+        /// Wire format: [1B msgType=13][1B protocol=3][2B poseSeq][1B objectCount]
+        ///   per object: [2B objectId][3B posX_i24][3B posY_i24][3B posZ_i24][4B rot_u32]
+        /// </summary>
+        public static void SerializeClientObjectsInto(BinaryWriter writer, ushort poseSeq, List<ObjectTransformEntry> objects)
+        {
+            writer.Write(MSG_CLIENT_OBJECTS);
+            writer.Write(PROTOCOL_VERSION);
+            writer.Write(poseSeq);
+
+            var count = objects != null ? Mathf.Min(objects.Count, MAX_SYNCED_OBJECTS) : 0;
+            writer.Write((byte)count);
+
+            for (int i = 0; i < count; i++)
+            {
+                var obj = objects[i];
+                writer.Write(obj.objectId);
+                var rot = NormalizeQuaternionSafe(obj.rotation);
+                WriteInt24(writer, QuantizeSignedInt24(obj.position.x, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(obj.position.y, ABS_POS_SCALE));
+                WriteInt24(writer, QuantizeSignedInt24(obj.position.z, ABS_POS_SCALE));
+                writer.Write(CompressQuaternionSmallestThree(rot));
+            }
+        }
+
+        /// <summary>
+        /// Serialize ownership change into an existing BinaryWriter.
+        /// Wire format: [1B msgType=19][2B objectId][2B newOwnerClientNo][2B seq]
+        /// </summary>
+        public static void SerializeOwnershipChangeInto(BinaryWriter writer, ushort objectId, ushort newOwnerClientNo, ushort seq)
+        {
+            writer.Write(MSG_OBJECT_OWNER);
+            writer.Write(objectId);
+            writer.Write(newOwnerClientNo);
+            writer.Write(seq);
+        }
+
+        /// <summary>
+        /// Serialize ownership change into a new byte array.
+        /// </summary>
+        public static byte[] SerializeOwnershipChange(ushort objectId, ushort newOwnerClientNo, ushort seq)
+        {
+            using (var ms = new MemoryStream(7))
+            using (var writer = new BinaryWriter(ms))
+            {
+                SerializeOwnershipChangeInto(writer, objectId, newOwnerClientNo, seq);
+                return ms.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Compute FNV-1a 64-bit signature hash for a batch of object transforms.
+        /// Returns 0 if objects is null or empty.
+        /// </summary>
+        internal static ulong ComputeObjectPoseSignature(List<ObjectTransformEntry> objects)
+        {
+            if (objects == null || objects.Count == 0) return 0;
+
+            ulong hash = 14695981039346656037UL;
+            for (int i = 0; i < objects.Count; i++)
+            {
+                var obj = objects[i];
+                HashShort(ref hash, (short)obj.objectId);
+                HashInt24(ref hash, QuantizeSignedInt24(obj.position.x, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(obj.position.y, ABS_POS_SCALE));
+                HashInt24(ref hash, QuantizeSignedInt24(obj.position.z, ABS_POS_SCALE));
+                HashUInt(ref hash, CompressQuaternionSmallestThree(NormalizeQuaternionSafe(obj.rotation)));
+            }
+            return hash;
+        }
+
+        #endregion
+
         #region === Deserialization ===
 
         public static (byte messageType, object data) Deserialize(byte[] bytes)
@@ -577,35 +659,24 @@ namespace Styly.NetSync
             {
                 var messageType = reader.ReadByte();
 
-                // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_ROOM_POSE)
-                {
-                    // Don't throw exception, just return invalid type with null data
-                    // This allows the caller to handle it gracefully
-                    return (messageType, null);
-                }
-
+                // Validate known message types
                 switch (messageType)
                 {
-                    // case MSG_CLIENT_TRANSFORM:
-                    //     return (messageType, DeserializeClientTransform(reader));
                     case MSG_ROOM_POSE:
                         return (messageType, DeserializeRoomTransform(reader));
                     case MSG_RPC:
-                        // RPC message
                         return (messageType, DeserializeRPCMessage(reader));
-                    // MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
                     case MSG_DEVICE_ID_MAPPING:
-                        // Device ID mapping notification
                         return (messageType, DeserializeDeviceIdMapping(reader));
                     case MSG_GLOBAL_VAR_SYNC:
-                        // Global variables sync from server
                         return (messageType, DeserializeGlobalVarSync(reader));
                     case MSG_CLIENT_VAR_SYNC:
-                        // Client variables sync from server
                         return (messageType, DeserializeClientVarSync(reader));
+                    case MSG_ROOM_OBJECTS:
+                        return (messageType, DeserializeRoomObjects(reader));
+                    case MSG_OBJECT_OWNER:
+                        return (messageType, DeserializeOwnershipChange(reader));
                     default:
-                        // This should not happen due to validation above, but keep as safety
                         return (messageType, null);
                 }
             }
@@ -1046,6 +1117,56 @@ namespace Styly.NetSync
 
             data["variables"] = variables.ToArray();
             return data;
+        }
+
+        /// <summary>
+        /// Deserialize MSG_ROOM_OBJECTS broadcast from server.
+        /// Wire format: [1B protocol=3][8B broadcastTime][1B objectCount]
+        ///   per object: [2B objectId][2B ownerClientNo][3B posX_i24][3B posY_i24][3B posZ_i24][4B rot_u32]
+        /// </summary>
+        private static RoomObjectData DeserializeRoomObjects(BinaryReader reader)
+        {
+            var data = new RoomObjectData();
+
+            var protocolVersion = reader.ReadByte();
+            if (protocolVersion != PROTOCOL_VERSION)
+            {
+                throw new InvalidDataException($"Unsupported object protocol version: {protocolVersion}");
+            }
+
+            data.broadcastTime = reader.ReadDouble();
+            var objectCount = reader.ReadByte();
+            data.objects = new List<ObjectTransformEntry>(objectCount);
+
+            for (int i = 0; i < objectCount; i++)
+            {
+                var objectId = reader.ReadUInt16();
+                var ownerClientNo = reader.ReadUInt16();
+                int px = ReadInt24(reader);
+                int py = ReadInt24(reader);
+                int pz = ReadInt24(reader);
+                uint packedRot = reader.ReadUInt32();
+                var position = QuantizedToVector3(px, py, pz, ABS_POS_SCALE);
+                var rotation = DecompressQuaternionSmallestThree(packedRot);
+
+                data.objects.Add(new ObjectTransformEntry(objectId, ownerClientNo, position, rotation));
+            }
+
+            return data;
+        }
+
+        /// <summary>
+        /// Deserialize MSG_OBJECT_OWNER ownership change.
+        /// Wire format: [2B objectId][2B newOwnerClientNo][2B seq]
+        /// </summary>
+        private static OwnershipChangeData DeserializeOwnershipChange(BinaryReader reader)
+        {
+            return new OwnershipChangeData
+            {
+                objectId = reader.ReadUInt16(),
+                newOwnerClientNo = reader.ReadUInt16(),
+                seq = reader.ReadUInt16()
+            };
         }
 
         /// <summary>

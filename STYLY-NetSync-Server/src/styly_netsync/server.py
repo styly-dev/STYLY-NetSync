@@ -338,6 +338,11 @@ class NetSyncServer:
         self.MAX_VAR_NAME_LENGTH = config.max_var_name_length
         self.MAX_VAR_VALUE_LENGTH = config.max_var_value_length
 
+        # Object sync state per room
+        # room_id -> { object_id(int) -> { "owner_client_no": int, "body_bytes": bytes, "last_update": float } }
+        self.room_objects: dict[str, dict[int, dict[str, Any]]] = {}
+        self.room_objects_dirty: dict[str, bool] = {}
+
         # Thread synchronization
         self._rooms_lock = threading.RLock()  # Reentrant lock for nested access
         self._stats_lock = threading.Lock()  # Lock for statistics
@@ -781,6 +786,18 @@ class NetSyncServer:
                 return self.room_device_id_to_client_no[room_id].get(device_id, 0)
         return 0
 
+    def _get_client_no_from_identity(
+        self, client_identity: bytes, room_id: str
+    ) -> int | None:
+        """Get client number from ZMQ client identity by looking up the room entries.
+
+        Returns the client_no if found, or None if the identity is not in the room.
+        """
+        device_id = self._get_device_id_from_identity(client_identity, room_id)
+        if device_id is None:
+            return None
+        return self._get_client_no_for_device_id(room_id, device_id) or None
+
     def _find_reusable_client_no(self, room_id: str) -> int:
         """Find a client number that can be reused (from expired device IDs)"""
         current_time = time.monotonic()
@@ -1072,6 +1089,14 @@ class NetSyncServer:
                                 # Buffer client variable set request (no rate limit drops)
                                 self._buffer_client_var_set(room_id, data)
                                 self._monitor_nv_sliding_window(room_id)
+                            elif msg_type == binary_serializer.MSG_CLIENT_OBJECTS:
+                                self._handle_client_objects(
+                                    client_identity, room_id, data
+                                )
+                            elif msg_type == binary_serializer.MSG_OBJECT_OWNER:
+                                self._handle_object_owner(
+                                    client_identity, room_id, data
+                                )
                             else:
                                 logger.warning(f"Unknown binary msg_type: {msg_type}")
                         except Exception as e:
@@ -1244,6 +1269,114 @@ class NetSyncServer:
     def _extract_transform_body(self, raw_payload: bytes) -> bytes:
         """Extract the transform body without device ID from raw payload."""
         return raw_payload or b""
+
+    def _handle_client_objects(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        data: dict[str, Any] | None,
+    ) -> None:
+        """Handle incoming MSG_CLIENT_OBJECTS from a client."""
+        if data is None:
+            return
+
+        objects: list[tuple[int, bytes]] = data.get("objects", [])
+
+        # Get sender's client_no from identity
+        sender_client_no = self._get_client_no_from_identity(client_identity, room_id)
+        if sender_client_no is None or sender_client_no <= 0:
+            return
+
+        now = time.monotonic()
+
+        with self._rooms_lock:
+            if room_id not in self.room_objects:
+                self.room_objects[room_id] = {}
+
+            room_objs = self.room_objects[room_id]
+
+            for object_id, body_bytes in objects:
+                # Validate ownership: only the owner can update
+                if object_id in room_objs:
+                    existing = room_objs[object_id]
+                    if (
+                        existing["owner_client_no"] != sender_client_no
+                        and existing["owner_client_no"] != 0
+                    ):
+                        continue  # Not the owner, skip
+
+                room_objs[object_id] = {
+                    "owner_client_no": sender_client_no,
+                    "body_bytes": body_bytes,
+                    "last_update": now,
+                }
+
+            self.room_objects_dirty[room_id] = True
+
+    def _handle_object_owner(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        data: dict[str, Any] | None,
+    ) -> None:
+        """Handle ownership change request."""
+        if data is None:
+            return
+
+        object_id: int = data.get("objectId", 0)
+        new_owner: int = data.get("newOwnerClientNo", 0)
+        seq: int = data.get("seq", 0)
+
+        with self._rooms_lock:
+            if room_id not in self.room_objects:
+                self.room_objects[room_id] = {}
+
+            room_objs = self.room_objects[room_id]
+
+            if object_id not in room_objs:
+                room_objs[object_id] = {
+                    "owner_client_no": new_owner,
+                    "body_bytes": b"",
+                    "last_update": time.monotonic(),
+                }
+            else:
+                room_objs[object_id]["owner_client_no"] = new_owner
+
+        # Broadcast ownership change to all clients in the room
+        msg_bytes = binary_serializer.serialize_object_owner(object_id, new_owner, seq)
+        self._send_ctrl_to_room_via_router(room_id, msg_bytes)
+
+    def _broadcast_room_objects(self, room_id: str) -> None:
+        """Broadcast MSG_ROOM_OBJECTS for a room."""
+        with self._rooms_lock:
+            if not self.room_objects_dirty.get(room_id, False):
+                return
+
+            room_objs = self.room_objects.get(room_id, {})
+            if not room_objs:
+                self.room_objects_dirty[room_id] = False
+                return
+
+            # Build object list: (object_id, owner_client_no, body_bytes)
+            obj_list: list[tuple[int, int, bytes]] = []
+            for object_id, obj_data in room_objs.items():
+                body_bytes = obj_data.get("body_bytes", b"")
+                if len(body_bytes) == 13:  # Valid pose data
+                    obj_list.append(
+                        (object_id, obj_data["owner_client_no"], body_bytes)
+                    )
+
+            self.room_objects_dirty[room_id] = False
+
+        if not obj_list:
+            return
+
+        broadcast_time = time.monotonic()
+        msg_bytes = binary_serializer.serialize_room_objects(broadcast_time, obj_list)
+
+        # Broadcast via PUB socket with topic
+        topic = room_id.encode("utf-8")
+        self._enqueue_pub_latest(topic, msg_bytes)
 
     def _send_rpc_to_room(self, room_id: str, rpc_data: dict[str, Any]) -> None:
         """Send RPC to target clients in room via ROUTER unicast.
@@ -1820,6 +1953,7 @@ class NetSyncServer:
 
         for room_id, client_snapshot in rooms_to_broadcast:
             self._broadcast_room(room_id, client_snapshot)
+            self._broadcast_room_objects(room_id)
 
     def _enqueue_pub_latest(self, topic_bytes: bytes, message_bytes: bytes) -> None:
         """Latest-only coalescing enqueue for high-rate topics (e.g., room transforms)."""
@@ -1900,6 +2034,23 @@ class NetSyncServer:
                         # Clean up binary cache by client number
                         if client_no and client_no in self.client_transform_body_cache:
                             del self.client_transform_body_cache[client_no]
+                        # Release ownership of objects owned by this client
+                        if client_no:
+                            for obj_id, obj_data in list(
+                                self.room_objects.get(room_id, {}).items()
+                            ):
+                                if obj_data["owner_client_no"] == client_no:
+                                    obj_data["owner_client_no"] = 0
+                                    # Broadcast ownership release
+                                    msg_bytes = (
+                                        binary_serializer.serialize_object_owner(
+                                            obj_id, 0, 0
+                                        )
+                                    )
+                                    self._send_ctrl_to_room_via_router(
+                                        room_id, msg_bytes
+                                    )
+                            self.room_objects_dirty[room_id] = True
                         # Note: We don't remove device ID->clientNo mapping here
                         # It will be cleaned up after DEVICE_ID_EXPIRY_TIME
                         logger.info(
