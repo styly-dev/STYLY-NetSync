@@ -87,24 +87,27 @@ namespace Styly.NetSync.Editor
                 {
                     EditorGUI.indentLevel++;
 
-                    foreach (var propertyName in AdvancedPropertyOrder)
+                    using (new EditorGUI.DisabledScope(EditorApplication.isPlaying))
                     {
-                        if (!advancedPropertyPaths.Contains(propertyName))
+                        foreach (var propertyName in AdvancedPropertyOrder)
                         {
-                            continue;
-                        }
-
-                        var property = serializedObject.FindProperty(propertyName);
-                        if (property != null)
-                        {
-                            // Custom label for transform send rate
-                            if (propertyName == "_transformSendRate")
+                            if (!advancedPropertyPaths.Contains(propertyName))
                             {
-                                EditorGUILayout.PropertyField(property, new GUIContent("Transform Send Rate (Hz)", property.tooltip), true);
+                                continue;
                             }
-                            else
+
+                            var property = serializedObject.FindProperty(propertyName);
+                            if (property != null)
                             {
-                                EditorGUILayout.PropertyField(property, true);
+                                // Custom label for transform send rate
+                                if (propertyName == "_transformSendRate")
+                                {
+                                    EditorGUILayout.PropertyField(property, new GUIContent("Transform Send Rate (Hz)", property.tooltip), true);
+                                }
+                                else
+                                {
+                                    EditorGUILayout.PropertyField(property, true);
+                                }
                             }
                         }
                     }
