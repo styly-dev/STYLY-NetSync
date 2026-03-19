@@ -172,10 +172,6 @@ namespace Styly.NetSync.Internal
                 _selfTransform.localPosition = _handTransform.localPosition;
                 _selfTransform.localRotation = _handTransform.localRotation;
 
-                if (_enableDebugLog)
-                {
-                    Debug.Log($"[HandPoseNormalizer] {_handedness}: pos={_selfTransform.localPosition:F4}, rot={_selfTransform.localRotation.eulerAngles:F2}");
-                }
             }
             else
             {
