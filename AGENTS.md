@@ -2,208 +2,89 @@
 
 ## Repository Structure
 
-STYLY-NetSync is a Unity multiplayer framework for Location-Based Entertainment (LBE) VR/AR experiences. The repository contains two main components:
+STYLY-NetSync is a Unity multiplayer framework for Location-Based Entertainment (LBE) VR/AR experiences.
 
 - **STYLY-NetSync-Server/**: Python server using ZeroMQ for networking
 - **STYLY-NetSync-Unity/**: Unity package with client implementation
 
 ## XR-Specific Design Considerations
 
-STYLY-NetSync is designed exclusively for XR (VR/MR/AR) applications. This has important implications:
+STYLY-NetSync is designed exclusively for XR (VR/MR/AR) applications:
 
-- **High-Frequency Tracking Inputs**: XR head and hand poses can change every frame, but outgoing network data is quantized and filtered before sending.
 - **Motion-Adaptive Sending**: Transform sending uses `SendRate` as an upper bound with `Only-on-change` filtering plus a `1Hz` heartbeat while idle.
-- **Bandwidth Planning**: Capacity planning should assume motion-dependent traffic with an idle heartbeat floor, not continuous full-payload flow.
+- **Bandwidth Planning**: Assume motion-dependent traffic with an idle heartbeat floor, not continuous full-payload flow.
 
-## Development Commands
+## Quick Start
 
-### Python Server (STYLY-NetSync-Server/)
+### Python Server
 
 ```bash
-# Setup
 cd STYLY-NetSync-Server
-pip install -e .                    # Install package with dependencies
-pip install -e ".[dev]"             # Install with dev dependencies (pytest, black, ruff, mypy)
-
-# Running server - CLI entry points (recommended)
-styly-netsync-server                # Main server command
-styly-netsync-server --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999
-styly-netsync-server --no-server-discovery  # Without UDP discovery
-
-# Alternative: module execution
-python -m styly_netsync
-
-# Load testing
-styly-netsync-simulator --clients 50 --server localhost --room default_room
-styly-netsync-simulator --clients 100 --transform-send-rate 60  # Custom rate
-python src/styly_netsync/client_simulator.py --clients 50
-
-# Development tools (ALWAYS run before committing)
-black src/ tests/                   # Format code
-ruff check src/ tests/              # Lint code
-mypy src/                           # Type check
-pytest                              # Run tests
-pytest --cov=src                    # Run tests with coverage
-
-# Complete quality pipeline
-black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest
-
-# Port management
-lsof -i :5555                       # Check port conflicts (macOS/Linux)
-netstat -ano | findstr :5555        # Check port conflicts (Windows)
-kill <PID>                          # Kill process using port
+pip install -e ".[dev]"
+styly-netsync-server
+# Quality pipeline (run before committing)
+black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 ```
 
-### Unity Client (STYLY-NetSync-Unity/)
+### Unity Client
 
-- Build and test using Unity Editor (Unity 6)
+- Open `STYLY-NetSync-Unity/` in Unity 6
 - Main package: `Packages/com.styly.styly-netsync/`
 - Test scenes: `Assets/Samples_Dev/Demo-01/` and `Assets/Samples_Dev/Debug/`
-- Package samples: `Packages/com.styly.styly-netsync/Samples~/SimpleDemos/`
 
 ## Architecture Overview
 
-### Core Components
+- **Server**: Multi-threaded Python (receive, periodic, discovery threads) with ZeroMQ DEALER-ROUTER + PUB-SUB and group-based room management
+- **Unity Client**: Manager pattern with internal components (connection, transform sync, RPC, network variables, avatars)
+- **Protocol**: Binary v3 with quantized positions and smallest-three quaternion compression
+- **Technology**: Python 3.11+ / pyzmq / FastAPI / msgpack (server), Unity 6 / NetMQ / Newtonsoft.Json (client)
 
-**Server (Python):**
-- `server.py` - Main server with multi-threaded architecture and room management
-- `binary_serializer.py` - Protocol v3 binary serializer (quantized positions + 32-bit smallest-three quaternion compression + head-relative pose encoding)
-- `client.py` - Python client API (`net_sync_manager` class) for non-Unity clients
-- `client_simulator.py` - Load testing tool for performance validation
-- `rest_bridge.py` - FastAPI-based REST API bridge for external integrations
-- `types.py` - Core data types (transform_data, client_transform_data, room_snapshot)
-- `nv_sync.py` - Network variable synchronization utilities
-- `cli.py` - CLI entry point wrapper
+## Protocol Rules
 
-**Unity Client:**
-- `NetSyncManager.cs` - Main singleton entry point and API
-- `NetSyncAvatar.cs` - Component for avatar synchronization
-- `Internal Scripts/` - Core networking components:
-  - `ConnectionManager.cs` - ZeroMQ socket management and threading
-  - `MessageProcessor.cs` - Binary protocol message handling
-  - `TransformSyncManager.cs` - Position/rotation synchronization with SendRate cap, only-on-change filtering, and 1Hz idle heartbeat
-  - `RPCManager.cs` - Remote procedure call system with priority-based sending and targeted delivery by client number
-  - `NetworkVariableManager.cs` - Synchronized key-value storage
-  - `AvatarManager.cs` - Player spawn/despawn management
-  - `ServerDiscoveryManager.cs` - UDP discovery service client
-  - `HumanPresenceManager.cs` - Collision avoidance visualization
-  - `BinarySerializer.cs` - Binary protocol serialization/deserialization
-  - `OutboundPacket.cs` - Outbound send queue with priority lanes
-  - `SendOutcome.cs` - Result type for send operations (Sent/Backpressure/Fatal)
-  - `DataStructure.cs` - Core data structures for networking
-  - `NetSyncSmoothing.cs` - Transform smoothing and interpolation
-  - `NetSyncTransformApplier.cs` - Transform application with snapshot interpolation
-  - `HandPoseNormalizer.cs` - Hand pose normalization utilities
-  - `Information.cs` - Version handling and compatibility checking
-  - `NetMQLifecycle.cs` - NetMQ lifecycle management
-  - `ReusableBufferWriter.cs` - Memory-efficient buffer writing
-- `Util Scripts/` - Utility components:
-  - `BodyTransformSolver.cs` - Body transform solving utilities
-  - `NetworkUtils.cs` - Network utility functions
-
-### Protocol Details
-
-- Uses ZeroMQ with DEALER-ROUTER and PUB-SUB patterns
-- Transform protocol is `protocolVersion=3` only (`v2` compatibility removed)
-- Transform message IDs are `MSG_CLIENT_POSE=11` and `MSG_ROOM_POSE=12`
-- Compact transform encoding: int16 quantized positions, yaw-only physical rotation (`0.1°` units), and 32-bit smallest-three quaternion compression
-- `Head` is absolute; `Right/Left/Virtual` transforms are encoded relative to `Head`
-- Server relays cached raw client pose bodies to minimize reserialization work
-- UDP discovery service for automatic server finding (port 9999)
-- Adaptive broadcasting (1-120Hz) with thread-safe design
+- Transform protocol is `protocolVersion=3` only (`v2` removed)
+- Message IDs: `MSG_CLIENT_POSE=11`, `MSG_ROOM_POSE=12`
+- `Head` is absolute; `Right/Left/Virtual` are head-relative
+- Position quantization: absolute `int24 @ 0.01m`, head-relative `int16 @ 0.005m`; out-of-range values clamped
+- Quaternion: 32-bit smallest-three compression
+- Server relays raw client pose body bytes (opaque relay, no decode)
+- **Do NOT use `ZMQ_CONFLATE`**: It corrupts 2-frame multipart messages (topic + payload). Implement conflate-like behavior at the application level.
 - Priority-based sending: Control messages (RPC, Network Variables) prioritized over Transform updates
-- RPC targeting: RPCs can be broadcast to all clients (default) or sent to specific clients by client number
 
-#### ZeroMQ Important Notes
+### Backward Compatibility Policy
 
-- **Do NOT use `ZMQ_CONFLATE` option**: This option does not support multipart messages. Since the current implementation uses 2-frame multipart messages (topic + payload), enabling `ZMQ_CONFLATE` will corrupt messages. If you need conflate-like behavior (keeping only the latest message), implement it at the application level instead.
+- Network protocol changes do NOT require backward compatibility — deploy server and clients together
+- Avoid unnecessary breaking changes to non-networking code
+- Always notify the user of breaking changes
 
-#### Backward Compatibility Policy
+## Unity–Python Feature Parity
 
-- **Network protocol changes do NOT require backward compatibility**: When modifying communication-related code (binary protocol, message formats, serialization), backward compatibility with older versions is not required.
-- **Avoid unnecessary breaking changes**: Do not introduce breaking changes to non-networking code without good reason.
-- **Always notify the user of breaking changes**: If a code modification breaks backward compatibility, clearly inform the user about the change and its impact.
+The Python client (`client.py`) and Unity client (`NetSyncManager.cs` + internal managers) must maintain feature parity. When modifying one side, check whether the other needs the same change.
 
-### Key Architectural Patterns
+Key mappings: `NetSyncManager.cs` ↔ `client.py`, `ConnectionManager.cs` ↔ connection in `client.py`, `BinarySerializer.cs` ↔ `binary_serializer.py`, `RPCManager.cs`/`NetworkVariableManager.cs` ↔ RPC/NV in `client.py`
 
-- **Server**: Multi-threaded (receive, periodic, discovery threads) with group-based room management
-- **Unity**: Manager pattern with internal components handling specific concerns
-- **Networking**: Binary protocol with efficient serialization
-- **Synchronization**: Transform, RPC, Network Variables, Device ID Mapping
+## Coding Rules
 
-### Unity–Python Feature Parity
-
-The Python client (`net_sync_manager` in `client.py`) and the Unity client (`NetSyncManager.cs` + internal managers) must maintain feature parity for all shared functionality (connection, discovery, transform sync, RPC, network variables, stealth mode, etc.).
-
-- **When adding or modifying a feature on one side, check whether the other side needs the same change.** If parity is missing, implement it or file an issue.
-- **Key counterpart mappings:**
-  - `NetSyncManager.cs` ↔ `client.py` (`net_sync_manager`)
-  - `ConnectionManager.cs` ↔ connection logic in `client.py`
-  - `ServerDiscoveryManager.cs` ↔ discovery logic in `client.py`
-  - `BinarySerializer.cs` ↔ `binary_serializer.py`
-  - `RPCManager.cs` / `NetworkVariableManager.cs` ↔ RPC/NV logic in `client.py`
-  - `server.py` has no Unity counterpart (server-only)
-
-## Technology Stack
-
-### Server
-- **Python**: 3.11+ required
-- **ZeroMQ**: pyzmq >= 26.0.0
-- **REST API**: FastAPI >= 0.115.0, uvicorn >= 0.30.0
-- **Serialization**: msgpack >= 1.0.5
-- **System**: psutil >= 5.9.0
-
-### Unity Client
-- **Unity**: Unity 6
-- **NetMQ** (ZeroMQ for Unity)
-- **Newtonsoft.Json**
-- **STYLY XR Rig**
-- **Device ID Provider**
-- **XR Core Utils**
-- **STYLY Shader Collection URP**
-
-## Unity C# Coding Rules (CRITICAL)
+### Unity C# (CRITICAL)
 
 - **Never use null propagation (`?.` / `??`) with UnityEngine.Object types**
-  - Bad: `return transform?.position;`
-  - Good: `return transform != null ? transform.position : Vector3.zero;`
-- All Unity API calls must be on main thread - no background thread access
-- Use explicit null checks instead of null propagation operators
-- Follow namespace conventions: `Styly.NetSync` (public) / `Styly.NetSync.Internal` (internal)
+- All Unity API calls must be on main thread — no background thread access
 - Do not add `.meta` files manually
+- Namespace: `Styly.NetSync` (public) / `Styly.NetSync.Internal` (internal)
+- Naming: private fields `_camelCase`, public `PascalCase`, 4-space indent
 
-## Coding Style & Naming Conventions
+### Python
 
-- **Python**: Black line length 88; Ruff enabled; MyPy with strict options (see `pyproject.toml`). Use 4-space indentation; name modules `snake_case`, classes `PascalCase`, functions `snake_case`.
-- **C# (Unity)**: 4-space indentation; `PascalCase` for public members/types, `camelCase` for fields/locals; prefix serialized private fields with `[SerializeField]` and `private`.
+- Black (88 chars), Ruff, MyPy strict; `snake_case` functions, `PascalCase` classes
 
-## Commit & Pull Request Guidelines
+## Commit & PR Guidelines
 
-- Use Conventional Commits (e.g., `feat: ...`, `fix: ...`, `refactor: ...`). Keep subject ≤72 chars; reference issues (`gh issue view <id>`), and let PR titles mirror the intent.
-- Target PRs to `develop`. Manual PRs to `main` are blocked; use the release workflow: `.github/workflows/release-workflow.yml`.
-- PR checklist: clear description, linked issues, test evidence (logs/screenshots or short screen capture for Unity), and changelog-worthy notes.
-- Use GitHub CLI for repository data (issues/PRs/releases): e.g., `gh pr create`, `gh issue list`.
-
-## Security & Configuration
-
-- Avoid committing secrets; use environment variables or Unity ProjectSettings where appropriate.
+- Conventional Commits (`feat:`, `fix:`, `refactor:`); subject ≤72 chars
+- Target PRs to `develop`; manual PRs to `main` are blocked (use release workflow)
+- PR checklist: description, linked issues, test evidence (logs/screenshots)
 
 ## Task Completion Checklist
 
-Before submitting code:
-
-**Python Server:**
-1. `black src/ tests/` (format)
-2. `ruff check src/ tests/` (lint)
-3. `mypy src/` (type check)
-4. `pytest` (tests)
-
-**Unity Client:**
-1. Verify compilation in Unity Editor
-2. Test in demo scenes
-3. Check console for errors
-
-**Both:**
-- Commit with descriptive messages
-- For protocol changes, verify full Unity+Server rollout instead of backward compatibility
-- Test server-client integration
+- **Python**: `black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest`
+- **Unity**: Verify compilation, test in demo scenes, check console for errors
+- **Both**: Commit with descriptive messages; test server-client integration when applicable
+- Avoid committing secrets
