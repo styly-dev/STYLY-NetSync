@@ -603,7 +603,14 @@ namespace Styly.NetSync
 
             while (_pendingMainThreadActions.TryDequeue(out var action))
             {
-                action();
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
             }
         }
     }
