@@ -10,6 +10,9 @@ namespace Styly.NetSync
 {
     internal class MessageProcessor
     {
+        // Thread-safe log queue: network thread enqueues, main thread drains in ProcessMessageQueue
+        private readonly ConcurrentQueue<(bool isError, string message)> _pendingLogs = new();
+
         // General-purpose message queue (RPC, variable sync, etc.)
         private readonly ConcurrentQueue<NetworkMessage> _messageQueue = new();
 
@@ -80,7 +83,7 @@ namespace Styly.NetSync
                 var (msgType, data) = BinarySerializer.Deserialize(payload);
                 if (data == null)
                 {
-                    if (_logNetworkTraffic) { Debug.LogWarning("Deserialize => null"); }
+                    if (_logNetworkTraffic) { _pendingLogs.Enqueue((false, "Deserialize => null")); }
                     return;
                 }
 
@@ -128,25 +131,23 @@ namespace Styly.NetSync
                         break;
 
                     default:
-                        if (_logNetworkTraffic) { Debug.LogWarning($"Unhandled type: {msgType}"); }
+                        if (_logNetworkTraffic) { _pendingLogs.Enqueue((false, $"Unhandled type: {msgType}")); }
                         break;
                 }
             }
             catch (Exception ex)
             {
-                // Log error with more context for debugging
-                Debug.LogError($"Binary parse error: {ex.Message}");
+                // Queue logs for main thread (Debug.Log* is not safe from background threads)
+                _pendingLogs.Enqueue((true, $"Binary parse error: {ex.Message}"));
 
-                // Log first few bytes of payload for debugging
                 if (payload != null && payload.Length > 0)
                 {
                     var hexDump = BitConverter.ToString(payload.Take(Math.Min(32, payload.Length)).ToArray());
-                    Debug.LogError($"First bytes of problematic payload: {hexDump} (length: {payload.Length})");
+                    _pendingLogs.Enqueue((true, $"First bytes of problematic payload: {hexDump} (length: {payload.Length})"));
 
-                    // Log the message type byte specifically
                     if (payload.Length >= 1)
                     {
-                        Debug.LogError($"Message type byte: {payload[0]} (0x{payload[0]:X2})");
+                        _pendingLogs.Enqueue((true, $"Message type byte: {payload[0]} (0x{payload[0]:X2})"));
                     }
                 }
             }
@@ -154,6 +155,15 @@ namespace Styly.NetSync
 
         public void ProcessMessageQueue(AvatarManager avatarManager, RPCManager rpcManager, string localDeviceId, NetSyncManager netSyncManager = null, NetworkVariableManager networkVariableManager = null)
         {
+            // Drain logs queued by the network thread
+            while (_pendingLogs.TryDequeue(out var logEntry))
+            {
+                if (logEntry.isError)
+                    Debug.LogError(logEntry.message);
+                else
+                    Debug.LogWarning(logEntry.message);
+            }
+
             // First, flush room transforms (bounded by MaxRoomTransformUpdatesQueueSize)
             // Purpose: ensure latest room state is applied promptly without starving other messages.
             while (_roomTransformQueue.TryDequeue(out var room))

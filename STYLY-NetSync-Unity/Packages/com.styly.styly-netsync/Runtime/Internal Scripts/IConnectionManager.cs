@@ -14,6 +14,9 @@ namespace Styly.NetSync
         bool IsConnectionError { get; }
         void ClearConnectionError();
 
+        // Main-thread drain for logs and callbacks queued by the network thread
+        void DrainMainThreadActions();
+
         // Exception diagnostics
         Exception LastException { get; }
         long LastExceptionAtUnixMs { get; }

@@ -30,6 +30,7 @@ namespace Styly.NetSync
         }
 
         public void ClearConnectionError() { }
+        public void DrainMainThreadActions() { }
         public bool TryEnqueueControl(string roomId, byte[] payload) => true;
         public void SetLatestTransform(string roomId, byte[] payload) { }
         public void StartDiscovery(ServerDiscoveryManager discoveryManager, string roomId) { }

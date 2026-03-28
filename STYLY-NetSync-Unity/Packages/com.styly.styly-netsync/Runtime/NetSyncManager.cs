@@ -515,6 +515,12 @@ namespace Styly.NetSync
 
             HandleDiscovery();
 
+            // Drain network-thread logs and callbacks on main thread
+            if (_connectionManager != null)
+            {
+                _connectionManager.DrainMainThreadActions();
+            }
+
             // Process pending connection errors BEFORE reconnection logic
             ProcessPendingConnectionErrorOnMainThread();
 

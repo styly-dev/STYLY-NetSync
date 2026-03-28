@@ -979,11 +979,17 @@ class NetSyncServer:
         self._rest_server = None
 
         if self.receive_thread:
-            self.receive_thread.join()
-            logger.info("Receive thread stopped")
+            self.receive_thread.join(timeout=5.0)
+            if self.receive_thread.is_alive():
+                logger.warning("Receive thread did not stop within timeout")
+            else:
+                logger.info("Receive thread stopped")
         if self.periodic_thread:
-            self.periodic_thread.join()
-            logger.info("Periodic thread stopped")
+            self.periodic_thread.join(timeout=5.0)
+            if self.periodic_thread.is_alive():
+                logger.warning("Periodic thread did not stop within timeout")
+            else:
+                logger.info("Periodic thread stopped")
 
         # Stop Publisher thread
         self._publisher_running = False
@@ -1000,8 +1006,11 @@ class NetSyncServer:
             except Full:
                 pass
         if self._publisher_thread:
-            self._publisher_thread.join()
-            logger.info("Publisher thread stopped")
+            self._publisher_thread.join(timeout=5.0)
+            if self._publisher_thread.is_alive():
+                logger.warning("Publisher thread did not stop within timeout")
+            else:
+                logger.info("Publisher thread stopped")
 
         if self.router:
             self.router.close()
@@ -1743,19 +1752,26 @@ class NetSyncServer:
                 # Log status periodically
                 if current_time - last_log >= self.STATUS_LOG_INTERVAL:
                     # Count normal and stealth clients separately
+                    # Take snapshot under lock to avoid RuntimeError from concurrent mutation
+                    with self._rooms_lock:
+                        rooms_snapshot = {
+                            rid: list(clients.values())
+                            for rid, clients in self.rooms.items()
+                        }
+                        total_device_ids = len(self.device_id_last_seen)
+                        num_rooms = len(self.rooms)
+
                     normal_clients = 0
                     stealth_clients = 0
-                    for room in self.rooms.values():
-                        for client in room.values():
+                    for clients in rooms_snapshot.values():
+                        for client in clients:
                             if client.get("is_stealth", False):
                                 stealth_clients += 1
                             else:
                                 normal_clients += 1
 
-                    total_device_ids = len(self.device_id_last_seen)
-
                     logger.info(
-                        f"Status: {len(self.rooms)} rooms, {normal_clients} normal clients, "
+                        f"Status: {num_rooms} rooms, {normal_clients} normal clients, "
                         f"{stealth_clients} stealth clients, "
                         f"{total_device_ids} tracked device IDs"
                     )
