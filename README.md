@@ -154,6 +154,8 @@ The uvx command automatically downloads the package, creates an isolated virtual
   </tbody>
 </table>
 
+> **Note:** On HMD, a media access permission dialog may appear on the first launch. This is required by [Device-ID-Provider](https://github.com/styly-dev/Device-ID-Provider) to generate a stable device ID that persists across app reinstalls and remains consistent across different app vendors on the same device. The ID is stored as a small file in MediaStore. If permission is denied, the system falls back to `SystemInfo.deviceUniqueIdentifier`.
+
 
 ## Unity C# API Reference
 
