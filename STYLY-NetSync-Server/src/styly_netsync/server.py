@@ -1305,8 +1305,11 @@ class NetSyncServer:
                     ):
                         continue  # Not the owner, skip
 
+                prev = room_objs.get(object_id)
+                prev_seq: int = prev["owner_seq"] if prev else 0
                 room_objs[object_id] = {
                     "owner_client_no": sender_client_no,
+                    "owner_seq": prev_seq,
                     "body_bytes": body_bytes,
                     "last_update": now,
                 }
@@ -1336,11 +1339,13 @@ class NetSyncServer:
             if object_id not in room_objs:
                 room_objs[object_id] = {
                     "owner_client_no": new_owner,
+                    "owner_seq": seq,
                     "body_bytes": b"",
                     "last_update": time.monotonic(),
                 }
             else:
                 room_objs[object_id]["owner_client_no"] = new_owner
+                room_objs[object_id]["owner_seq"] = seq
 
         # Broadcast ownership change to all clients in the room
         msg_bytes = binary_serializer.serialize_object_owner(object_id, new_owner, seq)
@@ -2040,11 +2045,15 @@ class NetSyncServer:
                                 self.room_objects.get(room_id, {}).items()
                             ):
                                 if obj_data["owner_client_no"] == client_no:
+                                    release_seq = (
+                                        obj_data.get("owner_seq", 0) + 1
+                                    ) & 0xFFFF
                                     obj_data["owner_client_no"] = 0
-                                    # Broadcast ownership release
+                                    obj_data["owner_seq"] = release_seq
+                                    # Broadcast ownership release with incremented seq
                                     msg_bytes = (
                                         binary_serializer.serialize_object_owner(
-                                            obj_id, 0, 0
+                                            obj_id, 0, release_seq
                                         )
                                     )
                                     self._send_ctrl_to_room_via_router(
@@ -2111,6 +2120,12 @@ class NetSyncServer:
                     # Clean up empty room tracking
                     if room_id in self.room_empty_since:
                         del self.room_empty_since[room_id]
+
+                    # Clean up object sync structures
+                    if room_id in self.room_objects:
+                        del self.room_objects[room_id]
+                    if room_id in self.room_objects_dirty:
+                        del self.room_objects_dirty[room_id]
 
                     # Clean up NV-related structures
                     if room_id in self.global_variables:

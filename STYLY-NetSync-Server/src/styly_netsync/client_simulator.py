@@ -45,12 +45,15 @@ import zmq
 
 # Import public APIs from styly_netsync module
 from styly_netsync.binary_serializer import (
+    MSG_CLIENT_OBJECTS,
     MSG_CLIENT_POSE,
     MSG_CLIENT_VAR_SET,
     MSG_CLIENT_VAR_SYNC,
     MSG_DEVICE_ID_MAPPING,
     MSG_GLOBAL_VAR_SET,
     MSG_GLOBAL_VAR_SYNC,
+    MSG_OBJECT_OWNER,
+    MSG_ROOM_OBJECTS,
     MSG_ROOM_POSE,
     MSG_RPC,
     deserialize,
@@ -84,12 +87,15 @@ def euler_to_quaternion(
 MESSAGE_TYPE_NAMES: dict[int, str] = {
     MSG_CLIENT_POSE: "CLIENT_POSE",
     MSG_ROOM_POSE: "ROOM_POSE",
+    MSG_CLIENT_OBJECTS: "CLIENT_OBJECTS",
+    MSG_ROOM_OBJECTS: "ROOM_OBJECTS",
     MSG_RPC: "RPC",
     MSG_DEVICE_ID_MAPPING: "DEVICE_ID_MAPPING",
     MSG_GLOBAL_VAR_SET: "GLOBAL_VAR_SET",
     MSG_GLOBAL_VAR_SYNC: "GLOBAL_VAR_SYNC",
     MSG_CLIENT_VAR_SET: "CLIENT_VAR_SET",
     MSG_CLIENT_VAR_SYNC: "CLIENT_VAR_SYNC",
+    MSG_OBJECT_OWNER: "OBJECT_OWNER",
 }
 
 # ============================================================================

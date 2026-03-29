@@ -1,7 +1,6 @@
 // ObjectSyncManager.cs - Manages high-frequency transform synchronization for non-avatar objects
 using System;
 using System.Collections.Generic;
-using System.IO;
 using UnityEngine;
 
 namespace Styly.NetSync
@@ -22,7 +21,6 @@ namespace Styly.NetSync
         private readonly List<ObjectTransformEntry> _dirtyEntries = new List<ObjectTransformEntry>(64);
 
         // Send rate control
-        private float _lastSendTime;
         private ushort _poseSeq;
         private bool _hasLastSignature;
         private ulong _lastSignature;
@@ -86,6 +84,14 @@ namespace Styly.NetSync
         {
             _registry.TryGetValue(objectId, out var obj);
             return obj;
+        }
+
+        /// <summary>
+        /// Returns true if enough time has elapsed since the last send to respect the configured SendRate.
+        /// </summary>
+        public bool ShouldSend(float currentTime)
+        {
+            return currentTime - _lastSentTime >= 1f / SendRate;
         }
 
         /// <summary>

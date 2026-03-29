@@ -23,7 +23,7 @@ namespace Styly.NetSync
 
         [Header("Events")]
         [Tooltip("Fired when ownership changes. Args: (oldOwnerClientNo, newOwnerClientNo)")]
-        public UnityEvent<int, int> OnOwnershipChanged;
+        public UnityEvent<int, int> OnOwnershipChanged = new UnityEvent<int, int>();
 
         // Runtime state
         private int _ownerClientNo;
@@ -140,8 +140,13 @@ namespace Styly.NetSync
         {
             if (_ownerClientNo != ownerClientNo)
             {
-                // Server broadcast is informational; ownership change messages are authoritative
-                // Only update if we don't have a pending local ownership claim
+                // Server room broadcast acts as a fallback reconciliation path.
+                // Accept if we have no local ownership (unowned or not locally owned).
+                // This ensures late-joining clients converge on the correct owner.
+                if (!IsLocallyOwned)
+                {
+                    SetOwnership(ownerClientNo, _ownershipSeq);
+                }
             }
         }
 

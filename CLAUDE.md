@@ -80,12 +80,14 @@ kill <PID>                          # Kill process using port
 **Unity Client:**
 - `NetSyncManager.cs` - Main singleton entry point and API
 - `NetSyncAvatar.cs` - Component for avatar synchronization
+- `NetSyncObject.cs` - Component for non-avatar object synchronization with ownership model
 - `Internal Scripts/` - Core networking components:
   - `ConnectionManager.cs` - ZeroMQ socket management and threading
   - `MessageProcessor.cs` - Binary protocol message handling
   - `TransformSyncManager.cs` - Position/rotation synchronization with SendRate cap, only-on-change filtering, and 1Hz idle heartbeat
   - `RPCManager.cs` - Remote procedure call system with priority-based sending and targeted delivery by client number
   - `NetworkVariableManager.cs` - Synchronized key-value storage
+  - `ObjectSyncManager.cs` - Non-avatar object transform synchronization with ownership
   - `AvatarManager.cs` - Player spawn/despawn management
   - `ServerDiscoveryManager.cs` - UDP discovery service client
   - `HumanPresenceManager.cs` - Collision avoidance visualization
@@ -108,6 +110,7 @@ kill <PID>                          # Kill process using port
 - Uses ZeroMQ with DEALER-ROUTER and PUB-SUB patterns
 - Transform protocol is `protocolVersion=3` only (`v2` compatibility removed)
 - Transform message IDs are `MSG_CLIENT_POSE=11` and `MSG_ROOM_POSE=12`
+- Object sync message IDs are `MSG_CLIENT_OBJECTS=13`, `MSG_ROOM_OBJECTS=14`, and `MSG_OBJECT_OWNER=19`
 - Compact transform encoding: int16 quantized positions, yaw-only physical rotation (`0.1°` units), and 32-bit smallest-three quaternion compression
 - `Head` is absolute; `Right/Left/Virtual` transforms are encoded relative to `Head`
 - Server relays cached raw client pose bodies to minimize reserialization work
@@ -131,7 +134,7 @@ kill <PID>                          # Kill process using port
 - **Server**: Multi-threaded (receive, periodic, discovery threads) with group-based room management
 - **Unity**: Manager pattern with internal components handling specific concerns
 - **Networking**: Binary protocol with efficient serialization
-- **Synchronization**: Transform, RPC, Network Variables, Device ID Mapping
+- **Synchronization**: Transform, Object Sync (with ownership), RPC, Network Variables, Device ID Mapping
 
 ### Unity–Python Feature Parity
 
@@ -144,6 +147,7 @@ The Python client (`net_sync_manager` in `client.py`) and the Unity client (`Net
   - `ServerDiscoveryManager.cs` ↔ discovery logic in `client.py`
   - `BinarySerializer.cs` ↔ `binary_serializer.py`
   - `RPCManager.cs` / `NetworkVariableManager.cs` ↔ RPC/NV logic in `client.py`
+  - `ObjectSyncManager.cs` / `NetSyncObject.cs` ↔ object sync logic in `client.py`
   - `server.py` has no Unity counterpart (server-only)
 
 ## Technology Stack

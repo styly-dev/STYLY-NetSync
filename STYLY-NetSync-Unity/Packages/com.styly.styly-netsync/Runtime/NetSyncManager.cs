@@ -766,13 +766,8 @@ namespace Styly.NetSync
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
             OnAvatarDisconnected?.Invoke(clientNo);
-
-            // Release objects owned by the disconnected client (host-only cleanup)
-            if (_objectSyncManager != null)
-            {
-                var aliveClients = GetAliveClients(true);
-                _objectSyncManager.HandleClientDisconnect(clientNo, _roomId, _clientNo, aliveClients);
-            }
+            // Object ownership cleanup on disconnect is handled server-side
+            // with proper seq incrementing (MSG_OBJECT_OWNER broadcast).
         }
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
@@ -1026,6 +1021,7 @@ namespace Styly.NetSync
         {
             if (!_connectionManager.IsConnected || _connectionManager.IsConnectionError) return;
             if (_objectSyncManager == null || _clientNo <= 0) return;
+            if (!_objectSyncManager.ShouldSend(Time.time)) return;
 
             _objectSyncManager.SendOwnedObjects(_roomId, _clientNo);
         }
