@@ -408,7 +408,7 @@ namespace Styly.NetSync
             if (_deviceIdResolver.IsResolved)
             {
                 CompleteDeviceIdResolution();
-                _networkingPending = false; // Prevent double-init if OnEnable ran before Awake
+                _networkingPending = false; // Prevent double-init by disabling the deferred Update() initialization path
             }
             // Otherwise, Update() will complete initialization when the resolver finishes
         }
