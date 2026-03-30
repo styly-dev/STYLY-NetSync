@@ -7,6 +7,9 @@ using Styly.NetSync;
 [RequireComponent(typeof(Rigidbody))]
 public class GrabbableNetSyncObject : MonoBehaviour
 {
+    [SerializeField, Tooltip("When true, this client claims ownership of objects left by disconnected clients.")]
+    private bool _claimOnOwnerDisconnect;
+
     private NetSyncObject _netSyncObject;
     private Rigidbody _rb;
     private bool _isGrabbed;
@@ -32,6 +35,12 @@ public class GrabbableNetSyncObject : MonoBehaviour
             _xrGrab.selectEntered.AddListener(OnXRSelectEntered);
             _xrGrab.selectExited.AddListener(OnXRSelectExited);
         }
+
+        var manager = NetSyncManager.Instance;
+        if (manager != null)
+        {
+            manager.OnAvatarDisconnected.AddListener(OnAvatarDisconnected);
+        }
     }
 
     void OnDisable()
@@ -43,6 +52,20 @@ public class GrabbableNetSyncObject : MonoBehaviour
             _xrGrab.selectEntered.RemoveListener(OnXRSelectEntered);
             _xrGrab.selectExited.RemoveListener(OnXRSelectExited);
         }
+
+        var manager = NetSyncManager.Instance;
+        if (manager != null)
+        {
+            manager.OnAvatarDisconnected.RemoveListener(OnAvatarDisconnected);
+        }
+    }
+
+    private void OnAvatarDisconnected(int clientNo)
+    {
+        if (!_claimOnOwnerDisconnect) return;
+        if (_netSyncObject.OwnerClientNo != clientNo) return;
+
+        _netSyncObject.ForceClaim();
     }
 
     private void OnXRSelectEntered(SelectEnterEventArgs args)
