@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -9,31 +10,77 @@ using Debug = UnityEngine.Debug;
 
 namespace Styly.NetSync.Editor
 {
-    public static class StartPythonServer
+    /// <summary>
+    /// Configuration for launching the NetSync Python server.
+    /// </summary>
+    internal class ServerLaunchConfig
     {
-        [MenuItem("STYLY/STYLY NetSync/Start NetSync Server", false, 100)]
-        public static void StartServer()
-        {
-            if (Application.platform == RuntimePlatform.OSXEditor)
-            {
-                StartServerMac();
-            }
-            else if (Application.platform == RuntimePlatform.WindowsEditor)
-            {
-                StartServerWindows();
-            }
-            else if (Application.platform == RuntimePlatform.LinuxEditor)
-            {
-                StartServerLinux();
-            }
-            else
-            {
-                EditorUtility.DisplayDialog("Unsupported Platform",
-                    "Starting Python server is only supported on Windows, macOS, and Linux.", "OK");
-            }
-        }
+        // Port settings
+        public int DealerPort = 5555;
+        public int PubPort = 5556;
+        public int ServerDiscoveryPort = 9999;
+        public int RestApiPort = 8800;
+        public bool DisableServerDiscovery = false;
+        public string ConfigFile = "";
 
-        private static int GetDefaultServerDiscoveryPort()
+        // Logging settings
+        public string LogDir = "";
+        public string LogRotation = "";
+        public string LogRetention = "";
+        public bool LogJsonConsole = false;
+        public string LogLevelConsole = "";
+
+        /// <summary>
+        /// Build the uvx command string for display and execution.
+        /// </summary>
+        public string BuildCommand(string serverVersion)
+        {
+            var sb = new StringBuilder();
+            sb.Append($"uvx styly-netsync-server@{serverVersion}");
+
+            if (!string.IsNullOrEmpty(ConfigFile))
+                sb.Append($" --config \"{ConfigFile}\"");
+
+            if (DealerPort != 5555)
+                sb.Append($" --dealer-port {DealerPort}");
+
+            if (PubPort != 5556)
+                sb.Append($" --pub-port {PubPort}");
+
+            if (DisableServerDiscovery)
+            {
+                sb.Append(" --no-server-discovery");
+            }
+            else if (ServerDiscoveryPort != 9999)
+            {
+                sb.Append($" --server-discovery-port {ServerDiscoveryPort}");
+            }
+
+            if (RestApiPort != 8800)
+                sb.Append($" --rest-api-port {RestApiPort}");
+
+            if (!string.IsNullOrEmpty(LogDir))
+                sb.Append($" --log-dir \"{LogDir}\"");
+
+            if (!string.IsNullOrEmpty(LogRotation))
+                sb.Append($" --log-rotation \"{LogRotation}\"");
+
+            if (!string.IsNullOrEmpty(LogRetention))
+                sb.Append($" --log-retention \"{LogRetention}\"");
+
+            if (LogJsonConsole)
+                sb.Append(" --log-json-console");
+
+            if (!string.IsNullOrEmpty(LogLevelConsole))
+                sb.Append($" --log-level-console {LogLevelConsole}");
+
+            return sb.ToString();
+        }
+    }
+
+    internal static class StartPythonServer
+    {
+        internal static int GetDefaultServerDiscoveryPort()
         {
             // Try to find NetSyncManager in the active scene first, then other loaded scenes
             Scene activeScene = SceneManager.GetActiveScene();
@@ -65,7 +112,7 @@ namespace Styly.NetSync.Editor
             return 9999;
         }
 
-        private static string GetServerVersionSafe()
+        internal static string GetServerVersionSafe()
         {
             string serverVersion;
             try
@@ -169,16 +216,39 @@ namespace Styly.NetSync.Editor
             });
         }
 
-        private static void StartServerMac()
+        /// <summary>
+        /// Launch the server with the given configuration.
+        /// </summary>
+        internal static void LaunchServer(ServerLaunchConfig config)
+        {
+            if (Application.platform == RuntimePlatform.OSXEditor)
+            {
+                StartServerMac(config);
+            }
+            else if (Application.platform == RuntimePlatform.WindowsEditor)
+            {
+                StartServerWindows(config);
+            }
+            else if (Application.platform == RuntimePlatform.LinuxEditor)
+            {
+                StartServerLinux(config);
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("Unsupported Platform",
+                    "Starting Python server is only supported on Windows, macOS, and Linux.", "OK");
+            }
+        }
+
+        private static void StartServerMac(ServerLaunchConfig config)
         {
             string serverVersion = GetServerVersionSafe();
-            int defaultServerDiscoveryPort = GetDefaultServerDiscoveryPort();
-            bool hasNetSyncManager = defaultServerDiscoveryPort != 9999;
+            string uvxCommand = config.BuildCommand(serverVersion);
 
             string shellScript = @"#!/bin/bash
 clear
-echo 'STYLY NetSync Python Server Setup'
-echo '=================================='
+echo 'STYLY NetSync Python Server'
+echo '============================'
 echo ''
 
 # Check if uv exists
@@ -235,55 +305,13 @@ if ! command -v uv &> /dev/null; then
 fi
 
 echo ''
-echo 'Starting STYLY NetSync Python Server...'
-echo 'Server version: " + serverVersion + @"'
-echo ''
-
-# Configure server discovery
-echo 'Configure server discovery:'
-echo '1. Use " + (hasNetSyncManager ? $"server discovery port from scene ({defaultServerDiscoveryPort})" : "default server discovery port (9999)") + @"'
-echo '2. Specify custom server discovery port'
-echo '3. Disable server discovery'
-echo ''
-read -p 'Select option (1-3) [1]: ' option
-option=${option:-1}
-
-SERVER_DISCOVERY_ARGS=''
-DEFAULT_PORT=" + defaultServerDiscoveryPort + @"
-
-case $option in
-    2)
-        read -p 'Enter server discovery port (1-65535): ' server_discovery_port
-        # Validate port number
-        if [[ $server_discovery_port =~ ^[0-9]+$ ]] && [ $server_discovery_port -ge 1 ] && [ $server_discovery_port -le 65535 ]; then
-            SERVER_DISCOVERY_ARGS=""--server-discovery-port $server_discovery_port""
-            echo ''
-            echo ""Using custom server discovery port: $server_discovery_port""
-        else
-            echo ''
-            echo ""Invalid port number. Using port $DEFAULT_PORT.""
-        fi
-        ;;
-    3)
-        SERVER_DISCOVERY_ARGS='--no-server-discovery'
-        echo ''
-        echo 'Server discovery disabled.'
-        ;;
-    *)
-        SERVER_DISCOVERY_ARGS=""--server-discovery-port $DEFAULT_PORT""
-        echo ''
-        echo ""Using server discovery port: $DEFAULT_PORT""
-        ;;
-esac
-
-echo ''
-echo 'Running: uvx styly-netsync-server@" + serverVersion + @"' $SERVER_DISCOVERY_ARGS
+echo 'Running: " + uvxCommand + @"'
 echo ''
 echo '========================================='
 echo ''
 
 # Start the server
-uvx styly-netsync-server@" + serverVersion + @" $SERVER_DISCOVERY_ARGS
+" + uvxCommand + @"
 
 # Keep terminal open if server exits
 echo ''
@@ -338,15 +366,15 @@ read -p 'Press any key to exit...'
             }
         }
 
-        private static void StartServerWindows()
+        private static void StartServerWindows(ServerLaunchConfig config)
         {
             string serverVersion = GetServerVersionSafe();
-            int defaultServerDiscoveryPort = GetDefaultServerDiscoveryPort();
-            bool hasNetSyncManager = defaultServerDiscoveryPort != 9999;
+            string uvxCommand = config.BuildCommand(serverVersion);
+
             string powershellScript = @"
 Clear-Host
-Write-Host 'STYLY NetSync Python Server Setup' -ForegroundColor Cyan
-Write-Host '==================================' -ForegroundColor Cyan
+Write-Host 'STYLY NetSync Python Server' -ForegroundColor Cyan
+Write-Host '============================' -ForegroundColor Cyan
 Write-Host ''
 
 # Check if uv exists
@@ -392,56 +420,13 @@ if (-not $uvExists) {
 }
 
 Write-Host ''
-Write-Host 'Starting STYLY NetSync Python Server...' -ForegroundColor Green
-Write-Host 'Server version: " + serverVersion + @"' -ForegroundColor Gray
-Write-Host ''
-
-# Configure server discovery
-Write-Host 'Configure server discovery:' -ForegroundColor Cyan
-Write-Host '1. Use " + (hasNetSyncManager ? $"server discovery port from scene ({defaultServerDiscoveryPort})" : "default server discovery port (9999)") + @"'
-Write-Host '2. Specify custom server discovery port'
-Write-Host '3. Disable server discovery'
-Write-Host ''
-$option = Read-Host 'Select option (1-3) [1]'
-if ([string]::IsNullOrWhiteSpace($option)) { $option = '1' }
-
-$serverDiscoveryArgs = ''
-$defaultPort = " + defaultServerDiscoveryPort + @"
-
-switch ($option) {
-    '2' {
-        $serverDiscoveryPort = Read-Host 'Enter server discovery port (1-65535)'
-        # Validate port number
-        if ($serverDiscoveryPort -match '^\d+$' -and [int]$serverDiscoveryPort -ge 1 -and [int]$serverDiscoveryPort -le 65535) {
-            $serverDiscoveryArgs = ""--server-discovery-port $serverDiscoveryPort""
-            Write-Host ''
-            Write-Host ""Using custom server discovery port: $serverDiscoveryPort"" -ForegroundColor Green
-        } else {
-            Write-Host ''
-            Write-Host ""Invalid port number. Using port $defaultPort."" -ForegroundColor Yellow
-        }
-    }
-    '3' {
-        $serverDiscoveryArgs = '--no-server-discovery'
-        Write-Host ''
-        Write-Host 'Server discovery disabled.' -ForegroundColor Yellow
-    }
-    default {
-        $serverDiscoveryArgs = ""--server-discovery-port $defaultPort""
-        Write-Host ''
-        Write-Host ""Using server discovery port: $defaultPort"" -ForegroundColor Green
-    }
-}
-
-Write-Host ''
-Write-Host ""Running: uvx styly-netsync-server@" + serverVersion + @" $serverDiscoveryArgs"" -ForegroundColor Cyan
+Write-Host 'Running: " + uvxCommand + @"' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '=========================================' -ForegroundColor Cyan
 Write-Host ''
 
 # Start the server
-$command = ""uvx styly-netsync-server@" + serverVersion + @" $serverDiscoveryArgs""
-Invoke-Expression $command
+" + uvxCommand + @"
 
 # Keep terminal open if server exits
 Write-Host ''
@@ -493,11 +478,10 @@ Read-Host 'Press Enter to exit'
             }
         }
 
-        private static void StartServerLinux()
+        private static void StartServerLinux(ServerLaunchConfig config)
         {
             string serverVersion = GetServerVersionSafe();
-            int defaultServerDiscoveryPort = GetDefaultServerDiscoveryPort();
-            bool hasNetSyncManager = defaultServerDiscoveryPort != 9999;
+            string uvxCommand = config.BuildCommand(serverVersion);
 
             // Try to find available terminal emulator
             string[] terminals = { "gnome-terminal", "konsole", "xterm", "x-terminal-emulator" };
@@ -534,8 +518,8 @@ Read-Host 'Press Enter to exit'
 
             string shellScript = @"#!/bin/bash
 clear
-echo 'STYLY NetSync Python Server Setup'
-echo '=================================='
+echo 'STYLY NetSync Python Server'
+echo '============================'
 echo ''
 
 # Check if uv exists
@@ -567,55 +551,13 @@ if ! command -v uv &> /dev/null; then
 fi
 
 echo ''
-echo 'Starting STYLY NetSync Python Server...'
-echo 'Server version: " + serverVersion + @"'
-echo ''
-
-# Configure server discovery
-echo 'Configure server discovery:'
-echo '1. Use " + (hasNetSyncManager ? $"server discovery port from scene ({defaultServerDiscoveryPort})" : "default server discovery port (9999)") + @"'
-echo '2. Specify custom server discovery port'
-echo '3. Disable server discovery'
-echo ''
-read -p 'Select option (1-3) [1]: ' option
-option=${option:-1}
-
-SERVER_DISCOVERY_ARGS=''
-DEFAULT_PORT=" + defaultServerDiscoveryPort + @"
-
-case $option in
-    2)
-        read -p 'Enter server discovery port (1-65535): ' server_discovery_port
-        # Validate port number
-        if [[ $server_discovery_port =~ ^[0-9]+$ ]] && [ $server_discovery_port -ge 1 ] && [ $server_discovery_port -le 65535 ]; then
-            SERVER_DISCOVERY_ARGS=""--server-discovery-port $server_discovery_port""
-            echo ''
-            echo ""Using custom server discovery port: $server_discovery_port""
-        else
-            echo ''
-            echo ""Invalid port number. Using port $DEFAULT_PORT.""
-        fi
-        ;;
-    3)
-        SERVER_DISCOVERY_ARGS='--no-server-discovery'
-        echo ''
-        echo 'Server discovery disabled.'
-        ;;
-    *)
-        SERVER_DISCOVERY_ARGS=""--server-discovery-port $DEFAULT_PORT""
-        echo ''
-        echo ""Using server discovery port: $DEFAULT_PORT""
-        ;;
-esac
-
-echo ''
-echo 'Running: uvx styly-netsync-server@" + serverVersion + @"' $SERVER_DISCOVERY_ARGS
+echo 'Running: " + uvxCommand + @"'
 echo ''
 echo '========================================='
 echo ''
 
 # Start the server
-uvx styly-netsync-server@" + serverVersion + @" $SERVER_DISCOVERY_ARGS
+" + uvxCommand + @"
 
 # Keep terminal open if server exits
 echo ''
