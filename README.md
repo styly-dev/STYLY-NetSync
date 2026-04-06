@@ -75,11 +75,12 @@ openupm add -f com.styly.styly-netsync@0.10.2
 ```shell
 # Start NetSync server
 # Use the same version of the Unity package
-uvx styly-netsync-server@0.10.2
+uvx --exclude-newer "5 days" --exclude-newer-package styly-netsync-server=false styly-netsync-server@0.10.2
 
 # [Optional] Start client simulator
-uvx --from styly-netsync-server@0.10.2 styly-netsync-simulator --clients 10
+uvx --exclude-newer "5 days" --exclude-newer-package styly-netsync-server=false --from styly-netsync-server@0.10.2 styly-netsync-simulator --clients 10
 ```
+> **Note:** `--exclude-newer "5 days"` restricts transitive dependencies to versions published at least 5 days ago as a supply chain protection measure. The `--exclude-newer-package styly-netsync-server=false` flag exempts the server package itself so the specified version can be used.
 The uvx command automatically downloads the package, creates an isolated virtual environment, installs dependencies, and runs the python server program.
 
 ### Version compatibility note

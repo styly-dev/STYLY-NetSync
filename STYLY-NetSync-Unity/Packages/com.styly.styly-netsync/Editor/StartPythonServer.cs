@@ -36,7 +36,7 @@ namespace Styly.NetSync.Editor
         public string BuildCommand(string serverVersion)
         {
             var sb = new StringBuilder();
-            sb.Append($"uvx styly-netsync-server@{serverVersion}");
+            sb.Append($"uvx --exclude-newer \"5 days\" --exclude-newer-package styly-netsync-server=false styly-netsync-server@{serverVersion}");
 
             if (!string.IsNullOrEmpty(ConfigFile))
                 sb.Append($" --config \"{ConfigFile}\"");
