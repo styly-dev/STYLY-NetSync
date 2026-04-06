@@ -13,11 +13,11 @@ MonoBehaviour:
   m_Name: DefaultPrimitiveParams
   m_EditorClassIdentifier: 
   primitive0:
-    size: 1
-    color: {r: 1, g: 0, b: 0, a: 1}
+    size: 0.55
+    color: {r: 0.70375204, g: 1, b: 0, a: 1}
   primitive1:
-    size: 1
-    color: {r: 0, g: 1, b: 0, a: 1}
+    size: 1.75
+    color: {r: 1, g: 0, b: 0.8156204, a: 1}
   primitive2:
-    size: 1
+    size: 1.21
     color: {r: 0, g: 0, b: 1, a: 1}
