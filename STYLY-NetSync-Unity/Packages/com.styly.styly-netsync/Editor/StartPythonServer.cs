@@ -304,6 +304,38 @@ if ! command -v uv &> /dev/null; then
     fi
 fi
 
+# Check uv version (--exclude-newer-package requires uv >= 0.9.2)
+UV_VERSION=$(uv --version 2>/dev/null | sed 's/uv //')
+UV_MAJOR=$(echo ""$UV_VERSION"" | cut -d. -f1)
+UV_MINOR=$(echo ""$UV_VERSION"" | cut -d. -f2)
+UV_PATCH=$(echo ""$UV_VERSION"" | cut -d. -f3)
+UV_MIN_MAJOR=0
+UV_MIN_MINOR=9
+UV_MIN_PATCH=2
+
+UV_TOO_OLD=0
+if [ ""$UV_MAJOR"" -lt ""$UV_MIN_MAJOR"" ] 2>/dev/null; then
+    UV_TOO_OLD=1
+elif [ ""$UV_MAJOR"" -eq ""$UV_MIN_MAJOR"" ] 2>/dev/null; then
+    if [ ""$UV_MINOR"" -lt ""$UV_MIN_MINOR"" ] 2>/dev/null; then
+        UV_TOO_OLD=1
+    elif [ ""$UV_MINOR"" -eq ""$UV_MIN_MINOR"" ] 2>/dev/null; then
+        if [ ""$UV_PATCH"" -lt ""$UV_MIN_PATCH"" ] 2>/dev/null; then
+            UV_TOO_OLD=1
+        fi
+    fi
+fi
+
+if [ ""$UV_TOO_OLD"" -eq 1 ]; then
+    echo ""Your uv version ($UV_VERSION) is too old. Version 0.9.2 or later is required.""
+    echo ''
+    echo 'Please update uv by running:'
+    echo '  uv self update'
+    echo ''
+    read -p 'Press any key to exit...'
+    exit 1
+fi
+
 echo ''
 echo 'Running: " + uvxCommand + @"'
 echo ''
@@ -417,6 +449,30 @@ if (-not $uvExists) {
         Read-Host 'Press Enter to exit'
         exit 1
     }
+}
+
+# Check uv version (--exclude-newer-package requires uv >= 0.9.2)
+$uvVersionStr = (uv --version 2>$null) -replace 'uv ', ''
+$uvParts = $uvVersionStr -split '\.'
+$uvMajor = [int]$uvParts[0]
+$uvMinor = [int]$uvParts[1]
+$uvPatch = [int]$uvParts[2]
+
+$uvTooOld = $false
+if ($uvMajor -lt 0) { $uvTooOld = $true }
+elseif ($uvMajor -eq 0) {
+    if ($uvMinor -lt 9) { $uvTooOld = $true }
+    elseif ($uvMinor -eq 9 -and $uvPatch -lt 2) { $uvTooOld = $true }
+}
+
+if ($uvTooOld) {
+    Write-Host ""Your uv version ($uvVersionStr) is too old. Version 0.9.2 or later is required."" -ForegroundColor Red
+    Write-Host ''
+    Write-Host 'Please update uv by running:' -ForegroundColor Yellow
+    Write-Host '  uv self update' -ForegroundColor White
+    Write-Host ''
+    Read-Host 'Press Enter to exit'
+    exit 1
 }
 
 Write-Host ''
@@ -548,6 +604,38 @@ if ! command -v uv &> /dev/null; then
         read -p 'Press any key to exit...'
         exit 1
     fi
+fi
+
+# Check uv version (--exclude-newer-package requires uv >= 0.9.2)
+UV_VERSION=$(uv --version 2>/dev/null | sed 's/uv //')
+UV_MAJOR=$(echo ""$UV_VERSION"" | cut -d. -f1)
+UV_MINOR=$(echo ""$UV_VERSION"" | cut -d. -f2)
+UV_PATCH=$(echo ""$UV_VERSION"" | cut -d. -f3)
+UV_MIN_MAJOR=0
+UV_MIN_MINOR=9
+UV_MIN_PATCH=2
+
+UV_TOO_OLD=0
+if [ ""$UV_MAJOR"" -lt ""$UV_MIN_MAJOR"" ] 2>/dev/null; then
+    UV_TOO_OLD=1
+elif [ ""$UV_MAJOR"" -eq ""$UV_MIN_MAJOR"" ] 2>/dev/null; then
+    if [ ""$UV_MINOR"" -lt ""$UV_MIN_MINOR"" ] 2>/dev/null; then
+        UV_TOO_OLD=1
+    elif [ ""$UV_MINOR"" -eq ""$UV_MIN_MINOR"" ] 2>/dev/null; then
+        if [ ""$UV_PATCH"" -lt ""$UV_MIN_PATCH"" ] 2>/dev/null; then
+            UV_TOO_OLD=1
+        fi
+    fi
+fi
+
+if [ ""$UV_TOO_OLD"" -eq 1 ]; then
+    echo ""Your uv version ($UV_VERSION) is too old. Version 0.9.2 or later is required.""
+    echo ''
+    echo 'Please update uv by running:'
+    echo '  uv self update'
+    echo ''
+    read -p 'Press any key to exit...'
+    exit 1
 fi
 
 echo ''
