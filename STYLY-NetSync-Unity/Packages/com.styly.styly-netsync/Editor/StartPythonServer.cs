@@ -80,7 +80,7 @@ namespace Styly.NetSync.Editor
                 sb.Append(" --log-json-console");
 
             if (!string.IsNullOrEmpty(LogLevelConsole))
-                sb.Append($" --log-level-console {LogLevelConsole}");
+                sb.Append($" --log-level-console {quoteValue(LogLevelConsole)}");
 
             return sb.ToString();
         }
@@ -331,7 +331,7 @@ fi
 UV_VERSION=$(uv --version 2>/dev/null | sed 's/uv //')
 UV_MAJOR=$(echo ""$UV_VERSION"" | cut -d. -f1)
 UV_MINOR=$(echo ""$UV_VERSION"" | cut -d. -f2)
-UV_PATCH=$(echo ""$UV_VERSION"" | cut -d. -f3)
+UV_PATCH=$(echo ""$UV_VERSION"" | cut -d. -f3 | sed 's/[^0-9].*//')
 UV_MIN_MAJOR=0
 UV_MIN_MINOR=9
 UV_MIN_PATCH=2
@@ -479,7 +479,7 @@ $uvVersionStr = (uv --version 2>$null) -replace 'uv ', ''
 $uvParts = $uvVersionStr -split '\.'
 $uvMajor = [int]$uvParts[0]
 $uvMinor = [int]$uvParts[1]
-$uvPatch = [int]$uvParts[2]
+$uvPatch = [int]($uvParts[2] -replace '[^0-9].*','')
 
 $uvTooOld = $false
 if ($uvMajor -lt 0) { $uvTooOld = $true }
@@ -633,7 +633,7 @@ fi
 UV_VERSION=$(uv --version 2>/dev/null | sed 's/uv //')
 UV_MAJOR=$(echo ""$UV_VERSION"" | cut -d. -f1)
 UV_MINOR=$(echo ""$UV_VERSION"" | cut -d. -f2)
-UV_PATCH=$(echo ""$UV_VERSION"" | cut -d. -f3)
+UV_PATCH=$(echo ""$UV_VERSION"" | cut -d. -f3 | sed 's/[^0-9].*//')
 UV_MIN_MAJOR=0
 UV_MIN_MINOR=9
 UV_MIN_PATCH=2
