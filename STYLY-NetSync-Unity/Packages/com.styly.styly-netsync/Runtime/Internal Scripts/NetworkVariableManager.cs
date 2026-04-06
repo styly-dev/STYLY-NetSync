@@ -17,12 +17,13 @@ namespace Styly.NetSync
     internal readonly struct NVValue : IEquatable<NVValue>
     {
         public readonly byte TypeTag; // VAR_TYPE_STRING=0 or VAR_TYPE_BYTES=1
-        public readonly byte[] RawBytes;
+        private readonly byte[] _rawBytes;
+        public byte[] RawBytes => _rawBytes ?? Array.Empty<byte>();
 
         public NVValue(byte typeTag, byte[] rawBytes)
         {
             TypeTag = typeTag;
-            RawBytes = rawBytes ?? Array.Empty<byte>();
+            _rawBytes = rawBytes ?? Array.Empty<byte>();
         }
 
         public static NVValue FromString(string value)
