@@ -43,6 +43,11 @@ namespace Styly.NetSync.Editor
             _serverVersion = StartPythonServer.GetServerVersionSafe();
         }
 
+        private void OnDisable()
+        {
+            SaveSettings();
+        }
+
         private void OnGUI()
         {
             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
@@ -159,11 +164,6 @@ namespace Styly.NetSync.Editor
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.EndScrollView();
-
-            if (GUI.changed)
-            {
-                SaveSettings();
-            }
         }
 
         private static int PortField(string label, int value)

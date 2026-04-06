@@ -31,15 +31,23 @@ namespace Styly.NetSync.Editor
         public string LogLevelConsole = "";
 
         /// <summary>
-        /// Build the uvx command string for display and execution.
+        /// Build the uvx command string for display (double-quoted).
         /// </summary>
         public string BuildCommand(string serverVersion)
         {
+            return BuildCommand(serverVersion, v => $"\"{v}\"");
+        }
+
+        /// <summary>
+        /// Build the uvx command string with a custom quoting function for shell-safe execution.
+        /// </summary>
+        public string BuildCommand(string serverVersion, Func<string, string> quoteValue)
+        {
             var sb = new StringBuilder();
-            sb.Append($"uvx --exclude-newer \"5 days\" --exclude-newer-package styly-netsync-server=false styly-netsync-server@{serverVersion}");
+            sb.Append($"uvx --exclude-newer {quoteValue("5 days")} --exclude-newer-package styly-netsync-server=false styly-netsync-server@{serverVersion}");
 
             if (!string.IsNullOrEmpty(ConfigFile))
-                sb.Append($" --config \"{ConfigFile}\"");
+                sb.Append($" --config {quoteValue(ConfigFile)}");
 
             if (DealerPort != 5555)
                 sb.Append($" --dealer-port {DealerPort}");
@@ -60,13 +68,13 @@ namespace Styly.NetSync.Editor
                 sb.Append($" --rest-api-port {RestApiPort}");
 
             if (!string.IsNullOrEmpty(LogDir))
-                sb.Append($" --log-dir \"{LogDir}\"");
+                sb.Append($" --log-dir {quoteValue(LogDir)}");
 
             if (!string.IsNullOrEmpty(LogRotation))
-                sb.Append($" --log-rotation \"{LogRotation}\"");
+                sb.Append($" --log-rotation {quoteValue(LogRotation)}");
 
             if (!string.IsNullOrEmpty(LogRetention))
-                sb.Append($" --log-retention \"{LogRetention}\"");
+                sb.Append($" --log-retention {quoteValue(LogRetention)}");
 
             if (LogJsonConsole)
                 sb.Append(" --log-json-console");
@@ -156,6 +164,21 @@ namespace Styly.NetSync.Editor
             return "'" + value.Replace("'", "'\\''") + "'";
         }
 
+        private static string EscapeForBashSingleQuote(string value)
+        {
+            return value.Replace("'", "'\\''");
+        }
+
+        private static string EscapeForPowerShellSingleQuote(string value)
+        {
+            return value.Replace("'", "''");
+        }
+
+        private static string QuoteForPowerShell(string value)
+        {
+            return "'" + value.Replace("'", "''") + "'";
+        }
+
         private static void RunInTerminal(string command)
         {
             string escaped = EscapeForAppleScript(command);
@@ -243,7 +266,7 @@ namespace Styly.NetSync.Editor
         private static void StartServerMac(ServerLaunchConfig config)
         {
             string serverVersion = GetServerVersionSafe();
-            string uvxCommand = config.BuildCommand(serverVersion);
+            string uvxCommand = config.BuildCommand(serverVersion, QuoteForShell);
 
             string shellScript = @"#!/bin/bash
 clear
@@ -337,7 +360,7 @@ if [ ""$UV_TOO_OLD"" -eq 1 ]; then
 fi
 
 echo ''
-echo 'Running: " + uvxCommand + @"'
+echo 'Running: " + EscapeForBashSingleQuote(uvxCommand) + @"'
 echo ''
 echo '========================================='
 echo ''
@@ -401,7 +424,7 @@ read -p 'Press any key to exit...'
         private static void StartServerWindows(ServerLaunchConfig config)
         {
             string serverVersion = GetServerVersionSafe();
-            string uvxCommand = config.BuildCommand(serverVersion);
+            string uvxCommand = config.BuildCommand(serverVersion, QuoteForPowerShell);
 
             string powershellScript = @"
 Clear-Host
@@ -476,7 +499,7 @@ if ($uvTooOld) {
 }
 
 Write-Host ''
-Write-Host 'Running: " + uvxCommand + @"' -ForegroundColor Cyan
+Write-Host 'Running: " + EscapeForPowerShellSingleQuote(uvxCommand) + @"' -ForegroundColor Cyan
 Write-Host ''
 Write-Host '=========================================' -ForegroundColor Cyan
 Write-Host ''
@@ -537,7 +560,7 @@ Read-Host 'Press Enter to exit'
         private static void StartServerLinux(ServerLaunchConfig config)
         {
             string serverVersion = GetServerVersionSafe();
-            string uvxCommand = config.BuildCommand(serverVersion);
+            string uvxCommand = config.BuildCommand(serverVersion, QuoteForShell);
 
             // Try to find available terminal emulator
             string[] terminals = { "gnome-terminal", "konsole", "xterm", "x-terminal-emulator" };
@@ -639,7 +662,7 @@ if [ ""$UV_TOO_OLD"" -eq 1 ]; then
 fi
 
 echo ''
-echo 'Running: " + uvxCommand + @"'
+echo 'Running: " + EscapeForBashSingleQuote(uvxCommand) + @"'
 echo ''
 echo '========================================='
 echo ''
