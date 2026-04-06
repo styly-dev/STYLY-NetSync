@@ -38,6 +38,8 @@ namespace Styly.NetSync
         public UnityEvent<int, string, string[]> OnRPCReceived;
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
+        public UnityEvent<string, byte[], byte[]> OnGlobalBytesVariableChanged;
+        public UnityEvent<int, string, byte[], byte[]> OnClientBytesVariableChanged;
         public UnityEvent OnReady;
         /// <summary>
         /// Event fired when server and client versions do not match.
@@ -138,7 +140,7 @@ namespace Styly.NetSync
             }
         }
 
-        // Network Variables API
+        // Network Variables API (string)
         public bool SetGlobalVariable(string name, string value)
         {
             return _networkVariableManager != null ? _networkVariableManager.SetGlobalVariable(name, value, _roomId) : false;
@@ -172,6 +174,43 @@ namespace Styly.NetSync
         public string GetClientVariable(string name, int clientNo, string defaultValue = null)
         {
             return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(name, clientNo, defaultValue) : defaultValue;
+        }
+
+        // Network Variables API (byte[])
+        public bool SetGlobalVariable(string name, byte[] value)
+        {
+            return _networkVariableManager != null ? _networkVariableManager.SetGlobalVariable(name, value, _roomId) : false;
+        }
+
+        public byte[] GetGlobalVariableBytes(string name, byte[] defaultValue = null)
+        {
+            return _networkVariableManager != null ? _networkVariableManager.GetGlobalVariableBytes(name, defaultValue) : defaultValue;
+        }
+
+        public bool SetClientVariable(string name, byte[] value)
+        {
+            if (_clientNo <= 0)
+            {
+                // Late-binding: store as NVValue for pending
+                _pendingSelfClientNVBytes.Add((name, value));
+                return true;
+            }
+            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(name, value, _clientNo, _roomId) : false;
+        }
+
+        public bool SetClientVariable(string name, byte[] value, int targetClientNo)
+        {
+            return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(name, value, targetClientNo, _roomId) : false;
+        }
+
+        public byte[] GetClientVariableBytes(string name, byte[] defaultValue = null)
+        {
+            return _networkVariableManager != null ? _networkVariableManager.GetClientVariableBytes(name, _clientNo, defaultValue) : defaultValue;
+        }
+
+        public byte[] GetClientVariableBytes(string name, int clientNo, byte[] defaultValue = null)
+        {
+            return _networkVariableManager != null ? _networkVariableManager.GetClientVariableBytes(name, clientNo, defaultValue) : defaultValue;
         }
 
         /// <summary>
@@ -290,6 +329,7 @@ namespace Styly.NetSync
         private float _nextDiscoveryAttemptAt = 0f;
         private float _reconnectAt;
         private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
+        private readonly List<(string name, byte[] value)> _pendingSelfClientNVBytes = new List<(string name, byte[] value)>();
         private bool _hasInvokedReady = false;
         private bool _shouldCheckReady = false;
         private bool _shouldSendHandshake = false;
@@ -627,6 +667,8 @@ namespace Styly.NetSync
             {
                 _networkVariableManager.OnGlobalVariableChanged += OnGlobalVariableChangedHandler;
                 _networkVariableManager.OnClientVariableChanged += OnClientVariableChangedHandler;
+                _networkVariableManager.OnGlobalBytesVariableChanged += OnGlobalBytesVariableChangedHandler;
+                _networkVariableManager.OnClientBytesVariableChanged += OnClientBytesVariableChangedHandler;
             }
 
             // Setup discovery event
@@ -782,17 +824,36 @@ namespace Styly.NetSync
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
         }
 
+        private void OnGlobalBytesVariableChangedHandler(string name, byte[] oldValue, byte[] newValue)
+        {
+            Debug.Log($"[NetSyncManager] Global Bytes Variable Changed - Name: {name}, Old: {(oldValue != null ? $"<binary:{oldValue.Length} bytes>" : "null")}, New: {(newValue != null ? $"<binary:{newValue.Length} bytes>" : "null")}");
+            OnGlobalBytesVariableChanged?.Invoke(name, oldValue, newValue);
+        }
+
+        private void OnClientBytesVariableChangedHandler(int clientNo, string name, byte[] oldValue, byte[] newValue)
+        {
+            Debug.Log($"[NetSyncManager] Client Bytes Variable Changed - Client#{clientNo}, Name: {name}, Old: {(oldValue != null ? $"<binary:{oldValue.Length} bytes>" : "null")}, New: {(newValue != null ? $"<binary:{newValue.Length} bytes>" : "null")}");
+            OnClientBytesVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
+        }
+
         private void OnLocalClientNoAssigned(int clientNo)
         {
             _clientNo = clientNo;
             DebugLog($"Local client number assigned: {clientNo}");
 
-            // Flush pending self client NV
+            // Flush pending self client NV (string)
             foreach (var (name, value) in _pendingSelfClientNV)
             {
                 _networkVariableManager?.SetClientVariable(name, value, _clientNo, _roomId);
             }
             _pendingSelfClientNV.Clear();
+
+            // Flush pending self client NV (bytes)
+            foreach (var (name, value) in _pendingSelfClientNVBytes)
+            {
+                _networkVariableManager?.SetClientVariable(name, value, _clientNo, _roomId);
+            }
+            _pendingSelfClientNVBytes.Clear();
 
             // Set flag to check ready state on main thread
             _shouldCheckReady = true;

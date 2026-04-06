@@ -142,6 +142,18 @@ def get_version() -> str:
     return "unknown"
 
 
+def _format_nv_value_for_log(value_type: int, value_bytes: bytes | None) -> str:
+    """Format an NV value for log output."""
+    if value_bytes is None:
+        return "None"
+    if value_type == binary_serializer.VAR_TYPE_BYTES:
+        return f"<binary:{len(value_bytes)} bytes>"
+    try:
+        return value_bytes.decode("utf-8")
+    except (UnicodeDecodeError, AttributeError):
+        return f"<binary:{len(value_bytes)} bytes>"
+
+
 class NetSyncServer:
     # Note: All default values are defined in default.toml, not in code.
     # The BROADCAST_CHECK_INTERVAL is derived from transform_broadcast_rate in config.
@@ -1316,7 +1328,10 @@ class NetSyncServer:
         """Buffer global variable set request for later processing"""
         sender_client_no = data.get("senderClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
-        var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
+        value_type = data.get("variableValueType", binary_serializer.VAR_TYPE_STRING)
+        value_bytes = data.get("variableValueBytes", b"")
+        if len(value_bytes) > self.MAX_VAR_VALUE_LENGTH:
+            value_bytes = value_bytes[: self.MAX_VAR_VALUE_LENGTH]
         timestamp = data.get("timestamp", time.monotonic())
 
         if not var_name:
@@ -1328,7 +1343,8 @@ class NetSyncServer:
             # Buffer the update (latest-wins per key)
             self.pending_global_nv[room_id][var_name] = (
                 sender_client_no,
-                var_value,
+                value_type,
+                value_bytes,
                 timestamp,
             )
 
@@ -1337,7 +1353,8 @@ class NetSyncServer:
         room_id: str,
         sender_client_no: int,
         var_name: str,
-        var_value: str,
+        value_type: int,
+        value_bytes: bytes,
         timestamp: float,
     ) -> bool:
         """Apply global variable update (used by flush, returns True if applied)"""
@@ -1352,7 +1369,10 @@ class NetSyncServer:
             if var_name in global_vars:
                 existing = global_vars[var_name]
                 # Skip if value unchanged (no-op)
-                if existing.get("value") == var_value:
+                if (
+                    existing.get("valueBytes") == value_bytes
+                    and existing.get("valueType") == value_type
+                ):
                     return False
                 if timestamp < existing["timestamp"] or (
                     timestamp == existing["timestamp"]
@@ -1360,18 +1380,23 @@ class NetSyncServer:
                 ):
                     return False  # Ignore older or lower priority update
 
-            # Store old value for logging
-            old_value = global_vars.get(var_name, {}).get("value", None)
+            # Log change
+            old_entry = global_vars.get(var_name, {})
+            old_display = _format_nv_value_for_log(
+                old_entry.get("valueType", 0), old_entry.get("valueBytes")
+            )
+            new_display = _format_nv_value_for_log(value_type, value_bytes)
 
             # Update variable
             global_vars[var_name] = {
-                "value": var_value,
+                "valueType": value_type,
+                "valueBytes": value_bytes,
                 "timestamp": timestamp,
                 "lastWriterClientNo": sender_client_no,
             }
 
             logger.info(
-                f"Global Variable Changed: room={room_id}, client={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'"
+                f"Global Variable Changed: room={room_id}, client={sender_client_no}, name='{var_name}', old='{old_display}', new='{new_display}'"
             )
             return True
 
@@ -1379,14 +1404,17 @@ class NetSyncServer:
         """Handle global variable set request (for backward compat - immediate apply+broadcast)"""
         sender_client_no = data.get("senderClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
-        var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
+        value_type = data.get("variableValueType", binary_serializer.VAR_TYPE_STRING)
+        value_bytes = data.get("variableValueBytes", b"")
+        if len(value_bytes) > self.MAX_VAR_VALUE_LENGTH:
+            value_bytes = value_bytes[: self.MAX_VAR_VALUE_LENGTH]
         timestamp = data.get("timestamp", time.monotonic())
 
         if not var_name:
             return
 
         if self._apply_global_var_set(
-            room_id, sender_client_no, var_name, var_value, timestamp
+            room_id, sender_client_no, var_name, value_type, value_bytes, timestamp
         ):
             # Broadcast sync to all clients
             self._broadcast_global_var_sync(room_id)
@@ -1396,7 +1424,10 @@ class NetSyncServer:
         sender_client_no = data.get("senderClientNo", 0)
         target_client_no = data.get("targetClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
-        var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
+        value_type = data.get("variableValueType", binary_serializer.VAR_TYPE_STRING)
+        value_bytes = data.get("variableValueBytes", b"")
+        if len(value_bytes) > self.MAX_VAR_VALUE_LENGTH:
+            value_bytes = value_bytes[: self.MAX_VAR_VALUE_LENGTH]
         timestamp = data.get("timestamp", time.monotonic())
 
         if not var_name:
@@ -1409,7 +1440,8 @@ class NetSyncServer:
             key = (target_client_no, var_name)
             self.pending_client_nv[room_id][key] = (
                 sender_client_no,
-                var_value,
+                value_type,
+                value_bytes,
                 timestamp,
             )
 
@@ -1419,7 +1451,8 @@ class NetSyncServer:
         sender_client_no: int,
         target_client_no: int,
         var_name: str,
-        var_value: str,
+        value_type: int,
+        value_bytes: bytes,
         timestamp: float,
     ) -> bool:
         """Apply client variable update (used by flush, returns True if applied)"""
@@ -1441,7 +1474,10 @@ class NetSyncServer:
             if var_name in client_vars:
                 existing = client_vars[var_name]
                 # Skip if value unchanged (no-op)
-                if existing.get("value") == var_value:
+                if (
+                    existing.get("valueBytes") == value_bytes
+                    and existing.get("valueType") == value_type
+                ):
                     return False
                 if timestamp < existing["timestamp"] or (
                     timestamp == existing["timestamp"]
@@ -1449,18 +1485,23 @@ class NetSyncServer:
                 ):
                     return False  # Ignore older or lower priority update
 
-            # Store old value for logging
-            old_value = client_vars.get(var_name, {}).get("value", None)
+            # Log change
+            old_entry = client_vars.get(var_name, {})
+            old_display = _format_nv_value_for_log(
+                old_entry.get("valueType", 0), old_entry.get("valueBytes")
+            )
+            new_display = _format_nv_value_for_log(value_type, value_bytes)
 
             # Update variable
             client_vars[var_name] = {
-                "value": var_value,
+                "valueType": value_type,
+                "valueBytes": value_bytes,
                 "timestamp": timestamp,
                 "lastWriterClientNo": sender_client_no,
             }
 
             logger.info(
-                f"Client Variable Changed: room={room_id}, target={target_client_no}, sender={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'"
+                f"Client Variable Changed: room={room_id}, target={target_client_no}, sender={sender_client_no}, name='{var_name}', old='{old_display}', new='{new_display}'"
             )
             return True
 
@@ -1469,14 +1510,23 @@ class NetSyncServer:
         sender_client_no = data.get("senderClientNo", 0)
         target_client_no = data.get("targetClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
-        var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
+        value_type = data.get("variableValueType", binary_serializer.VAR_TYPE_STRING)
+        value_bytes = data.get("variableValueBytes", b"")
+        if len(value_bytes) > self.MAX_VAR_VALUE_LENGTH:
+            value_bytes = value_bytes[: self.MAX_VAR_VALUE_LENGTH]
         timestamp = data.get("timestamp", time.monotonic())
 
         if not var_name:
             return
 
         if self._apply_client_var_set(
-            room_id, sender_client_no, target_client_no, var_name, var_value, timestamp
+            room_id,
+            sender_client_no,
+            target_client_no,
+            var_name,
+            value_type,
+            value_bytes,
+            timestamp,
         ):
             # Broadcast sync to all clients
             self._broadcast_client_var_sync(room_id)
@@ -1493,14 +1543,16 @@ class NetSyncServer:
 
         variables = []
         for var_name, var_data in self.global_variables[room_id].items():
-            variables.append(
-                {
-                    "name": var_name,
-                    "value": var_data["value"],
-                    "timestamp": var_data["timestamp"],
-                    "lastWriterClientNo": var_data["lastWriterClientNo"],
-                }
-            )
+            entry: dict[str, Any] = {
+                "name": var_name,
+                "valueType": var_data.get(
+                    "valueType", binary_serializer.VAR_TYPE_STRING
+                ),
+                "valueBytes": var_data.get("valueBytes", b""),
+                "timestamp": var_data["timestamp"],
+                "lastWriterClientNo": var_data["lastWriterClientNo"],
+            }
+            variables.append(entry)
 
         if not variables:
             return None
@@ -1520,14 +1572,16 @@ class NetSyncServer:
         for client_no, variables in self.client_variables[room_id].items():
             client_vars: list[dict[str, object]] = []
             for var_name, var_data in variables.items():
-                client_vars.append(
-                    {
-                        "name": var_name,
-                        "value": var_data["value"],
-                        "timestamp": var_data["timestamp"],
-                        "lastWriterClientNo": var_data["lastWriterClientNo"],
-                    }
-                )
+                entry: dict[str, object] = {
+                    "name": var_name,
+                    "valueType": var_data.get(
+                        "valueType", binary_serializer.VAR_TYPE_STRING
+                    ),
+                    "valueBytes": var_data.get("valueBytes", b""),
+                    "timestamp": var_data["timestamp"],
+                    "lastWriterClientNo": var_data["lastWriterClientNo"],
+                }
+                client_vars.append(entry)
             if client_vars:
                 client_variables[str(client_no)] = client_vars
 
@@ -1601,19 +1655,25 @@ class NetSyncServer:
             self.pending_client_nv[room_id] = {}
 
         applied_globals: list[str] = []
-        for var_name, (sender, value, ts) in globals_to_apply:
-            if self._apply_global_var_set(room_id, sender, var_name, value, ts):
+        for var_name, (sender, vtype, vbytes, ts) in globals_to_apply:
+            if self._apply_global_var_set(room_id, sender, var_name, vtype, vbytes, ts):
                 applied_globals.append(var_name)
 
         applied_clients: dict[int, list[dict[str, Any]]] = {}
-        for (target_client_no, var_name), (sender, value, ts) in clients_to_apply:
+        for (target_client_no, var_name), (
+            sender,
+            vtype,
+            vbytes,
+            ts,
+        ) in clients_to_apply:
             if self._apply_client_var_set(
-                room_id, sender, target_client_no, var_name, value, ts
+                room_id, sender, target_client_no, var_name, vtype, vbytes, ts
             ):
                 applied_clients.setdefault(target_client_no, []).append(
                     {
                         "name": var_name,
-                        "value": value,
+                        "valueType": vtype,
+                        "valueBytes": vbytes,
                         "timestamp": ts,
                         "lastWriterClientNo": sender,
                     }
@@ -1621,14 +1681,17 @@ class NetSyncServer:
 
         # Send NV syncs via ROUTER unicast for reliable delivery
         if applied_globals:
-            vars_payload = []
+            vars_payload: list[dict[str, Any]] = []
             with self._rooms_lock:
                 for name in applied_globals:
                     d = self.global_variables[room_id][name]
                     vars_payload.append(
                         {
                             "name": name,
-                            "value": d["value"],
+                            "valueType": d.get(
+                                "valueType", binary_serializer.VAR_TYPE_STRING
+                            ),
+                            "valueBytes": d.get("valueBytes", b""),
                             "timestamp": d["timestamp"],
                             "lastWriterClientNo": d["lastWriterClientNo"],
                         }

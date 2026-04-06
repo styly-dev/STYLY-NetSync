@@ -70,8 +70,8 @@ max_client_vars = 100
 # Maximum variable name length in bytes
 max_var_name_length = 64
 
-# Maximum variable value length in bytes
-max_var_value_length = 1024
+# Maximum variable value length in bytes (supports byte[] values up to this size)
+max_var_value_length = 65536
 
 # Network variable flush interval in seconds (50ms default)
 nv_flush_interval = 0.05

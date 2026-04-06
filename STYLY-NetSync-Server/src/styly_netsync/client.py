@@ -194,9 +194,9 @@ class net_sync_manager:
         self._client_to_device: dict[int, str] = {}
         self._client_stealth_flags: dict[int, bool] = {}
 
-        # Network Variables (local cache)
-        self._global_variables: dict[str, str] = {}
-        self._client_variables: dict[int, dict[str, str]] = {}
+        # Network Variables (local cache): name -> (value_type, raw_bytes)
+        self._global_variables: dict[str, tuple[int, bytes]] = {}
+        self._client_variables: dict[int, dict[str, tuple[int, bytes]]] = {}
 
         # Event queues and handlers
         self._rpc_queue: Queue = Queue(maxsize=queue_max)
@@ -206,6 +206,8 @@ class net_sync_manager:
         self.on_rpc_received = EventHandler()
         self.on_global_variable_changed = EventHandler()
         self.on_client_variable_changed = EventHandler()
+        self.on_global_bytes_variable_changed = EventHandler()
+        self.on_client_bytes_variable_changed = EventHandler()
         self.on_avatar_connected = EventHandler()
         self.on_client_disconnected = EventHandler()
         self.on_server_discovered = EventHandler()
@@ -1001,30 +1003,50 @@ class net_sync_manager:
 
             for var in variables:
                 name = var.get("name", "")
-                value = var.get("value", "")
-                old_value = self._global_variables.get(name)
+                value_type = var.get("valueType", binary_serializer.VAR_TYPE_STRING)
+                value_bytes = var.get("valueBytes", b"")
+                new_entry = (value_type, value_bytes)
+                old_entry = self._global_variables.get(name)
 
-                self._global_variables[name] = value
+                self._global_variables[name] = new_entry
 
-                if old_value != value:
+                if old_entry != new_entry:
                     with self._lock:
                         self._stats["nv_updates"] += 1
 
-                    event = ("global", name, old_value, value)
-                    if self._auto_dispatch:
-                        self.on_global_variable_changed.invoke(name, old_value, value)
+                    if value_type == binary_serializer.VAR_TYPE_BYTES:
+                        old_bytes = old_entry[1] if old_entry else None
+                        if self._auto_dispatch:
+                            self.on_global_bytes_variable_changed.invoke(
+                                name, old_bytes, value_bytes
+                            )
+                        else:
+                            self._enqueue_nv_event(
+                                ("global_bytes", name, old_bytes, value_bytes)
+                            )
                     else:
-                        try:
-                            self._nv_queue.put_nowait(event)
-                        except Full:
-                            try:
-                                self._nv_queue.get_nowait()
-                                self._nv_queue.put_nowait(event)
-                            except Empty:
-                                pass
+                        old_str = old_entry[1].decode("utf-8") if old_entry else None
+                        new_str = value_bytes.decode("utf-8")
+                        if self._auto_dispatch:
+                            self.on_global_variable_changed.invoke(
+                                name, old_str, new_str
+                            )
+                        else:
+                            self._enqueue_nv_event(("global", name, old_str, new_str))
 
         except Exception as e:
             logger.error(f"Error processing global var sync: {e}")
+
+    def _enqueue_nv_event(self, event: tuple) -> None:
+        """Enqueue an NV event, dropping oldest on overflow."""
+        try:
+            self._nv_queue.put_nowait(event)
+        except Full:
+            try:
+                self._nv_queue.get_nowait()
+                self._nv_queue.put_nowait(event)
+            except Empty:
+                pass
 
     def _process_client_var_sync(self, msg_data: dict[str, Any]) -> None:
         """Process client variable sync."""
@@ -1042,29 +1064,46 @@ class net_sync_manager:
 
                 for var in variables:
                     name = var.get("name", "")
-                    value = var.get("value", "")
-                    old_value = self._client_variables[client_no].get(name)
+                    value_type = var.get("valueType", binary_serializer.VAR_TYPE_STRING)
+                    value_bytes = var.get("valueBytes", b"")
+                    new_entry = (value_type, value_bytes)
+                    old_entry = self._client_variables[client_no].get(name)
 
-                    self._client_variables[client_no][name] = value
+                    self._client_variables[client_no][name] = new_entry
 
-                    if old_value != value:
+                    if old_entry != new_entry:
                         with self._lock:
                             self._stats["nv_updates"] += 1
 
-                        event = ("client", client_no, name, old_value, value)
-                        if self._auto_dispatch:
-                            self.on_client_variable_changed.invoke(
-                                client_no, name, old_value, value
-                            )
+                        if value_type == binary_serializer.VAR_TYPE_BYTES:
+                            old_bytes = old_entry[1] if old_entry else None
+                            if self._auto_dispatch:
+                                self.on_client_bytes_variable_changed.invoke(
+                                    client_no, name, old_bytes, value_bytes
+                                )
+                            else:
+                                self._enqueue_nv_event(
+                                    (
+                                        "client_bytes",
+                                        client_no,
+                                        name,
+                                        old_bytes,
+                                        value_bytes,
+                                    )
+                                )
                         else:
-                            try:
-                                self._nv_queue.put_nowait(event)
-                            except Full:
-                                try:
-                                    self._nv_queue.get_nowait()
-                                    self._nv_queue.put_nowait(event)
-                                except Empty:
-                                    pass
+                            old_str = (
+                                old_entry[1].decode("utf-8") if old_entry else None
+                            )
+                            new_str = value_bytes.decode("utf-8")
+                            if self._auto_dispatch:
+                                self.on_client_variable_changed.invoke(
+                                    client_no, name, old_str, new_str
+                                )
+                            else:
+                                self._enqueue_nv_event(
+                                    ("client", client_no, name, old_str, new_str)
+                                )
 
         except Exception as e:
             logger.error(f"Error processing client var sync: {e}")
@@ -1198,10 +1237,11 @@ class net_sync_manager:
             return False
 
         try:
-            var_data = {
+            var_data: dict[str, Any] = {
                 "senderClientNo": self._client_no,
                 "variableName": name,
                 "variableValue": value,
+                "variableValueType": binary_serializer.VAR_TYPE_STRING,
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_global_var_set(var_data)
@@ -1213,17 +1253,40 @@ class net_sync_manager:
             logger.error(f"Error queueing global variable: {e}")
             return False
 
+    def set_global_variable_bytes(self, name: str, value: bytes) -> bool:
+        """Queue global variable update with binary value (via control queue)."""
+        if not self._running or not self._dealer_socket or self._client_no is None:
+            return False
+
+        try:
+            var_data: dict[str, Any] = {
+                "senderClientNo": self._client_no,
+                "variableName": name,
+                "variableValueType": binary_serializer.VAR_TYPE_BYTES,
+                "variableValueBytes": value,
+                "timestamp": time.time(),
+            }
+            message = binary_serializer.serialize_global_var_set(var_data)
+            return self._enqueue_control(
+                self._room, message, msg_type="global_variable"
+            )
+
+        except Exception as e:
+            logger.error(f"Error queueing global variable bytes: {e}")
+            return False
+
     def set_client_variable(self, target_client_no: int, name: str, value: str) -> bool:
         """Queue client variable update (via control queue)."""
         if not self._running or not self._dealer_socket or self._client_no is None:
             return False
 
         try:
-            var_data = {
+            var_data: dict[str, Any] = {
                 "senderClientNo": self._client_no,
                 "targetClientNo": target_client_no,
                 "variableName": name,
                 "variableValue": value,
+                "variableValueType": binary_serializer.VAR_TYPE_STRING,
                 "timestamp": time.time(),
             }
             message = binary_serializer.serialize_client_var_set(var_data)
@@ -1233,6 +1296,31 @@ class net_sync_manager:
 
         except Exception as e:
             logger.error(f"Error queueing client variable: {e}")
+            return False
+
+    def set_client_variable_bytes(
+        self, target_client_no: int, name: str, value: bytes
+    ) -> bool:
+        """Queue client variable update with binary value (via control queue)."""
+        if not self._running or not self._dealer_socket or self._client_no is None:
+            return False
+
+        try:
+            var_data: dict[str, Any] = {
+                "senderClientNo": self._client_no,
+                "targetClientNo": target_client_no,
+                "variableName": name,
+                "variableValueType": binary_serializer.VAR_TYPE_BYTES,
+                "variableValueBytes": value,
+                "timestamp": time.time(),
+            }
+            message = binary_serializer.serialize_client_var_set(var_data)
+            return self._enqueue_control(
+                self._room, message, msg_type="client_variable"
+            )
+
+        except Exception as e:
+            logger.error(f"Error queueing client variable bytes: {e}")
             return False
 
     def _enqueue_control(
@@ -1266,15 +1354,39 @@ class net_sync_manager:
             return False
 
     def get_global_variable(self, name: str, default: str | None = None) -> str | None:
-        """Get global variable from local cache."""
-        return self._global_variables.get(name, default)
+        """Get global string variable from local cache."""
+        entry = self._global_variables.get(name)
+        if entry is not None and entry[0] == binary_serializer.VAR_TYPE_STRING:
+            return entry[1].decode("utf-8")
+        return default
+
+    def get_global_variable_bytes(
+        self, name: str, default: bytes | None = None
+    ) -> bytes | None:
+        """Get global binary variable from local cache."""
+        entry = self._global_variables.get(name)
+        if entry is not None and entry[0] == binary_serializer.VAR_TYPE_BYTES:
+            return entry[1]
+        return default
 
     def get_client_variable(
         self, client_no: int, name: str, default: str | None = None
     ) -> str | None:
-        """Get client variable from local cache."""
+        """Get client string variable from local cache."""
         if client_no in self._client_variables:
-            return self._client_variables[client_no].get(name, default)
+            entry = self._client_variables[client_no].get(name)
+            if entry is not None and entry[0] == binary_serializer.VAR_TYPE_STRING:
+                return entry[1].decode("utf-8")
+        return default
+
+    def get_client_variable_bytes(
+        self, client_no: int, name: str, default: bytes | None = None
+    ) -> bytes | None:
+        """Get client binary variable from local cache."""
+        if client_no in self._client_variables:
+            entry = self._client_variables[client_no].get(name)
+            if entry is not None and entry[0] == binary_serializer.VAR_TYPE_BYTES:
+                return entry[1]
         return default
 
     # Device mapping API
@@ -1287,12 +1399,20 @@ class net_sync_manager:
         return self._client_to_device.get(client_no)
 
     def get_all_global_variables(self) -> dict[str, str]:
-        """Return a copy of all global variables."""
-        return self._global_variables.copy()
+        """Return a copy of all string-typed global variables."""
+        result: dict[str, str] = {}
+        for name, (vtype, vbytes) in self._global_variables.items():
+            if vtype == binary_serializer.VAR_TYPE_STRING:
+                result[name] = vbytes.decode("utf-8")
+        return result
 
     def get_all_client_variables(self, client_no: int) -> dict[str, str]:
-        """Return a copy of all variables for the given client."""
-        return self._client_variables.get(client_no, {}).copy()
+        """Return a copy of all string-typed variables for the given client."""
+        result: dict[str, str] = {}
+        for name, (vtype, vbytes) in self._client_variables.get(client_no, {}).items():
+            if vtype == binary_serializer.VAR_TYPE_STRING:
+                result[name] = vbytes.decode("utf-8")
+        return result
 
     def is_client_stealth_mode(self, client_no: int) -> bool:
         """Check if the client is in stealth mode."""
@@ -1323,9 +1443,19 @@ class net_sync_manager:
                 if event[0] == "global":
                     _, name, old_value, new_value = event
                     self.on_global_variable_changed.invoke(name, old_value, new_value)
+                elif event[0] == "global_bytes":
+                    _, name, old_value, new_value = event
+                    self.on_global_bytes_variable_changed.invoke(
+                        name, old_value, new_value
+                    )
                 elif event[0] == "client":
                     _, client_no, name, old_value, new_value = event
                     self.on_client_variable_changed.invoke(
+                        client_no, name, old_value, new_value
+                    )
+                elif event[0] == "client_bytes":
+                    _, client_no, name, old_value, new_value = event
+                    self.on_client_bytes_variable_changed.invoke(
                         client_no, name, old_value, new_value
                     )
                 dispatched += 1

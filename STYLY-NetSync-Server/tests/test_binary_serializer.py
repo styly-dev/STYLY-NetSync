@@ -867,3 +867,155 @@ class TestRPCMessageSerialization:
         _, result, _ = binary_serializer.deserialize(serialized)
 
         assert result["functionName"] == "OnDamage_テスト"
+
+
+class TestNetworkVariableSerialization:
+    """Tests for NV serialization with typed values (string and bytes)."""
+
+    def test_global_var_set_string_roundtrip(self) -> None:
+        """String global var set should round-trip correctly."""
+        data = {
+            "senderClientNo": 1,
+            "variableName": "score",
+            "variableValue": "hello world",
+            "variableValueType": binary_serializer.VAR_TYPE_STRING,
+            "timestamp": 1234.5,
+        }
+        serialized = binary_serializer.serialize_global_var_set(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_GLOBAL_VAR_SET
+        assert result["senderClientNo"] == 1
+        assert result["variableName"] == "score"
+        assert result["variableValueType"] == binary_serializer.VAR_TYPE_STRING
+        assert result["variableValue"] == "hello world"
+        assert result["variableValueBytes"] == b"hello world"
+
+    def test_global_var_set_bytes_roundtrip(self) -> None:
+        """Binary global var set should round-trip correctly."""
+        raw = bytes(range(256))
+        data = {
+            "senderClientNo": 2,
+            "variableName": "image",
+            "variableValueType": binary_serializer.VAR_TYPE_BYTES,
+            "variableValueBytes": raw,
+            "timestamp": 5678.9,
+        }
+        serialized = binary_serializer.serialize_global_var_set(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_GLOBAL_VAR_SET
+        assert result["variableValueType"] == binary_serializer.VAR_TYPE_BYTES
+        assert result["variableValueBytes"] == raw
+        assert "variableValue" not in result  # bytes type has no string key
+
+    def test_global_var_sync_mixed_types(self) -> None:
+        """Sync with both string and bytes variables should round-trip."""
+        data = {
+            "variables": [
+                {
+                    "name": "text_var",
+                    "valueType": binary_serializer.VAR_TYPE_STRING,
+                    "valueBytes": b"hello",
+                    "timestamp": 1.0,
+                    "lastWriterClientNo": 1,
+                },
+                {
+                    "name": "bin_var",
+                    "valueType": binary_serializer.VAR_TYPE_BYTES,
+                    "valueBytes": b"\x00\x01\x02\xff",
+                    "timestamp": 2.0,
+                    "lastWriterClientNo": 2,
+                },
+            ]
+        }
+        serialized = binary_serializer.serialize_global_var_sync(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_GLOBAL_VAR_SYNC
+        variables = result["variables"]
+        assert len(variables) == 2
+
+        assert variables[0]["name"] == "text_var"
+        assert variables[0]["valueType"] == binary_serializer.VAR_TYPE_STRING
+        assert variables[0]["value"] == "hello"
+        assert variables[0]["valueBytes"] == b"hello"
+
+        assert variables[1]["name"] == "bin_var"
+        assert variables[1]["valueType"] == binary_serializer.VAR_TYPE_BYTES
+        assert variables[1]["valueBytes"] == b"\x00\x01\x02\xff"
+        assert "value" not in variables[1]
+
+    def test_client_var_set_bytes_roundtrip(self) -> None:
+        """Binary client var set should round-trip correctly."""
+        raw = b"\xde\xad\xbe\xef"
+        data = {
+            "senderClientNo": 1,
+            "targetClientNo": 3,
+            "variableName": "data",
+            "variableValueType": binary_serializer.VAR_TYPE_BYTES,
+            "variableValueBytes": raw,
+            "timestamp": 100.0,
+        }
+        serialized = binary_serializer.serialize_client_var_set(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_CLIENT_VAR_SET
+        assert result["senderClientNo"] == 1
+        assert result["targetClientNo"] == 3
+        assert result["variableValueType"] == binary_serializer.VAR_TYPE_BYTES
+        assert result["variableValueBytes"] == raw
+
+    def test_client_var_sync_mixed_types(self) -> None:
+        """Client var sync with both string and bytes should round-trip."""
+        data = {
+            "clientVariables": {
+                "1": [
+                    {
+                        "name": "status",
+                        "valueType": binary_serializer.VAR_TYPE_STRING,
+                        "valueBytes": b"ready",
+                        "timestamp": 1.0,
+                        "lastWriterClientNo": 1,
+                    },
+                ],
+                "2": [
+                    {
+                        "name": "payload",
+                        "valueType": binary_serializer.VAR_TYPE_BYTES,
+                        "valueBytes": b"\x00" * 100,
+                        "timestamp": 2.0,
+                        "lastWriterClientNo": 2,
+                    },
+                ],
+            }
+        }
+        serialized = binary_serializer.serialize_client_var_sync(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_CLIENT_VAR_SYNC
+        client_vars = result["clientVariables"]
+
+        assert client_vars["1"][0]["name"] == "status"
+        assert client_vars["1"][0]["valueType"] == binary_serializer.VAR_TYPE_STRING
+        assert client_vars["1"][0]["value"] == "ready"
+
+        assert client_vars["2"][0]["name"] == "payload"
+        assert client_vars["2"][0]["valueType"] == binary_serializer.VAR_TYPE_BYTES
+        assert client_vars["2"][0]["valueBytes"] == b"\x00" * 100
+
+    def test_large_binary_value(self) -> None:
+        """Large binary value (64KB) should serialize and deserialize correctly."""
+        raw = bytes(range(256)) * 256  # 64KB
+        data = {
+            "senderClientNo": 1,
+            "variableName": "big",
+            "variableValueType": binary_serializer.VAR_TYPE_BYTES,
+            "variableValueBytes": raw,
+            "timestamp": 0.0,
+        }
+        serialized = binary_serializer.serialize_global_var_set(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert result["variableValueBytes"] == raw
+        assert len(result["variableValueBytes"]) == 65536

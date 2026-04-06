@@ -57,7 +57,7 @@ class TestLoadDefaultConfig:
         assert config.max_global_vars == 100
         assert config.max_client_vars == 100
         assert config.max_var_name_length == 64
-        assert config.max_var_value_length == 1024
+        assert config.max_var_value_length == 65536
         assert config.nv_flush_interval == 0.05
         assert config.nv_monitor_window_size == 1.0
         assert config.nv_monitor_threshold == 200

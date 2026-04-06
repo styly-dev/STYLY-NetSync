@@ -23,6 +23,10 @@ namespace Styly.NetSync
         public const byte MSG_CLIENT_POSE = 11;  // Client pose (quaternion + timestamps)
         public const byte MSG_ROOM_POSE = 12;  // Room pose snapshot (quaternion + timestamps)
 
+        // Network Variable value type tags
+        public const byte VAR_TYPE_STRING = 0x00;
+        public const byte VAR_TYPE_BYTES = 0x01;
+
         // Transform data type identifiers (deprecated - kept for reference)
         // Protocol v3 pose encoding constants
         private const float ABS_POS_SCALE = 0.01f;
@@ -889,11 +893,21 @@ namespace Styly.NetSync
             writer.Write((byte)nameBytes.Length);
             writer.Write(nameBytes);
 
-            // Variable value (max 1024 bytes)
-            var varValue = data.TryGetValue("variableValue", out var valueObj) ? (valueObj != null ? valueObj.ToString() : "") : "";
-            if (varValue.Length > 1024) varValue = varValue.Substring(0, 1024);
-            var valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
-            writer.Write((ushort)valueBytes.Length);
+            // Variable value: [1B type_tag][4B uint32 length][N bytes payload]
+            var valueType = data.TryGetValue("variableValueType", out var typeObj) ? Convert.ToByte(typeObj) : VAR_TYPE_STRING;
+            byte[] valueBytes;
+            if (valueType == VAR_TYPE_BYTES && data.TryGetValue("variableValueBytes", out var bytesObj))
+            {
+                valueBytes = (byte[])bytesObj;
+            }
+            else
+            {
+                var varValue = data.TryGetValue("variableValue", out var valueObj) ? (valueObj != null ? valueObj.ToString() : "") : "";
+                valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
+                valueType = VAR_TYPE_STRING;
+            }
+            writer.Write(valueType);
+            writer.Write((uint)valueBytes.Length);
             writer.Write(valueBytes);
 
             // Timestamp (8 bytes double)
@@ -935,11 +949,21 @@ namespace Styly.NetSync
             writer.Write((byte)nameBytes.Length);
             writer.Write(nameBytes);
 
-            // Variable value (max 1024 bytes)
-            var varValue = data.TryGetValue("variableValue", out var valueObj) ? (valueObj != null ? valueObj.ToString() : "") : "";
-            if (varValue.Length > 1024) varValue = varValue.Substring(0, 1024);
-            var valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
-            writer.Write((ushort)valueBytes.Length);
+            // Variable value: [1B type_tag][4B uint32 length][N bytes payload]
+            var valueType = data.TryGetValue("variableValueType", out var typeObj) ? Convert.ToByte(typeObj) : VAR_TYPE_STRING;
+            byte[] valueBytes;
+            if (valueType == VAR_TYPE_BYTES && data.TryGetValue("variableValueBytes", out var bytesObj))
+            {
+                valueBytes = (byte[])bytesObj;
+            }
+            else
+            {
+                var varValue = data.TryGetValue("variableValue", out var valueObj) ? (valueObj != null ? valueObj.ToString() : "") : "";
+                valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
+                valueType = VAR_TYPE_STRING;
+            }
+            writer.Write(valueType);
+            writer.Write((uint)valueBytes.Length);
             writer.Write(valueBytes);
 
             // Timestamp (8 bytes double)
@@ -1031,9 +1055,16 @@ namespace Styly.NetSync
                 var nameLength = reader.ReadByte();
                 variable["name"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLength));
 
-                // Variable value
-                var valueLength = reader.ReadUInt16();
-                variable["value"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(valueLength));
+                // Variable value: [1B type_tag][4B uint32 length][N bytes payload]
+                var valueType = reader.ReadByte();
+                var valueLength = reader.ReadUInt32();
+                var rawBytes = reader.ReadBytes((int)valueLength);
+                variable["valueType"] = valueType;
+                variable["valueBytes"] = rawBytes;
+                if (valueType == VAR_TYPE_STRING)
+                {
+                    variable["value"] = System.Text.Encoding.UTF8.GetString(rawBytes);
+                }
 
                 // Timestamp
                 variable["timestamp"] = reader.ReadDouble();
@@ -1074,9 +1105,16 @@ namespace Styly.NetSync
                     var nameLength = reader.ReadByte();
                     variable["name"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(nameLength));
 
-                    // Variable value
-                    var valueLength = reader.ReadUInt16();
-                    variable["value"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(valueLength));
+                    // Variable value: [1B type_tag][4B uint32 length][N bytes payload]
+                    var valueType = reader.ReadByte();
+                    var valueLength = reader.ReadUInt32();
+                    var rawBytes = reader.ReadBytes((int)valueLength);
+                    variable["valueType"] = valueType;
+                    variable["valueBytes"] = rawBytes;
+                    if (valueType == VAR_TYPE_STRING)
+                    {
+                        variable["value"] = System.Text.Encoding.UTF8.GetString(rawBytes);
+                    }
 
                     // Timestamp
                     variable["timestamp"] = reader.ReadDouble();

@@ -4,12 +4,62 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Text;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 
 namespace Styly.NetSync
 {
+    /// <summary>
+    /// Tagged union for network variable values (string or byte[]).
+    /// </summary>
+    internal readonly struct NVValue : IEquatable<NVValue>
+    {
+        public readonly byte TypeTag; // VAR_TYPE_STRING=0 or VAR_TYPE_BYTES=1
+        public readonly byte[] RawBytes;
+
+        public NVValue(byte typeTag, byte[] rawBytes)
+        {
+            TypeTag = typeTag;
+            RawBytes = rawBytes ?? Array.Empty<byte>();
+        }
+
+        public static NVValue FromString(string value)
+        {
+            return new NVValue(BinarySerializer.VAR_TYPE_STRING,
+                value != null ? Encoding.UTF8.GetBytes(value) : Array.Empty<byte>());
+        }
+
+        public static NVValue FromBytes(byte[] value)
+        {
+            return new NVValue(BinarySerializer.VAR_TYPE_BYTES, value ?? Array.Empty<byte>());
+        }
+
+        public string AsString => TypeTag == BinarySerializer.VAR_TYPE_STRING ? Encoding.UTF8.GetString(RawBytes) : null;
+
+        public bool Equals(NVValue other)
+        {
+            return TypeTag == other.TypeTag && RawBytes.SequenceEqual(other.RawBytes);
+        }
+
+        public override bool Equals(object obj) => obj is NVValue other && Equals(other);
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hash = TypeTag;
+                for (int i = 0; i < Math.Min(RawBytes.Length, 16); i++)
+                    hash = hash * 31 + RawBytes[i];
+                return hash;
+            }
+        }
+
+        public static bool operator ==(NVValue left, NVValue right) => left.Equals(right);
+        public static bool operator !=(NVValue left, NVValue right) => !left.Equals(right);
+    }
+
     internal class NetworkVariableManager
     {
         private readonly IConnectionManager _connectionManager;
@@ -18,38 +68,42 @@ namespace Styly.NetSync
 
         // Reusable serialization resources to reduce allocations per send
         private readonly ReusableBufferWriter _buf;
-        private const int INITIAL_BUFFER_CAPACITY = 1024;
+        private const int INITIAL_BUFFER_CAPACITY = 4096;
 
         // Network Variables storage
-        private readonly Dictionary<string, string> _globalVariables = new();
-        private readonly Dictionary<int, Dictionary<string, string>> _clientVariables = new();
+        private readonly Dictionary<string, NVValue> _globalVariables = new();
+        private readonly Dictionary<int, Dictionary<string, NVValue>> _clientVariables = new();
 
         // Network Variables limits (must match server)
         private const int MAX_GLOBAL_VARS = 100;
         private const int MAX_CLIENT_VARS = 100;
         private const int MAX_VAR_NAME_LENGTH = 64;
-        private const int MAX_VAR_VALUE_LENGTH = 1024;
+        private const int MAX_VAR_VALUE_LENGTH = 65536;
 
         // Debounce configuration
         private const double DEBOUNCE_INTERVAL = 0.1; // 100ms debounce
 
         // Send-side dedupe caches
-        private readonly Dictionary<string, string> _lastSentGlobal = new();
-        private readonly Dictionary<(int, string), string> _lastSentClient = new();
+        private readonly Dictionary<string, NVValue> _lastSentGlobal = new();
+        private readonly Dictionary<(int, string), NVValue> _lastSentClient = new();
 
         // Leading-edge throttles (cooldowns) for NV sends
         private readonly Dictionary<string, double> _nextAllowedGlobal = new();
         private readonly Dictionary<(int clientNo, string name), double> _nextAllowedClient = new();
 
         // Debounce buffers for pending sends
-        private readonly Dictionary<string, string> _pendingGlobal = new();
+        private readonly Dictionary<string, NVValue> _pendingGlobal = new();
         private readonly Dictionary<string, double> _dueGlobal = new();
-        private readonly Dictionary<(int, string), string> _pendingClient = new();
+        private readonly Dictionary<(int, string), NVValue> _pendingClient = new();
         private readonly Dictionary<(int, string), double> _dueClient = new();
 
-        // Events (using C# events, NOT SendMessage)
+        // Events for string-typed variables (using C# events, NOT SendMessage)
         public event Action<string, string, string> OnGlobalVariableChanged;
         public event Action<int, string, string, string> OnClientVariableChanged;
+
+        // Events for byte[]-typed variables
+        public event Action<string, byte[], byte[]> OnGlobalBytesVariableChanged;
+        public event Action<int, string, byte[], byte[]> OnClientBytesVariableChanged;
 
         // Flag to track if initial network variables have been received
         private bool _hasReceivedInitialSync = false;
@@ -108,12 +162,26 @@ namespace Styly.NetSync
             _buf = new ReusableBufferWriter(INITIAL_BUFFER_CAPACITY);
         }
 
-        // Global Variables API
+        // Global Variables API (string)
         public bool SetGlobalVariable(string name, string value, string roomId)
         {
-            if (!ValidateVariableName(name) || !ValidateVariableValue(value))
+            if (!ValidateVariableName(name) || !ValidateStringValue(value))
                 return false;
 
+            return SetGlobalVariableInternal(name, NVValue.FromString(value), roomId);
+        }
+
+        // Global Variables API (byte[])
+        public bool SetGlobalVariable(string name, byte[] value, string roomId)
+        {
+            if (!ValidateVariableName(name) || !ValidateBytesValue(value))
+                return false;
+
+            return SetGlobalVariableInternal(name, NVValue.FromBytes(value), roomId);
+        }
+
+        private bool SetGlobalVariableInternal(string name, NVValue nvValue, string roomId)
+        {
             if (_globalVariables.Count >= MAX_GLOBAL_VARS && !_globalVariables.ContainsKey(name))
             {
                 Debug.LogWarning($"Global variable limit ({MAX_GLOBAL_VARS}) reached");
@@ -123,17 +191,17 @@ namespace Styly.NetSync
             // Offline mode: write locally and fire event without server round-trip
             if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
             {
-                var oldValue = _globalVariables.TryGetValue(name, out var existing) ? existing : null;
-                if (!string.Equals(oldValue, value))
+                var hasOld = _globalVariables.TryGetValue(name, out var existing);
+                if (!hasOld || existing != nvValue)
                 {
-                    _globalVariables[name] = value;
-                    OnGlobalVariableChanged?.Invoke(name, oldValue, value);
+                    _globalVariables[name] = nvValue;
+                    FireGlobalEvent(name, hasOld ? existing : default, nvValue);
                 }
                 return true;
             }
 
             // Dedupe: same as the last actually sent value -> skip, but treat as success
-            if (_lastSentGlobal.TryGetValue(name, out var lastSent) && lastSent == value)
+            if (_lastSentGlobal.TryGetValue(name, out var lastSent) && lastSent == nvValue)
                 return true;
 
             double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
@@ -143,13 +211,13 @@ namespace Styly.NetSync
             if (allowImmediate)
             {
                 // Try immediate send; only start cooldown if it *actually* sent
-                if (TrySendGlobalNow(name, value, roomId))
+                if (TrySendGlobalNow(name, nvValue, roomId))
                 {
                     _nextAllowedGlobal[name] = now + DEBOUNCE_INTERVAL;
                 }
 
                 // Always schedule trailing edge (latest-wins) and DO NOT extend it later
-                _pendingGlobal[name] = value;
+                _pendingGlobal[name] = nvValue;
                 if (!_dueGlobal.ContainsKey(name))
                     _dueGlobal[name] = now + DEBOUNCE_INTERVAL;
 
@@ -157,7 +225,7 @@ namespace Styly.NetSync
             }
 
             // Inside cooldown: update pending value but keep the original deadline
-            _pendingGlobal[name] = value;
+            _pendingGlobal[name] = nvValue;
             if (!_dueGlobal.ContainsKey(name))
                 _dueGlobal[name] = next;
 
@@ -165,20 +233,24 @@ namespace Styly.NetSync
         }
 
         // Internal method to send now (used by flush)
-        private bool TrySendGlobalNow(string name, string value, string roomId)
+        private bool TrySendGlobalNow(string name, NVValue nvValue, string roomId)
         {
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             var data = new Dictionary<string, object>
             {
                 ["senderClientNo"] = _netSyncManager.ClientNo,
                 ["variableName"] = name,
-                ["variableValue"] = value,
+                ["variableValueType"] = nvValue.TypeTag,
                 ["timestamp"] = timestamp
             };
+            if (nvValue.TypeTag == BinarySerializer.VAR_TYPE_BYTES)
+                data["variableValueBytes"] = nvValue.RawBytes;
+            else
+                data["variableValue"] = nvValue.AsString;
 
             try
             {
-                var required = EstimateGlobalVarSetSize(name, value);
+                var required = EstimateNVSetSize(name, nvValue.RawBytes.Length, hasTarget: false);
                 _buf.EnsureCapacity(required);
 
                 _buf.Stream.Position = 0;
@@ -191,7 +263,7 @@ namespace Styly.NetSync
                 var sent = _connectionManager.TryEnqueueControl(roomId, payload);
                 if (sent)
                 {
-                    _lastSentGlobal[name] = value; // Update last sent cache
+                    _lastSentGlobal[name] = nvValue;
                 }
                 return sent;
             }
@@ -208,17 +280,44 @@ namespace Styly.NetSync
             {
                 throw new InvalidOperationException("Cannot get global variables before OnReady event. Please wait for OnReady to be fired.");
             }
-            return _globalVariables.TryGetValue(name, out var value) ? value : defaultValue;
+            if (_globalVariables.TryGetValue(name, out var nv) && nv.TypeTag == BinarySerializer.VAR_TYPE_STRING)
+                return nv.AsString;
+            return defaultValue;
         }
 
-        // Client Variables API
+        public byte[] GetGlobalVariableBytes(string name, byte[] defaultValue = null)
+        {
+            if (!_hasReceivedInitialSync)
+            {
+                throw new InvalidOperationException("Cannot get global variables before OnReady event. Please wait for OnReady to be fired.");
+            }
+            if (_globalVariables.TryGetValue(name, out var nv) && nv.TypeTag == BinarySerializer.VAR_TYPE_BYTES)
+                return nv.RawBytes;
+            return defaultValue;
+        }
+
+        // Client Variables API (string)
         public bool SetClientVariable(string name, string value, int targetClientNo, string roomId)
         {
-            if (!ValidateVariableName(name) || !ValidateVariableValue(value))
+            if (!ValidateVariableName(name) || !ValidateStringValue(value))
                 return false;
 
+            return SetClientVariableInternal(name, NVValue.FromString(value), targetClientNo, roomId);
+        }
+
+        // Client Variables API (byte[])
+        public bool SetClientVariable(string name, byte[] value, int targetClientNo, string roomId)
+        {
+            if (!ValidateVariableName(name) || !ValidateBytesValue(value))
+                return false;
+
+            return SetClientVariableInternal(name, NVValue.FromBytes(value), targetClientNo, roomId);
+        }
+
+        private bool SetClientVariableInternal(string name, NVValue nvValue, int targetClientNo, string roomId)
+        {
             if (!_clientVariables.ContainsKey(targetClientNo))
-                _clientVariables[targetClientNo] = new Dictionary<string, string>();
+                _clientVariables[targetClientNo] = new Dictionary<string, NVValue>();
 
             var clientVars = _clientVariables[targetClientNo];
             if (clientVars.Count >= MAX_CLIENT_VARS && !clientVars.ContainsKey(name))
@@ -230,11 +329,11 @@ namespace Styly.NetSync
             // Offline mode: write locally and fire event without server round-trip
             if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
             {
-                var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
-                if (!string.Equals(oldValue, value))
+                var hasOld = clientVars.TryGetValue(name, out var existing);
+                if (!hasOld || existing != nvValue)
                 {
-                    clientVars[name] = value;
-                    OnClientVariableChanged?.Invoke(targetClientNo, name, oldValue, value);
+                    clientVars[name] = nvValue;
+                    FireClientEvent(targetClientNo, name, hasOld ? existing : default, nvValue);
                 }
                 return true;
             }
@@ -242,7 +341,7 @@ namespace Styly.NetSync
             var key = (targetClientNo, name);
 
             // Dedupe: same as the last actually sent value -> skip, but treat as success
-            if (_lastSentClient.TryGetValue(key, out var lastSent) && lastSent == value)
+            if (_lastSentClient.TryGetValue(key, out var lastSent) && lastSent == nvValue)
                 return true;
 
             double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
@@ -251,13 +350,13 @@ namespace Styly.NetSync
             bool allowImmediate = !_nextAllowedClient.TryGetValue(key, out var next) || now >= next;
             if (allowImmediate)
             {
-                if (TrySendClientNow(targetClientNo, name, value, roomId))
+                if (TrySendClientNow(targetClientNo, name, nvValue, roomId))
                 {
                     _nextAllowedClient[key] = now + DEBOUNCE_INTERVAL;
                 }
 
                 // Schedule trailing and keep its deadline fixed
-                _pendingClient[key] = value;
+                _pendingClient[key] = nvValue;
                 if (!_dueClient.ContainsKey(key))
                     _dueClient[key] = now + DEBOUNCE_INTERVAL;
 
@@ -265,7 +364,7 @@ namespace Styly.NetSync
             }
 
             // Inside cooldown: update pending value but keep original due time
-            _pendingClient[key] = value;
+            _pendingClient[key] = nvValue;
             if (!_dueClient.ContainsKey(key))
                 _dueClient[key] = next;
 
@@ -273,7 +372,7 @@ namespace Styly.NetSync
         }
 
         // Internal method to send now (used by flush)
-        private bool TrySendClientNow(int targetClientNo, string name, string value, string roomId)
+        private bool TrySendClientNow(int targetClientNo, string name, NVValue nvValue, string roomId)
         {
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             var data = new Dictionary<string, object>
@@ -281,13 +380,17 @@ namespace Styly.NetSync
                 ["senderClientNo"] = _netSyncManager.ClientNo,
                 ["targetClientNo"] = targetClientNo,
                 ["variableName"] = name,
-                ["variableValue"] = value,
+                ["variableValueType"] = nvValue.TypeTag,
                 ["timestamp"] = timestamp
             };
+            if (nvValue.TypeTag == BinarySerializer.VAR_TYPE_BYTES)
+                data["variableValueBytes"] = nvValue.RawBytes;
+            else
+                data["variableValue"] = nvValue.AsString;
 
             try
             {
-                var required = EstimateClientVarSetSize(name, value);
+                var required = EstimateNVSetSize(name, nvValue.RawBytes.Length, hasTarget: true);
                 _buf.EnsureCapacity(required);
 
                 _buf.Stream.Position = 0;
@@ -301,7 +404,7 @@ namespace Styly.NetSync
                 if (sent)
                 {
                     var key = (targetClientNo, name);
-                    _lastSentClient[key] = value; // Update last sent cache
+                    _lastSentClient[key] = nvValue;
                 }
                 return sent;
             }
@@ -320,7 +423,22 @@ namespace Styly.NetSync
             }
             if (_clientVariables.TryGetValue(clientNo, out var clientVars))
             {
-                return clientVars.TryGetValue(name, out var value) ? value : defaultValue;
+                if (clientVars.TryGetValue(name, out var nv) && nv.TypeTag == BinarySerializer.VAR_TYPE_STRING)
+                    return nv.AsString;
+            }
+            return defaultValue;
+        }
+
+        public byte[] GetClientVariableBytes(string name, int clientNo, byte[] defaultValue = null)
+        {
+            if (!_hasReceivedInitialSync)
+            {
+                throw new InvalidOperationException("Cannot get client variables before OnReady event. Please wait for OnReady to be fired.");
+            }
+            if (_clientVariables.TryGetValue(clientNo, out var clientVars))
+            {
+                if (clientVars.TryGetValue(name, out var nv) && nv.TypeTag == BinarySerializer.VAR_TYPE_BYTES)
+                    return nv.RawBytes;
             }
             return defaultValue;
         }
@@ -369,21 +487,20 @@ namespace Styly.NetSync
                     if (variable != null)
                     {
                         var name = variable.TryGetValue("name", out var nameObj) ? (nameObj != null ? nameObj.ToString() : null) : null;
-                        var value = variable.TryGetValue("value", out var valueObj) ? (valueObj != null ? valueObj.ToString() : null) : null;
+                        if (string.IsNullOrEmpty(name)) continue;
 
-                        if (!string.IsNullOrEmpty(name) && value != null)
+                        var nvValue = ExtractNVValue(variable);
+
+                        var hasOld = _globalVariables.TryGetValue(name, out var existing);
+                        // Skip if value is unchanged
+                        if (hasOld && existing == nvValue)
                         {
-                            var oldValue = _globalVariables.TryGetValue(name, out var existing) ? existing : null;
-                            // Skip if value is unchanged
-                            if (object.Equals(oldValue, value))
-                            {
-                                continue;
-                            }
-                            _globalVariables[name] = value;
-
-                            // Trigger event only when changed
-                            OnGlobalVariableChanged?.Invoke(name, oldValue, value);
+                            continue;
                         }
+                        _globalVariables[name] = nvValue;
+
+                        // Trigger event only when changed
+                        FireGlobalEvent(name, hasOld ? existing : default, nvValue);
                     }
                 }
             }
@@ -416,7 +533,7 @@ namespace Styly.NetSync
                         if (variables == null) continue;
 
                         if (!_clientVariables.ContainsKey(clientNo))
-                            _clientVariables[clientNo] = new Dictionary<string, string>();
+                            _clientVariables[clientNo] = new Dictionary<string, NVValue>();
 
                         var clientVars = _clientVariables[clientNo];
 
@@ -427,22 +544,21 @@ namespace Styly.NetSync
                             if (variable != null)
                             {
                                 var name = variable.TryGetValue("name", out var nameObj) ? (nameObj != null ? nameObj.ToString() : null) : null;
-                                var value = variable.TryGetValue("value", out var valueObj) ? (valueObj != null ? valueObj.ToString() : null) : null;
+                                if (string.IsNullOrEmpty(name)) continue;
 
-                                if (!string.IsNullOrEmpty(name) && value != null)
+                                var nvValue = ExtractNVValue(variable);
+
+                                var hasOld = clientVars.TryGetValue(name, out var existing);
+                                // Skip if value is unchanged
+                                if (hasOld && existing == nvValue)
                                 {
-                                    var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
-                                    // Skip if value is unchanged
-                                    if (string.Equals(oldValue, value, StringComparison.Ordinal))
-                                    {
-                                        continue;
-                                    }
-
-                                    clientVars[name] = value;
-
-                                    // Trigger event only when changed
-                                    OnClientVariableChanged?.Invoke(clientNo, name, oldValue, value);
+                                    continue;
                                 }
+
+                                clientVars[name] = nvValue;
+
+                                // Trigger event only when changed
+                                FireClientEvent(clientNo, name, hasOld ? existing : default, nvValue);
                             }
                         }
                     }
@@ -461,20 +577,98 @@ namespace Styly.NetSync
             return true;
         }
 
-        private bool ValidateVariableValue(string value)
+        private bool ValidateStringValue(string value)
         {
-            if (value == null || value.Length > MAX_VAR_VALUE_LENGTH)
+            if (value == null)
             {
-                Debug.LogWarning($"Invalid variable value: must be 0-{MAX_VAR_VALUE_LENGTH} characters");
+                Debug.LogWarning("Invalid variable value: must not be null");
+                return false;
+            }
+            int byteLen = Encoding.UTF8.GetByteCount(value);
+            if (byteLen > MAX_VAR_VALUE_LENGTH)
+            {
+                Debug.LogWarning($"Invalid variable value: {byteLen} bytes exceeds {MAX_VAR_VALUE_LENGTH} byte limit");
                 return false;
             }
             return true;
         }
 
+        private bool ValidateBytesValue(byte[] value)
+        {
+            if (value == null)
+            {
+                Debug.LogWarning("Invalid variable value: must not be null");
+                return false;
+            }
+            if (value.Length > MAX_VAR_VALUE_LENGTH)
+            {
+                Debug.LogWarning($"Invalid variable value: {value.Length} bytes exceeds {MAX_VAR_VALUE_LENGTH} byte limit");
+                return false;
+            }
+            return true;
+        }
+
+        // Extract NVValue from deserialized dictionary
+        private static NVValue ExtractNVValue(Dictionary<string, object> variable)
+        {
+            byte valueType = BinarySerializer.VAR_TYPE_STRING;
+            if (variable.TryGetValue("valueType", out var typeObj))
+                valueType = Convert.ToByte(typeObj);
+
+            if (valueType == BinarySerializer.VAR_TYPE_BYTES && variable.TryGetValue("valueBytes", out var bytesObj))
+            {
+                return new NVValue(BinarySerializer.VAR_TYPE_BYTES, (byte[])bytesObj);
+            }
+
+            // String type or fallback
+            byte[] rawBytes;
+            if (variable.TryGetValue("valueBytes", out var rawObj))
+            {
+                rawBytes = (byte[])rawObj;
+            }
+            else
+            {
+                var strValue = variable.TryGetValue("value", out var valueObj) ? (valueObj != null ? valueObj.ToString() : "") : "";
+                rawBytes = Encoding.UTF8.GetBytes(strValue);
+            }
+            return new NVValue(BinarySerializer.VAR_TYPE_STRING, rawBytes);
+        }
+
+        // Fire appropriate event based on type tag
+        private void FireGlobalEvent(string name, NVValue oldValue, NVValue newValue)
+        {
+            if (newValue.TypeTag == BinarySerializer.VAR_TYPE_BYTES)
+            {
+                OnGlobalBytesVariableChanged?.Invoke(name, oldValue.RawBytes, newValue.RawBytes);
+            }
+            else
+            {
+                OnGlobalVariableChanged?.Invoke(name, oldValue.AsString, newValue.AsString);
+            }
+        }
+
+        private void FireClientEvent(int clientNo, string name, NVValue oldValue, NVValue newValue)
+        {
+            if (newValue.TypeTag == BinarySerializer.VAR_TYPE_BYTES)
+            {
+                OnClientBytesVariableChanged?.Invoke(clientNo, name, oldValue.RawBytes, newValue.RawBytes);
+            }
+            else
+            {
+                OnClientVariableChanged?.Invoke(clientNo, name, oldValue.AsString, newValue.AsString);
+            }
+        }
+
         // Get all global variables (for debugging/inspection)
         public Dictionary<string, string> GetAllGlobalVariables()
         {
-            return new Dictionary<string, string>(_globalVariables);
+            var result = new Dictionary<string, string>();
+            foreach (var kvp in _globalVariables)
+            {
+                if (kvp.Value.TypeTag == BinarySerializer.VAR_TYPE_STRING)
+                    result[kvp.Key] = kvp.Value.AsString;
+            }
+            return result;
         }
 
         // Get all client variables for a specific client (for debugging/inspection)
@@ -482,7 +676,13 @@ namespace Styly.NetSync
         {
             if (_clientVariables.TryGetValue(clientNo, out var clientVars))
             {
-                return new Dictionary<string, string>(clientVars);
+                var result = new Dictionary<string, string>();
+                foreach (var kvp in clientVars)
+                {
+                    if (kvp.Value.TypeTag == BinarySerializer.VAR_TYPE_STRING)
+                        result[kvp.Key] = kvp.Value.AsString;
+                }
+                return result;
             }
             return new Dictionary<string, string>();
         }
@@ -502,26 +702,12 @@ namespace Styly.NetSync
 
         // Buffer growth handled by ReusableBufferWriter
 
-        private static int EstimateGlobalVarSetSize(string name, string value)
+        // Unified size estimation: 1 (msgType) + 2 (sender) + [2 (target)] + 1 + nameLen + 1 (typeTag) + 4 (uint32 valueLen) + valueLen + 8 (timestamp)
+        private static int EstimateNVSetSize(string name, int valueBytesLength, bool hasTarget)
         {
-            // 1 (type) + 2 (sender) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
-            int nameLen = ClampedUtf8Length(name, 64);
-            int valueLen = ClampedUtf8Length(value, 1024);
-            return 1 + 2 + 1 + nameLen + 2 + valueLen + 8;
-        }
-
-        private static int EstimateClientVarSetSize(string name, string value)
-        {
-            // 1 (type) + 2 (sender) + 2 (target) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
-            int nameLen = ClampedUtf8Length(name, 64);
-            int valueLen = ClampedUtf8Length(value, 1024);
-            return 1 + 2 + 2 + 1 + nameLen + 2 + valueLen + 8;
-        }
-
-        private static int ClampedUtf8Length(string s, int max)
-        {
-            var len = s != null ? Encoding.UTF8.GetByteCount(s) : 0;
-            return Math.Min(len, max);
+            int nameLen = name != null ? Math.Min(Encoding.UTF8.GetByteCount(name), 64) : 0;
+            int targetSize = hasTarget ? 2 : 0;
+            return 1 + 2 + targetSize + 1 + nameLen + 1 + 4 + valueBytesLength + 8;
         }
 
         /// <summary>
@@ -530,7 +716,7 @@ namespace Styly.NetSync
         /// <returns>True if all pending were flushed, false if any backpressure occurred.</returns>
         private bool FlushPendingGlobal(double nowSeconds, string roomId)
         {
-            var toFlush = new List<(string name, string value)>();
+            var toFlush = new List<(string name, NVValue value)>();
             bool allFlushed = true;
 
             foreach (var kvp in _dueGlobal)
@@ -576,7 +762,7 @@ namespace Styly.NetSync
         /// <returns>True if all pending were flushed, false if any backpressure occurred.</returns>
         private bool FlushPendingClient(double nowSeconds, string roomId)
         {
-            var toFlush = new List<((int targetClientNo, string name) key, string value)>();
+            var toFlush = new List<((int targetClientNo, string name) key, NVValue value)>();
             bool allFlushed = true;
 
             foreach (var kvp in _dueClient)

@@ -20,6 +20,10 @@ MSG_CLIENT_VAR_SYNC = 10  # Sync client variables
 MSG_CLIENT_POSE = 11
 MSG_ROOM_POSE = 12
 
+# Network Variable value type tags
+VAR_TYPE_STRING = 0x00
+VAR_TYPE_BYTES = 0x01
+
 # Transform data type identifiers (deprecated - kept for reference)
 
 # Maximum allowed virtual transforms to prevent memory issues
@@ -112,6 +116,23 @@ def _unpack_string(
         offset += 1
     string = data[offset : offset + length].decode("utf-8")
     return string, offset + length
+
+
+def _pack_nv_value(buffer: bytearray, type_tag: int, raw_bytes: bytes) -> None:
+    """Pack a typed NV value: [1B type_tag][4B uint32 length][N bytes payload]"""
+    buffer.append(type_tag)
+    buffer.extend(struct.pack("<I", len(raw_bytes)))
+    buffer.extend(raw_bytes)
+
+
+def _unpack_nv_value(data: bytes, offset: int) -> tuple[int, bytes, int]:
+    """Unpack a typed NV value. Returns (type_tag, raw_bytes, new_offset)."""
+    type_tag = data[offset]
+    offset += 1
+    length = struct.unpack("<I", data[offset : offset + 4])[0]
+    offset += 4
+    raw_bytes = data[offset : offset + length]
+    return type_tag, raw_bytes, offset + length
 
 
 def _transform_get_position(transform: dict[str, Any]) -> tuple[float, float, float]:
@@ -651,7 +672,9 @@ def serialize_global_var_set(data: dict[str, Any]) -> bytes:
     """Serialize global variable set message
 
     Args:
-        data: Dictionary with senderClientNo, variableName, variableValue, timestamp
+        data: Dictionary with senderClientNo, variableName,
+              variableValue (str) or variableValueBytes (bytes),
+              variableValueType (0=string, 1=bytes), timestamp
     """
     buffer = bytearray()
 
@@ -665,9 +688,13 @@ def serialize_global_var_set(data: dict[str, Any]) -> bytes:
     name = data.get("variableName", "")[:64]
     _pack_string(buffer, name)
 
-    # Variable value (max 1024 bytes)
-    value = data.get("variableValue", "")[:1024]
-    _pack_string(buffer, value, use_ushort=True)
+    # Variable value: [1B type_tag][4B uint32 length][N bytes payload]
+    value_type = data.get("variableValueType", VAR_TYPE_STRING)
+    if value_type == VAR_TYPE_BYTES:
+        raw_bytes = data.get("variableValueBytes", b"")
+    else:
+        raw_bytes = data.get("variableValue", "").encode("utf-8")
+    _pack_nv_value(buffer, value_type, raw_bytes)
 
     # Timestamp (8 bytes double)
     buffer.extend(struct.pack("<d", data.get("timestamp", 0.0)))
@@ -679,7 +706,9 @@ def serialize_global_var_sync(data: dict[str, Any]) -> bytes:
     """Serialize global variable sync message
 
     Args:
-        data: Dictionary with variables list
+        data: Dictionary with variables list. Each variable has name,
+              valueType (0=string, 1=bytes), valueBytes (bytes),
+              timestamp, lastWriterClientNo.
     """
     buffer = bytearray()
 
@@ -693,7 +722,9 @@ def serialize_global_var_sync(data: dict[str, Any]) -> bytes:
     # Each variable
     for var in variables:
         _pack_string(buffer, var.get("name", "")[:64])
-        _pack_string(buffer, var.get("value", "")[:1024], use_ushort=True)
+        value_type = var.get("valueType", VAR_TYPE_STRING)
+        raw_bytes = var.get("valueBytes", b"")
+        _pack_nv_value(buffer, value_type, raw_bytes)
         buffer.extend(struct.pack("<d", var.get("timestamp", 0.0)))
         buffer.extend(struct.pack("<H", var.get("lastWriterClientNo", 0)))
 
@@ -704,7 +735,9 @@ def serialize_client_var_set(data: dict[str, Any]) -> bytes:
     """Serialize client variable set message
 
     Args:
-        data: Dictionary with senderClientNo, targetClientNo, variableName, variableValue, timestamp
+        data: Dictionary with senderClientNo, targetClientNo, variableName,
+              variableValue (str) or variableValueBytes (bytes),
+              variableValueType (0=string, 1=bytes), timestamp
     """
     buffer = bytearray()
 
@@ -721,9 +754,13 @@ def serialize_client_var_set(data: dict[str, Any]) -> bytes:
     name = data.get("variableName", "")[:64]
     _pack_string(buffer, name)
 
-    # Variable value (max 1024 bytes)
-    value = data.get("variableValue", "")[:1024]
-    _pack_string(buffer, value, use_ushort=True)
+    # Variable value: [1B type_tag][4B uint32 length][N bytes payload]
+    value_type = data.get("variableValueType", VAR_TYPE_STRING)
+    if value_type == VAR_TYPE_BYTES:
+        raw_bytes = data.get("variableValueBytes", b"")
+    else:
+        raw_bytes = data.get("variableValue", "").encode("utf-8")
+    _pack_nv_value(buffer, value_type, raw_bytes)
 
     # Timestamp (8 bytes double)
     buffer.extend(struct.pack("<d", data.get("timestamp", 0.0)))
@@ -735,7 +772,9 @@ def serialize_client_var_sync(data: dict[str, Any]) -> bytes:
     """Serialize client variable sync message
 
     Args:
-        data: Dictionary with clientVariables dict
+        data: Dictionary with clientVariables dict. Each variable has name,
+              valueType (0=string, 1=bytes), valueBytes (bytes),
+              timestamp, lastWriterClientNo.
     """
     buffer = bytearray()
 
@@ -755,7 +794,9 @@ def serialize_client_var_sync(data: dict[str, Any]) -> bytes:
         # Each variable for this client
         for var in variables:
             _pack_string(buffer, var.get("name", "")[:64])
-            _pack_string(buffer, var.get("value", "")[:1024], use_ushort=True)
+            value_type = var.get("valueType", VAR_TYPE_STRING)
+            raw_bytes = var.get("valueBytes", b"")
+            _pack_nv_value(buffer, value_type, raw_bytes)
             buffer.extend(struct.pack("<d", var.get("timestamp", 0.0)))
             buffer.extend(struct.pack("<H", var.get("lastWriterClientNo", 0)))
 
@@ -1136,8 +1177,12 @@ def _deserialize_global_var_set(data: bytes, offset: int) -> dict[str, Any]:
     # Variable name
     result["variableName"], offset = _unpack_string(data, offset)
 
-    # Variable value
-    result["variableValue"], offset = _unpack_string(data, offset, use_ushort=True)
+    # Variable value: [1B type_tag][4B uint32 length][N bytes payload]
+    value_type, raw_bytes, offset = _unpack_nv_value(data, offset)
+    result["variableValueType"] = value_type
+    result["variableValueBytes"] = raw_bytes
+    if value_type == VAR_TYPE_STRING:
+        result["variableValue"] = raw_bytes.decode("utf-8")
 
     # Timestamp (8 bytes double)
     result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
@@ -1156,9 +1201,13 @@ def _deserialize_global_var_sync(data: bytes, offset: int) -> dict[str, Any]:
 
     # Each variable
     for _ in range(count):
-        var = {}
+        var: dict[str, Any] = {}
         var["name"], offset = _unpack_string(data, offset)
-        var["value"], offset = _unpack_string(data, offset, use_ushort=True)
+        value_type, raw_bytes, offset = _unpack_nv_value(data, offset)
+        var["valueType"] = value_type
+        var["valueBytes"] = raw_bytes
+        if value_type == VAR_TYPE_STRING:
+            var["value"] = raw_bytes.decode("utf-8")
         var["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
         offset += 8
         var["lastWriterClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
@@ -1183,8 +1232,12 @@ def _deserialize_client_var_set(data: bytes, offset: int) -> dict[str, Any]:
     # Variable name
     result["variableName"], offset = _unpack_string(data, offset)
 
-    # Variable value
-    result["variableValue"], offset = _unpack_string(data, offset, use_ushort=True)
+    # Variable value: [1B type_tag][4B uint32 length][N bytes payload]
+    value_type, raw_bytes, offset = _unpack_nv_value(data, offset)
+    result["variableValueType"] = value_type
+    result["variableValueBytes"] = raw_bytes
+    if value_type == VAR_TYPE_STRING:
+        result["variableValue"] = raw_bytes.decode("utf-8")
 
     # Timestamp (8 bytes double)
     result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
@@ -1209,11 +1262,15 @@ def _deserialize_client_var_sync(data: bytes, offset: int) -> dict[str, Any]:
         var_count = struct.unpack("<H", data[offset : offset + 2])[0]
         offset += 2
 
-        variables = []
+        variables: list[dict[str, Any]] = []
         for _ in range(var_count):
-            var = {}
+            var: dict[str, Any] = {}
             var["name"], offset = _unpack_string(data, offset)
-            var["value"], offset = _unpack_string(data, offset, use_ushort=True)
+            value_type, raw_bytes, offset = _unpack_nv_value(data, offset)
+            var["valueType"] = value_type
+            var["valueBytes"] = raw_bytes
+            if value_type == VAR_TYPE_STRING:
+                var["value"] = raw_bytes.decode("utf-8")
             var["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
             offset += 8
             var["lastWriterClientNo"] = struct.unpack("<H", data[offset : offset + 2])[
