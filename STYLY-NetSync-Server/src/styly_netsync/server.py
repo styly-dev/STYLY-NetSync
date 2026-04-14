@@ -1997,8 +1997,44 @@ class NetSyncServer:
                     logger.error(f"Error during room cleanup for {room_id}: {e}")
                     # Continue with other rooms even if one fails
 
+    def _probe_existing_discovery_server(self) -> None:
+        """Send a UDP broadcast probe to check if another server is already
+        responding on the same discovery port.  Logs a warning if a valid
+        response is received; never blocks startup."""
+        probe_sock: socket.socket | None = None
+        try:
+            probe_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            probe_sock.settimeout(1.0)
+
+            probe_msg = b"STYLY-NETSYNC-DISCOVER"
+            probe_sock.sendto(probe_msg, ("<broadcast>", self.server_discovery_port))
+
+            # Listen for any valid response within the timeout
+            try:
+                data, addr = probe_sock.recvfrom(1024)
+                response = data.decode("utf-8", errors="replace")
+                if response.startswith("STYLY-NETSYNC|"):
+                    logger.warning(
+                        f"Another STYLY-NetSync server is already responding "
+                        f"on discovery port {self.server_discovery_port} "
+                        f"(from {addr[0]}:{addr[1]}). Clients on this "
+                        f"LAN may connect to the wrong server."
+                    )
+            except TimeoutError:
+                # No response — no conflict detected
+                pass
+        except Exception as e:
+            logger.debug(f"Discovery port probe skipped: {e}")
+        finally:
+            if probe_sock is not None:
+                probe_sock.close()
+
     def _start_server_discovery(self) -> None:
         """Start server discovery service to respond to client requests"""
+        # Probe for existing servers before binding
+        self._probe_existing_discovery_server()
+
         # Start UDP server discovery
         try:
             self.server_discovery_socket = socket.socket(
