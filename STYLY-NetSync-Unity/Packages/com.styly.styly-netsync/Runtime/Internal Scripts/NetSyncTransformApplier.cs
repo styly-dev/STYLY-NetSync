@@ -124,7 +124,7 @@ namespace Styly.NetSync
 
             if ((data.flags & PoseFlags.PhysicalValid) != 0 && data.physical != null)
             {
-                _physical.AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(data.physical.position, data.physical.rotation));
+                _physical.AddSnapshot(data.poseTime, data.poseSeq, new SmoothingPoseSampleData(data.physical.position, data.physical.rotation));
             }
             else
             {
@@ -133,7 +133,7 @@ namespace Styly.NetSync
 
             if ((data.flags & PoseFlags.HeadValid) != 0 && data.head != null)
             {
-                _head.AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(data.head.position, data.head.rotation));
+                _head.AddSnapshot(data.poseTime, data.poseSeq, new SmoothingPoseSampleData(data.head.position, data.head.rotation));
             }
             else
             {
@@ -142,7 +142,7 @@ namespace Styly.NetSync
 
             if ((data.flags & PoseFlags.RightValid) != 0 && data.rightHand != null)
             {
-                _rightHand.AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(data.rightHand.position, data.rightHand.rotation));
+                _rightHand.AddSnapshot(data.poseTime, data.poseSeq, new SmoothingPoseSampleData(data.rightHand.position, data.rightHand.rotation));
             }
             else
             {
@@ -151,7 +151,7 @@ namespace Styly.NetSync
 
             if ((data.flags & PoseFlags.LeftValid) != 0 && data.leftHand != null)
             {
-                _leftHand.AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(data.leftHand.position, data.leftHand.rotation));
+                _leftHand.AddSnapshot(data.poseTime, data.poseSeq, new SmoothingPoseSampleData(data.leftHand.position, data.leftHand.rotation));
             }
             else
             {
@@ -165,7 +165,7 @@ namespace Styly.NetSync
                 {
                     var td = data.virtuals[i];
                     if (td == null) { continue; }
-                    _virtuals[i].AddSnapshot(data.poseTime, data.poseSeq, new PoseSampleData(td.position, td.rotation));
+                    _virtuals[i].AddSnapshot(data.poseTime, data.poseSeq, new SmoothingPoseSampleData(td.position, td.rotation));
                 }
             }
             else
@@ -185,7 +185,7 @@ namespace Styly.NetSync
             }
 
             _intervalEstimator.OnPoseTime(poseTime);
-            _singleChannel.AddSnapshot(poseTime, poseSeq, new PoseSampleData(position, rotation));
+            _singleChannel.AddSnapshot(poseTime, poseSeq, new SmoothingPoseSampleData(position, rotation));
         }
 
         public void Clear()
@@ -249,7 +249,7 @@ namespace Styly.NetSync
             }
         }
 
-        private static void ApplyBinding(in TransformBinding binding, in PoseSampleData pose)
+        private static void ApplyBinding(in TransformBinding binding, in SmoothingPoseSampleData pose)
         {
             if (binding.Transform == null) return;
 

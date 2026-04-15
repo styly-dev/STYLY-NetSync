@@ -162,6 +162,9 @@ namespace Styly.NetSync.Tests.EditorTests
 
             RoomSnapshotMessage bad = MakeSnapshot(1, _entityId, Vector3.zero);
             bad.RoomId = "room-B";
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex("roomId mismatch"));
             client.TestInjectRoomSnapshot(bad);
 
             Assert.AreEqual(JoinState.Rejected, client.State);

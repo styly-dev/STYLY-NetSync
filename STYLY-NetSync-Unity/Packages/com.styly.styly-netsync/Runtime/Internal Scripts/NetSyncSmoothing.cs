@@ -22,12 +22,12 @@ namespace Styly.NetSync
         }
     }
 
-    internal struct PoseSampleData
+    internal struct SmoothingPoseSampleData
     {
         public Vector3 Position;
         public Quaternion Rotation;
 
-        public PoseSampleData(Vector3 position, Quaternion rotation)
+        public SmoothingPoseSampleData(Vector3 position, Quaternion rotation)
         {
             Position = position;
             Rotation = rotation;
@@ -207,9 +207,9 @@ namespace Styly.NetSync
     {
         public double Time;
         public ushort Seq;
-        public PoseSampleData Pose;
+        public SmoothingPoseSampleData Pose;
 
-        public PoseSnapshot(double time, ushort seq, PoseSampleData pose)
+        public PoseSnapshot(double time, ushort seq, SmoothingPoseSampleData pose)
         {
             Time = time;
             Seq = seq;
@@ -217,10 +217,10 @@ namespace Styly.NetSync
         }
     }
 
-    internal struct PoseSample
+    internal struct SmoothingPoseSample
     {
         public SampleState State;
-        public PoseSampleData Target;
+        public SmoothingPoseSampleData Target;
         public double SnapshotDt;
         public float LinearSpeed;
         public float AngularSpeedDeg;
@@ -442,7 +442,7 @@ namespace Styly.NetSync
         private readonly PoseSnapshotBuffer _buffer;
         private readonly PoseChannelSettings _settings;
         private bool _hasCurrent;
-        private PoseSampleData _current;
+        private SmoothingPoseSampleData _current;
 
         public PoseChannel(PoseChannelSettings settings, int capacity = 32)
         {
@@ -456,7 +456,7 @@ namespace Styly.NetSync
             _hasCurrent = false;
         }
 
-        public void AddSnapshot(double poseTime, ushort seq, in PoseSampleData pose)
+        public void AddSnapshot(double poseTime, ushort seq, in SmoothingPoseSampleData pose)
         {
             var normalized = pose;
             if (normalized.Rotation.w == 0 && normalized.Rotation.x == 0 && normalized.Rotation.y == 0 && normalized.Rotation.z == 0)
@@ -506,22 +506,22 @@ namespace Styly.NetSync
             }
         }
 
-        private PoseSample Sample(double renderServerTime)
+        private SmoothingPoseSample Sample(double renderServerTime)
         {
             if (_buffer.Count == 0)
             {
-                return new PoseSample { State = SampleState.Empty, Target = _hasCurrent ? _current : default };
+                return new SmoothingPoseSample { State = SampleState.Empty, Target = _hasCurrent ? _current : default };
             }
 
             if (_buffer.Count == 1)
             {
                 var only = _buffer[0];
-                return new PoseSample { State = SampleState.HoldSingle, Target = only.Pose };
+                return new SmoothingPoseSample { State = SampleState.HoldSingle, Target = only.Pose };
             }
 
             if (!_buffer.TryGetBracket(renderServerTime, out var fromIdx, out var toIdx, out var t))
             {
-                return new PoseSample { State = SampleState.Empty, Target = _hasCurrent ? _current : default };
+                return new SmoothingPoseSample { State = SampleState.Empty, Target = _hasCurrent ? _current : default };
             }
 
             var a = _buffer[fromIdx];
@@ -537,11 +537,11 @@ namespace Styly.NetSync
 
             if (renderServerTime <= b.Time + 1e-9)
             {
-                var target = new PoseSampleData(
+                var target = new SmoothingPoseSampleData(
                     Vector3.LerpUnclamped(a.Pose.Position, b.Pose.Position, (float)t),
                     Quaternion.SlerpUnclamped(a.Pose.Rotation, b.Pose.Rotation, (float)t)
                 );
-                return new PoseSample
+                return new SmoothingPoseSample
                 {
                     State = SampleState.Interpolating,
                     Target = target,
@@ -555,11 +555,11 @@ namespace Styly.NetSync
             if (beyond <= _settings.MaxExtrapolationSeconds && dt > 1e-6)
             {
                 var tEx = 1.0 + beyond / dt;
-                var target = new PoseSampleData(
+                var target = new SmoothingPoseSampleData(
                     Vector3.LerpUnclamped(a.Pose.Position, b.Pose.Position, (float)tEx),
                     Quaternion.SlerpUnclamped(a.Pose.Rotation, b.Pose.Rotation, (float)tEx)
                 );
-                return new PoseSample
+                return new SmoothingPoseSample
                 {
                     State = SampleState.Extrapolating,
                     Target = target,
@@ -569,7 +569,7 @@ namespace Styly.NetSync
                 };
             }
 
-            return new PoseSample
+            return new SmoothingPoseSample
             {
                 State = SampleState.HoldSingle,
                 Target = b.Pose,
@@ -579,7 +579,7 @@ namespace Styly.NetSync
             };
         }
 
-        public PoseSampleData Tick(double renderServerTime, float deltaTime)
+        public SmoothingPoseSampleData Tick(double renderServerTime, float deltaTime)
         {
             var sample = Sample(renderServerTime);
 

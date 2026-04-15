@@ -58,6 +58,12 @@ namespace Styly.NetSync.Internal
         SceneHashMismatch = 0,
         RoomFull = 1,
         ProtocolVersionMismatch = 2,
+        // Client-only sentinels below. These are never produced by the
+        // server wire format; they exist so ReplicationClient can surface
+        // pre-join state (None) and client-detected snapshot mismatches
+        // (RoomIdMismatch) through the same enum the protocol uses.
+        RoomIdMismatch = 253,
+        None = 254,
         Unspecified = 255,
     }
 

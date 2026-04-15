@@ -237,6 +237,8 @@ namespace Styly.NetSync.Internal
                 case (byte)JoinRejectReason.SceneHashMismatch:
                 case (byte)JoinRejectReason.RoomFull:
                 case (byte)JoinRejectReason.ProtocolVersionMismatch:
+                case (byte)JoinRejectReason.RoomIdMismatch:
+                case (byte)JoinRejectReason.None:
                 case (byte)JoinRejectReason.Unspecified:
                     return true;
                 default:

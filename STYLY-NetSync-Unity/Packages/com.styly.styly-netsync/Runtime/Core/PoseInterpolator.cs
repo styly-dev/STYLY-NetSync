@@ -114,7 +114,7 @@ namespace Styly.NetSync.Internal
             int idxAfter = -1;
             for (int i = 0; i < samples.Count; i++)
             {
-                if (samples[i].ServerTimeUs <= renderTimeUs)
+                if (samples[i].ServerTimeUs < renderTimeUs)
                 {
                     idxBefore = i;
                 }

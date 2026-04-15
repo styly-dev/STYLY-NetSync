@@ -45,17 +45,6 @@ namespace Styly.NetSync.Internal
         Rejected = 3,
     }
 
-    /// <summary>
-    /// Reason a ROOM_SNAPSHOT handshake was rejected. Phase 2 only
-    /// surfaces the two we can detect from a v1-only wire.
-    /// </summary>
-    public enum JoinRejectReason
-    {
-        None = 0,
-        SceneHashMismatch = 1,
-        RoomIdMismatch = 2,
-    }
-
     public sealed class ReplicationClient
     {
         private readonly IReplicationTransport _transport;
