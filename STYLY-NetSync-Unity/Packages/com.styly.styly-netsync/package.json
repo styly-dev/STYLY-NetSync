@@ -23,5 +23,8 @@
       "description": "Contains simple demo scenes and scripts for STYLY NetSync",
       "path": "Samples~/SimpleDemos"
     }
+  ],
+  "testables": [
+    "com.styly.styly-netsync"
   ]
 }

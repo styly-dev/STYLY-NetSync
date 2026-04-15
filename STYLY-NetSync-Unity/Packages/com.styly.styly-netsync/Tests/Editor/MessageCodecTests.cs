@@ -1,0 +1,257 @@
+using System.Collections.Generic;
+using NUnit.Framework;
+using UnityEngine;
+using Styly.NetSync.Internal;
+
+namespace Styly.NetSync.Tests.Editor
+{
+    // Round-trip tests for the replication protocol v1 MessageCodec.
+    // Byte layout must match docs/replication-protocol-v1.md and
+    // STYLY-NetSync-Server/src/styly_netsync/replication/message_codec.py.
+    public class MessageCodecTests
+    {
+        private static readonly ITransformCodec Codec = TransformCodecV1.Instance;
+
+        private static TransformState SampleState(float seed)
+        {
+            return new TransformState
+            {
+                Position = new Vector3(seed, seed + 1f, seed + 2f),
+                Rotation = new Quaternion(0f, 0f, 0f, 1f),
+                Scale = new Vector3(seed + 0.1f, seed + 0.2f, seed + 0.3f),
+            };
+        }
+
+        [Test]
+        public void JoinRoomRoundTrip()
+        {
+            var msg = new JoinRoomMessage { RoomId = "lobby", DeviceId = "device-abc" };
+            var bytes = MessageCodec.EncodeJoinRoom(msg);
+            Assert.AreEqual(ReplMessageIds.JoinRoom, bytes[0]);
+            Assert.AreEqual(ReplMessageIds.ReplProtocolVersion, bytes[1]);
+            var decoded = MessageCodec.DecodeJoinRoom(bytes);
+            Assert.AreEqual(msg.RoomId, decoded.RoomId);
+            Assert.AreEqual(msg.DeviceId, decoded.DeviceId);
+        }
+
+        [Test]
+        public void JoinRoomEmptyStrings()
+        {
+            var msg = new JoinRoomMessage { RoomId = "", DeviceId = "" };
+            var decoded = MessageCodec.DecodeJoinRoom(MessageCodec.EncodeJoinRoom(msg));
+            Assert.AreEqual(string.Empty, decoded.RoomId);
+            Assert.AreEqual(string.Empty, decoded.DeviceId);
+        }
+
+        [Test]
+        public void RoomSnapshotRoundTrip()
+        {
+            var msg = new RoomSnapshotMessage
+            {
+                RoomId = "room-1",
+                ServerTick = 123456,
+                Entities = new List<EntityRecord>
+                {
+                    new EntityRecord
+                    {
+                        EntityId = 0xDEADBEEFCAFEBABEUL,
+                        AuthorityEpoch = 7,
+                        OwnerShortId = 42,
+                        PoseSeq = 9,
+                        ChangedMask = ChangedMask.All,
+                        State = SampleState(1f),
+                    },
+                    new EntityRecord
+                    {
+                        EntityId = 1,
+                        AuthorityEpoch = 0,
+                        OwnerShortId = 0,
+                        PoseSeq = 0,
+                        ChangedMask = ChangedMask.Position,
+                        State = SampleState(2f),
+                    },
+                },
+            };
+            var bytes = MessageCodec.EncodeRoomSnapshot(msg, Codec);
+            Assert.AreEqual(ReplMessageIds.RoomSnapshot, bytes[0]);
+            var decoded = MessageCodec.DecodeRoomSnapshot(bytes, Codec);
+            Assert.AreEqual(msg.RoomId, decoded.RoomId);
+            Assert.AreEqual(msg.ServerTick, decoded.ServerTick);
+            Assert.AreEqual(2, decoded.Entities.Count);
+            Assert.AreEqual(msg.Entities[0].State.Position, decoded.Entities[0].State.Position);
+            Assert.AreEqual(msg.Entities[0].State.Scale, decoded.Entities[0].State.Scale);
+            // Position-only second entity should decode scale as default (1,1,1).
+            Assert.AreEqual(msg.Entities[1].State.Position, decoded.Entities[1].State.Position);
+            Assert.AreEqual(Vector3.one, decoded.Entities[1].State.Scale);
+        }
+
+        [Test]
+        public void OwnershipRequestRoundTrip()
+        {
+            var msg = new OwnershipRequestMessage
+            {
+                EntityId = 0x1122334455667788UL,
+                RequesterShortId = 12,
+                ExpectedEpoch = 3,
+            };
+            var bytes = MessageCodec.EncodeOwnershipRequest(msg);
+            Assert.AreEqual(ReplMessageIds.OwnershipRequest, bytes[0]);
+            var decoded = MessageCodec.DecodeOwnershipRequest(bytes);
+            Assert.AreEqual(msg.EntityId, decoded.EntityId);
+            Assert.AreEqual(msg.RequesterShortId, decoded.RequesterShortId);
+            Assert.AreEqual(msg.ExpectedEpoch, decoded.ExpectedEpoch);
+        }
+
+        [Test]
+        public void OwnershipEventRoundTrip()
+        {
+            foreach (OwnershipReason reason in System.Enum.GetValues(typeof(OwnershipReason)))
+            {
+                var msg = new OwnershipEventMessage
+                {
+                    EntityId = 99,
+                    NewOwnerShortId = reason == OwnershipReason.Granted ? 7u : 0u,
+                    NewAuthorityEpoch = 4,
+                    Reason = reason,
+                };
+                var bytes = MessageCodec.EncodeOwnershipEvent(msg);
+                Assert.AreEqual(ReplMessageIds.OwnershipEvent, bytes[0]);
+                var decoded = MessageCodec.DecodeOwnershipEvent(bytes);
+                Assert.AreEqual(msg.EntityId, decoded.EntityId);
+                Assert.AreEqual(msg.NewOwnerShortId, decoded.NewOwnerShortId);
+                Assert.AreEqual(msg.NewAuthorityEpoch, decoded.NewAuthorityEpoch);
+                Assert.AreEqual(msg.Reason, decoded.Reason);
+            }
+        }
+
+        [Test]
+        public void ResyncRequestRoundTrip()
+        {
+            var msg = new ResyncRequestMessage
+            {
+                EntityIds = new List<ulong> { 1, 2, ulong.MaxValue },
+            };
+            var bytes = MessageCodec.EncodeResyncRequest(msg);
+            Assert.AreEqual(ReplMessageIds.ResyncRequest, bytes[0]);
+            var decoded = MessageCodec.DecodeResyncRequest(bytes);
+            CollectionAssert.AreEqual(msg.EntityIds, decoded.EntityIds);
+        }
+
+        [Test]
+        public void ResyncRequestEmpty()
+        {
+            var msg = new ResyncRequestMessage { EntityIds = new List<ulong>() };
+            var decoded = MessageCodec.DecodeResyncRequest(
+                MessageCodec.EncodeResyncRequest(msg));
+            Assert.AreEqual(0, decoded.EntityIds.Count);
+        }
+
+        [Test]
+        public void ResyncReplyRoundTrip()
+        {
+            var msg = new ResyncReplyMessage
+            {
+                Entities = new List<EntityRecord>
+                {
+                    new EntityRecord
+                    {
+                        EntityId = 10,
+                        AuthorityEpoch = 1,
+                        OwnerShortId = 2,
+                        PoseSeq = 3,
+                        ChangedMask = ChangedMask.Rotation,
+                        State = SampleState(3f),
+                    },
+                },
+            };
+            var bytes = MessageCodec.EncodeResyncReply(msg, Codec);
+            Assert.AreEqual(ReplMessageIds.ResyncReply, bytes[0]);
+            var decoded = MessageCodec.DecodeResyncReply(bytes, Codec);
+            Assert.AreEqual(1, decoded.Entities.Count);
+            Assert.AreEqual(ChangedMask.Rotation, decoded.Entities[0].ChangedMask);
+            Assert.AreEqual(Vector3.zero, decoded.Entities[0].State.Position);
+            Assert.AreEqual(Vector3.one, decoded.Entities[0].State.Scale);
+            Assert.AreEqual(msg.Entities[0].State.Rotation, decoded.Entities[0].State.Rotation);
+        }
+
+        [Test]
+        public void StateBatchRoundTrip()
+        {
+            var msg = new StateBatchMessage
+            {
+                ServerTick = 42,
+                Updates = new List<StateUpdate>
+                {
+                    new StateUpdate
+                    {
+                        EntityId = 1,
+                        AuthorityEpoch = 5,
+                        PoseSeq = 10,
+                        Flags = StateFlags.Keyframe | StateFlags.Teleport,
+                        ChangedMask = ChangedMask.All,
+                        State = SampleState(4f),
+                    },
+                    new StateUpdate
+                    {
+                        EntityId = 2,
+                        AuthorityEpoch = 5,
+                        PoseSeq = 11,
+                        Flags = StateFlags.Heartbeat,
+                        ChangedMask = ChangedMask.None,
+                        State = TransformState.Identity,
+                    },
+                },
+            };
+            var bytes = MessageCodec.EncodeStateBatch(msg, Codec);
+            Assert.AreEqual(ReplMessageIds.StateBatch, bytes[0]);
+            var decoded = MessageCodec.DecodeStateBatch(bytes, Codec);
+            Assert.AreEqual(42u, decoded.ServerTick);
+            Assert.AreEqual(2, decoded.Updates.Count);
+            Assert.AreEqual(
+                StateFlags.Keyframe | StateFlags.Teleport, decoded.Updates[0].Flags);
+            Assert.AreEqual(msg.Updates[0].State.Position, decoded.Updates[0].State.Position);
+            Assert.AreEqual(StateFlags.Heartbeat, decoded.Updates[1].Flags);
+            Assert.AreEqual(ChangedMask.None, decoded.Updates[1].ChangedMask);
+        }
+
+        [Test]
+        public void StateBatchEmpty()
+        {
+            var msg = new StateBatchMessage
+            {
+                ServerTick = 0,
+                Updates = new List<StateUpdate>(),
+            };
+            var decoded = MessageCodec.DecodeStateBatch(
+                MessageCodec.EncodeStateBatch(msg, Codec), Codec);
+            Assert.AreEqual(0u, decoded.ServerTick);
+            Assert.AreEqual(0, decoded.Updates.Count);
+        }
+
+        [Test]
+        public void RejectUnknownVersion()
+        {
+            var bytes = MessageCodec.EncodeJoinRoom(
+                new JoinRoomMessage { RoomId = "a", DeviceId = "b" });
+            bytes[1] = 99;
+            Assert.Throws<System.IO.InvalidDataException>(
+                () => MessageCodec.DecodeJoinRoom(bytes));
+        }
+
+        [Test]
+        public void RejectWrongMessageType()
+        {
+            var bytes = MessageCodec.EncodeJoinRoom(
+                new JoinRoomMessage { RoomId = "a", DeviceId = "b" });
+            Assert.Throws<System.IO.InvalidDataException>(
+                () => MessageCodec.DecodeOwnershipRequest(bytes));
+        }
+
+        [Test]
+        public void PeekMessageTypeEmpty()
+        {
+            Assert.AreEqual(0, MessageCodec.PeekMessageType(new byte[0]));
+            Assert.AreEqual(0, MessageCodec.PeekMessageType(null));
+        }
+    }
+}

@@ -1,0 +1,24 @@
+{
+    "name": "com.styly.styly-netsync.Tests.Editor",
+    "rootNamespace": "",
+    "references": [
+        "GUID:71f73dfa490a5b84b9b17b2b59b31cec",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

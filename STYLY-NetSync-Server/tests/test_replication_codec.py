@@ -1,0 +1,227 @@
+"""Round-trip tests for replication protocol v1 message codec."""
+
+from __future__ import annotations
+
+import pytest
+
+from styly_netsync.replication.message_codec import (
+    MSG_REPL_JOIN_ROOM,
+    MSG_REPL_OWNERSHIP_EVENT,
+    MSG_REPL_OWNERSHIP_REQUEST,
+    MSG_REPL_RESYNC_REPLY,
+    MSG_REPL_RESYNC_REQUEST,
+    MSG_REPL_ROOM_SNAPSHOT,
+    MSG_REPL_STATE_BATCH,
+    REPL_PROTOCOL_VERSION,
+    MessageCodec,
+    TransformCodecV1,
+)
+from styly_netsync.replication.messages import (
+    ChangedMask,
+    JoinRoomMessage,
+    OwnershipEventMessage,
+    OwnershipReason,
+    OwnershipRequestMessage,
+    ResyncReplyMessage,
+    ResyncRequestMessage,
+    RoomSnapshotMessage,
+    StateBatchMessage,
+    StateFlags,
+    StateUpdate,
+    WireEntityRecord,
+    WireTransform,
+)
+
+
+@pytest.fixture
+def codec() -> TransformCodecV1:
+    return TransformCodecV1()
+
+
+def _sample_state(seed: float) -> WireTransform:
+    # Values are exactly representable in float32 so round-trip equality holds.
+    return WireTransform(
+        position=(seed, seed + 1.0, seed + 2.0),
+        rotation=(0.0, 0.0, 0.0, 1.0),
+        scale=(seed + 0.25, seed + 0.5, seed + 0.75),
+    )
+
+
+def test_peek_message_type_empty() -> None:
+    assert MessageCodec.peek_message_type(b"") == 0
+
+
+def test_join_room_round_trip() -> None:
+    msg = JoinRoomMessage(room_id="lobby", device_id="device-abc")
+    encoded = MessageCodec.encode_join_room(msg)
+    assert encoded[0] == MSG_REPL_JOIN_ROOM
+    assert encoded[1] == REPL_PROTOCOL_VERSION
+    decoded = MessageCodec.decode_join_room(encoded)
+    assert decoded == msg
+
+
+def test_join_room_empty_strings() -> None:
+    msg = JoinRoomMessage(room_id="", device_id="")
+    decoded = MessageCodec.decode_join_room(MessageCodec.encode_join_room(msg))
+    assert decoded == msg
+
+
+def test_room_snapshot_round_trip(codec: TransformCodecV1) -> None:
+    msg = RoomSnapshotMessage(
+        room_id="room-1",
+        server_tick=123456,
+        entities=[
+            WireEntityRecord(
+                entity_id=0xDEADBEEFCAFEBABE,
+                authority_epoch=7,
+                owner_short_id=42,
+                pose_seq=9,
+                changed_mask=ChangedMask.ALL,
+                state=_sample_state(1.0),
+            ),
+            WireEntityRecord(
+                entity_id=1,
+                authority_epoch=0,
+                owner_short_id=0,
+                pose_seq=0,
+                changed_mask=ChangedMask.POSITION,
+                state=_sample_state(2.0),
+            ),
+        ],
+    )
+    encoded = MessageCodec.encode_room_snapshot(msg, codec)
+    assert encoded[0] == MSG_REPL_ROOM_SNAPSHOT
+    decoded = MessageCodec.decode_room_snapshot(encoded, codec)
+    assert decoded.room_id == msg.room_id
+    assert decoded.server_tick == msg.server_tick
+    assert len(decoded.entities) == 2
+    # Position-only second record should decode scale as default (1,1,1).
+    assert decoded.entities[0].state.position == msg.entities[0].state.position
+    assert decoded.entities[0].state.scale == msg.entities[0].state.scale
+    assert decoded.entities[1].state.position == msg.entities[1].state.position
+    assert decoded.entities[1].state.scale == (1.0, 1.0, 1.0)
+
+
+def test_ownership_request_round_trip() -> None:
+    msg = OwnershipRequestMessage(
+        entity_id=0x1122334455667788,
+        requester_short_id=12,
+        expected_epoch=3,
+    )
+    encoded = MessageCodec.encode_ownership_request(msg)
+    assert encoded[0] == MSG_REPL_OWNERSHIP_REQUEST
+    assert MessageCodec.decode_ownership_request(encoded) == msg
+
+
+def test_ownership_event_round_trip() -> None:
+    for reason in OwnershipReason:
+        msg = OwnershipEventMessage(
+            entity_id=99,
+            new_owner_short_id=7 if reason is OwnershipReason.GRANTED else 0,
+            new_authority_epoch=4,
+            reason=reason,
+        )
+        encoded = MessageCodec.encode_ownership_event(msg)
+        assert encoded[0] == MSG_REPL_OWNERSHIP_EVENT
+        assert MessageCodec.decode_ownership_event(encoded) == msg
+
+
+def test_resync_request_round_trip() -> None:
+    msg = ResyncRequestMessage(entity_ids=[1, 2, 0xFFFFFFFFFFFFFFFF])
+    encoded = MessageCodec.encode_resync_request(msg)
+    assert encoded[0] == MSG_REPL_RESYNC_REQUEST
+    assert MessageCodec.decode_resync_request(encoded) == msg
+
+
+def test_resync_request_empty() -> None:
+    msg = ResyncRequestMessage()
+    assert (
+        MessageCodec.decode_resync_request(MessageCodec.encode_resync_request(msg))
+        == msg
+    )
+
+
+def test_resync_reply_round_trip(codec: TransformCodecV1) -> None:
+    msg = ResyncReplyMessage(
+        entities=[
+            WireEntityRecord(
+                entity_id=10,
+                authority_epoch=1,
+                owner_short_id=2,
+                pose_seq=3,
+                changed_mask=ChangedMask.ROTATION,
+                state=_sample_state(3.0),
+            )
+        ]
+    )
+    encoded = MessageCodec.encode_resync_reply(msg, codec)
+    assert encoded[0] == MSG_REPL_RESYNC_REPLY
+    decoded = MessageCodec.decode_resync_reply(encoded, codec)
+    assert len(decoded.entities) == 1
+    assert decoded.entities[0].changed_mask == ChangedMask.ROTATION
+    # Position and scale default when not masked.
+    assert decoded.entities[0].state.position == (0.0, 0.0, 0.0)
+    assert decoded.entities[0].state.scale == (1.0, 1.0, 1.0)
+    assert decoded.entities[0].state.rotation == msg.entities[0].state.rotation
+
+
+def test_state_batch_round_trip(codec: TransformCodecV1) -> None:
+    msg = StateBatchMessage(
+        server_tick=42,
+        updates=[
+            StateUpdate(
+                entity_id=1,
+                authority_epoch=5,
+                pose_seq=10,
+                flags=StateFlags.KEYFRAME | StateFlags.TELEPORT,
+                changed_mask=ChangedMask.ALL,
+                state=_sample_state(4.0),
+            ),
+            StateUpdate(
+                entity_id=2,
+                authority_epoch=5,
+                pose_seq=11,
+                flags=StateFlags.HEARTBEAT,
+                changed_mask=ChangedMask.NONE,
+                state=WireTransform(),
+            ),
+        ],
+    )
+    encoded = MessageCodec.encode_state_batch(msg, codec)
+    assert encoded[0] == MSG_REPL_STATE_BATCH
+    decoded = MessageCodec.decode_state_batch(encoded, codec)
+    assert decoded.server_tick == 42
+    assert len(decoded.updates) == 2
+    assert decoded.updates[0].flags == StateFlags.KEYFRAME | StateFlags.TELEPORT
+    assert decoded.updates[0].state.position == msg.updates[0].state.position
+    assert decoded.updates[1].flags == StateFlags.HEARTBEAT
+    assert decoded.updates[1].changed_mask == ChangedMask.NONE
+
+
+def test_state_batch_empty(codec: TransformCodecV1) -> None:
+    msg = StateBatchMessage(server_tick=0, updates=[])
+    decoded = MessageCodec.decode_state_batch(
+        MessageCodec.encode_state_batch(msg, codec), codec
+    )
+    assert decoded == msg
+
+
+def test_reject_unknown_version(codec: TransformCodecV1) -> None:
+    encoded = bytearray(
+        MessageCodec.encode_join_room(JoinRoomMessage(room_id="a", device_id="b"))
+    )
+    encoded[1] = 99
+    with pytest.raises(ValueError, match="Unsupported"):
+        MessageCodec.decode_join_room(bytes(encoded))
+
+
+def test_reject_wrong_message_type() -> None:
+    encoded = MessageCodec.encode_join_room(JoinRoomMessage(room_id="a", device_id="b"))
+    with pytest.raises(ValueError, match="Unexpected message type"):
+        MessageCodec.decode_ownership_request(encoded)
+
+
+def test_short_string_overflow_rejected() -> None:
+    huge = "x" * 300
+    with pytest.raises(ValueError, match="exceeds 255"):
+        MessageCodec.encode_join_room(JoinRoomMessage(room_id=huge, device_id=""))
