@@ -7,11 +7,14 @@ wire format definition.
 
 from __future__ import annotations
 
+import logging
 import struct
 from typing import Protocol
 
 from .messages import (
     ChangedMask,
+    JoinRejectMessage,
+    JoinRejectReason,
     JoinRoomMessage,
     OwnershipEventMessage,
     OwnershipReason,
@@ -26,6 +29,8 @@ from .messages import (
     WireTransform,
 )
 
+logger = logging.getLogger(__name__)
+
 REPL_PROTOCOL_VERSION: int = 1
 
 MSG_REPL_JOIN_ROOM: int = 30
@@ -35,6 +40,7 @@ MSG_REPL_OWNERSHIP_EVENT: int = 33
 MSG_REPL_RESYNC_REQUEST: int = 34
 MSG_REPL_RESYNC_REPLY: int = 35
 MSG_REPL_STATE_BATCH: int = 36
+MSG_REPL_JOIN_REJECT: int = 37
 
 
 class TransformCodec(Protocol):
@@ -218,14 +224,18 @@ class MessageCodec:
         _write_header(buf, MSG_REPL_JOIN_ROOM)
         _write_short_string(buf, message.room_id)
         _write_short_string(buf, message.device_id)
+        _write_short_string(buf, message.scene_hash)
         return bytes(buf)
 
     @staticmethod
     def decode_join_room(data: bytes) -> JoinRoomMessage:
         offset = _read_header(data, MSG_REPL_JOIN_ROOM)
         room_id, offset = _read_short_string(data, offset)
-        device_id, _ = _read_short_string(data, offset)
-        return JoinRoomMessage(room_id=room_id, device_id=device_id)
+        device_id, offset = _read_short_string(data, offset)
+        scene_hash, _ = _read_short_string(data, offset)
+        return JoinRoomMessage(
+            room_id=room_id, device_id=device_id, scene_hash=scene_hash
+        )
 
     # --- ROOM_SNAPSHOT ---
 
@@ -236,7 +246,15 @@ class MessageCodec:
         buf = bytearray()
         _write_header(buf, MSG_REPL_ROOM_SNAPSHOT)
         _write_short_string(buf, message.room_id)
-        buf.extend(struct.pack("<II", message.server_tick, len(message.entities)))
+        # baseRoomSeq (u32) + serverTimeUs (u64) + entity count (u32)
+        buf.extend(
+            struct.pack(
+                "<IQI",
+                message.base_room_seq,
+                message.server_time_us,
+                len(message.entities),
+            )
+        )
         for record in message.entities:
             _write_entity_record(buf, record, codec)
         return bytes(buf)
@@ -245,14 +263,46 @@ class MessageCodec:
     def decode_room_snapshot(data: bytes, codec: TransformCodec) -> RoomSnapshotMessage:
         offset = _read_header(data, MSG_REPL_ROOM_SNAPSHOT)
         room_id, offset = _read_short_string(data, offset)
-        server_tick, count = struct.unpack_from("<II", data, offset)
-        offset += 8
+        base_room_seq, server_time_us, count = struct.unpack_from("<IQI", data, offset)
+        offset += 16
         entities: list[WireEntityRecord] = []
         for _ in range(count):
             record, offset = _read_entity_record(data, offset, codec)
             entities.append(record)
         return RoomSnapshotMessage(
-            room_id=room_id, server_tick=server_tick, entities=entities
+            room_id=room_id,
+            base_room_seq=base_room_seq,
+            server_time_us=server_time_us,
+            entities=entities,
+        )
+
+    # --- JOIN_REJECT ---
+
+    @staticmethod
+    def encode_join_reject(message: JoinRejectMessage) -> bytes:
+        buf = bytearray()
+        _write_header(buf, MSG_REPL_JOIN_REJECT)
+        _write_short_string(buf, message.room_id)
+        buf.append(int(message.reason))
+        _write_short_string(buf, message.reason_text)
+        return bytes(buf)
+
+    @staticmethod
+    def decode_join_reject(data: bytes) -> JoinRejectMessage:
+        offset = _read_header(data, MSG_REPL_JOIN_REJECT)
+        room_id, offset = _read_short_string(data, offset)
+        raw_reason = data[offset]
+        offset += 1
+        try:
+            reason = JoinRejectReason(raw_reason)
+        except ValueError:
+            logger.warning(
+                "Unknown JoinRejectReason %d; coercing to UNSPECIFIED", raw_reason
+            )
+            reason = JoinRejectReason.UNSPECIFIED
+        reason_text, _ = _read_short_string(data, offset)
+        return JoinRejectMessage(
+            room_id=room_id, reason=reason, reason_text=reason_text
         )
 
     # --- OWNERSHIP_REQUEST ---
@@ -386,6 +436,7 @@ class MessageCodec:
 
 
 __all__ = [
+    "MSG_REPL_JOIN_REJECT",
     "MSG_REPL_JOIN_ROOM",
     "MSG_REPL_OWNERSHIP_EVENT",
     "MSG_REPL_OWNERSHIP_REQUEST",

@@ -13,23 +13,42 @@ namespace Styly.NetSync.Internal
         public const byte ResyncRequest = 34;
         public const byte ResyncReply = 35;
         public const byte StateBatch = 36;
+        public const byte JoinReject = 37;
 
         public const byte ReplProtocolVersion = 1;
     }
 
-    // Client -> server. Announces room membership.
+    // Client -> server. Announces room membership. SceneHash lets the
+    // server reject clients that were built against a different scene.
     public struct JoinRoomMessage
     {
         public string RoomId;
         public string DeviceId;
+        public string SceneHash;
     }
 
     // Server -> client. Initial snapshot delivered on join.
+    // BaseRoomSeq is the anchor sequence (RoomState.NextRoomSeq - 1) against
+    // which subsequent STATE_BATCH deltas are ordered. ServerTimeUs is the
+    // server wall clock in microseconds since the Unix epoch; clients use
+    // it for relative age calculations (cross-process monotonic clocks are
+    // unusable for this).
     public struct RoomSnapshotMessage
     {
         public string RoomId;
-        public uint ServerTick;
+        public uint BaseRoomSeq;
+        public ulong ServerTimeUs;
         public List<EntityRecord> Entities;
+    }
+
+    // Server -> client. Sent instead of RoomSnapshot when JOIN_ROOM is
+    // rejected (e.g. scene hash mismatch). ReasonText is free-form for
+    // diagnostics; receivers must not rely on its format.
+    public struct JoinRejectMessage
+    {
+        public string RoomId;
+        public JoinRejectReason Reason;
+        public string ReasonText;
     }
 
     // Client -> server. Requests ownership of an entity.

@@ -25,22 +25,72 @@ namespace Styly.NetSync.Tests.Editor
         [Test]
         public void JoinRoomRoundTrip()
         {
-            var msg = new JoinRoomMessage { RoomId = "lobby", DeviceId = "device-abc" };
+            var msg = new JoinRoomMessage
+            {
+                RoomId = "lobby",
+                DeviceId = "device-abc",
+                SceneHash = "abc123",
+            };
             var bytes = MessageCodec.EncodeJoinRoom(msg);
             Assert.AreEqual(ReplMessageIds.JoinRoom, bytes[0]);
             Assert.AreEqual(ReplMessageIds.ReplProtocolVersion, bytes[1]);
             var decoded = MessageCodec.DecodeJoinRoom(bytes);
             Assert.AreEqual(msg.RoomId, decoded.RoomId);
             Assert.AreEqual(msg.DeviceId, decoded.DeviceId);
+            Assert.AreEqual(msg.SceneHash, decoded.SceneHash);
         }
 
         [Test]
         public void JoinRoomEmptyStrings()
         {
-            var msg = new JoinRoomMessage { RoomId = "", DeviceId = "" };
+            var msg = new JoinRoomMessage { RoomId = "", DeviceId = "", SceneHash = "" };
             var decoded = MessageCodec.DecodeJoinRoom(MessageCodec.EncodeJoinRoom(msg));
             Assert.AreEqual(string.Empty, decoded.RoomId);
             Assert.AreEqual(string.Empty, decoded.DeviceId);
+            Assert.AreEqual(string.Empty, decoded.SceneHash);
+        }
+
+        [Test]
+        public void JoinRejectRoundTrip()
+        {
+            foreach (JoinRejectReason reason in System.Enum.GetValues(typeof(JoinRejectReason)))
+            {
+                var msg = new JoinRejectMessage
+                {
+                    RoomId = "room-x",
+                    Reason = reason,
+                    ReasonText = $"reason={reason}",
+                };
+                var bytes = MessageCodec.EncodeJoinReject(msg);
+                Assert.AreEqual(ReplMessageIds.JoinReject, bytes[0]);
+                var decoded = MessageCodec.DecodeJoinReject(bytes);
+                Assert.AreEqual(msg.RoomId, decoded.RoomId);
+                Assert.AreEqual(msg.Reason, decoded.Reason);
+                Assert.AreEqual(msg.ReasonText, decoded.ReasonText);
+            }
+        }
+
+        [Test]
+        public void JoinRejectUnknownReasonCoerced()
+        {
+            // Synthesize a payload with an unknown reason code; decoder must
+            // coerce to Unspecified rather than throw, so forward-compatible
+            // clients still surface the reason text.
+            var bytes = MessageCodec.EncodeJoinReject(new JoinRejectMessage
+            {
+                RoomId = "room-x",
+                Reason = JoinRejectReason.Unspecified,
+                ReasonText = "future reason",
+            });
+            // Layout: header(2) + roomId_len(1) + roomId(6) + reason(1) + ...
+            int reasonOffset = 2 + 1 + "room-x".Length;
+            bytes[reasonOffset] = 200; // not defined in the enum
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Warning,
+                new System.Text.RegularExpressions.Regex("Unknown JoinRejectReason"));
+            var decoded = MessageCodec.DecodeJoinReject(bytes);
+            Assert.AreEqual(JoinRejectReason.Unspecified, decoded.Reason);
+            Assert.AreEqual("future reason", decoded.ReasonText);
         }
 
         [Test]
@@ -49,7 +99,8 @@ namespace Styly.NetSync.Tests.Editor
             var msg = new RoomSnapshotMessage
             {
                 RoomId = "room-1",
-                ServerTick = 123456,
+                BaseRoomSeq = 123456,
+                ServerTimeUs = 1_700_000_000_000_000UL,
                 Entities = new List<EntityRecord>
                 {
                     new EntityRecord
@@ -76,7 +127,8 @@ namespace Styly.NetSync.Tests.Editor
             Assert.AreEqual(ReplMessageIds.RoomSnapshot, bytes[0]);
             var decoded = MessageCodec.DecodeRoomSnapshot(bytes, Codec);
             Assert.AreEqual(msg.RoomId, decoded.RoomId);
-            Assert.AreEqual(msg.ServerTick, decoded.ServerTick);
+            Assert.AreEqual(msg.BaseRoomSeq, decoded.BaseRoomSeq);
+            Assert.AreEqual(msg.ServerTimeUs, decoded.ServerTimeUs);
             Assert.AreEqual(2, decoded.Entities.Count);
             Assert.AreEqual(msg.Entities[0].State.Position, decoded.Entities[0].State.Position);
             Assert.AreEqual(msg.Entities[0].State.Scale, decoded.Entities[0].State.Scale);
@@ -232,7 +284,7 @@ namespace Styly.NetSync.Tests.Editor
         public void RejectUnknownVersion()
         {
             var bytes = MessageCodec.EncodeJoinRoom(
-                new JoinRoomMessage { RoomId = "a", DeviceId = "b" });
+                new JoinRoomMessage { RoomId = "a", DeviceId = "b", SceneHash = "c" });
             bytes[1] = 99;
             Assert.Throws<System.IO.InvalidDataException>(
                 () => MessageCodec.DecodeJoinRoom(bytes));
@@ -242,7 +294,7 @@ namespace Styly.NetSync.Tests.Editor
         public void RejectWrongMessageType()
         {
             var bytes = MessageCodec.EncodeJoinRoom(
-                new JoinRoomMessage { RoomId = "a", DeviceId = "b" });
+                new JoinRoomMessage { RoomId = "a", DeviceId = "b", SceneHash = "c" });
             Assert.Throws<System.IO.InvalidDataException>(
                 () => MessageCodec.DecodeOwnershipRequest(bytes));
         }

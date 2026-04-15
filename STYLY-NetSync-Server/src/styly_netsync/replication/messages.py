@@ -43,6 +43,19 @@ class OwnershipReason(IntEnum):
     RELEASED = 3
 
 
+class JoinRejectReason(IntEnum):
+    """Reason code returned by the server when a JOIN_ROOM is rejected.
+
+    Unused codes are reserved for future expansion; 255 is the catch-all
+    so clients can always surface a message even if the code is unknown.
+    """
+
+    SCENE_HASH_MISMATCH = 0
+    ROOM_FULL = 1
+    PROTOCOL_VERSION_MISMATCH = 2
+    UNSPECIFIED = 255
+
+
 @dataclass
 class WireTransform:
     """Wire-level transform snapshot. v1 stores float32 components.
@@ -82,13 +95,39 @@ class WireEntityRecord:
 class JoinRoomMessage:
     room_id: str
     device_id: str
+    scene_hash: str = ""
 
 
 @dataclass
 class RoomSnapshotMessage:
+    """Snapshot delivered to a client on successful JOIN_ROOM.
+
+    ``base_room_seq`` is ``RoomState.next_room_seq - 1`` and anchors
+    subsequent STATE_BATCH deltas; a client can detect an out-of-order
+    snapshot by comparing against later batch sequences.
+
+    ``server_time_us`` is the server's wall clock in microseconds since
+    the Unix epoch (``time.time_ns() // 1000`` on the server). Clients
+    use it only for relative age calculations, so any monotonic drift
+    between server and client is irrelevant.
+
+    ``entities`` is sparse — only touched/owned entities; clients
+    reconstruct unmodified scene objects from authored defaults.
+    """
+
     room_id: str
-    server_tick: int
+    base_room_seq: int
+    server_time_us: int
     entities: list[WireEntityRecord] = field(default_factory=list)
+
+
+@dataclass
+class JoinRejectMessage:
+    """Server response when a JOIN_ROOM cannot be accepted."""
+
+    room_id: str
+    reason: JoinRejectReason
+    reason_text: str = ""
 
 
 @dataclass
@@ -124,6 +163,8 @@ class StateBatchMessage:
 
 __all__ = [
     "ChangedMask",
+    "JoinRejectMessage",
+    "JoinRejectReason",
     "JoinRoomMessage",
     "OwnershipEventMessage",
     "OwnershipReason",

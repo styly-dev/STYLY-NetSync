@@ -76,10 +76,35 @@ namespace Styly.NetSync
             _netSyncManager = netSyncManager;
         }
 
+        /// <summary>
+        /// Raised on the network thread when a payload's first byte is in the
+        /// replication-protocol range (30..39). The handler is responsible for
+        /// trampolining onto the main thread before touching Unity state.
+        /// </summary>
+        public event System.Action<byte, byte[]> OnReplicationPayload;
+
         public void ProcessIncomingMessage(byte[] payload)
         {
             try
             {
+                // Short-circuit replication-protocol messages (IDs 30..39) so
+                // they bypass the legacy BinarySerializer pipeline. See
+                // docs/replication-protocol-v1.md.
+                if (payload != null && payload.Length > 0)
+                {
+                    byte first = payload[0];
+                    if (first >= 30 && first <= 39)
+                    {
+                        var handler = OnReplicationPayload;
+                        if (handler != null)
+                        {
+                            handler(first, payload);
+                        }
+                        _messagesReceived++;
+                        return;
+                    }
+                }
+
                 var (msgType, data) = BinarySerializer.Deserialize(payload);
                 if (data == null)
                 {

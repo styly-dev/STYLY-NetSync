@@ -8,7 +8,9 @@ Phase 1 only populates ``models`` and ``room_registry``; the remaining
 modules are intentionally left as empty stubs for later phases.
 """
 
+from .dispatcher import DispatchResult, ReplicationDispatcher, SendFn
 from .message_codec import (
+    MSG_REPL_JOIN_REJECT,
     MSG_REPL_JOIN_ROOM,
     MSG_REPL_OWNERSHIP_EVENT,
     MSG_REPL_OWNERSHIP_REQUEST,
@@ -23,6 +25,8 @@ from .message_codec import (
 )
 from .messages import (
     ChangedMask,
+    JoinRejectMessage,
+    JoinRejectReason,
     JoinRoomMessage,
     OwnershipEventMessage,
     OwnershipReason,
@@ -38,13 +42,18 @@ from .messages import (
 )
 from .models import EntityKind, EntityRecord, TransformState
 from .room_registry import ClientState, RoomRegistry, RoomState
+from .snapshot_service import SnapshotService
 
 __all__ = [
     "ChangedMask",
     "ClientState",
+    "DispatchResult",
     "EntityKind",
     "EntityRecord",
+    "JoinRejectMessage",
+    "JoinRejectReason",
     "JoinRoomMessage",
+    "MSG_REPL_JOIN_REJECT",
     "MSG_REPL_JOIN_ROOM",
     "MSG_REPL_OWNERSHIP_EVENT",
     "MSG_REPL_OWNERSHIP_REQUEST",
@@ -57,11 +66,14 @@ __all__ = [
     "OwnershipReason",
     "OwnershipRequestMessage",
     "REPL_PROTOCOL_VERSION",
+    "ReplicationDispatcher",
     "ResyncReplyMessage",
     "ResyncRequestMessage",
     "RoomRegistry",
     "RoomSnapshotMessage",
     "RoomState",
+    "SendFn",
+    "SnapshotService",
     "StateBatchMessage",
     "StateFlags",
     "StateUpdate",

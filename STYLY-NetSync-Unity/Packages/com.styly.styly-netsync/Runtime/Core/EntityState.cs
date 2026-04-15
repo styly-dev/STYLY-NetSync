@@ -33,6 +33,17 @@ namespace Styly.NetSync.Internal
         Released = 3,
     }
 
+    // Reason codes for JoinRejectMessage. 255 is the forward-compatible
+    // catch-all so clients can always surface the accompanying reason text
+    // even when a new server reports an unknown code.
+    public enum JoinRejectReason : byte
+    {
+        SceneHashMismatch = 0,
+        RoomFull = 1,
+        ProtocolVersionMismatch = 2,
+        Unspecified = 255,
+    }
+
     // Replicated transform. v1 stores float32 components; quantization is a
     // future codec drop-in (see ITransformCodec).
     public struct TransformState

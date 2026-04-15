@@ -129,6 +129,7 @@ namespace Styly.NetSync.Internal
             WriteHeader(writer, ReplMessageIds.JoinRoom);
             WriteShortString(writer, message.RoomId);
             WriteShortString(writer, message.DeviceId);
+            WriteShortString(writer, message.SceneHash);
             return ms.ToArray();
         }
 
@@ -141,6 +142,7 @@ namespace Styly.NetSync.Internal
             {
                 RoomId = ReadShortString(reader),
                 DeviceId = ReadShortString(reader),
+                SceneHash = ReadShortString(reader),
             };
         }
 
@@ -153,7 +155,8 @@ namespace Styly.NetSync.Internal
             using var writer = new BinaryWriter(ms);
             WriteHeader(writer, ReplMessageIds.RoomSnapshot);
             WriteShortString(writer, message.RoomId);
-            writer.Write(message.ServerTick);
+            writer.Write(message.BaseRoomSeq);
+            writer.Write(message.ServerTimeUs);
             var entities = message.Entities;
             uint count = entities == null ? 0u : (uint)entities.Count;
             writer.Write(count);
@@ -176,7 +179,8 @@ namespace Styly.NetSync.Internal
             var msg = new RoomSnapshotMessage
             {
                 RoomId = ReadShortString(reader),
-                ServerTick = reader.ReadUInt32(),
+                BaseRoomSeq = reader.ReadUInt32(),
+                ServerTimeUs = reader.ReadUInt64(),
             };
             uint count = reader.ReadUInt32();
             var entities = new List<EntityRecord>((int)count);
@@ -186,6 +190,56 @@ namespace Styly.NetSync.Internal
             }
             msg.Entities = entities;
             return msg;
+        }
+
+        // --- JOIN_REJECT ---
+
+        public static byte[] EncodeJoinReject(in JoinRejectMessage message)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            WriteHeader(writer, ReplMessageIds.JoinReject);
+            WriteShortString(writer, message.RoomId);
+            writer.Write((byte)message.Reason);
+            WriteShortString(writer, message.ReasonText);
+            return ms.ToArray();
+        }
+
+        public static JoinRejectMessage DecodeJoinReject(byte[] data)
+        {
+            using var ms = new MemoryStream(data);
+            using var reader = new BinaryReader(ms);
+            ReadAndVerifyHeader(reader, ReplMessageIds.JoinReject);
+            var roomId = ReadShortString(reader);
+            byte rawReason = reader.ReadByte();
+            var reason = IsKnownJoinRejectReason(rawReason)
+                ? (JoinRejectReason)rawReason
+                : JoinRejectReason.Unspecified;
+            if (!IsKnownJoinRejectReason(rawReason))
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[MessageCodec] Unknown JoinRejectReason {rawReason}; coercing to Unspecified");
+            }
+            return new JoinRejectMessage
+            {
+                RoomId = roomId,
+                Reason = reason,
+                ReasonText = ReadShortString(reader),
+            };
+        }
+
+        private static bool IsKnownJoinRejectReason(byte raw)
+        {
+            switch (raw)
+            {
+                case (byte)JoinRejectReason.SceneHashMismatch:
+                case (byte)JoinRejectReason.RoomFull:
+                case (byte)JoinRejectReason.ProtocolVersionMismatch:
+                case (byte)JoinRejectReason.Unspecified:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         // --- OWNERSHIP_REQUEST ---

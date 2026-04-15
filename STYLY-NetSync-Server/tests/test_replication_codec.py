@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from styly_netsync.replication.message_codec import (
+    MSG_REPL_JOIN_REJECT,
     MSG_REPL_JOIN_ROOM,
     MSG_REPL_OWNERSHIP_EVENT,
     MSG_REPL_OWNERSHIP_REQUEST,
@@ -18,6 +19,8 @@ from styly_netsync.replication.message_codec import (
 )
 from styly_netsync.replication.messages import (
     ChangedMask,
+    JoinRejectMessage,
+    JoinRejectReason,
     JoinRoomMessage,
     OwnershipEventMessage,
     OwnershipReason,
@@ -52,7 +55,7 @@ def test_peek_message_type_empty() -> None:
 
 
 def test_join_room_round_trip() -> None:
-    msg = JoinRoomMessage(room_id="lobby", device_id="device-abc")
+    msg = JoinRoomMessage(room_id="lobby", device_id="device-abc", scene_hash="abc123")
     encoded = MessageCodec.encode_join_room(msg)
     assert encoded[0] == MSG_REPL_JOIN_ROOM
     assert encoded[1] == REPL_PROTOCOL_VERSION
@@ -61,15 +64,50 @@ def test_join_room_round_trip() -> None:
 
 
 def test_join_room_empty_strings() -> None:
-    msg = JoinRoomMessage(room_id="", device_id="")
+    msg = JoinRoomMessage(room_id="", device_id="", scene_hash="")
     decoded = MessageCodec.decode_join_room(MessageCodec.encode_join_room(msg))
     assert decoded == msg
+
+
+def test_join_reject_round_trip() -> None:
+    for reason in JoinRejectReason:
+        msg = JoinRejectMessage(
+            room_id="room-x",
+            reason=reason,
+            reason_text=f"reason={reason.name}",
+        )
+        encoded = MessageCodec.encode_join_reject(msg)
+        assert encoded[0] == MSG_REPL_JOIN_REJECT
+        decoded = MessageCodec.decode_join_reject(encoded)
+        assert decoded == msg
+
+
+def test_join_reject_unknown_reason_coerced() -> None:
+    # Synthesize a payload with an unknown reason code; decoder must coerce
+    # to UNSPECIFIED rather than raise, so forward-compatible clients can
+    # still surface the reason_text.
+    encoded = bytearray(
+        MessageCodec.encode_join_reject(
+            JoinRejectMessage(
+                room_id="room-x",
+                reason=JoinRejectReason.UNSPECIFIED,
+                reason_text="future reason",
+            )
+        )
+    )
+    # Layout: header(2) + roomId_len(1) + roomId(6) + reason(1) + ...
+    reason_offset = 2 + 1 + len("room-x")
+    encoded[reason_offset] = 200  # not defined in the enum
+    decoded = MessageCodec.decode_join_reject(bytes(encoded))
+    assert decoded.reason is JoinRejectReason.UNSPECIFIED
+    assert decoded.reason_text == "future reason"
 
 
 def test_room_snapshot_round_trip(codec: TransformCodecV1) -> None:
     msg = RoomSnapshotMessage(
         room_id="room-1",
-        server_tick=123456,
+        base_room_seq=123456,
+        server_time_us=1_700_000_000_000_000,
         entities=[
             WireEntityRecord(
                 entity_id=0xDEADBEEFCAFEBABE,
@@ -93,7 +131,8 @@ def test_room_snapshot_round_trip(codec: TransformCodecV1) -> None:
     assert encoded[0] == MSG_REPL_ROOM_SNAPSHOT
     decoded = MessageCodec.decode_room_snapshot(encoded, codec)
     assert decoded.room_id == msg.room_id
-    assert decoded.server_tick == msg.server_tick
+    assert decoded.base_room_seq == msg.base_room_seq
+    assert decoded.server_time_us == msg.server_time_us
     assert len(decoded.entities) == 2
     # Position-only second record should decode scale as default (1,1,1).
     assert decoded.entities[0].state.position == msg.entities[0].state.position
@@ -208,7 +247,9 @@ def test_state_batch_empty(codec: TransformCodecV1) -> None:
 
 def test_reject_unknown_version(codec: TransformCodecV1) -> None:
     encoded = bytearray(
-        MessageCodec.encode_join_room(JoinRoomMessage(room_id="a", device_id="b"))
+        MessageCodec.encode_join_room(
+            JoinRoomMessage(room_id="a", device_id="b", scene_hash="c")
+        )
     )
     encoded[1] = 99
     with pytest.raises(ValueError, match="Unsupported"):
@@ -224,4 +265,6 @@ def test_reject_wrong_message_type() -> None:
 def test_short_string_overflow_rejected() -> None:
     huge = "x" * 300
     with pytest.raises(ValueError, match="exceeds 255"):
-        MessageCodec.encode_join_room(JoinRoomMessage(room_id=huge, device_id=""))
+        MessageCodec.encode_join_room(
+            JoinRoomMessage(room_id=huge, device_id="", scene_hash="")
+        )

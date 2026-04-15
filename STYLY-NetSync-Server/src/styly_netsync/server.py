@@ -42,6 +42,8 @@ import zmq
 from loguru import logger
 from . import binary_serializer
 from . import network_utils
+from .replication.dispatcher import ReplicationDispatcher
+from .replication.room_registry import RoomRegistry as ReplicationRoomRegistry
 from .logging_utils import configure_logging
 from .config import (
     ConfigurationError,
@@ -341,6 +343,13 @@ class NetSyncServer:
         # Thread synchronization
         self._rooms_lock = threading.RLock()  # Reentrant lock for nested access
         self._stats_lock = threading.Lock()  # Lock for statistics
+
+        # Replication protocol v1 state (Phase 2: JOIN_ROOM + ROOM_SNAPSHOT).
+        # Lives alongside the legacy v3 pose relay and does not replace it.
+        self._replication_rooms = ReplicationRoomRegistry()
+        self._replication_dispatcher = ReplicationDispatcher(
+            room_registry=self._replication_rooms,
+        )
 
         # Threading
         self.running = False
@@ -1046,6 +1055,16 @@ class NetSyncServer:
                         except UnicodeDecodeError as e:
                             logger.error(f"Failed to decode room ID: {e}")
                             continue
+                        # Replication protocol v1 frames (message IDs 30+)
+                        # are dispatched in parallel to the legacy v3 pose
+                        # relay. The two protocols share the same ROUTER
+                        # socket but do not otherwise interact.
+                        if message_bytes and message_bytes[0] >= 30:
+                            self._dispatch_replication_frame(
+                                client_identity, room_id_bytes, message_bytes
+                            )
+                            continue
+
                         # Protocol v3 binary-only handling (no JSON fallback)
                         try:
                             msg_type, data, raw_payload = binary_serializer.deserialize(
@@ -1103,6 +1122,48 @@ class NetSyncServer:
                 logger.error(traceback.format_exc())
 
         logger.info("Receive loop ended")
+
+    def _dispatch_replication_frame(
+        self,
+        client_identity: bytes,
+        room_id_bytes: bytes,
+        message_bytes: bytes,
+    ) -> None:
+        """Route a replication-protocol-v1 frame through the dispatcher.
+
+        Reply frames are sent back to the originating client via ROUTER
+        using the same ``[identity, room_id, payload]`` envelope as the
+        legacy v3 control plane. Lives on the receive thread; the
+        ``ReplicationDispatcher`` is not thread-safe and must only be
+        touched from here.
+        """
+        router = self.router
+        if router is None:
+            return
+
+        def _send(identity: bytes, frame: bytes) -> None:
+            try:
+                router.send_multipart(
+                    [identity, room_id_bytes, frame], flags=zmq.DONTWAIT
+                )
+            except zmq.Again:
+                logger.warning(
+                    "ROUTER send would block for replication reply to %r", identity
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("ROUTER send failed for replication reply: %s", exc)
+
+        try:
+            result = self._replication_dispatcher.handle_frame(
+                client_identity, message_bytes, _send
+            )
+        except Exception as exc:
+            logger.error("Replication dispatch error: %s", exc)
+            logger.error(traceback.format_exc())
+            return
+
+        if not result.handled:
+            logger.warning("Unhandled replication message type %d", message_bytes[0])
 
     def _drain_router_ctrl_queue(self) -> None:
         """Drain pending control messages from the router queue.

@@ -36,6 +36,7 @@ protocol uses 1–12 and is unchanged.
 | 34 | `MSG_REPL_RESYNC_REQUEST`    | client -> server  |
 | 35 | `MSG_REPL_RESYNC_REPLY`      | server -> client  |
 | 36 | `MSG_REPL_STATE_BATCH`       | both              |
+| 37 | `MSG_REPL_JOIN_REJECT`       | server -> client  |
 
 ## Shared primitives
 
@@ -92,27 +93,64 @@ u8  msgType = 30
 u8  replVersion = 1
 str roomId       // u8 length + UTF-8
 str deviceId     // u8 length + UTF-8
+str sceneHash    // u8 length + UTF-8 (SceneHashBuilder output)
 ```
+
+`sceneHash` lets the server reject clients built against a different
+scene (see `JOIN_REJECT`). An empty string means "unknown"; servers may
+accept or reject at their discretion.
 
 ### ROOM_SNAPSHOT (31)
 
-Initial synchronization for a joining client. The server sends the full
-set of known entities.
+Initial synchronization for a joining client. The server sends the
+authoritative state for every touched entity in the room.
 
 ```
 u8   msgType = 31
 u8   replVersion = 1
 str  roomId
-u32  serverTick           // monotonic tick counter
+u32  baseRoomSeq          // RoomState.nextRoomSeq - 1 at snapshot time
+u64  serverTimeUs         // server wall clock in microseconds since Unix epoch
 u32  entityCount
 repeat entityCount:
     u64 entityId
     u32 authorityEpoch
     u32 ownerShortId      // 0 = server-owned
     u16 poseSeq
-    u8  changedMask       // always Position|Rotation|Scale for snapshot
+    u8  changedMask       // typically Position|Rotation|Scale for snapshot
     // Transform fields per mask, encoded by TransformCodec
 ```
+
+`baseRoomSeq` anchors subsequent `STATE_BATCH` deltas so a client can
+detect out-of-order or missing updates. `serverTimeUs` lets clients age
+incoming snapshots against their own clock; cross-process monotonic
+clocks would be unusable here, which is why wall-clock is used.
+
+### JOIN_REJECT (37)
+
+Sent by the server in place of a `ROOM_SNAPSHOT` when a `JOIN_ROOM`
+cannot be accepted. Clients should surface `reasonText` to the user.
+
+```
+u8  msgType = 37
+u8  replVersion = 1
+str roomId
+u8  reasonCode          // JoinRejectReason
+str reasonText          // free-form diagnostic; may be empty
+```
+
+`JoinRejectReason` values:
+
+| Code | Name                                    |
+|------|-----------------------------------------|
+| 0    | `SCENE_HASH_MISMATCH`                   |
+| 1    | `ROOM_FULL` (reserved)                  |
+| 2    | `PROTOCOL_VERSION_MISMATCH` (reserved)  |
+| 255  | `UNSPECIFIED`                           |
+
+Unknown reason codes MUST be coerced to `UNSPECIFIED` on the receiver
+(log a warning) so forward-compatible clients still surface the reason
+text when the server adds new codes.
 
 ### OWNERSHIP_REQUEST (32)
 
