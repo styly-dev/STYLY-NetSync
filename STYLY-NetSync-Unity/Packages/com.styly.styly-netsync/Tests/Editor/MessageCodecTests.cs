@@ -232,23 +232,21 @@ namespace Styly.NetSync.Tests.Editor
         [Test]
         public void ResyncRequestRoundTrip()
         {
-            var msg = new ResyncRequestMessage
-            {
-                EntityIds = new List<ulong> { 1, 2, ulong.MaxValue },
-            };
+            var msg = new ResyncRequestMessage { LastAppliedRoomSeq = 0xDEADBEEFu };
             var bytes = MessageCodec.EncodeResyncRequest(msg);
             Assert.AreEqual(ReplMessageIds.ResyncRequest, bytes[0]);
             var decoded = MessageCodec.DecodeResyncRequest(bytes);
-            CollectionAssert.AreEqual(msg.EntityIds, decoded.EntityIds);
+            Assert.AreEqual(msg.LastAppliedRoomSeq, decoded.LastAppliedRoomSeq);
         }
 
         [Test]
-        public void ResyncRequestEmpty()
+        public void ResyncRequestZero()
         {
-            var msg = new ResyncRequestMessage { EntityIds = new List<ulong>() };
+            // A fresh client with no applied batches uses 0 to ask for everything.
+            var msg = new ResyncRequestMessage { LastAppliedRoomSeq = 0u };
             var decoded = MessageCodec.DecodeResyncRequest(
                 MessageCodec.EncodeResyncRequest(msg));
-            Assert.AreEqual(0, decoded.EntityIds.Count);
+            Assert.AreEqual(0u, decoded.LastAppliedRoomSeq);
         }
 
         [Test]
@@ -256,6 +254,9 @@ namespace Styly.NetSync.Tests.Editor
         {
             var msg = new ResyncReplyMessage
             {
+                RoomId = "room-resync",
+                BaseRoomSeq = 98765u,
+                ServerTimeUs = 1_700_000_000_000_500UL,
                 Entities = new List<EntityRecord>
                 {
                     new EntityRecord
@@ -272,6 +273,9 @@ namespace Styly.NetSync.Tests.Editor
             var bytes = MessageCodec.EncodeResyncReply(msg, Codec);
             Assert.AreEqual(ReplMessageIds.ResyncReply, bytes[0]);
             var decoded = MessageCodec.DecodeResyncReply(bytes, Codec);
+            Assert.AreEqual(msg.RoomId, decoded.RoomId);
+            Assert.AreEqual(msg.BaseRoomSeq, decoded.BaseRoomSeq);
+            Assert.AreEqual(msg.ServerTimeUs, decoded.ServerTimeUs);
             Assert.AreEqual(1, decoded.Entities.Count);
             Assert.AreEqual(ChangedMask.Rotation, decoded.Entities[0].ChangedMask);
             Assert.AreEqual(Vector3.zero, decoded.Entities[0].State.Position);

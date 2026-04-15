@@ -46,6 +46,12 @@ namespace Styly.NetSync
         /// </summary>
         public UnityEvent<string, string> OnVersionMismatch = new UnityEvent<string, string>();
 
+        /// <summary>
+        /// Fired on main thread whenever the replication subsystem's join
+        /// state transitions (Disconnected / Joining / Joined / Rejected).
+        /// </summary>
+        public event Action<JoinState> OnReplicationJoinStateChanged;
+
         // Advanced Options (drawn by NetSyncManagerEditor in a foldout)
         [SerializeField, Tooltip("Enable offline mode for testing without a server.")]
         private bool _offlineMode = false;
@@ -276,6 +282,7 @@ namespace Styly.NetSync
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
+        private ReplicationBridge _replicationBridge;
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -571,6 +578,14 @@ namespace Styly.NetSync
             HandleReconnection();
             ProcessMessages();
 
+            // Replication v1 main-thread tick: drains network-thread inbox,
+            // applies snapshots / state batches, ticks ownership timeouts
+            // and pose publish + interpolate.
+            if (_replicationBridge != null)
+            {
+                _replicationBridge.Pump();
+            }
+
             // Skip transform/NV operations during room switching
             if (!_roomSwitching)
             {
@@ -648,6 +663,11 @@ namespace Styly.NetSync
             _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
+
+            // Replication v1 subsystem (Phase 2-5). Constructed last so it
+            // sees the fully-initialized connection + message processor.
+            _replicationBridge = new ReplicationBridge(_connectionManager, _messageProcessor);
+            _replicationBridge.Client.JoinStateChanged += OnReplicationJoinStateChangedInternal;
 
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
@@ -1174,6 +1194,12 @@ namespace Styly.NetSync
             _transformSyncManager = null;
             _networkVariableManager?.Dispose();
             _networkVariableManager = null;
+            if (_replicationBridge != null)
+            {
+                _replicationBridge.Client.JoinStateChanged -= OnReplicationJoinStateChangedInternal;
+                _replicationBridge.Dispose();
+                _replicationBridge = null;
+            }
         }
 
         /// <summary>
@@ -1294,6 +1320,66 @@ namespace Styly.NetSync
             }
 
             _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYaw, poseTime, poseSeq);
+        }
+
+        // -------------------------------------------------------------------
+        // Replication v1 public API (Phase 5).
+        // -------------------------------------------------------------------
+
+        /// <summary>
+        /// Current replication join state. Returns Disconnected when the
+        /// subsystem has not yet been initialized.
+        /// </summary>
+        public JoinState ReplicationJoinState
+        {
+            get
+            {
+                ReplicationBridge bridge = _replicationBridge;
+                return bridge != null ? bridge.Client.State : JoinState.Disconnected;
+            }
+        }
+
+        /// <summary>
+        /// Kick off the replication JOIN_ROOM handshake against the given
+        /// roomId. SceneHash is computed from the active scene via
+        /// <see cref="SceneHashBuilder"/>. Returns true when the request
+        /// was dispatched; false when the subsystem is not ready yet or
+        /// the underlying transport is not connected.
+        /// </summary>
+        public bool JoinReplicationRoom(string roomId)
+        {
+            ReplicationBridge bridge = _replicationBridge;
+            if (bridge == null)
+            {
+                return false;
+            }
+            if (_connectionManager == null || !_connectionManager.IsConnected)
+            {
+                return false;
+            }
+            string effectiveRoomId = string.IsNullOrEmpty(roomId) ? _roomId : roomId;
+            string sceneHash = SceneHashBuilder.BuildHash(UnityEngine.SceneManagement.SceneManager.GetActiveScene());
+            bridge.BeginJoin(effectiveRoomId, _deviceId, sceneHash);
+            return true;
+        }
+
+        /// <summary>
+        /// Force a RESYNC_REQUEST against the server. Useful for debugging
+        /// or recovery UI. Returns true when dispatched.
+        /// </summary>
+        public bool RequestReplicationResync()
+        {
+            ReplicationBridge bridge = _replicationBridge;
+            return bridge != null && bridge.Client.RequestResync();
+        }
+
+        private void OnReplicationJoinStateChangedInternal(JoinState state)
+        {
+            Action<JoinState> handler = OnReplicationJoinStateChanged;
+            if (handler != null)
+            {
+                handler(state);
+            }
         }
     }
 }

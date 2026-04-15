@@ -74,15 +74,27 @@ namespace Styly.NetSync.Internal
         public OwnershipEventReasonCode ReasonCode;
     }
 
-    // Client -> server. Requests fresh state for one or more entities.
+    // Client -> server. Requests a fresh authoritative snapshot.
+    // LastAppliedRoomSeq is the highest STATE_BATCH.RoomSeq the client has
+    // successfully applied. The server responds with a targeted
+    // ResyncReplyMessage (same shape as a ROOM_SNAPSHOT). A per-entity
+    // resync variant may arrive in a future protocol revision; v1 is
+    // full-snapshot only.
     public struct ResyncRequestMessage
     {
-        public List<ulong> EntityIds;
+        public uint LastAppliedRoomSeq;
     }
 
     // Server -> client. Response to ResyncRequest.
+    // Shares the wire layout of RoomSnapshotMessage minus YourClientNo
+    // (resync is post-join so the client already knows its identity).
+    // Kept as a distinct struct so call sites can tell a resync reply
+    // apart from the initial join snapshot.
     public struct ResyncReplyMessage
     {
+        public string RoomId;
+        public uint BaseRoomSeq;
+        public ulong ServerTimeUs;
         public List<EntityRecord> Entities;
     }
 

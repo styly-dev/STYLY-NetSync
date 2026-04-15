@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from .message_codec import (
     MSG_REPL_JOIN_ROOM,
     MSG_REPL_OWNERSHIP_REQUEST,
+    MSG_REPL_RESYNC_REQUEST,
     MSG_REPL_STATE_BATCH,
     MessageCodec,
     TransformCodec,
@@ -28,7 +29,9 @@ from .messages import (
     JoinRejectMessage,
     JoinRejectReason,
     OwnershipEventMessage,
+    OwnershipEventReasonCode,
     OwnershipResult,
+    ResyncReplyMessage,
 )
 from .ownership_arbiter import (
     OwnershipArbiter,
@@ -40,6 +43,17 @@ from .snapshot_service import SnapshotService
 from .state_relay import StateRelay
 
 logger = logging.getLogger(__name__)
+
+
+# Default quiet-window after which a client is treated as disconnected
+# and their owned entities are reclaimed via OWNERSHIP_EVENT(EXPIRED).
+# Matches the legacy v3 pose-relay ``CLIENT_TIMEOUT`` default of 10 s.
+DEFAULT_CLIENT_TIMEOUT_SEC: float = 10.0
+
+# How far a client's last_applied_room_seq can lag the current
+# ``next_room_seq - 1`` before we log a warning on RESYNC_REQUEST.
+# Informational only — the reply is always a full current snapshot.
+_RESYNC_GAP_WARN_THRESHOLD: int = 1000
 
 
 SendFn = Callable[[bytes, bytes], None]
@@ -81,6 +95,7 @@ class ReplicationDispatcher:
         transform_codec: TransformCodec | None = None,
         ownership_arbiter: OwnershipArbiter | None = None,
         state_relay: StateRelay | None = None,
+        client_timeout_sec: float = DEFAULT_CLIENT_TIMEOUT_SEC,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._rooms = room_registry
@@ -98,6 +113,7 @@ class ReplicationDispatcher:
         # used when the caller omits one. Real servers always pass
         # their own :class:`StateRelay` so the flush path emits frames.
         self._relay = state_relay
+        self._client_timeout_sec = client_timeout_sec
         self._clock = clock
 
     def handle_frame(
@@ -128,6 +144,8 @@ class ReplicationDispatcher:
             )
         if msg_type == MSG_REPL_STATE_BATCH:
             return self._handle_state_batch(client_identity, room_id, frame)
+        if msg_type == MSG_REPL_RESYNC_REQUEST:
+            return self._handle_resync_request(client_identity, room_id, frame, send)
         return DispatchResult(handled=False)
 
     # --- Periodic tasks --------------------------------------------------
@@ -160,6 +178,59 @@ class ReplicationDispatcher:
         if self._relay is None:
             return 0
         return self._relay.tick()
+
+    def sweep_disconnected_clients(self, broadcast: BroadcastFn) -> int:
+        """Evict clients that have gone silent and reclaim their entities.
+
+        A client is disconnected when ``now - last_seen`` exceeds
+        :attr:`_client_timeout_sec`. Each evicted client's owned
+        entities have their ownership cleared (epoch bumped, lease
+        zeroed) and an ``OWNERSHIP_EVENT(EXPIRED)`` is broadcast to
+        the room so peers know to stop interpolating their poses.
+
+        Returns the total number of EXPIRED events emitted across all
+        rooms. Intended to be called from the server's periodic thread
+        at the same cadence as the lease sweep (2-5 Hz).
+        """
+        now = self._clock()
+        total = 0
+        cutoff = now - self._client_timeout_sec
+        for room_id, room in self._rooms.items():
+            # Collect keys first so we can mutate the dict while iterating.
+            stale_keys = [
+                key
+                for key, state in room.connected_clients.items()
+                if state.last_seen < cutoff
+            ]
+            for key in stale_keys:
+                state = room.connected_clients.pop(key)
+                logger.info(
+                    "Evicting disconnected client %d from room %r "
+                    "(last_seen age=%.1fs)",
+                    state.client_no,
+                    room_id,
+                    now - state.last_seen,
+                )
+                if state.client_no == 0:
+                    # No short id was ever allocated (should not happen
+                    # post-Task #12); nothing to reclaim.
+                    continue
+                for record in room.entities.values():
+                    if record.owner_client_no != state.client_no:
+                        continue
+                    record.owner_client_no = 0
+                    record.authority_epoch += 1
+                    record.lease_expire_at = 0.0
+                    event = OwnershipEventMessage(
+                        entity_id=record.entity_id,
+                        new_owner_short_id=0,
+                        new_authority_epoch=record.authority_epoch,
+                        result=OwnershipResult.EXPIRED,
+                        reason_code=OwnershipEventReasonCode.LEASE_EXPIRED,
+                    )
+                    broadcast(room_id, MessageCodec.encode_ownership_event(event))
+                    total += 1
+        return total
 
     # --- JOIN_ROOM ------------------------------------------------------
 
@@ -269,6 +340,7 @@ class ReplicationDispatcher:
             return DispatchResult(handled=True, accepted=False)
 
         now = self._clock()
+        self._touch_last_seen(room, client_identity, now)
         outcome = self._arbiter.handle_request(
             room,
             OwnershipRequest(
@@ -354,8 +426,86 @@ class ReplicationDispatcher:
             )
             return DispatchResult(handled=True, accepted=False)
 
+        self._touch_last_seen(room, client_identity, self._clock())
         accepted = self._relay.accept_state_batch(sender_client_no, room, batch)
         return DispatchResult(handled=True, accepted=bool(accepted))
+
+    # --- RESYNC_REQUEST ------------------------------------------------
+
+    def _handle_resync_request(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        frame: bytes,
+        send: SendFn,
+    ) -> DispatchResult:
+        """Respond to a client RESYNC_REQUEST with a targeted snapshot.
+
+        The reply mirrors ``ROOM_SNAPSHOT`` in shape (sans
+        ``your_client_no`` — the client already knows its short id
+        from the initial join). ``last_applied_room_seq`` on the
+        request is used only for gap telemetry today; a future
+        revision could turn it into a delta-replay hint.
+        """
+        try:
+            msg = MessageCodec.decode_resync_request(frame)
+        except (ValueError, IndexError, struct.error) as exc:
+            logger.warning("Malformed RESYNC_REQUEST from %r: %s", client_identity, exc)
+            return DispatchResult(handled=True, accepted=False)
+
+        room = self._rooms.get(room_id)
+        if room is None:
+            logger.warning(
+                "RESYNC_REQUEST for unknown room %r (client %r)",
+                room_id,
+                client_identity,
+            )
+            return DispatchResult(handled=True, accepted=False)
+
+        self._touch_last_seen(room, client_identity, self._clock())
+
+        # Gap telemetry. The room's current sequence is
+        # ``next_room_seq - 1`` (matches the SnapshotService baseline);
+        # anything more than the configured window behind is suspicious
+        # but not fatal — we still reply with the current state.
+        current_seq = max(room.next_room_seq - 1, 0)
+        if (
+            msg.last_applied_room_seq > 0
+            and current_seq > msg.last_applied_room_seq + _RESYNC_GAP_WARN_THRESHOLD
+        ):
+            logger.warning(
+                "Client %r in room %r is %d batches behind current "
+                "(last_applied=%d, current=%d); replying with full snapshot",
+                client_identity,
+                room_id,
+                current_seq - msg.last_applied_room_seq,
+                msg.last_applied_room_seq,
+                current_seq,
+            )
+
+        snapshot = self._snapshots.build_snapshot(room)
+        reply = ResyncReplyMessage(
+            room_id=snapshot.room_id,
+            base_room_seq=snapshot.base_room_seq,
+            server_time_us=snapshot.server_time_us,
+            entities=snapshot.entities,
+        )
+        send(client_identity, MessageCodec.encode_resync_reply(reply, self._codec))
+        return DispatchResult(handled=True, accepted=True)
+
+    def _touch_last_seen(
+        self, room: RoomState, client_identity: bytes, now: float
+    ) -> None:
+        """Bump ``last_seen`` on every inbound frame from ``client_identity``.
+
+        No-op for unknown identities; the disconnect sweep treats those
+        as already-evicted.
+        """
+        key = self._identity_to_key(client_identity)
+        state = room.connected_clients.get(key)
+        if state is None:
+            return
+        state.last_seen = now
 
     def _client_no_for_identity(self, room: RoomState, client_identity: bytes) -> int:
         """Resolve a ROUTER identity to its room-local short id.

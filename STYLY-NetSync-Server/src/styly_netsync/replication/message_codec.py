@@ -385,25 +385,14 @@ class MessageCodec:
     def encode_resync_request(message: ResyncRequestMessage) -> bytes:
         buf = bytearray()
         _write_header(buf, MSG_REPL_RESYNC_REQUEST)
-        count = len(message.entity_ids)
-        if count > 0xFFFF:
-            raise ValueError(f"Resync entity count {count} exceeds u16 limit")
-        buf.extend(struct.pack("<H", count))
-        for entity_id in message.entity_ids:
-            buf.extend(struct.pack("<Q", entity_id))
+        buf.extend(struct.pack("<I", message.last_applied_room_seq))
         return bytes(buf)
 
     @staticmethod
     def decode_resync_request(data: bytes) -> ResyncRequestMessage:
         offset = _read_header(data, MSG_REPL_RESYNC_REQUEST)
-        (count,) = struct.unpack_from("<H", data, offset)
-        offset += 2
-        ids: list[int] = []
-        for _ in range(count):
-            (eid,) = struct.unpack_from("<Q", data, offset)
-            offset += 8
-            ids.append(eid)
-        return ResyncRequestMessage(entity_ids=ids)
+        (last_applied_room_seq,) = struct.unpack_from("<I", data, offset)
+        return ResyncRequestMessage(last_applied_room_seq=last_applied_room_seq)
 
     # --- RESYNC_REPLY ---
 
@@ -413,10 +402,16 @@ class MessageCodec:
     ) -> bytes:
         buf = bytearray()
         _write_header(buf, MSG_REPL_RESYNC_REPLY)
-        count = len(message.entities)
-        if count > 0xFFFF:
-            raise ValueError(f"Resync reply entity count {count} exceeds u16 limit")
-        buf.extend(struct.pack("<H", count))
+        _write_short_string(buf, message.room_id)
+        # baseRoomSeq (u32) + serverTimeUs (u64) + entity count (u32)
+        buf.extend(
+            struct.pack(
+                "<IQI",
+                message.base_room_seq,
+                message.server_time_us,
+                len(message.entities),
+            )
+        )
         for record in message.entities:
             _write_entity_record(buf, record, codec)
         return bytes(buf)
@@ -424,13 +419,19 @@ class MessageCodec:
     @staticmethod
     def decode_resync_reply(data: bytes, codec: TransformCodec) -> ResyncReplyMessage:
         offset = _read_header(data, MSG_REPL_RESYNC_REPLY)
-        (count,) = struct.unpack_from("<H", data, offset)
-        offset += 2
+        room_id, offset = _read_short_string(data, offset)
+        base_room_seq, server_time_us, count = struct.unpack_from("<IQI", data, offset)
+        offset += 16
         entities: list[WireEntityRecord] = []
         for _ in range(count):
             record, offset = _read_entity_record(data, offset, codec)
             entities.append(record)
-        return ResyncReplyMessage(entities=entities)
+        return ResyncReplyMessage(
+            room_id=room_id,
+            base_room_seq=base_room_seq,
+            server_time_us=server_time_us,
+            entities=entities,
+        )
 
     # --- STATE_BATCH ---
 

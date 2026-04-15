@@ -179,11 +179,32 @@ class OwnershipEventMessage:
 
 @dataclass
 class ResyncRequestMessage:
-    entity_ids: list[int] = field(default_factory=list)
+    """Client asks the server for a fresh snapshot.
+
+    ``last_applied_room_seq`` is the highest ``STATE_BATCH.room_seq``
+    the client has successfully applied. The server replies with a
+    targeted :class:`ResyncReplyMessage` carrying the full authoritative
+    room state. A per-entity resync variant may be added in a future
+    protocol revision if bandwidth profiling justifies it; v1 is
+    full-snapshot only.
+    """
+
+    last_applied_room_seq: int = 0
 
 
 @dataclass
 class ResyncReplyMessage:
+    """Targeted snapshot unicast back to a requesting client.
+
+    Shares the wire layout of :class:`RoomSnapshotMessage` (minus
+    ``your_client_no`` — resync is post-join so the client already
+    knows its identity). Kept as a distinct type so call sites can tell
+    a resync reply apart from the initial join snapshot.
+    """
+
+    room_id: str = ""
+    base_room_seq: int = 0
+    server_time_us: int = 0
     entities: list[WireEntityRecord] = field(default_factory=list)
 
 

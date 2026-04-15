@@ -211,31 +211,48 @@ Note the distinction between `result=EXPIRED` with `reasonCode=NONE`
 
 ### RESYNC_REQUEST (34)
 
-Client asks the server for fresh state on one or more entities (e.g. after
-detecting a gap in `poseSeq`).
+Client asks the server for a fresh authoritative snapshot, usually
+because it detected a `roomSeq` gap between its last applied
+`STATE_BATCH` and a new incoming one (suggesting dropped frames).
 
 ```
-u8  msgType = 34
-u8  replVersion = 1
-u16 entityCount
-repeat entityCount:
-    u64 entityId
+u8   msgType = 34
+u8   replVersion = 1
+u32  lastAppliedRoomSeq    // highest STATE_BATCH.roomSeq the client has applied
 ```
+
+v1 is full-snapshot only: the server responds with a targeted
+`RESYNC_REPLY` carrying the complete authoritative room state. A
+per-entity resync variant (asking only for specific `entityId`s) is
+reserved for a future protocol revision if bandwidth profiling
+justifies it.
 
 ### RESYNC_REPLY (35)
 
+Server's response to `RESYNC_REQUEST`. Shares the wire layout of
+`ROOM_SNAPSHOT` minus `yourClientNo` (resync is post-join so the
+client already knows its identity).
+
 ```
-u8  msgType = 35
-u8  replVersion = 1
-u16 entityCount
+u8   msgType = 35
+u8   replVersion = 1
+str  roomId
+u32  baseRoomSeq           // RoomState.nextRoomSeq - 1 at reply time
+u64  serverTimeUs          // server wall clock in microseconds since Unix epoch
+u32  entityCount
 repeat entityCount:
     u64 entityId
     u32 authorityEpoch
-    u32 ownerShortId
+    u32 ownerShortId       // 0 = server-owned
     u16 poseSeq
-    u8  changedMask       // fields present for this entity
+    u8  changedMask        // fields present for this entity
     // Transform fields per mask, encoded by TransformCodec
 ```
+
+Clients apply a `RESYNC_REPLY` like a snapshot (sparse overwrite of
+returned entities) and advance their drop-stale cursor to
+`baseRoomSeq` so subsequent `STATE_BATCH` frames before that point are
+dropped.
 
 ## State plane
 

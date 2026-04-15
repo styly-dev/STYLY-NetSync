@@ -217,22 +217,26 @@ def test_ownership_event_unknown_result_raises() -> None:
 
 
 def test_resync_request_round_trip() -> None:
-    msg = ResyncRequestMessage(entity_ids=[1, 2, 0xFFFFFFFFFFFFFFFF])
+    msg = ResyncRequestMessage(last_applied_room_seq=0xDEADBEEF)
     encoded = MessageCodec.encode_resync_request(msg)
     assert encoded[0] == MSG_REPL_RESYNC_REQUEST
     assert MessageCodec.decode_resync_request(encoded) == msg
 
 
-def test_resync_request_empty() -> None:
+def test_resync_request_zero() -> None:
+    # A fresh client with no applied batches uses 0 to ask for everything.
     msg = ResyncRequestMessage()
-    assert (
-        MessageCodec.decode_resync_request(MessageCodec.encode_resync_request(msg))
-        == msg
+    decoded = MessageCodec.decode_resync_request(
+        MessageCodec.encode_resync_request(msg)
     )
+    assert decoded.last_applied_room_seq == 0
 
 
 def test_resync_reply_round_trip(codec: TransformCodecV1) -> None:
     msg = ResyncReplyMessage(
+        room_id="room-resync",
+        base_room_seq=98765,
+        server_time_us=1_700_000_000_000_500,
         entities=[
             WireEntityRecord(
                 entity_id=10,
@@ -242,17 +246,28 @@ def test_resync_reply_round_trip(codec: TransformCodecV1) -> None:
                 changed_mask=ChangedMask.ROTATION,
                 state=_sample_state(3.0),
             )
-        ]
+        ],
     )
     encoded = MessageCodec.encode_resync_reply(msg, codec)
     assert encoded[0] == MSG_REPL_RESYNC_REPLY
     decoded = MessageCodec.decode_resync_reply(encoded, codec)
+    assert decoded.room_id == msg.room_id
+    assert decoded.base_room_seq == msg.base_room_seq
+    assert decoded.server_time_us == msg.server_time_us
     assert len(decoded.entities) == 1
     assert decoded.entities[0].changed_mask == ChangedMask.ROTATION
     # Position and scale default when not masked.
     assert decoded.entities[0].state.position == (0.0, 0.0, 0.0)
     assert decoded.entities[0].state.scale == (1.0, 1.0, 1.0)
     assert decoded.entities[0].state.rotation == msg.entities[0].state.rotation
+
+
+def test_resync_reply_empty(codec: TransformCodecV1) -> None:
+    msg = ResyncReplyMessage(room_id="", base_room_seq=0, server_time_us=0, entities=[])
+    decoded = MessageCodec.decode_resync_reply(
+        MessageCodec.encode_resync_reply(msg, codec), codec
+    )
+    assert decoded == msg
 
 
 def test_state_batch_round_trip(codec: TransformCodecV1) -> None:

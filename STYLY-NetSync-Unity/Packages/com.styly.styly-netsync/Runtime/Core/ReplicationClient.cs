@@ -93,6 +93,32 @@ namespace Styly.NetSync.Internal
         /// </summary>
         public event Action<ulong> UnknownEntityEncountered;
 
+        /// <summary>
+        /// Raised on the main thread when the client dispatches a
+        /// RESYNC_REQUEST. The argument is the last-applied RoomSeq.
+        /// </summary>
+        public event Action<uint> OnResyncStarted;
+
+        /// <summary>
+        /// Raised on the main thread after a RESYNC_REPLY has been applied.
+        /// The argument is the new HighestAppliedRoomSeq.
+        /// </summary>
+        public event Action<uint> OnResyncCompleted;
+
+        /// <summary>
+        /// Resync trigger thresholds. Kept as properties so tests and
+        /// tuning can override them without recompiling the codebase.
+        /// </summary>
+        public uint GapTolerance { get; set; } = 16;
+        public int UnknownEntityFloodThreshold { get; set; } = 3;
+
+        /// <summary>
+        /// When true, the client has a resync in flight and is waiting for
+        /// RESYNC_REPLY. Suppresses additional RESYNC_REQUEST dispatches.
+        /// </summary>
+        private bool _resyncPending;
+        private int _consecutiveUnknownEntities;
+
         public JoinState State => _state;
         public string RoomId => _pendingRoomId;
         public JoinRejectReason LastRejectReason => _lastRejectReason;
@@ -198,7 +224,9 @@ namespace Styly.NetSync.Internal
         }
 
         /// <summary>
-        /// Reset to Disconnected. Clears internal buffers.
+        /// Reset to Disconnected. Clears internal buffers plus the remote
+        /// pose buffer (if attached) so reconnects start from scratch.
+        /// Per spec §10.7, a transport reconnect forces a fresh join.
         /// </summary>
         public void Reset()
         {
@@ -209,7 +237,28 @@ namespace Styly.NetSync.Internal
             _pendingRoomId = null;
             _pendingDeviceId = null;
             _pendingSceneHash = null;
+            _resyncPending = false;
+            _consecutiveUnknownEntities = 0;
+            PoseBuffer buffer = Buffer;
+            if (buffer != null)
+            {
+                buffer.Clear();
+            }
             TransitionTo(JoinState.Disconnected);
+        }
+
+        /// <summary>
+        /// Public hook to force a RESYNC_REQUEST. Used by debug UI and by
+        /// the automatic gap / flood triggers. Returns true when dispatched.
+        /// </summary>
+        public bool RequestResync()
+        {
+            if (_state != JoinState.Joined || _resyncPending)
+            {
+                return false;
+            }
+            DispatchResyncRequest();
+            return true;
         }
 
         /// <summary>
@@ -274,6 +323,13 @@ namespace Styly.NetSync.Internal
 
         internal IReadOnlyList<StateBatchMessage> TestPreSnapshotBuffer => _preSnapshotBuffer;
 
+        internal void TestInjectResyncReply(ResyncReplyMessage msg)
+        {
+            HandleResyncReply(msg);
+        }
+
+        internal bool TestResyncPending => _resyncPending;
+
         // -----------------------------------------------------------------
         // Internal dispatch
         // -----------------------------------------------------------------
@@ -294,7 +350,7 @@ namespace Styly.NetSync.Internal
                         HandleOwnershipEvent(MessageCodec.DecodeOwnershipEvent(payload));
                         break;
                     case ReplMessageIds.ResyncReply:
-                        // Phase 2: decoded but not yet applied. Drop silently.
+                        HandleResyncReply(MessageCodec.DecodeResyncReply(payload, _codec));
                         break;
                     default:
                         // Unknown / client-only outbound IDs appearing in inbound
@@ -369,34 +425,82 @@ namespace Styly.NetSync.Internal
 
         private void ApplySnapshot(RoomSnapshotMessage msg)
         {
+            ApplySnapshotBody(msg.Entities, msg.BaseRoomSeq);
+        }
+
+        /// <summary>
+        /// Shared snapshot-apply used by both ROOM_SNAPSHOT (initial join)
+        /// and RESYNC_REPLY (mid-session recovery). Updates ownership state,
+        /// applies transforms, and advances the highest-applied RoomSeq.
+        /// </summary>
+        private void ApplySnapshotBody(IReadOnlyList<EntityRecord> entities, uint newHighRoomSeq)
+        {
             EntityRegistry registry = EntityRegistry.Instance;
-            List<EntityRecord> entities = msg.Entities;
-            if (entities == null)
+            OwnershipClient ownership = Ownership;
+            if (entities != null)
             {
-                _highestAppliedRoomSeq = msg.BaseRoomSeq;
+                for (int i = 0; i < entities.Count; i++)
+                {
+                    EntityRecord rec = entities[i];
+                    if (ownership != null)
+                    {
+                        ownership.HandleSnapshotEntity(rec);
+                    }
+                    if (!registry.TryGet(rec.EntityId, out EntityBinding binding))
+                    {
+                        RaiseUnknownEntity(rec.EntityId);
+                        continue;
+                    }
+                    NetSyncObject obj = binding.Component;
+                    if (obj == null)
+                    {
+                        continue;
+                    }
+                    ApplyTransformState(obj, rec.State, rec.ChangedMask);
+                }
+            }
+            _highestAppliedRoomSeq = newHighRoomSeq;
+
+            // Snapshots authoritatively re-seed state; flush any PoseBuffer
+            // samples that would otherwise re-apply stale data.
+            PoseBuffer buffer = Buffer;
+            if (buffer != null)
+            {
+                buffer.Clear();
+            }
+
+            // Snapshot success clears the flood counter — stale-id bursts
+            // prior to the resync were expected.
+            _consecutiveUnknownEntities = 0;
+        }
+
+        private void HandleResyncReply(ResyncReplyMessage msg)
+        {
+            // RESYNC_REPLY carries its own BaseRoomSeq (same semantics as
+            // ROOM_SNAPSHOT.BaseRoomSeq) so we can advance the drop-stale
+            // cursor to match the server's authoritative state at the
+            // moment the resync was produced.
+            ApplySnapshotBody(msg.Entities, msg.BaseRoomSeq);
+            _highestAppliedRoomSeq = msg.BaseRoomSeq;
+            _resyncPending = false;
+            OnResyncCompleted?.Invoke(_highestAppliedRoomSeq);
+        }
+
+        private void DispatchResyncRequest()
+        {
+            if (_resyncPending)
+            {
                 return;
             }
-            OwnershipClient ownership = Ownership;
-            for (int i = 0; i < entities.Count; i++)
+            _resyncPending = true;
+            _consecutiveUnknownEntities = 0;
+
+            byte[] payload = MessageCodec.EncodeResyncRequest(new ResyncRequestMessage
             {
-                EntityRecord rec = entities[i];
-                if (ownership != null)
-                {
-                    ownership.HandleSnapshotEntity(rec);
-                }
-                if (!registry.TryGet(rec.EntityId, out EntityBinding binding))
-                {
-                    RaiseUnknownEntity(rec.EntityId);
-                    continue;
-                }
-                NetSyncObject obj = binding.Component;
-                if (obj == null)
-                {
-                    continue;
-                }
-                ApplyTransformState(obj, rec.State, rec.ChangedMask);
-            }
-            _highestAppliedRoomSeq = msg.BaseRoomSeq;
+                LastAppliedRoomSeq = _highestAppliedRoomSeq,
+            });
+            _transport.SendControl(_pendingRoomId ?? string.Empty, payload);
+            OnResyncStarted?.Invoke(_highestAppliedRoomSeq);
         }
 
         private void HandleOwnershipEvent(OwnershipEventMessage evt)
@@ -436,10 +540,26 @@ namespace Styly.NetSync.Internal
                 return;
             }
 
+            // Gap detection (spec §10.7): a RoomSeq that jumps forward past
+            // GapTolerance implies we've missed batches; trigger a resync.
+            if (batch.RoomSeq > 0 && _highestAppliedRoomSeq > 0 &&
+                batch.RoomSeq > _highestAppliedRoomSeq + GapTolerance &&
+                !_resyncPending)
+            {
+                DispatchResyncRequest();
+                // Still apply the batch — the resync reply will reconcile any
+                // remaining discrepancies.
+            }
+
             EntityRegistry registry = EntityRegistry.Instance;
             List<StateUpdate> updates = batch.Updates;
             PoseBuffer buffer = Buffer;
             OwnershipClient ownership = Ownership;
+            int unknownThisBatch = 0;
+            // Source-of-truth for remote-sample timing: server-stamped time.
+            // Falls back to the local IServerClock estimate when the server
+            // did not fill ServerTimeUs (client-originated echo paths).
+            ulong sampleTimeUs = batch.ServerTimeUs != 0UL ? batch.ServerTimeUs : SynthesizeServerTimeUs();
             if (updates != null)
             {
                 for (int i = 0; i < updates.Count; i++)
@@ -452,6 +572,7 @@ namespace Styly.NetSync.Internal
                     if (!registry.TryGet(u.EntityId, out EntityBinding binding))
                     {
                         RaiseUnknownEntity(u.EntityId);
+                        unknownThisBatch++;
                         continue;
                     }
                     NetSyncObject obj = binding.Component;
@@ -482,7 +603,7 @@ namespace Styly.NetSync.Internal
                     {
                         buffer.Add(u.EntityId, new PoseSample
                         {
-                            ServerTimeUs = SynthesizeServerTimeUs(),
+                            ServerTimeUs = sampleTimeUs,
                             PoseSeq = u.PoseSeq,
                             Flags = u.Flags,
                             Mask = u.ChangedMask,
@@ -496,6 +617,22 @@ namespace Styly.NetSync.Internal
                         ApplyTransformState(obj, u.State, u.ChangedMask);
                     }
                 }
+            }
+
+            // Unknown-entity flood detection. If we see N unknowns in a row
+            // across batches, assume the local registry is behind the server
+            // and pull a fresh snapshot.
+            if (unknownThisBatch > 0)
+            {
+                _consecutiveUnknownEntities += unknownThisBatch;
+                if (_consecutiveUnknownEntities >= UnknownEntityFloodThreshold && !_resyncPending)
+                {
+                    DispatchResyncRequest();
+                }
+            }
+            else
+            {
+                _consecutiveUnknownEntities = 0;
             }
 
             if (batch.RoomSeq > _highestAppliedRoomSeq)

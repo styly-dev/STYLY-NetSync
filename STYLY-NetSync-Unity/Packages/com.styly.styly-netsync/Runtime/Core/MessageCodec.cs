@@ -355,16 +355,7 @@ namespace Styly.NetSync.Internal
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
             WriteHeader(writer, ReplMessageIds.ResyncRequest);
-            var ids = message.EntityIds;
-            ushort count = ids == null ? (ushort)0 : checked((ushort)ids.Count);
-            writer.Write(count);
-            if (ids != null)
-            {
-                for (int i = 0; i < ids.Count; i++)
-                {
-                    writer.Write(ids[i]);
-                }
-            }
+            writer.Write(message.LastAppliedRoomSeq);
             return ms.ToArray();
         }
 
@@ -373,13 +364,10 @@ namespace Styly.NetSync.Internal
             using var ms = new MemoryStream(data);
             using var reader = new BinaryReader(ms);
             ReadAndVerifyHeader(reader, ReplMessageIds.ResyncRequest);
-            ushort count = reader.ReadUInt16();
-            var ids = new List<ulong>(count);
-            for (int i = 0; i < count; i++)
+            return new ResyncRequestMessage
             {
-                ids.Add(reader.ReadUInt64());
-            }
-            return new ResyncRequestMessage { EntityIds = ids };
+                LastAppliedRoomSeq = reader.ReadUInt32(),
+            };
         }
 
         // --- RESYNC_REPLY ---
@@ -390,8 +378,11 @@ namespace Styly.NetSync.Internal
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
             WriteHeader(writer, ReplMessageIds.ResyncReply);
+            WriteShortString(writer, message.RoomId);
+            writer.Write(message.BaseRoomSeq);
+            writer.Write(message.ServerTimeUs);
             var entities = message.Entities;
-            ushort count = entities == null ? (ushort)0 : checked((ushort)entities.Count);
+            uint count = entities == null ? 0u : (uint)entities.Count;
             writer.Write(count);
             if (entities != null)
             {
@@ -409,13 +400,20 @@ namespace Styly.NetSync.Internal
             using var ms = new MemoryStream(data);
             using var reader = new BinaryReader(ms);
             ReadAndVerifyHeader(reader, ReplMessageIds.ResyncReply);
-            ushort count = reader.ReadUInt16();
-            var entities = new List<EntityRecord>(count);
-            for (int i = 0; i < count; i++)
+            var msg = new ResyncReplyMessage
+            {
+                RoomId = ReadShortString(reader),
+                BaseRoomSeq = reader.ReadUInt32(),
+                ServerTimeUs = reader.ReadUInt64(),
+            };
+            uint count = reader.ReadUInt32();
+            var entities = new List<EntityRecord>((int)count);
+            for (uint i = 0; i < count; i++)
             {
                 entities.Add(ReadEntityRecord(reader, codec));
             }
-            return new ResyncReplyMessage { Entities = entities };
+            msg.Entities = entities;
+            return msg;
         }
 
         // --- STATE_BATCH ---

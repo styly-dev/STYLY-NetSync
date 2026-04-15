@@ -1229,10 +1229,13 @@ class NetSyncServer:
                 logger.error("ROUTER broadcast failed: %s", exc)
 
     def _replication_sweep_tick(self) -> None:
-        """Run the ownership lease sweep; called from the periodic thread.
+        """Run the ownership lease + disconnect sweeps.
 
-        Uses the same broadcast path as request-driven events so every
-        connected client in a room learns about an expired lease.
+        Both sweeps share the ROUTER broadcast path with request-driven
+        OWNERSHIP_EVENT frames, so every peer in the room learns about
+        reclaimed ownership at the same time regardless of whether the
+        cause was lease expiry, client disconnect, or an explicit
+        release. Called from the periodic thread.
         """
 
         def _broadcast(target_room_id: str, frame: bytes) -> None:
@@ -1241,8 +1244,9 @@ class NetSyncServer:
         try:
             with self._replication_lock:
                 self._replication_dispatcher.sweep_expired_leases(_broadcast)
+                self._replication_dispatcher.sweep_disconnected_clients(_broadcast)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error("Replication lease sweep error: %s", exc)
+            logger.error("Replication sweep error: %s", exc)
             logger.error(traceback.format_exc())
 
     def _replication_flush_tick(self) -> None:

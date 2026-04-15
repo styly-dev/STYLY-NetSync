@@ -489,9 +489,10 @@ def test_state_batch_from_unknown_identity_is_dropped() -> None:
 def test_unhandled_message_type_reports_not_handled() -> None:
     dispatcher, _registry, sent, broadcast, send, bcast = _make_dispatcher()
 
-    # Fabricate a frame with an unknown replication message id (e.g. 34 =
-    # RESYNC_REQUEST, not yet implemented).
-    frame = bytes([34, 1, 0, 0])
+    # JOIN_REJECT (id 37) is server→client only — the server never
+    # routes an inbound frame of that type, so it is a reliable
+    # "unhandled" sample for this test.
+    frame = bytes([37, 1])
     result = dispatcher.handle_frame(b"client-y", "lobby", frame, send, bcast)
     assert result.handled is False
     assert sent == []

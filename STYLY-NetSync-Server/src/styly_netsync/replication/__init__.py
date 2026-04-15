@@ -8,7 +8,12 @@ Phase 1 only populates ``models`` and ``room_registry``; the remaining
 modules are intentionally left as empty stubs for later phases.
 """
 
-from .dispatcher import DispatchResult, ReplicationDispatcher, SendFn
+from .dispatcher import (
+    DEFAULT_CLIENT_TIMEOUT_SEC,
+    DispatchResult,
+    ReplicationDispatcher,
+    SendFn,
+)
 from .message_codec import (
     MSG_REPL_JOIN_REJECT,
     MSG_REPL_JOIN_ROOM,
@@ -49,6 +54,7 @@ from .state_relay import StateRelay
 __all__ = [
     "ChangedMask",
     "ClientState",
+    "DEFAULT_CLIENT_TIMEOUT_SEC",
     "DispatchResult",
     "EntityKind",
     "EntityRecord",
