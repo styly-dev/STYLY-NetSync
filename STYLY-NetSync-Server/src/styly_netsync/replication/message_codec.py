@@ -17,8 +17,9 @@ from .messages import (
     JoinRejectReason,
     JoinRoomMessage,
     OwnershipEventMessage,
-    OwnershipReason,
+    OwnershipEventReasonCode,
     OwnershipRequestMessage,
+    OwnershipResult,
     ResyncReplyMessage,
     ResyncRequestMessage,
     RoomSnapshotMessage,
@@ -246,12 +247,13 @@ class MessageCodec:
         buf = bytearray()
         _write_header(buf, MSG_REPL_ROOM_SNAPSHOT)
         _write_short_string(buf, message.room_id)
-        # baseRoomSeq (u32) + serverTimeUs (u64) + entity count (u32)
+        # baseRoomSeq (u32) + serverTimeUs (u64) + yourClientNo (u32) + entity count (u32)
         buf.extend(
             struct.pack(
-                "<IQI",
+                "<IQII",
                 message.base_room_seq,
                 message.server_time_us,
+                message.your_client_no,
                 len(message.entities),
             )
         )
@@ -263,8 +265,10 @@ class MessageCodec:
     def decode_room_snapshot(data: bytes, codec: TransformCodec) -> RoomSnapshotMessage:
         offset = _read_header(data, MSG_REPL_ROOM_SNAPSHOT)
         room_id, offset = _read_short_string(data, offset)
-        base_room_seq, server_time_us, count = struct.unpack_from("<IQI", data, offset)
-        offset += 16
+        base_room_seq, server_time_us, your_client_no, count = struct.unpack_from(
+            "<IQII", data, offset
+        )
+        offset += 20
         entities: list[WireEntityRecord] = []
         for _ in range(count):
             record, offset = _read_entity_record(data, offset, codec)
@@ -273,6 +277,7 @@ class MessageCodec:
             room_id=room_id,
             base_room_seq=base_room_seq,
             server_time_us=server_time_us,
+            your_client_no=your_client_no,
             entities=entities,
         )
 
@@ -339,11 +344,12 @@ class MessageCodec:
         _write_header(buf, MSG_REPL_OWNERSHIP_EVENT)
         buf.extend(
             struct.pack(
-                "<QIIB",
+                "<QIIBB",
                 message.entity_id,
                 message.new_owner_short_id,
                 message.new_authority_epoch,
-                int(message.reason),
+                int(message.result),
+                int(message.reason_code),
             )
         )
         return bytes(buf)
@@ -351,12 +357,26 @@ class MessageCodec:
     @staticmethod
     def decode_ownership_event(data: bytes) -> OwnershipEventMessage:
         offset = _read_header(data, MSG_REPL_OWNERSHIP_EVENT)
-        entity_id, owner, epoch, reason = struct.unpack_from("<QIIB", data, offset)
+        entity_id, owner, epoch, raw_result, raw_reason = struct.unpack_from(
+            "<QIIBB", data, offset
+        )
+        try:
+            result = OwnershipResult(raw_result)
+        except ValueError as exc:
+            raise ValueError(f"Unknown OwnershipResult {raw_result}") from exc
+        try:
+            reason_code = OwnershipEventReasonCode(raw_reason)
+        except ValueError:
+            logger.warning(
+                "Unknown OwnershipEventReasonCode %d; coercing to NONE", raw_reason
+            )
+            reason_code = OwnershipEventReasonCode.NONE
         return OwnershipEventMessage(
             entity_id=entity_id,
             new_owner_short_id=owner,
             new_authority_epoch=epoch,
-            reason=OwnershipReason(reason),
+            result=result,
+            reason_code=reason_code,
         )
 
     # --- RESYNC_REQUEST ---

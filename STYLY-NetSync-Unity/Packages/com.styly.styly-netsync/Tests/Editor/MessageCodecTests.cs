@@ -101,6 +101,7 @@ namespace Styly.NetSync.Tests.Editor
                 RoomId = "room-1",
                 BaseRoomSeq = 123456,
                 ServerTimeUs = 1_700_000_000_000_000UL,
+                YourClientNo = 42u,
                 Entities = new List<EntityRecord>
                 {
                     new EntityRecord
@@ -129,6 +130,7 @@ namespace Styly.NetSync.Tests.Editor
             Assert.AreEqual(msg.RoomId, decoded.RoomId);
             Assert.AreEqual(msg.BaseRoomSeq, decoded.BaseRoomSeq);
             Assert.AreEqual(msg.ServerTimeUs, decoded.ServerTimeUs);
+            Assert.AreEqual(msg.YourClientNo, decoded.YourClientNo);
             Assert.AreEqual(2, decoded.Entities.Count);
             Assert.AreEqual(msg.Entities[0].State.Position, decoded.Entities[0].State.Position);
             Assert.AreEqual(msg.Entities[0].State.Scale, decoded.Entities[0].State.Scale);
@@ -157,14 +159,25 @@ namespace Styly.NetSync.Tests.Editor
         [Test]
         public void OwnershipEventRoundTrip()
         {
-            foreach (OwnershipReason reason in System.Enum.GetValues(typeof(OwnershipReason)))
+            var cases = new (OwnershipResult result, OwnershipEventReasonCode reason, uint owner)[]
+            {
+                (OwnershipResult.Granted, OwnershipEventReasonCode.None, 7u),
+                (OwnershipResult.Released, OwnershipEventReasonCode.None, 0u),
+                (OwnershipResult.Expired, OwnershipEventReasonCode.None, 0u),
+                (OwnershipResult.Denied, OwnershipEventReasonCode.AlreadyOwned, 0u),
+                (OwnershipResult.Denied, OwnershipEventReasonCode.NotOwner, 0u),
+                (OwnershipResult.Denied, OwnershipEventReasonCode.EpochMismatch, 0u),
+                (OwnershipResult.Denied, OwnershipEventReasonCode.LeaseExpired, 0u),
+            };
+            foreach (var c in cases)
             {
                 var msg = new OwnershipEventMessage
                 {
                     EntityId = 99,
-                    NewOwnerShortId = reason == OwnershipReason.Granted ? 7u : 0u,
+                    NewOwnerShortId = c.owner,
                     NewAuthorityEpoch = 4,
-                    Reason = reason,
+                    Result = c.result,
+                    ReasonCode = c.reason,
                 };
                 var bytes = MessageCodec.EncodeOwnershipEvent(msg);
                 Assert.AreEqual(ReplMessageIds.OwnershipEvent, bytes[0]);
@@ -172,8 +185,48 @@ namespace Styly.NetSync.Tests.Editor
                 Assert.AreEqual(msg.EntityId, decoded.EntityId);
                 Assert.AreEqual(msg.NewOwnerShortId, decoded.NewOwnerShortId);
                 Assert.AreEqual(msg.NewAuthorityEpoch, decoded.NewAuthorityEpoch);
-                Assert.AreEqual(msg.Reason, decoded.Reason);
+                Assert.AreEqual(msg.Result, decoded.Result);
+                Assert.AreEqual(msg.ReasonCode, decoded.ReasonCode);
             }
+        }
+
+        [Test]
+        public void OwnershipEventUnknownReasonCodeCoerced()
+        {
+            var bytes = MessageCodec.EncodeOwnershipEvent(new OwnershipEventMessage
+            {
+                EntityId = 1,
+                NewOwnerShortId = 0,
+                NewAuthorityEpoch = 0,
+                Result = OwnershipResult.Denied,
+                ReasonCode = OwnershipEventReasonCode.None,
+            });
+            // header(2) + entityId(8) + owner(4) + epoch(4) + result(1) + reasonCode(1)
+            int reasonCodeOffset = 2 + 8 + 4 + 4 + 1;
+            bytes[reasonCodeOffset] = 200;
+            UnityEngine.TestTools.LogAssert.Expect(
+                UnityEngine.LogType.Warning,
+                new System.Text.RegularExpressions.Regex("Unknown OwnershipEventReasonCode"));
+            var decoded = MessageCodec.DecodeOwnershipEvent(bytes);
+            Assert.AreEqual(OwnershipEventReasonCode.None, decoded.ReasonCode);
+            Assert.AreEqual(OwnershipResult.Denied, decoded.Result);
+        }
+
+        [Test]
+        public void OwnershipEventUnknownResultThrows()
+        {
+            var bytes = MessageCodec.EncodeOwnershipEvent(new OwnershipEventMessage
+            {
+                EntityId = 1,
+                NewOwnerShortId = 0,
+                NewAuthorityEpoch = 0,
+                Result = OwnershipResult.Granted,
+                ReasonCode = OwnershipEventReasonCode.None,
+            });
+            int resultOffset = 2 + 8 + 4 + 4;
+            bytes[resultOffset] = 200;
+            Assert.Throws<System.IO.InvalidDataException>(
+                () => MessageCodec.DecodeOwnershipEvent(bytes));
         }
 
         [Test]

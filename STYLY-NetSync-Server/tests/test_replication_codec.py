@@ -23,8 +23,9 @@ from styly_netsync.replication.messages import (
     JoinRejectReason,
     JoinRoomMessage,
     OwnershipEventMessage,
-    OwnershipReason,
+    OwnershipEventReasonCode,
     OwnershipRequestMessage,
+    OwnershipResult,
     ResyncReplyMessage,
     ResyncRequestMessage,
     RoomSnapshotMessage,
@@ -108,6 +109,7 @@ def test_room_snapshot_round_trip(codec: TransformCodecV1) -> None:
         room_id="room-1",
         base_room_seq=123456,
         server_time_us=1_700_000_000_000_000,
+        your_client_no=42,
         entities=[
             WireEntityRecord(
                 entity_id=0xDEADBEEFCAFEBABE,
@@ -133,6 +135,7 @@ def test_room_snapshot_round_trip(codec: TransformCodecV1) -> None:
     assert decoded.room_id == msg.room_id
     assert decoded.base_room_seq == msg.base_room_seq
     assert decoded.server_time_us == msg.server_time_us
+    assert decoded.your_client_no == msg.your_client_no
     assert len(decoded.entities) == 2
     # Position-only second record should decode scale as default (1,1,1).
     assert decoded.entities[0].state.position == msg.entities[0].state.position
@@ -153,16 +156,64 @@ def test_ownership_request_round_trip() -> None:
 
 
 def test_ownership_event_round_trip() -> None:
-    for reason in OwnershipReason:
+    cases = [
+        (OwnershipResult.GRANTED, OwnershipEventReasonCode.NONE, 7),
+        (OwnershipResult.RELEASED, OwnershipEventReasonCode.NONE, 0),
+        (OwnershipResult.EXPIRED, OwnershipEventReasonCode.NONE, 0),
+        (OwnershipResult.DENIED, OwnershipEventReasonCode.ALREADY_OWNED, 0),
+        (OwnershipResult.DENIED, OwnershipEventReasonCode.NOT_OWNER, 0),
+        (OwnershipResult.DENIED, OwnershipEventReasonCode.EPOCH_MISMATCH, 0),
+        (OwnershipResult.DENIED, OwnershipEventReasonCode.LEASE_EXPIRED, 0),
+    ]
+    for result, reason_code, owner in cases:
         msg = OwnershipEventMessage(
             entity_id=99,
-            new_owner_short_id=7 if reason is OwnershipReason.GRANTED else 0,
+            new_owner_short_id=owner,
             new_authority_epoch=4,
-            reason=reason,
+            result=result,
+            reason_code=reason_code,
         )
         encoded = MessageCodec.encode_ownership_event(msg)
         assert encoded[0] == MSG_REPL_OWNERSHIP_EVENT
         assert MessageCodec.decode_ownership_event(encoded) == msg
+
+
+def test_ownership_event_unknown_reason_code_coerced() -> None:
+    encoded = bytearray(
+        MessageCodec.encode_ownership_event(
+            OwnershipEventMessage(
+                entity_id=1,
+                new_owner_short_id=0,
+                new_authority_epoch=0,
+                result=OwnershipResult.DENIED,
+                reason_code=OwnershipEventReasonCode.NONE,
+            )
+        )
+    )
+    # Layout: header(2) + entityId(8) + owner(4) + epoch(4) + result(1) + reasonCode(1)
+    reason_code_offset = 2 + 8 + 4 + 4 + 1
+    encoded[reason_code_offset] = 200
+    decoded = MessageCodec.decode_ownership_event(bytes(encoded))
+    assert decoded.reason_code is OwnershipEventReasonCode.NONE
+    assert decoded.result is OwnershipResult.DENIED
+
+
+def test_ownership_event_unknown_result_raises() -> None:
+    encoded = bytearray(
+        MessageCodec.encode_ownership_event(
+            OwnershipEventMessage(
+                entity_id=1,
+                new_owner_short_id=0,
+                new_authority_epoch=0,
+                result=OwnershipResult.GRANTED,
+                reason_code=OwnershipEventReasonCode.NONE,
+            )
+        )
+    )
+    result_offset = 2 + 8 + 4 + 4
+    encoded[result_offset] = 200
+    with pytest.raises(ValueError, match="Unknown OwnershipResult"):
+        MessageCodec.decode_ownership_event(bytes(encoded))
 
 
 def test_resync_request_round_trip() -> None:

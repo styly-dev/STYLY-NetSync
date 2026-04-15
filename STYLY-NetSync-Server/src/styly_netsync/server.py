@@ -344,12 +344,20 @@ class NetSyncServer:
         self._rooms_lock = threading.RLock()  # Reentrant lock for nested access
         self._stats_lock = threading.Lock()  # Lock for statistics
 
-        # Replication protocol v1 state (Phase 2: JOIN_ROOM + ROOM_SNAPSHOT).
-        # Lives alongside the legacy v3 pose relay and does not replace it.
+        # Replication protocol v1 state (Phases 2-3: JOIN_ROOM +
+        # ROOM_SNAPSHOT + OWNERSHIP_REQUEST/EVENT). Lives alongside the
+        # legacy v3 pose relay and does not replace it. The dispatcher
+        # is serial by contract — both the receive thread and the
+        # periodic thread (lease sweep) must acquire
+        # ``_replication_lock`` before touching it.
         self._replication_rooms = ReplicationRoomRegistry()
         self._replication_dispatcher = ReplicationDispatcher(
             room_registry=self._replication_rooms,
         )
+        self._replication_lock = threading.RLock()
+        # Approximately 4 Hz — well within the 2-5 Hz target for lease
+        # sweeps and cheap relative to the existing periodic loop.
+        self.REPLICATION_SWEEP_INTERVAL = 0.25
 
         # Threading
         self.running = False
@@ -1131,14 +1139,22 @@ class NetSyncServer:
     ) -> None:
         """Route a replication-protocol-v1 frame through the dispatcher.
 
-        Reply frames are sent back to the originating client via ROUTER
-        using the same ``[identity, room_id, payload]`` envelope as the
-        legacy v3 control plane. Lives on the receive thread; the
+        Reply frames are sent back via ROUTER using the same
+        ``[identity, room_id, payload]`` envelope as the legacy v3
+        control plane. Room-scoped broadcasts fan out over ROUTER
+        unicast to each connected client identity stored in the
+        replication registry. Lives on the receive thread; the
         ``ReplicationDispatcher`` is not thread-safe and must only be
-        touched from here.
+        touched from here (and the periodic sweep below).
         """
         router = self.router
         if router is None:
+            return
+
+        try:
+            room_id = room_id_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            logger.warning("Bad room_id bytes in replication frame: %s", exc)
             return
 
         def _send(identity: bytes, frame: bytes) -> None:
@@ -1153,10 +1169,14 @@ class NetSyncServer:
             except Exception as exc:  # pragma: no cover - defensive
                 logger.error("ROUTER send failed for replication reply: %s", exc)
 
+        def _broadcast(target_room_id: str, frame: bytes) -> None:
+            self._broadcast_replication_frame(target_room_id, frame)
+
         try:
-            result = self._replication_dispatcher.handle_frame(
-                client_identity, message_bytes, _send
-            )
+            with self._replication_lock:
+                result = self._replication_dispatcher.handle_frame(
+                    client_identity, room_id, message_bytes, _send, _broadcast
+                )
         except Exception as exc:
             logger.error("Replication dispatch error: %s", exc)
             logger.error(traceback.format_exc())
@@ -1164,6 +1184,55 @@ class NetSyncServer:
 
         if not result.handled:
             logger.warning("Unhandled replication message type %d", message_bytes[0])
+
+    def _broadcast_replication_frame(self, room_id: str, frame: bytes) -> None:
+        """Fan out a replication frame to every connected client in ``room_id``.
+
+        Uses ROUTER unicast to each stored client identity; this keeps
+        the replication control plane on the same reliable delivery
+        channel as the existing v3 control traffic. Clients that no
+        longer have an identity entry are silently skipped.
+        """
+        router = self.router
+        if router is None:
+            return
+        with self._replication_lock:
+            room = self._replication_rooms.get(room_id)
+            if room is None:
+                return
+            identities = [
+                state.identity
+                for state in room.connected_clients.values()
+                if state.identity
+            ]
+        room_bytes = room_id.encode("utf-8")
+        for identity in identities:
+            try:
+                router.send_multipart([identity, room_bytes, frame], flags=zmq.DONTWAIT)
+            except zmq.Again:
+                logger.warning(
+                    "ROUTER send would block on replication broadcast to %r",
+                    identity,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("ROUTER broadcast failed: %s", exc)
+
+    def _replication_sweep_tick(self) -> None:
+        """Run the ownership lease sweep; called from the periodic thread.
+
+        Uses the same broadcast path as request-driven events so every
+        connected client in a room learns about an expired lease.
+        """
+
+        def _broadcast(target_room_id: str, frame: bytes) -> None:
+            self._broadcast_replication_frame(target_room_id, frame)
+
+        try:
+            with self._replication_lock:
+                self._replication_dispatcher.sweep_expired_leases(_broadcast)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Replication lease sweep error: %s", exc)
+            logger.error(traceback.format_exc())
 
     def _drain_router_ctrl_queue(self) -> None:
         """Drain pending control messages from the router queue.
@@ -1775,6 +1844,7 @@ class NetSyncServer:
         last_broadcast_check: float = 0.0
         last_cleanup: float = 0.0
         last_device_id_cleanup: float = 0.0
+        last_replication_sweep: float = 0.0
         last_log = time.monotonic()
         DEVICE_ID_CLEANUP_INTERVAL = 60.0  # Clean up expired device IDs every minute
 
@@ -1809,6 +1879,16 @@ class NetSyncServer:
                 if current_time - last_device_id_cleanup >= DEVICE_ID_CLEANUP_INTERVAL:
                     self._cleanup_expired_device_id_mappings(current_time)
                     last_device_id_cleanup = current_time
+
+                # Replication-protocol-v1 ownership lease sweep (~4 Hz).
+                # Separate from the v3 broadcast cadence since the sweep
+                # must keep running even when no rooms have v3 traffic.
+                if (
+                    current_time - last_replication_sweep
+                    >= self.REPLICATION_SWEEP_INTERVAL
+                ):
+                    self._replication_sweep_tick()
+                    last_replication_sweep = current_time
 
                 # Log status periodically
                 if current_time - last_log >= self.STATUS_LOG_INTERVAL:

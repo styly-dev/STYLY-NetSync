@@ -98,6 +98,35 @@ namespace Styly.NetSync.Internal
         public JoinRejectReason LastRejectReason => _lastRejectReason;
         public uint HighestAppliedServerTick => _highestAppliedServerTick;
 
+        // LocalClientNo is learned from ROOM_SNAPSHOT.YourClientNo during the
+        // join handshake. Tests and specialized integrations may override it
+        // via the public setter, but the default path reads it off the wire.
+        private int _localClientNo;
+
+        /// <summary>
+        /// Optional ownership subsystem. ReplicationClient routes
+        /// OWNERSHIP_EVENT and snapshot ownership columns here when set.
+        /// </summary>
+        public OwnershipClient Ownership { get; set; }
+
+        /// <summary>
+        /// Network-assigned short id for the local client. Set by
+        /// NetSyncManager when the device-id mapping resolves.
+        /// </summary>
+        public int LocalClientNo
+        {
+            get => _localClientNo;
+            set
+            {
+                _localClientNo = value;
+                OwnershipClient ownership = Ownership;
+                if (ownership != null)
+                {
+                    ownership.LocalClientNo = value;
+                }
+            }
+        }
+
         public ReplicationClient(IReplicationTransport transport, ITransformCodec codec)
         {
             _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -128,15 +157,11 @@ namespace Styly.NetSync.Internal
             _lastRejectReason = JoinRejectReason.None;
             TransitionTo(JoinState.Joining);
 
-            // Encode and send JOIN_ROOM. v1 JoinRoomMessage only carries
-            // roomId + deviceId on the wire; sceneHash travels once Phase 3
-            // extends the message. We stash _pendingSceneHash for the
-            // eventual comparison against the server's roomId (best we can
-            // do with the current v1 schema).
             byte[] payload = MessageCodec.EncodeJoinRoom(new JoinRoomMessage
             {
                 RoomId = _pendingRoomId,
                 DeviceId = _pendingDeviceId,
+                SceneHash = _pendingSceneHash,
             });
             _transport.SendControl(_pendingRoomId, payload);
         }
@@ -214,6 +239,8 @@ namespace Styly.NetSync.Internal
                         HandleStateBatch(MessageCodec.DecodeStateBatch(payload, _codec));
                         break;
                     case ReplMessageIds.OwnershipEvent:
+                        HandleOwnershipEvent(MessageCodec.DecodeOwnershipEvent(payload));
+                        break;
                     case ReplMessageIds.ResyncReply:
                         // Phase 2: decoded but not yet applied. Drop silently.
                         break;
@@ -255,13 +282,19 @@ namespace Styly.NetSync.Internal
                 return;
             }
 
-            // Step (d): apply snapshot to live bindings.
+            // Step (d): learn our own identity from the snapshot.
+            if (msg.YourClientNo != 0)
+            {
+                LocalClientNo = (int)msg.YourClientNo;
+            }
+
+            // Step (e): apply snapshot to live bindings.
             ApplySnapshot(msg);
 
-            // Step (e): replay buffered STATE_BATCH where ServerTick > base.
-            ReplayBufferedBatches(msg.ServerTick);
+            // Step (f): replay buffered STATE_BATCH where ServerTick > base.
+            ReplayBufferedBatches(msg.BaseRoomSeq);
 
-            // Step (f): transition to Joined.
+            // Step (g): transition to Joined.
             TransitionTo(JoinState.Joined);
         }
 
@@ -288,12 +321,17 @@ namespace Styly.NetSync.Internal
             List<EntityRecord> entities = msg.Entities;
             if (entities == null)
             {
-                _highestAppliedServerTick = msg.ServerTick;
+                _highestAppliedServerTick = msg.BaseRoomSeq;
                 return;
             }
+            OwnershipClient ownership = Ownership;
             for (int i = 0; i < entities.Count; i++)
             {
                 EntityRecord rec = entities[i];
+                if (ownership != null)
+                {
+                    ownership.HandleSnapshotEntity(rec);
+                }
                 if (!registry.TryGet(rec.EntityId, out EntityBinding binding))
                 {
                     RaiseUnknownEntity(rec.EntityId);
@@ -306,7 +344,16 @@ namespace Styly.NetSync.Internal
                 }
                 ApplyTransformState(obj, rec.State, rec.ChangedMask);
             }
-            _highestAppliedServerTick = msg.ServerTick;
+            _highestAppliedServerTick = msg.BaseRoomSeq;
+        }
+
+        private void HandleOwnershipEvent(OwnershipEventMessage evt)
+        {
+            OwnershipClient ownership = Ownership;
+            if (ownership != null)
+            {
+                ownership.HandleOwnershipEvent(evt);
+            }
         }
 
         private void ReplayBufferedBatches(uint baseServerTick)

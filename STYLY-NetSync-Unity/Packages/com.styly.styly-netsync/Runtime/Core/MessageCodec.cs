@@ -157,6 +157,7 @@ namespace Styly.NetSync.Internal
             WriteShortString(writer, message.RoomId);
             writer.Write(message.BaseRoomSeq);
             writer.Write(message.ServerTimeUs);
+            writer.Write(message.YourClientNo);
             var entities = message.Entities;
             uint count = entities == null ? 0u : (uint)entities.Count;
             writer.Write(count);
@@ -181,6 +182,7 @@ namespace Styly.NetSync.Internal
                 RoomId = ReadShortString(reader),
                 BaseRoomSeq = reader.ReadUInt32(),
                 ServerTimeUs = reader.ReadUInt64(),
+                YourClientNo = reader.ReadUInt32(),
             };
             uint count = reader.ReadUInt32();
             var entities = new List<EntityRecord>((int)count);
@@ -278,7 +280,8 @@ namespace Styly.NetSync.Internal
             writer.Write(message.EntityId);
             writer.Write(message.NewOwnerShortId);
             writer.Write(message.NewAuthorityEpoch);
-            writer.Write((byte)message.Reason);
+            writer.Write((byte)message.Result);
+            writer.Write((byte)message.ReasonCode);
             return ms.ToArray();
         }
 
@@ -287,13 +290,62 @@ namespace Styly.NetSync.Internal
             using var ms = new MemoryStream(data);
             using var reader = new BinaryReader(ms);
             ReadAndVerifyHeader(reader, ReplMessageIds.OwnershipEvent);
+            var entityId = reader.ReadUInt64();
+            var newOwner = reader.ReadUInt32();
+            var newEpoch = reader.ReadUInt32();
+            byte rawResult = reader.ReadByte();
+            byte rawReasonCode = reader.ReadByte();
+            if (!IsKnownOwnershipResult(rawResult))
+            {
+                throw new InvalidDataException(
+                    $"Unknown OwnershipResult {rawResult}");
+            }
+            var reasonCode = IsKnownOwnershipEventReasonCode(rawReasonCode)
+                ? (OwnershipEventReasonCode)rawReasonCode
+                : OwnershipEventReasonCode.None;
+            if (!IsKnownOwnershipEventReasonCode(rawReasonCode))
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[MessageCodec] Unknown OwnershipEventReasonCode {rawReasonCode}; coercing to None");
+            }
             return new OwnershipEventMessage
             {
-                EntityId = reader.ReadUInt64(),
-                NewOwnerShortId = reader.ReadUInt32(),
-                NewAuthorityEpoch = reader.ReadUInt32(),
-                Reason = (OwnershipReason)reader.ReadByte(),
+                EntityId = entityId,
+                NewOwnerShortId = newOwner,
+                NewAuthorityEpoch = newEpoch,
+                Result = (OwnershipResult)rawResult,
+                ReasonCode = reasonCode,
             };
+        }
+
+        private static bool IsKnownOwnershipResult(byte raw)
+        {
+            switch (raw)
+            {
+                case (byte)OwnershipResult.Granted:
+                case (byte)OwnershipResult.Denied:
+                case (byte)OwnershipResult.Released:
+                case (byte)OwnershipResult.Expired:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsKnownOwnershipEventReasonCode(byte raw)
+        {
+            switch (raw)
+            {
+                case (byte)OwnershipEventReasonCode.None:
+                case (byte)OwnershipEventReasonCode.AlreadyOwned:
+                case (byte)OwnershipEventReasonCode.NotOwner:
+                case (byte)OwnershipEventReasonCode.EpochMismatch:
+                case (byte)OwnershipEventReasonCode.LeaseExpired:
+                case (byte)OwnershipEventReasonCode.Timeout:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         // --- RESYNC_REQUEST ---

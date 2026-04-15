@@ -34,13 +34,39 @@ class ChangedMask(IntFlag):
     ALL = POSITION | ROTATION | SCALE
 
 
-class OwnershipReason(IntEnum):
-    """Reason code for :class:`OwnershipEventMessage`."""
+class OwnershipResult(IntEnum):
+    """Outcome of an ownership transition, carried in
+    :class:`OwnershipEventMessage`.
+
+    ``EXPIRED`` is used by the server's proactive lease sweep to signal
+    that a lease has been released without client participation; it is
+    distinct from a ``DENIED`` with :attr:`OwnershipEventReasonCode.LEASE_EXPIRED`,
+    which describes a request that arrived after the requester's lease
+    had already expired.
+    """
 
     GRANTED = 0
-    REJECTED = 1
-    REVOKED = 2
-    RELEASED = 3
+    DENIED = 1
+    RELEASED = 2
+    EXPIRED = 3
+
+
+class OwnershipEventReasonCode(IntEnum):
+    """Auxiliary reason code carried alongside :class:`OwnershipResult`.
+
+    ``NONE`` is used for success cases (``GRANTED``/``RELEASED``) and for
+    server-initiated ``EXPIRED`` sweeps. The remaining codes describe
+    why a ``DENIED`` result was produced. ``TIMEOUT`` is reserved for
+    Unity-side use (a client-local "request never got an answer") and
+    is never produced by the server arbiter.
+    """
+
+    NONE = 0
+    ALREADY_OWNED = 1
+    NOT_OWNER = 2
+    EPOCH_MISMATCH = 3
+    LEASE_EXPIRED = 4
+    TIMEOUT = 5
 
 
 class JoinRejectReason(IntEnum):
@@ -111,6 +137,10 @@ class RoomSnapshotMessage:
     use it only for relative age calculations, so any monotonic drift
     between server and client is irrelevant.
 
+    ``your_client_no`` is the short client id the server assigned to
+    the joining client; it lets the replication layer learn its own
+    identity from the snapshot rather than needing an external wiring.
+
     ``entities`` is sparse — only touched/owned entities; clients
     reconstruct unmodified scene objects from authored defaults.
     """
@@ -118,6 +148,7 @@ class RoomSnapshotMessage:
     room_id: str
     base_room_seq: int
     server_time_us: int
+    your_client_no: int = 0
     entities: list[WireEntityRecord] = field(default_factory=list)
 
 
@@ -142,7 +173,8 @@ class OwnershipEventMessage:
     entity_id: int
     new_owner_short_id: int
     new_authority_epoch: int
-    reason: OwnershipReason
+    result: OwnershipResult
+    reason_code: OwnershipEventReasonCode = OwnershipEventReasonCode.NONE
 
 
 @dataclass
@@ -167,8 +199,9 @@ __all__ = [
     "JoinRejectReason",
     "JoinRoomMessage",
     "OwnershipEventMessage",
-    "OwnershipReason",
+    "OwnershipEventReasonCode",
     "OwnershipRequestMessage",
+    "OwnershipResult",
     "ResyncReplyMessage",
     "ResyncRequestMessage",
     "RoomSnapshotMessage",

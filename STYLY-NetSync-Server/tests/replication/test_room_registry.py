@@ -20,6 +20,7 @@ def test_get_or_create_creates_room_with_defaults() -> None:
     assert room.room_id == "room-a"
     assert room.scene_hash == "hash-1"
     assert room.next_room_seq == 1
+    assert room.next_client_no == 1
     assert room.entities == {}
     assert room.dirty_entity_ids == set()
     assert room.connected_clients == {}

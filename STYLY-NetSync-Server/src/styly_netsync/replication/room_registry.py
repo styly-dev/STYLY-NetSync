@@ -8,6 +8,7 @@ relay rather than touching ZeroMQ directly.
 
 from __future__ import annotations
 
+from collections.abc import ItemsView
 from dataclasses import dataclass, field
 
 from .models import EntityKind, EntityRecord
@@ -32,22 +33,37 @@ class DuplicateEntityError(RuntimeError):
 class ClientState:
     """Minimal per-client bookkeeping.
 
-    Later phases will add ownership lease tracking, last-seen pose
-    sequence per entity, and flow-control state.
+    ``identity`` is the raw ZeroMQ ROUTER identity bytes the server
+    uses to unicast back to this client. It is opaque to the
+    replication core — stored so room-scoped broadcasts can fan out
+    over the existing ROUTER socket without needing a separate PUB
+    subscription map. Empty bytes means "no routable identity" (used
+    by tests or during bring-up).
+
+    Later phases will add ownership lease tracking per client,
+    last-seen pose sequence per entity, and flow-control state.
     """
 
     client_no: int
     connected_at: float = 0.0
     last_seen: float = 0.0
+    identity: bytes = b""
 
 
 @dataclass
 class RoomState:
-    """Per-room state held by the registry."""
+    """Per-room state held by the registry.
+
+    ``next_client_no`` is the monotonic counter used by the dispatcher
+    to mint a fresh short id each time a new client joins the room.
+    The value 0 is reserved for "no owner" / "unassigned" across the
+    replication plane, so allocation starts at 1.
+    """
 
     room_id: str
     scene_hash: str
     next_room_seq: int = 1
+    next_client_no: int = 1
     entities: dict[int, EntityRecord] = field(default_factory=dict)
     dirty_entity_ids: set[int] = field(default_factory=set)
     connected_clients: dict[int, ClientState] = field(default_factory=dict)
@@ -86,6 +102,14 @@ class RoomRegistry:
     def get(self, room_id: str) -> RoomState | None:
         """Return the room state or ``None`` if no such room exists."""
         return self._rooms.get(room_id)
+
+    def items(self) -> ItemsView[str, RoomState]:
+        """Iterate ``(room_id, state)`` pairs for every registered room.
+
+        The view is backed by the internal dict, so callers must not
+        mutate the registry while iterating.
+        """
+        return self._rooms.items()
 
     def remove(self, room_id: str) -> None:
         """Remove a room if present; no-op otherwise."""

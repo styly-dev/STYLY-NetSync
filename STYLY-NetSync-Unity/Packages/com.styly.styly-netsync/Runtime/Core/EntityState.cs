@@ -24,13 +24,30 @@ namespace Styly.NetSync.Internal
         All = Position | Rotation | Scale,
     }
 
-    // Reason codes for OwnershipEvent.
-    public enum OwnershipReason : byte
+    // Outcome of an ownership transition. Carried in OwnershipEvent.
+    // Expired is server-initiated (lease sweep); LeaseExpired as a reason
+    // code paired with Denied covers the client-initiated "stale request"
+    // path (see OwnershipEventReasonCode).
+    public enum OwnershipResult : byte
     {
         Granted = 0,
-        Rejected = 1,
-        Revoked = 2,
-        Released = 3,
+        Denied = 1,
+        Released = 2,
+        Expired = 3,
+    }
+
+    // Auxiliary reason code accompanying OwnershipResult. None is used on
+    // success (Granted / Released) and for server-initiated Expired
+    // sweeps. Timeout is reserved for Unity-side use (a client-local
+    // "request never got an answer") and is never produced by the server.
+    public enum OwnershipEventReasonCode : byte
+    {
+        None = 0,
+        AlreadyOwned = 1,
+        NotOwner = 2,
+        EpochMismatch = 3,
+        LeaseExpired = 4,
+        Timeout = 5,
     }
 
     // Reason codes for JoinRejectMessage. 255 is the forward-compatible

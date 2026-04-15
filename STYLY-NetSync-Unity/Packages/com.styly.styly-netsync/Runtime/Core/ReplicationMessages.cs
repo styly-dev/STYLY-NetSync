@@ -32,12 +32,15 @@ namespace Styly.NetSync.Internal
     // which subsequent STATE_BATCH deltas are ordered. ServerTimeUs is the
     // server wall clock in microseconds since the Unix epoch; clients use
     // it for relative age calculations (cross-process monotonic clocks are
-    // unusable for this).
+    // unusable for this). YourClientNo is the short client id the server
+    // assigned to the receiving client; the replication layer reads its
+    // own identity from this rather than requiring external wiring.
     public struct RoomSnapshotMessage
     {
         public string RoomId;
         public uint BaseRoomSeq;
         public ulong ServerTimeUs;
+        public uint YourClientNo;
         public List<EntityRecord> Entities;
     }
 
@@ -59,13 +62,16 @@ namespace Styly.NetSync.Internal
         public uint ExpectedEpoch;
     }
 
-    // Server -> clients. Broadcast when ownership changes.
+    // Server -> clients. Broadcast when ownership changes. Result is the
+    // outcome of the transition; ReasonCode is auxiliary (None for
+    // success and server-initiated Expired, populated for Denied).
     public struct OwnershipEventMessage
     {
         public ulong EntityId;
         public uint NewOwnerShortId;
         public uint NewAuthorityEpoch;
-        public OwnershipReason Reason;
+        public OwnershipResult Result;
+        public OwnershipEventReasonCode ReasonCode;
     }
 
     // Client -> server. Requests fresh state for one or more entities.

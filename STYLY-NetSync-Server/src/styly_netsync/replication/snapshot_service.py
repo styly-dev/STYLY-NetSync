@@ -96,12 +96,20 @@ class SnapshotService:
         """
         self._time_source = time_source
 
-    def build_snapshot(self, room: RoomState) -> RoomSnapshotMessage:
+    def build_snapshot(
+        self, room: RoomState, your_client_no: int = 0
+    ) -> RoomSnapshotMessage:
         """Build a :class:`RoomSnapshotMessage` for ``room``.
 
         ``base_room_seq`` is ``next_room_seq - 1`` so it anchors the
         client against the most recently published state-plane tick;
         if the room has never ticked, this evaluates to 0.
+
+        ``your_client_no`` is the short client id the server assigned
+        to the recipient. Callers that know the target client should
+        pass it so the receiver can learn its own identity from the
+        snapshot; defaults to 0 for paths that don't target a
+        specific client (e.g. tests).
 
         Entities are filtered to the set the server has observed —
         anything with a non-zero pose_seq, a current owner, an
@@ -117,6 +125,7 @@ class SnapshotService:
             room_id=room.room_id,
             base_room_seq=base_room_seq,
             server_time_us=self._time_source(),
+            your_client_no=your_client_no,
             entities=wire_records,
         )
 

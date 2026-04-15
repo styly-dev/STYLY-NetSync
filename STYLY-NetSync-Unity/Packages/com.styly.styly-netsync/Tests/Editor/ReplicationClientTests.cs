@@ -91,7 +91,7 @@ namespace Styly.NetSync.Tests.EditorTests
             return new RoomSnapshotMessage
             {
                 RoomId = "room-A",
-                ServerTick = serverTick,
+                BaseRoomSeq = serverTick,
                 Entities = new List<EntityRecord>
                 {
                     new EntityRecord

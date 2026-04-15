@@ -111,6 +111,7 @@ u8   replVersion = 1
 str  roomId
 u32  baseRoomSeq          // RoomState.nextRoomSeq - 1 at snapshot time
 u64  serverTimeUs         // server wall clock in microseconds since Unix epoch
+u32  yourClientNo         // short client id assigned to the recipient
 u32  entityCount
 repeat entityCount:
     u64 entityId
@@ -125,6 +126,9 @@ repeat entityCount:
 detect out-of-order or missing updates. `serverTimeUs` lets clients age
 incoming snapshots against their own clock; cross-process monotonic
 clocks would be unusable here, which is why wall-clock is used.
+`yourClientNo` is the short client id the server assigned to the
+recipient, so the replication client can learn its own identity from
+the snapshot rather than relying on an out-of-band channel.
 
 ### JOIN_REJECT (37)
 
@@ -164,7 +168,7 @@ u32 expectedEpoch          // last epoch the requester saw; server may reject
 
 ### OWNERSHIP_EVENT (33)
 
-Broadcast when ownership changes (accept, reject, or revoke).
+Broadcast when ownership changes (grant, deny, release, or sweep-expire).
 
 ```
 u8  msgType = 33
@@ -172,8 +176,38 @@ u8  replVersion = 1
 u64 entityId
 u32 newOwnerShortId        // 0 = server-owned / released
 u32 newAuthorityEpoch
-u8  reason                 // 0=Granted, 1=Rejected, 2=Revoked, 3=Released
+u8  result                 // OwnershipResult
+u8  reasonCode             // OwnershipEventReasonCode
 ```
+
+`OwnershipResult` values:
+
+| Code | Name       | Meaning                                                |
+|------|------------|--------------------------------------------------------|
+| 0    | `GRANTED`  | Acquire request succeeded.                             |
+| 1    | `DENIED`   | Acquire or release rejected; see `reasonCode`.         |
+| 2    | `RELEASED` | Owner voluntarily released ownership.                  |
+| 3    | `EXPIRED`  | Server-initiated lease sweep released an idle owner.   |
+
+Unknown `result` values MUST cause the receiver to reject the frame
+(fail-fast); `result` is not a safely-defaultable field.
+
+`OwnershipEventReasonCode` values:
+
+| Code | Name             | Meaning                                              |
+|------|------------------|------------------------------------------------------|
+| 0    | `NONE`           | Success (`GRANTED`/`RELEASED`) or server `EXPIRED`.  |
+| 1    | `ALREADY_OWNED`  | Entity already owned by someone else.                |
+| 2    | `NOT_OWNER`      | Requester does not own the entity.                   |
+| 3    | `EPOCH_MISMATCH` | Request's `expectedEpoch` did not match.             |
+| 4    | `LEASE_EXPIRED`  | Request arrived after the requester's lease expired. |
+| 5    | `TIMEOUT`        | Reserved for Unity-local use; not produced by server.|
+
+Unknown `reasonCode` values MUST be coerced to `NONE` on the receiver
+(log a warning) so forward-compatible clients still surface `result`.
+Note the distinction between `result=EXPIRED` with `reasonCode=NONE`
+(server sweep) and `result=DENIED` with `reasonCode=LEASE_EXPIRED`
+(stale request rejected).
 
 ### RESYNC_REQUEST (34)
 

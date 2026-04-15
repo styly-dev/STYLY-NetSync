@@ -62,6 +62,99 @@ namespace Styly.NetSync
         /// </summary>
         public ReplicationProfile Profile => _profile;
 
+        /// <summary>
+        /// True when the local client currently holds authority over this
+        /// entity. Flipped to true only by a matching OWNERSHIP_EVENT grant;
+        /// never speculatively.
+        /// </summary>
+        public bool IsOwnedByLocalClient
+        {
+            get
+            {
+                OwnershipClient ownership = OwnershipClient.Active;
+                return ownership != null && ownership.IsOwnedByLocalClient(EntityId);
+            }
+        }
+
+        /// <summary>
+        /// Short id of the current owner (0 = server-owned / unowned).
+        /// </summary>
+        public int CurrentOwnerClientNo
+        {
+            get
+            {
+                OwnershipClient ownership = OwnershipClient.Active;
+                return ownership != null ? ownership.GetOwnerClientNo(EntityId) : 0;
+            }
+        }
+
+        /// <summary>
+        /// Monotonic authority epoch. Bumps on every ownership transition.
+        /// </summary>
+        public uint AuthorityEpoch
+        {
+            get
+            {
+                OwnershipClient ownership = OwnershipClient.Active;
+                return ownership != null ? ownership.GetAuthorityEpoch(EntityId) : 0u;
+            }
+        }
+
+        /// <summary>
+        /// Fired on ownership transitions affecting this entity.
+        /// </summary>
+        public event Action<OwnershipChangedEvent> OnOwnershipChanged;
+
+        /// <summary>
+        /// Reserved for Phase 4. Not emitted yet.
+        /// </summary>
+#pragma warning disable CS0067 // Event is intentionally unused (Phase 4 stub).
+        public event Action OnRemoteTeleport;
+#pragma warning restore CS0067
+
+        /// <summary>
+        /// Dispatch an OWNERSHIP_REQUEST to acquire this entity. Returns
+        /// true only when the request was handed to the transport. The
+        /// actual grant/deny is surfaced via <see cref="OnOwnershipChanged"/>.
+        /// Does NOT flip <see cref="IsOwnedByLocalClient"/> speculatively.
+        /// </summary>
+        public bool RequestOwnership()
+        {
+            OwnershipClient ownership = OwnershipClient.Active;
+            if (ownership == null)
+            {
+                return false;
+            }
+            return ownership.RequestAcquire(EntityId);
+        }
+
+        /// <summary>
+        /// Dispatch an OWNERSHIP_REQUEST to release this entity. Returns
+        /// true only when the request was handed to the transport.
+        /// </summary>
+        public bool ReleaseOwnership()
+        {
+            OwnershipClient ownership = OwnershipClient.Active;
+            if (ownership == null)
+            {
+                return false;
+            }
+            return ownership.RequestRelease(EntityId, ownership.GetAuthorityEpoch(EntityId));
+        }
+
+        /// <summary>
+        /// Invoked by OwnershipClient when an ownership event for this
+        /// entity resolves. Marshals to <see cref="OnOwnershipChanged"/>.
+        /// </summary>
+        internal void RaiseOwnershipChanged(OwnershipChangedEvent change)
+        {
+            Action<OwnershipChangedEvent> handler = OnOwnershipChanged;
+            if (handler != null)
+            {
+                handler(change);
+            }
+        }
+
         private void OnEnable()
         {
             EntityRegistry.Instance.Register(this);
