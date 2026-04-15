@@ -67,13 +67,13 @@ namespace Styly.NetSync.Internal
             new ConcurrentQueue<(byte, byte[])>();
 
         // Buffer for STATE_BATCH messages that arrive before ROOM_SNAPSHOT.
-        // On snapshot apply, we replay entries with ServerTick > baseServerTick.
+        // On snapshot apply, we replay entries with RoomSeq > baseRoomSeq.
         private readonly List<StateBatchMessage> _preSnapshotBuffer = new List<StateBatchMessage>();
 
-        // Highest ServerTick we have already applied. Updated by snapshot
-        // apply and by each STATE_BATCH applied post-join. Out-of-order
-        // batches with a stale tick are dropped.
-        private uint _highestAppliedServerTick;
+        // Highest RoomSeq we have already applied. Updated by snapshot apply
+        // and by each STATE_BATCH applied post-join. Out-of-order batches
+        // with a stale RoomSeq are dropped.
+        private uint _highestAppliedRoomSeq;
 
         private JoinState _state = JoinState.Disconnected;
         private string _pendingRoomId;
@@ -96,7 +96,7 @@ namespace Styly.NetSync.Internal
         public JoinState State => _state;
         public string RoomId => _pendingRoomId;
         public JoinRejectReason LastRejectReason => _lastRejectReason;
-        public uint HighestAppliedServerTick => _highestAppliedServerTick;
+        public uint HighestAppliedRoomSeq => _highestAppliedRoomSeq;
 
         // LocalClientNo is learned from ROOM_SNAPSHOT.YourClientNo during the
         // join handshake. Tests and specialized integrations may override it
@@ -108,6 +108,37 @@ namespace Styly.NetSync.Internal
         /// OWNERSHIP_EVENT and snapshot ownership columns here when set.
         /// </summary>
         public OwnershipClient Ownership { get; set; }
+
+        /// <summary>
+        /// Optional remote-pose buffer. When set, STATE_BATCH updates for
+        /// non-owned entities are enqueued here instead of being applied
+        /// directly. The paired <see cref="Interpolator"/> consumes the
+        /// buffer in its Pump step.
+        /// </summary>
+        public PoseBuffer Buffer { get; set; }
+
+        /// <summary>
+        /// Optional interpolator driven by <see cref="Pump"/>.
+        /// </summary>
+        public PoseInterpolator Interpolator { get; set; }
+
+        /// <summary>
+        /// Optional publisher driven by <see cref="Pump"/>.
+        /// </summary>
+        public PosePublisher Publisher { get; set; }
+
+        /// <summary>
+        /// Clock used to stamp incoming STATE_BATCH samples into PoseBuffer.
+        /// Until the wire carries per-batch ServerTimeUs, we use the local
+        /// server-clock estimate at arrival time.
+        /// </summary>
+        public IServerClock ServerClock { get; set; }
+
+        private ulong SynthesizeServerTimeUs()
+        {
+            IServerClock clock = ServerClock;
+            return clock != null ? clock.NowUs : 0UL;
+        }
 
         /// <summary>
         /// Network-assigned short id for the local client. Set by
@@ -153,7 +184,7 @@ namespace Styly.NetSync.Internal
             _pendingDeviceId = deviceId ?? string.Empty;
             _pendingSceneHash = sceneHash ?? string.Empty;
             _preSnapshotBuffer.Clear();
-            _highestAppliedServerTick = 0;
+            _highestAppliedRoomSeq = 0;
             _lastRejectReason = JoinRejectReason.None;
             TransitionTo(JoinState.Joining);
 
@@ -173,7 +204,7 @@ namespace Styly.NetSync.Internal
         {
             _inbox.Clear();
             _preSnapshotBuffer.Clear();
-            _highestAppliedServerTick = 0;
+            _highestAppliedRoomSeq = 0;
             _lastRejectReason = JoinRejectReason.None;
             _pendingRoomId = null;
             _pendingDeviceId = null;
@@ -203,6 +234,27 @@ namespace Styly.NetSync.Internal
             while (_inbox.TryDequeue(out var item))
             {
                 DispatchDecoded(item.msgType, item.payload);
+            }
+
+            OwnershipClient ownership = Ownership;
+            if (ownership != null)
+            {
+                ownership.Pump();
+            }
+
+            if (_state == JoinState.Joined)
+            {
+                PosePublisher publisher = Publisher;
+                if (publisher != null)
+                {
+                    publisher.Tick();
+                }
+            }
+
+            PoseInterpolator interp = Interpolator;
+            if (interp != null)
+            {
+                interp.Tick();
             }
         }
 
@@ -291,7 +343,7 @@ namespace Styly.NetSync.Internal
             // Step (e): apply snapshot to live bindings.
             ApplySnapshot(msg);
 
-            // Step (f): replay buffered STATE_BATCH where ServerTick > base.
+            // Step (f): replay buffered STATE_BATCH where RoomSeq > base.
             ReplayBufferedBatches(msg.BaseRoomSeq);
 
             // Step (g): transition to Joined.
@@ -321,7 +373,7 @@ namespace Styly.NetSync.Internal
             List<EntityRecord> entities = msg.Entities;
             if (entities == null)
             {
-                _highestAppliedServerTick = msg.BaseRoomSeq;
+                _highestAppliedRoomSeq = msg.BaseRoomSeq;
                 return;
             }
             OwnershipClient ownership = Ownership;
@@ -344,7 +396,7 @@ namespace Styly.NetSync.Internal
                 }
                 ApplyTransformState(obj, rec.State, rec.ChangedMask);
             }
-            _highestAppliedServerTick = msg.BaseRoomSeq;
+            _highestAppliedRoomSeq = msg.BaseRoomSeq;
         }
 
         private void HandleOwnershipEvent(OwnershipEventMessage evt)
@@ -356,19 +408,19 @@ namespace Styly.NetSync.Internal
             }
         }
 
-        private void ReplayBufferedBatches(uint baseServerTick)
+        private void ReplayBufferedBatches(uint baseRoomSeq)
         {
             if (_preSnapshotBuffer.Count == 0)
             {
                 return;
             }
-            // Sort by ServerTick ascending so we apply in order even if the
+            // Sort by RoomSeq ascending so we apply in order even if the
             // network delivered them out of sequence.
-            _preSnapshotBuffer.Sort((a, b) => a.ServerTick.CompareTo(b.ServerTick));
+            _preSnapshotBuffer.Sort((a, b) => a.RoomSeq.CompareTo(b.RoomSeq));
             for (int i = 0; i < _preSnapshotBuffer.Count; i++)
             {
                 StateBatchMessage batch = _preSnapshotBuffer[i];
-                if (batch.ServerTick > baseServerTick)
+                if (batch.RoomSeq > baseRoomSeq)
                 {
                     ApplyStateBatch(batch);
                 }
@@ -379,13 +431,15 @@ namespace Styly.NetSync.Internal
         private void ApplyStateBatch(StateBatchMessage batch)
         {
             // Drop strictly-stale batches (out-of-order delivery after join).
-            if (batch.ServerTick != 0 && batch.ServerTick <= _highestAppliedServerTick)
+            if (batch.RoomSeq != 0 && batch.RoomSeq <= _highestAppliedRoomSeq)
             {
                 return;
             }
 
             EntityRegistry registry = EntityRegistry.Instance;
             List<StateUpdate> updates = batch.Updates;
+            PoseBuffer buffer = Buffer;
+            OwnershipClient ownership = Ownership;
             if (updates != null)
             {
                 for (int i = 0; i < updates.Count; i++)
@@ -405,13 +459,48 @@ namespace Styly.NetSync.Internal
                     {
                         continue;
                     }
-                    ApplyTransformState(obj, u.State, u.ChangedMask);
+
+                    // Authority / epoch gate: drop if the sender's epoch is
+                    // stale relative to what OwnershipClient currently tracks.
+                    if (ownership != null)
+                    {
+                        uint currentEpoch = ownership.GetAuthorityEpoch(u.EntityId);
+                        if (currentEpoch != 0 && u.AuthorityEpoch < currentEpoch)
+                        {
+                            continue;
+                        }
+                    }
+
+                    // Local-owner entities are driven by PosePublisher, not
+                    // by inbound updates. Skip to avoid echo.
+                    if (ownership != null && ownership.IsOwnedByLocalClient(u.EntityId))
+                    {
+                        continue;
+                    }
+
+                    if (buffer != null)
+                    {
+                        buffer.Add(u.EntityId, new PoseSample
+                        {
+                            ServerTimeUs = SynthesizeServerTimeUs(),
+                            PoseSeq = u.PoseSeq,
+                            Flags = u.Flags,
+                            Mask = u.ChangedMask,
+                            State = u.State,
+                        });
+                    }
+                    else
+                    {
+                        // Legacy direct-apply path (used when no interpolator
+                        // is attached — e.g. Phase 2 unit tests).
+                        ApplyTransformState(obj, u.State, u.ChangedMask);
+                    }
                 }
             }
 
-            if (batch.ServerTick > _highestAppliedServerTick)
+            if (batch.RoomSeq > _highestAppliedRoomSeq)
             {
-                _highestAppliedServerTick = batch.ServerTick;
+                _highestAppliedRoomSeq = batch.RoomSeq;
             }
         }
 

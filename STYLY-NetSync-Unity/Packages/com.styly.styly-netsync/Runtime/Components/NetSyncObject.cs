@@ -106,11 +106,22 @@ namespace Styly.NetSync
         public event Action<OwnershipChangedEvent> OnOwnershipChanged;
 
         /// <summary>
-        /// Reserved for Phase 4. Not emitted yet.
+        /// Fires when the interpolator snaps this entity due to a Teleport
+        /// flag or a distance spike beyond the teleport threshold.
         /// </summary>
-#pragma warning disable CS0067 // Event is intentionally unused (Phase 4 stub).
         public event Action OnRemoteTeleport;
-#pragma warning restore CS0067
+
+        /// <summary>
+        /// Invoked by PoseInterpolator when a teleport snap is applied.
+        /// </summary>
+        internal void RaiseRemoteTeleport()
+        {
+            Action handler = OnRemoteTeleport;
+            if (handler != null)
+            {
+                handler();
+            }
+        }
 
         /// <summary>
         /// Dispatch an OWNERSHIP_REQUEST to acquire this entity. Returns

@@ -15,19 +15,26 @@ from styly_netsync.replication.message_codec import (
     MSG_REPL_JOIN_REJECT,
     MSG_REPL_OWNERSHIP_EVENT,
     MSG_REPL_ROOM_SNAPSHOT,
+    MSG_REPL_STATE_BATCH,
     MessageCodec,
     TransformCodecV1,
 )
 from styly_netsync.replication.messages import (
+    ChangedMask,
     JoinRejectReason,
     JoinRoomMessage,
     OwnershipRequestMessage,
     OwnershipResult,
+    StateBatchMessage,
+    StateFlags,
+    StateUpdate,
+    WireTransform,
 )
 from styly_netsync.replication.models import EntityKind, EntityRecord
 from styly_netsync.replication.ownership_arbiter import OwnershipArbiter
 from styly_netsync.replication.room_registry import RoomRegistry
 from styly_netsync.replication.snapshot_service import SnapshotService
+from styly_netsync.replication.state_relay import StateRelay
 
 
 def _make_dispatcher(
@@ -43,13 +50,6 @@ def _make_dispatcher(
     BroadcastFn,
 ]:
     registry = registry if registry is not None else RoomRegistry()
-    dispatcher = ReplicationDispatcher(
-        room_registry=registry,
-        snapshot_service=SnapshotService(time_source=lambda: 123_456_789),
-        transform_codec=TransformCodecV1(),
-        ownership_arbiter=OwnershipArbiter(lease_sec=lease_sec),
-        clock=lambda: clock,
-    )
     sent: list[tuple[bytes, bytes]] = []
     broadcast: list[tuple[str, bytes]] = []
 
@@ -59,6 +59,21 @@ def _make_dispatcher(
     def broadcast_fn(room_id: str, frame: bytes) -> None:
         broadcast.append((room_id, frame))
 
+    relay = StateRelay(
+        room_registry=registry,
+        broadcast=broadcast_fn,
+        transform_codec=TransformCodecV1(),
+        lease_sec=lease_sec,
+        clock=lambda: clock,
+    )
+    dispatcher = ReplicationDispatcher(
+        room_registry=registry,
+        snapshot_service=SnapshotService(time_source=lambda: 123_456_789),
+        transform_codec=TransformCodecV1(),
+        ownership_arbiter=OwnershipArbiter(lease_sec=lease_sec),
+        state_relay=relay,
+        clock=lambda: clock,
+    )
     return dispatcher, registry, sent, broadcast, send_fn, broadcast_fn
 
 
@@ -344,6 +359,131 @@ def test_sweep_expired_leases_broadcasts_expired_events() -> None:
     assert event.new_owner_short_id == 0
     # Epoch bumped once on acquire (0→1), once on expiry (1→2).
     assert event.new_authority_epoch == 2
+
+
+# --- STATE_BATCH -----------------------------------------------------------
+
+
+def test_state_batch_routed_and_broadcast_on_flush() -> None:
+    """End-to-end: JOIN → OWNERSHIP acquire → STATE_BATCH → flush → broadcast."""
+    dispatcher, registry, sent, broadcast, send, bcast = _make_dispatcher()
+    _seed_room_with_entity(registry, entity_id=100)
+
+    # Join so the dispatcher knows the identity → client_no mapping.
+    join_frame = MessageCodec.encode_join_room(
+        JoinRoomMessage(room_id="lobby", device_id="dev-o", scene_hash="h")
+    )
+    dispatcher.handle_frame(b"client-o", "lobby", join_frame, send, bcast)
+    snapshot = MessageCodec.decode_room_snapshot(sent[0][1], TransformCodecV1())
+    client_no = snapshot.your_client_no
+
+    # Acquire ownership so the state relay will accept updates.
+    req_frame = MessageCodec.encode_ownership_request(
+        OwnershipRequestMessage(
+            entity_id=100, requester_short_id=client_no, expected_epoch=0
+        )
+    )
+    dispatcher.handle_frame(b"client-o", "lobby", req_frame, send, bcast)
+
+    broadcast_count_before = len(broadcast)
+
+    # Send a STATE_BATCH; accepted update should go into dirty set.
+    state_frame = MessageCodec.encode_state_batch(
+        StateBatchMessage(
+            room_seq=0,
+            updates=[
+                StateUpdate(
+                    entity_id=100,
+                    authority_epoch=1,
+                    pose_seq=1,
+                    flags=StateFlags.NONE,
+                    changed_mask=ChangedMask.POSITION | ChangedMask.ROTATION,
+                    state=WireTransform(position=(4.0, 5.0, 6.0)),
+                )
+            ],
+        ),
+        TransformCodecV1(),
+    )
+    result = dispatcher.handle_frame(b"client-o", "lobby", state_frame, send, bcast)
+    assert result.handled is True
+    assert result.accepted is True
+    # No new broadcast yet — the relay only publishes on flush.
+    assert len(broadcast) == broadcast_count_before
+
+    # Flush drains the dirty set and emits exactly one STATE_BATCH frame.
+    flushed = dispatcher.flush_pending_batches()
+    assert flushed == 1
+    assert len(broadcast) == broadcast_count_before + 1
+
+    published_room, published_frame = broadcast[-1]
+    assert published_room == "lobby"
+    assert published_frame[0] == MSG_REPL_STATE_BATCH
+
+    decoded = MessageCodec.decode_state_batch(published_frame, TransformCodecV1())
+    assert decoded.room_seq == 1
+    assert len(decoded.updates) == 1
+    assert decoded.updates[0].entity_id == 100
+    assert decoded.updates[0].pose_seq == 1
+    assert decoded.updates[0].state.position == (4.0, 5.0, 6.0)
+
+
+def test_state_batch_from_non_owner_is_dropped() -> None:
+    dispatcher, registry, sent, broadcast, send, bcast = _make_dispatcher()
+    _seed_room_with_entity(registry, entity_id=100)
+
+    join_frame = MessageCodec.encode_join_room(
+        JoinRoomMessage(room_id="lobby", device_id="dev-q", scene_hash="h")
+    )
+    dispatcher.handle_frame(b"client-q", "lobby", join_frame, send, bcast)
+
+    # Send a STATE_BATCH without ever claiming ownership.
+    state_frame = MessageCodec.encode_state_batch(
+        StateBatchMessage(
+            room_seq=0,
+            updates=[
+                StateUpdate(
+                    entity_id=100,
+                    authority_epoch=0,
+                    pose_seq=1,
+                    flags=StateFlags.NONE,
+                    changed_mask=ChangedMask.POSITION,
+                    state=WireTransform(position=(1.0, 0.0, 0.0)),
+                )
+            ],
+        ),
+        TransformCodecV1(),
+    )
+    result = dispatcher.handle_frame(b"client-q", "lobby", state_frame, send, bcast)
+    assert result.handled is True
+    assert result.accepted is False
+
+    # Nothing to flush.
+    assert dispatcher.flush_pending_batches() == 0
+
+
+def test_state_batch_from_unknown_identity_is_dropped() -> None:
+    """Identity must be registered via JOIN_ROOM before STATE_BATCH is accepted."""
+    dispatcher, registry, _sent, _bc, send, bcast = _make_dispatcher()
+    _seed_room_with_entity(registry, entity_id=100)
+
+    state_frame = MessageCodec.encode_state_batch(
+        StateBatchMessage(
+            room_seq=0,
+            updates=[
+                StateUpdate(
+                    entity_id=100,
+                    authority_epoch=0,
+                    pose_seq=1,
+                    flags=StateFlags.NONE,
+                    changed_mask=ChangedMask.POSITION,
+                )
+            ],
+        ),
+        TransformCodecV1(),
+    )
+    result = dispatcher.handle_frame(b"stranger", "lobby", state_frame, send, bcast)
+    assert result.handled is True
+    assert result.accepted is False
 
 
 def test_unhandled_message_type_reports_not_handled() -> None:

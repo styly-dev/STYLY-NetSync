@@ -87,9 +87,16 @@ namespace Styly.NetSync.Internal
     }
 
     // Both directions. Carries per-entity state updates.
+    // RoomSeq is the RoomState.NextRoomSeq-1 value at publish time;
+    // monotonically non-decreasing and aligns with
+    // RoomSnapshotMessage.BaseRoomSeq so clients can drop batches that
+    // pre-date their last applied snapshot. ServerTimeUs is the server
+    // wall clock in microseconds since the Unix epoch at publish time
+    // (same semantics as RoomSnapshotMessage.ServerTimeUs).
     public struct StateBatchMessage
     {
-        public uint ServerTick;
+        public uint RoomSeq;
+        public ulong ServerTimeUs;
         public List<StateUpdate> Updates;
     }
 }

@@ -44,6 +44,7 @@ from .messages import (
 from .models import EntityKind, EntityRecord, TransformState
 from .room_registry import ClientState, RoomRegistry, RoomState
 from .snapshot_service import SnapshotService
+from .state_relay import StateRelay
 
 __all__ = [
     "ChangedMask",
@@ -77,6 +78,7 @@ __all__ = [
     "SendFn",
     "SnapshotService",
     "StateBatchMessage",
+    "StateRelay",
     "StateFlags",
     "StateUpdate",
     "TransformCodec",

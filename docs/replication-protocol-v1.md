@@ -248,11 +248,21 @@ relayed updates.
 ```
 u8   msgType = 36
 u8   replVersion = 1
-u32  serverTick           // monotonic tick counter; 0 when sent by client
+u32  roomSeq              // RoomState.nextRoomSeq - 1 at publish time; 0 from client
+u64  serverTimeUs         // server wall clock in microseconds since Unix epoch
 u32  updateCount
 repeat updateCount:
     StateUpdate           // see above
 ```
+
+`roomSeq` is monotonically non-decreasing on server-originated batches
+and aligns with :ref:`ROOM_SNAPSHOT`'s `baseRoomSeq`, so clients can
+drop batches that pre-date their last applied snapshot and re-order
+late arrivals. Client-originated batches set `roomSeq = 0`; the server
+stamps its own `roomSeq` on relay. `serverTimeUs` has the same
+semantics as `ROOM_SNAPSHOT.serverTimeUs` — clients use it for
+age-gating stale batches on slow links; client senders set `0` and
+the server stamps on relay.
 
 ## Versioning
 

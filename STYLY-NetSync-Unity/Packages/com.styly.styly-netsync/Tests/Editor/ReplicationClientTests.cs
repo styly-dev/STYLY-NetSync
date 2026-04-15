@@ -65,7 +65,7 @@ namespace Styly.NetSync.Tests.EditorTests
         {
             return new StateBatchMessage
             {
-                ServerTick = serverTick,
+                RoomSeq = serverTick,
                 Updates = new List<StateUpdate>
                 {
                     new StateUpdate
@@ -144,8 +144,8 @@ namespace Styly.NetSync.Tests.EditorTests
             Assert.AreEqual(JoinState.Joined, client.State);
             Assert.AreEqual(0, client.TestPreSnapshotBuffer.Count,
                 "Buffer should drain on snapshot apply.");
-            Assert.AreEqual(7u, client.HighestAppliedServerTick,
-                "Highest applied tick should be the replayed batch's tick.");
+            Assert.AreEqual(7u, client.HighestAppliedRoomSeq,
+                "Highest applied room seq should be the replayed batch's RoomSeq.");
             // Expect seq 7 replayed, positions 5 and 3 dropped.
             Assert.AreEqual(new Vector3(7f, 0f, 0f), _obj.transform.localPosition);
 

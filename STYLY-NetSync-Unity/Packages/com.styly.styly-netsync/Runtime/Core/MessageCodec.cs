@@ -426,7 +426,8 @@ namespace Styly.NetSync.Internal
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
             WriteHeader(writer, ReplMessageIds.StateBatch);
-            writer.Write(message.ServerTick);
+            writer.Write(message.RoomSeq);
+            writer.Write(message.ServerTimeUs);
             var updates = message.Updates;
             uint count = updates == null ? 0u : (uint)updates.Count;
             writer.Write(count);
@@ -446,7 +447,11 @@ namespace Styly.NetSync.Internal
             using var ms = new MemoryStream(data);
             using var reader = new BinaryReader(ms);
             ReadAndVerifyHeader(reader, ReplMessageIds.StateBatch);
-            var msg = new StateBatchMessage { ServerTick = reader.ReadUInt32() };
+            var msg = new StateBatchMessage
+            {
+                RoomSeq = reader.ReadUInt32(),
+                ServerTimeUs = reader.ReadUInt64(),
+            };
             uint count = reader.ReadUInt32();
             var updates = new List<StateUpdate>((int)count);
             for (uint i = 0; i < count; i++)

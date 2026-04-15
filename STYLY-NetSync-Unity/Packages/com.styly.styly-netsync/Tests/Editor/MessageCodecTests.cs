@@ -284,7 +284,8 @@ namespace Styly.NetSync.Tests.Editor
         {
             var msg = new StateBatchMessage
             {
-                ServerTick = 42,
+                RoomSeq = 42,
+                ServerTimeUs = 1_700_000_000_000_000UL,
                 Updates = new List<StateUpdate>
                 {
                     new StateUpdate
@@ -310,7 +311,8 @@ namespace Styly.NetSync.Tests.Editor
             var bytes = MessageCodec.EncodeStateBatch(msg, Codec);
             Assert.AreEqual(ReplMessageIds.StateBatch, bytes[0]);
             var decoded = MessageCodec.DecodeStateBatch(bytes, Codec);
-            Assert.AreEqual(42u, decoded.ServerTick);
+            Assert.AreEqual(42u, decoded.RoomSeq);
+            Assert.AreEqual(1_700_000_000_000_000UL, decoded.ServerTimeUs);
             Assert.AreEqual(2, decoded.Updates.Count);
             Assert.AreEqual(
                 StateFlags.Keyframe | StateFlags.Teleport, decoded.Updates[0].Flags);
@@ -324,12 +326,14 @@ namespace Styly.NetSync.Tests.Editor
         {
             var msg = new StateBatchMessage
             {
-                ServerTick = 0,
+                RoomSeq = 0,
+                ServerTimeUs = 0UL,
                 Updates = new List<StateUpdate>(),
             };
             var decoded = MessageCodec.DecodeStateBatch(
                 MessageCodec.EncodeStateBatch(msg, Codec), Codec);
-            Assert.AreEqual(0u, decoded.ServerTick);
+            Assert.AreEqual(0u, decoded.RoomSeq);
+            Assert.AreEqual(0UL, decoded.ServerTimeUs);
             Assert.AreEqual(0, decoded.Updates.Count);
         }
 

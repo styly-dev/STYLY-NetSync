@@ -189,7 +189,22 @@ class ResyncReplyMessage:
 
 @dataclass
 class StateBatchMessage:
-    server_tick: int
+    """Per-tick batch of entity state updates.
+
+    ``room_seq`` is the ``RoomState.next_room_seq - 1`` value at the
+    moment the batch is published. It is monotonically non-decreasing
+    and aligns with :class:`RoomSnapshotMessage.base_room_seq`, so
+    clients can drop batches that pre-date their last applied snapshot
+    and re-order late arrivals.
+
+    ``server_time_us`` is the server wall clock in microseconds since
+    the Unix epoch at publish time; clients use it for age-gating
+    stale batches on slow links. Defaults to ``0`` for call sites that
+    don't care (e.g. tests), but the wire always carries it.
+    """
+
+    room_seq: int
+    server_time_us: int = 0
     updates: list[StateUpdate] = field(default_factory=list)
 
 

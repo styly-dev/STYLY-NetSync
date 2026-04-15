@@ -257,7 +257,8 @@ def test_resync_reply_round_trip(codec: TransformCodecV1) -> None:
 
 def test_state_batch_round_trip(codec: TransformCodecV1) -> None:
     msg = StateBatchMessage(
-        server_tick=42,
+        room_seq=42,
+        server_time_us=1_700_000_000_000_000,
         updates=[
             StateUpdate(
                 entity_id=1,
@@ -280,7 +281,8 @@ def test_state_batch_round_trip(codec: TransformCodecV1) -> None:
     encoded = MessageCodec.encode_state_batch(msg, codec)
     assert encoded[0] == MSG_REPL_STATE_BATCH
     decoded = MessageCodec.decode_state_batch(encoded, codec)
-    assert decoded.server_tick == 42
+    assert decoded.room_seq == 42
+    assert decoded.server_time_us == 1_700_000_000_000_000
     assert len(decoded.updates) == 2
     assert decoded.updates[0].flags == StateFlags.KEYFRAME | StateFlags.TELEPORT
     assert decoded.updates[0].state.position == msg.updates[0].state.position
@@ -289,7 +291,7 @@ def test_state_batch_round_trip(codec: TransformCodecV1) -> None:
 
 
 def test_state_batch_empty(codec: TransformCodecV1) -> None:
-    msg = StateBatchMessage(server_tick=0, updates=[])
+    msg = StateBatchMessage(room_seq=0, server_time_us=0, updates=[])
     decoded = MessageCodec.decode_state_batch(
         MessageCodec.encode_state_batch(msg, codec), codec
     )

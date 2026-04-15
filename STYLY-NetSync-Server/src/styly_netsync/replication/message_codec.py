@@ -438,7 +438,15 @@ class MessageCodec:
     def encode_state_batch(message: StateBatchMessage, codec: TransformCodec) -> bytes:
         buf = bytearray()
         _write_header(buf, MSG_REPL_STATE_BATCH)
-        buf.extend(struct.pack("<II", message.server_tick, len(message.updates)))
+        # roomSeq (u32) + serverTimeUs (u64) + updateCount (u32)
+        buf.extend(
+            struct.pack(
+                "<IQI",
+                message.room_seq,
+                message.server_time_us,
+                len(message.updates),
+            )
+        )
         for update in message.updates:
             _write_state_update(buf, update, codec)
         return bytes(buf)
@@ -446,13 +454,17 @@ class MessageCodec:
     @staticmethod
     def decode_state_batch(data: bytes, codec: TransformCodec) -> StateBatchMessage:
         offset = _read_header(data, MSG_REPL_STATE_BATCH)
-        server_tick, count = struct.unpack_from("<II", data, offset)
-        offset += 8
+        room_seq, server_time_us, count = struct.unpack_from("<IQI", data, offset)
+        offset += 16
         updates: list[StateUpdate] = []
         for _ in range(count):
             update, offset = _read_state_update(data, offset, codec)
             updates.append(update)
-        return StateBatchMessage(server_tick=server_tick, updates=updates)
+        return StateBatchMessage(
+            room_seq=room_seq,
+            server_time_us=server_time_us,
+            updates=updates,
+        )
 
 
 __all__ = [

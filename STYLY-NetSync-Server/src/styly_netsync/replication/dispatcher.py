@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from .message_codec import (
     MSG_REPL_JOIN_ROOM,
     MSG_REPL_OWNERSHIP_REQUEST,
+    MSG_REPL_STATE_BATCH,
     MessageCodec,
     TransformCodec,
     TransformCodecV1,
@@ -34,8 +35,9 @@ from .ownership_arbiter import (
     OwnershipOutcome,
     OwnershipRequest,
 )
-from .room_registry import ClientState, RoomRegistry, SceneHashMismatchError
+from .room_registry import ClientState, RoomRegistry, RoomState, SceneHashMismatchError
 from .snapshot_service import SnapshotService
+from .state_relay import StateRelay
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,7 @@ class ReplicationDispatcher:
         snapshot_service: SnapshotService | None = None,
         transform_codec: TransformCodec | None = None,
         ownership_arbiter: OwnershipArbiter | None = None,
+        state_relay: StateRelay | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._rooms = room_registry
@@ -90,6 +93,11 @@ class ReplicationDispatcher:
         self._arbiter = (
             ownership_arbiter if ownership_arbiter is not None else OwnershipArbiter()
         )
+        # The relay is optional so existing tests can construct the
+        # dispatcher without a broadcast callback; a no-op broadcast is
+        # used when the caller omits one. Real servers always pass
+        # their own :class:`StateRelay` so the flush path emits frames.
+        self._relay = state_relay
         self._clock = clock
 
     def handle_frame(
@@ -118,6 +126,8 @@ class ReplicationDispatcher:
             return self._handle_ownership_request(
                 client_identity, room_id, frame, send, broadcast
             )
+        if msg_type == MSG_REPL_STATE_BATCH:
+            return self._handle_state_batch(client_identity, room_id, frame)
         return DispatchResult(handled=False)
 
     # --- Periodic tasks --------------------------------------------------
@@ -139,6 +149,17 @@ class ReplicationDispatcher:
                 broadcast(room_id, frame)
                 total += 1
         return total
+
+    def flush_pending_batches(self) -> int:
+        """Drain dirty entity sets into STATE_BATCH frames.
+
+        Delegates to the configured :class:`StateRelay` which owns the
+        broadcast callback. Returns the number of rooms actually
+        flushed (0 if no relay is wired — tests can omit it).
+        """
+        if self._relay is None:
+            return 0
+        return self._relay.tick()
 
     # --- JOIN_ROOM ------------------------------------------------------
 
@@ -288,6 +309,66 @@ class ReplicationDispatcher:
             accepted=outcome.result is OwnershipResult.GRANTED,
             ownership_result=outcome.result,
         )
+
+    # --- STATE_BATCH (inbound) -----------------------------------------
+
+    def _handle_state_batch(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        frame: bytes,
+    ) -> DispatchResult:
+        """Route an inbound STATE_BATCH from an owning client.
+
+        STATE_BATCH is fire-and-forget: there is no synchronous reply
+        on the wire. Accepted updates show up on the next flush via
+        :meth:`flush_pending_batches`; rejected updates are log-only.
+        """
+        if self._relay is None:
+            # No relay configured — defensively drop so tests that
+            # construct the dispatcher without a broadcast channel stay
+            # valid.
+            return DispatchResult(handled=True, accepted=False)
+
+        try:
+            batch = MessageCodec.decode_state_batch(frame, self._codec)
+        except (ValueError, IndexError, struct.error) as exc:
+            logger.warning("Malformed STATE_BATCH from %r: %s", client_identity, exc)
+            return DispatchResult(handled=True, accepted=False)
+
+        room = self._rooms.get(room_id)
+        if room is None:
+            logger.warning(
+                "STATE_BATCH for unknown room %r (client %r)",
+                room_id,
+                client_identity,
+            )
+            return DispatchResult(handled=True, accepted=False)
+
+        sender_client_no = self._client_no_for_identity(room, client_identity)
+        if sender_client_no == 0:
+            logger.warning(
+                "STATE_BATCH from unknown identity %r in room %r",
+                client_identity,
+                room_id,
+            )
+            return DispatchResult(handled=True, accepted=False)
+
+        accepted = self._relay.accept_state_batch(sender_client_no, room, batch)
+        return DispatchResult(handled=True, accepted=bool(accepted))
+
+    def _client_no_for_identity(self, room: RoomState, client_identity: bytes) -> int:
+        """Resolve a ROUTER identity to its room-local short id.
+
+        Returns 0 when the identity is not registered against the room
+        — the caller treats that as an invalid sender and drops the
+        frame.
+        """
+        key = self._identity_to_key(client_identity)
+        state = room.connected_clients.get(key)
+        if state is None:
+            return 0
+        return state.client_no
 
     @staticmethod
     def _outcome_to_event(outcome: OwnershipOutcome) -> OwnershipEventMessage:

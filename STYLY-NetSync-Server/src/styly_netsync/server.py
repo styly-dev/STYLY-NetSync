@@ -44,6 +44,7 @@ from . import binary_serializer
 from . import network_utils
 from .replication.dispatcher import ReplicationDispatcher
 from .replication.room_registry import RoomRegistry as ReplicationRoomRegistry
+from .replication.state_relay import StateRelay as ReplicationStateRelay
 from .logging_utils import configure_logging
 from .config import (
     ConfigurationError,
@@ -344,20 +345,30 @@ class NetSyncServer:
         self._rooms_lock = threading.RLock()  # Reentrant lock for nested access
         self._stats_lock = threading.Lock()  # Lock for statistics
 
-        # Replication protocol v1 state (Phases 2-3: JOIN_ROOM +
-        # ROOM_SNAPSHOT + OWNERSHIP_REQUEST/EVENT). Lives alongside the
-        # legacy v3 pose relay and does not replace it. The dispatcher
-        # is serial by contract — both the receive thread and the
-        # periodic thread (lease sweep) must acquire
-        # ``_replication_lock`` before touching it.
+        # Replication protocol v1 state (Phases 2-4: JOIN_ROOM +
+        # ROOM_SNAPSHOT + OWNERSHIP_REQUEST/EVENT + STATE_BATCH).
+        # Lives alongside the legacy v3 pose relay and does not
+        # replace it. The dispatcher is serial by contract — both the
+        # receive thread and the periodic thread (lease sweep +
+        # state-relay flush) must acquire ``_replication_lock`` before
+        # touching it.
         self._replication_rooms = ReplicationRoomRegistry()
+        self._replication_state_relay = ReplicationStateRelay(
+            room_registry=self._replication_rooms,
+            broadcast=self._broadcast_replication_frame,
+        )
         self._replication_dispatcher = ReplicationDispatcher(
             room_registry=self._replication_rooms,
+            state_relay=self._replication_state_relay,
         )
         self._replication_lock = threading.RLock()
         # Approximately 4 Hz — well within the 2-5 Hz target for lease
         # sweeps and cheap relative to the existing periodic loop.
         self.REPLICATION_SWEEP_INTERVAL = 0.25
+        # Default 33 ms → ~30 Hz flush cadence for STATE_BATCH.
+        self.REPLICATION_FLUSH_INTERVAL = (
+            self._replication_state_relay.flush_interval_sec
+        )
 
         # Threading
         self.running = False
@@ -1234,6 +1245,20 @@ class NetSyncServer:
             logger.error("Replication lease sweep error: %s", exc)
             logger.error(traceback.format_exc())
 
+    def _replication_flush_tick(self) -> None:
+        """Drain per-room dirty sets into STATE_BATCH broadcasts.
+
+        Called from the periodic thread at ``REPLICATION_FLUSH_INTERVAL``
+        cadence. Empty rooms (no accepted updates since last tick)
+        incur no wire traffic.
+        """
+        try:
+            with self._replication_lock:
+                self._replication_dispatcher.flush_pending_batches()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Replication state-relay flush error: %s", exc)
+            logger.error(traceback.format_exc())
+
     def _drain_router_ctrl_queue(self) -> None:
         """Drain pending control messages from the router queue.
 
@@ -1845,6 +1870,7 @@ class NetSyncServer:
         last_cleanup: float = 0.0
         last_device_id_cleanup: float = 0.0
         last_replication_sweep: float = 0.0
+        last_replication_flush: float = 0.0
         last_log = time.monotonic()
         DEVICE_ID_CLEANUP_INTERVAL = 60.0  # Clean up expired device IDs every minute
 
@@ -1889,6 +1915,14 @@ class NetSyncServer:
                 ):
                     self._replication_sweep_tick()
                     last_replication_sweep = current_time
+
+                # Replication-protocol-v1 state-relay flush (~30 Hz).
+                if (
+                    current_time - last_replication_flush
+                    >= self.REPLICATION_FLUSH_INTERVAL
+                ):
+                    self._replication_flush_tick()
+                    last_replication_flush = current_time
 
                 # Log status periodically
                 if current_time - last_log >= self.STATUS_LOG_INTERVAL:
