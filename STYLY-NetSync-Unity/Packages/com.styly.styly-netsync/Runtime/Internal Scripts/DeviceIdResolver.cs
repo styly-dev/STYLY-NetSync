@@ -6,8 +6,7 @@ namespace Styly.NetSync.Internal
 {
     /// <summary>
     /// Resolves a stable device ID asynchronously.
-    /// In Unity Editor: returns a random GUID immediately.
-    /// On real devices: attempts Device-ID-Provider first, falls back to SystemInfo.deviceUniqueIdentifier.
+    /// Attempts Device-ID-Provider first, falls back to SystemInfo.deviceUniqueIdentifier.
     /// On Android, handles the permission dialog without blocking the main thread.
     /// </summary>
     internal sealed class DeviceIdResolver
@@ -50,23 +49,15 @@ namespace Styly.NetSync.Internal
         /// </summary>
         public void Resolve()
         {
-#if UNITY_EDITOR
-            DeviceId = Guid.NewGuid().ToString();
-            Log($"Unity Editor: using generated GUID: {DeviceId}");
-            IsResolved = true;
-#else
             ResolveRuntime();
-#endif
         }
 
         /// <summary>
         /// Must be called from Update() on the main thread.
         /// Completes deferred permission results that arrived from the Java UI thread.
-        /// In Editor mode this is a no-op since resolution is always synchronous.
         /// </summary>
         public void Tick()
         {
-#if !UNITY_EDITOR
             if (_permissionGranted)
             {
                 _permissionGranted = false;
@@ -81,10 +72,8 @@ namespace Styly.NetSync.Internal
                 PlayerPrefs.Save();
                 ResolveWithFallback();
             }
-#endif
         }
 
-#if !UNITY_EDITOR
         private void ResolveRuntime()
         {
             // Android-specific: check permission state before calling Device-ID-Provider
@@ -210,7 +199,6 @@ namespace Styly.NetSync.Internal
             }
             IsResolved = true;
         }
-#endif
 
         private void Log(string message)
         {
