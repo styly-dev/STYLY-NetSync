@@ -189,6 +189,20 @@ namespace Styly.NetSync
             }
         }
 
+#if UNITY_EDITOR
+        void LateUpdate()
+        {
+            // In the Editor there is no XR device, so TrackedPoseDriver leaves _head at (0,0,0).
+            // Override the local avatar head transform to Camera.main so the avatar renders at
+            // the correct height (CameraYOffset applied) during editor play-mode testing.
+            if (IsLocalAvatar && _head != null && Camera.main != null)
+            {
+                _head.position = Camera.main.transform.position;
+                _head.rotation = Camera.main.transform.rotation;
+            }
+        }
+#endif
+
         // Get current transform data for sending
         internal ClientTransformData GetTransformData()
         {
@@ -217,9 +231,20 @@ namespace Styly.NetSync
             _tx.physical = _txPhysical;
 
             // World space transforms.
+            // In the Editor there is no XR device, so TrackedPoseDriver returns (0,0,0).
+            // Camera.main.transform.position correctly reflects CameraYOffset (e.g. 1.3 m)
+            // that was set for a comfortable editor view, matching the visual camera height.
+            // On-device builds use _head.position (floor-relative XR tracking) directly.
+#if UNITY_EDITOR
+            var headForSync = Camera.main != null ? Camera.main.transform : _head;
+            Fill(_txHead,
+                headForSync != null ? headForSync.position : Vector3.zero,
+                headForSync != null ? headForSync.rotation : Quaternion.identity);
+#else
             Fill(_txHead,
                 _head != null ? _head.position : Vector3.zero,
                 _head != null ? _head.rotation : Quaternion.identity);
+#endif
             _tx.head = _txHead;
 
             Fill(_txRight,
