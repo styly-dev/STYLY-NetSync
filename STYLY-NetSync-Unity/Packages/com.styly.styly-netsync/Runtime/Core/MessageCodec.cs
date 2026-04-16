@@ -256,6 +256,7 @@ namespace Styly.NetSync.Internal
             writer.Write(message.EntityId);
             writer.Write(message.RequesterShortId);
             writer.Write(message.ExpectedEpoch);
+            writer.Write(message.Release ? (byte)1 : (byte)0);
             return ms.ToArray();
         }
 
@@ -269,6 +270,7 @@ namespace Styly.NetSync.Internal
                 EntityId = reader.ReadUInt64(),
                 RequesterShortId = reader.ReadUInt32(),
                 ExpectedEpoch = reader.ReadUInt32(),
+                Release = reader.ReadByte() != 0,
             };
         }
 

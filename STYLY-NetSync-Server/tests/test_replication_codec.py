@@ -149,10 +149,25 @@ def test_ownership_request_round_trip() -> None:
         entity_id=0x1122334455667788,
         requester_short_id=12,
         expected_epoch=3,
+        release=False,
     )
     encoded = MessageCodec.encode_ownership_request(msg)
     assert encoded[0] == MSG_REPL_OWNERSHIP_REQUEST
-    assert MessageCodec.decode_ownership_request(encoded) == msg
+    decoded = MessageCodec.decode_ownership_request(encoded)
+    assert decoded == msg
+    assert decoded.release is False
+
+    # Verify release flag round-trips correctly.
+    release_msg = OwnershipRequestMessage(
+        entity_id=42,
+        requester_short_id=1,
+        expected_epoch=5,
+        release=True,
+    )
+    release_encoded = MessageCodec.encode_ownership_request(release_msg)
+    release_decoded = MessageCodec.decode_ownership_request(release_encoded)
+    assert release_decoded == release_msg
+    assert release_decoded.release is True
 
 
 def test_ownership_event_round_trip() -> None:

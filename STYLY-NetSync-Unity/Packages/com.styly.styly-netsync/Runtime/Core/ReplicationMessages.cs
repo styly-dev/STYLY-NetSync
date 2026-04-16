@@ -60,6 +60,7 @@ namespace Styly.NetSync.Internal
         public ulong EntityId;
         public uint RequesterShortId;
         public uint ExpectedEpoch;
+        public bool Release;
     }
 
     // Server -> clients. Broadcast when ownership changes. Result is the

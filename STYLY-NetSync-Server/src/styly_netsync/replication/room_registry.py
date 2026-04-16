@@ -84,8 +84,13 @@ class RoomRegistry:
         """Return the room state for ``room_id``, creating it with
         ``scene_hash`` if it does not exist.
 
+        When the room exists but has no connected clients, the scene
+        hash is updated to the new value. This allows empty rooms that
+        persist across reconnects to accept clients whose scene hash
+        changed (e.g. due to runtime transform drift between sessions).
+
         Raises ``SceneHashMismatchError`` if the room already exists
-        with a different scene hash.
+        **with connected clients** and a different scene hash.
         """
         room = self._rooms.get(room_id)
         if room is None:
@@ -93,10 +98,18 @@ class RoomRegistry:
             self._rooms[room_id] = room
             return room
         if room.scene_hash != scene_hash:
-            raise SceneHashMismatchError(
-                f"room {room_id!r} expects scene_hash={room.scene_hash!r} "
-                f"but client reported {scene_hash!r}"
-            )
+            if not room.connected_clients:
+                # Room is empty — adopt the new hash instead of
+                # rejecting. Entity state is cleared since it may be
+                # stale from the previous session's hash.
+                room.scene_hash = scene_hash
+                room.entities.clear()
+                room.dirty_entity_ids.clear()
+            else:
+                raise SceneHashMismatchError(
+                    f"room {room_id!r} expects scene_hash={room.scene_hash!r} "
+                    f"but client reported {scene_hash!r}"
+                )
         return room
 
     def get(self, room_id: str) -> RoomState | None:

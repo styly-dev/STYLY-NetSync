@@ -321,6 +321,7 @@ namespace Styly.NetSync.Internal
                 EntityId = entityId,
                 RequesterShortId = (uint)_localClientNo,
                 ExpectedEpoch = expectedEpoch,
+                Release = kind == PendingKind.Release,
             });
             if (!_transport.SendControl(_roomId, payload))
             {

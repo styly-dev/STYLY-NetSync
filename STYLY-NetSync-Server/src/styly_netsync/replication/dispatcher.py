@@ -297,6 +297,15 @@ class ReplicationDispatcher:
         snapshot = self._snapshots.build_snapshot(room, your_client_no=client_no)
         frame_out = MessageCodec.encode_room_snapshot(snapshot, self._codec)
         send(client_identity, frame_out)
+        logger.info(
+            "Replication JOIN_ROOM accepted: room=%r client_no=%d "
+            "identity=%r entities=%d connected=%d",
+            msg.room_id,
+            client_no,
+            client_identity,
+            len(room.entities),
+            len(room.connected_clients),
+        )
         return DispatchResult(handled=True, accepted=True)
 
     def _send_reject(
@@ -339,15 +348,36 @@ class ReplicationDispatcher:
             )
             return DispatchResult(handled=True, accepted=False)
 
+        sender_client_no = self._client_no_for_identity(room, client_identity)
+        if sender_client_no == 0:
+            logger.warning(
+                "OWNERSHIP_REQUEST from unknown identity %r in room %r",
+                client_identity,
+                room_id,
+            )
+            return DispatchResult(handled=True, accepted=False)
+
         now = self._clock()
         self._touch_last_seen(room, client_identity, now)
+
+        # Use the server-resolved sender_client_no rather than the
+        # wire-supplied requester_short_id to prevent spoofing.
+        if sender_client_no != msg.requester_short_id:
+            logger.warning(
+                "OWNERSHIP_REQUEST client_no mismatch: identity resolved "
+                "to %d but wire carries %d in room %r; using server value",
+                sender_client_no,
+                msg.requester_short_id,
+                room_id,
+            )
+
         outcome = self._arbiter.handle_request(
             room,
             OwnershipRequest(
                 entity_id=msg.entity_id,
-                sender_client_no=msg.requester_short_id,
+                sender_client_no=sender_client_no,
                 expected_epoch=msg.expected_epoch,
-                release=False,
+                release=msg.release,
             ),
             now=now,
         )
@@ -363,17 +393,25 @@ class ReplicationDispatcher:
         send(client_identity, event_frame)
         broadcast(room_id, event_frame)
 
-        if outcome.result is not OwnershipResult.GRANTED:
-            # Deny reason is now carried on the wire via reason_code;
-            # log it here too for operator visibility.
+        if outcome.result is OwnershipResult.GRANTED:
             logger.info(
-                "Ownership request not granted: room=%r entity=%d sender=%d "
-                "result=%s reason=%s",
+                "OWNERSHIP GRANTED: room=%r entity=0x%X owner=%d epoch=%d",
                 room_id,
                 outcome.entity_id,
-                msg.requester_short_id,
+                outcome.new_owner_client_no,
+                outcome.new_authority_epoch,
+            )
+        else:
+            logger.info(
+                "OWNERSHIP DENIED: room=%r entity=0x%X sender=%d "
+                "result=%s reason=%s current_owner=%d epoch=%d",
+                room_id,
+                outcome.entity_id,
+                sender_client_no,
                 outcome.result.name,
                 outcome.reason.name,
+                outcome.new_owner_client_no,
+                outcome.new_authority_epoch,
             )
 
         return DispatchResult(
@@ -428,6 +466,37 @@ class ReplicationDispatcher:
 
         self._touch_last_seen(room, client_identity, self._clock())
         accepted = self._relay.accept_state_batch(sender_client_no, room, batch)
+        n_updates = len(batch.updates)
+        n_accepted = len(accepted)
+        if n_updates > 0 and n_accepted < n_updates:
+            # Log only when updates are dropped — successful flow is quiet.
+            for u in batch.updates:
+                rec = room.entities.get(u.entity_id)
+                if rec is None:
+                    logger.info(
+                        "STATE_BATCH DROPPED: room=%r entity=0x%X "
+                        "reason=unknown_entity",
+                        room_id,
+                        u.entity_id,
+                    )
+                elif rec.owner_client_no != sender_client_no:
+                    logger.info(
+                        "STATE_BATCH DROPPED: room=%r entity=0x%X "
+                        "reason=not_owner (sender=%d, owner=%d)",
+                        room_id,
+                        u.entity_id,
+                        sender_client_no,
+                        rec.owner_client_no,
+                    )
+                elif u.authority_epoch != rec.authority_epoch:
+                    logger.info(
+                        "STATE_BATCH DROPPED: room=%r entity=0x%X "
+                        "reason=epoch_mismatch (sent=%d, server=%d)",
+                        room_id,
+                        u.entity_id,
+                        u.authority_epoch,
+                        rec.authority_epoch,
+                    )
         return DispatchResult(handled=True, accepted=bool(accepted))
 
     # --- RESYNC_REQUEST ------------------------------------------------
@@ -459,6 +528,15 @@ class ReplicationDispatcher:
                 "RESYNC_REQUEST for unknown room %r (client %r)",
                 room_id,
                 client_identity,
+            )
+            return DispatchResult(handled=True, accepted=False)
+
+        sender_client_no = self._client_no_for_identity(room, client_identity)
+        if sender_client_no == 0:
+            logger.warning(
+                "RESYNC_REQUEST from unknown identity %r in room %r",
+                client_identity,
+                room_id,
             )
             return DispatchResult(handled=True, accepted=False)
 

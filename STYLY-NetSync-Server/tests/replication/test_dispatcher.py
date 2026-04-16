@@ -107,8 +107,15 @@ def test_join_room_creates_room_and_replies_with_snapshot() -> None:
 
 def test_join_room_scene_hash_mismatch_sends_reject() -> None:
     dispatcher, registry, sent, _bc, send, broadcast = _make_dispatcher()
-    registry.get_or_create("lobby", "hash-1")
 
+    # First client joins to create the room and stay connected.
+    frame_ok = MessageCodec.encode_join_room(
+        JoinRoomMessage(room_id="lobby", device_id="dev-1", scene_hash="hash-1")
+    )
+    dispatcher.handle_frame(b"client-1", "lobby", frame_ok, send, broadcast)
+    sent.clear()
+
+    # Second client with a different hash must be rejected.
     frame = MessageCodec.encode_join_room(
         JoinRoomMessage(room_id="lobby", device_id="dev-2", scene_hash="hash-2")
     )
@@ -227,12 +234,42 @@ def _seed_room_with_entity(registry: RoomRegistry, entity_id: int = 100) -> None
     )
 
 
+def _join_client(
+    dispatcher: ReplicationDispatcher,
+    identity: bytes,
+    send: SendFn,
+    bcast: BroadcastFn,
+    room_id: str = "lobby",
+    scene_hash: str = "h",
+) -> int:
+    """Helper: send JOIN_ROOM and return the assigned client_no."""
+    frame = MessageCodec.encode_join_room(
+        JoinRoomMessage(room_id=room_id, device_id="d", scene_hash=scene_hash)
+    )
+    sent_before: list[tuple[bytes, bytes]] = []
+
+    def capture_send(ident: bytes, data: bytes) -> None:
+        sent_before.append((ident, data))
+
+    dispatcher.handle_frame(identity, room_id, frame, capture_send, bcast)
+    snapshot = MessageCodec.decode_room_snapshot(sent_before[0][1], TransformCodecV1())
+    return snapshot.your_client_no
+
+
 def test_ownership_acquire_sends_reply_and_broadcasts_event() -> None:
     dispatcher, registry, sent, broadcast, send, bcast = _make_dispatcher()
     _seed_room_with_entity(registry)
 
+    # Client must join before requesting ownership.
+    client_no = _join_client(dispatcher, b"client-7", send, bcast)
+
+    sent.clear()
+    broadcast.clear()
+
     frame = MessageCodec.encode_ownership_request(
-        OwnershipRequestMessage(entity_id=100, requester_short_id=7, expected_epoch=0)
+        OwnershipRequestMessage(
+            entity_id=100, requester_short_id=client_no, expected_epoch=0
+        )
     )
     result = dispatcher.handle_frame(b"client-7", "lobby", frame, send, bcast)
 
@@ -251,13 +288,13 @@ def test_ownership_acquire_sends_reply_and_broadcasts_event() -> None:
 
     event = MessageCodec.decode_ownership_event(broadcast[0][1])
     assert event.entity_id == 100
-    assert event.new_owner_short_id == 7
+    assert event.new_owner_short_id == client_no
     assert event.new_authority_epoch == 1
     assert event.result is OwnershipResult.GRANTED
 
     # Authoritative record reflects the grant.
     record = registry.get("lobby").entities[100]  # type: ignore[union-attr]
-    assert record.owner_client_no == 7
+    assert record.owner_client_no == client_no
     assert record.authority_epoch == 1
     assert record.lease_expire_at == 1002.0
 
@@ -266,13 +303,24 @@ def test_ownership_acquire_on_owned_returns_rejected_event() -> None:
     dispatcher, registry, sent, broadcast, send, bcast = _make_dispatcher()
     _seed_room_with_entity(registry)
 
+    # Both clients must join first.
+    client_no_7 = _join_client(dispatcher, b"client-7", send, bcast)
+    client_no_9 = _join_client(dispatcher, b"client-9", send, bcast)
+
+    sent.clear()
+    broadcast.clear()
+
     first = MessageCodec.encode_ownership_request(
-        OwnershipRequestMessage(entity_id=100, requester_short_id=7, expected_epoch=0)
+        OwnershipRequestMessage(
+            entity_id=100, requester_short_id=client_no_7, expected_epoch=0
+        )
     )
     dispatcher.handle_frame(b"client-7", "lobby", first, send, bcast)
 
     second = MessageCodec.encode_ownership_request(
-        OwnershipRequestMessage(entity_id=100, requester_short_id=9, expected_epoch=0)
+        OwnershipRequestMessage(
+            entity_id=100, requester_short_id=client_no_9, expected_epoch=0
+        )
     )
     result = dispatcher.handle_frame(b"client-9", "lobby", second, send, bcast)
 
@@ -282,7 +330,7 @@ def test_ownership_acquire_on_owned_returns_rejected_event() -> None:
     # Latest broadcast carries the deny event with current owner/epoch.
     event = MessageCodec.decode_ownership_event(broadcast[-1][1])
     assert event.result is OwnershipResult.DENIED
-    assert event.new_owner_short_id == 7  # unchanged
+    assert event.new_owner_short_id == client_no_7  # unchanged
     assert event.new_authority_epoch == 1
 
 
@@ -339,9 +387,15 @@ def test_sweep_expired_leases_broadcasts_expired_events() -> None:
     def bcast(room_id: str, frame: bytes) -> None:
         broadcast.append((room_id, frame))
 
+    # Client must join first so ownership request is accepted.
+    client_no = _join_client(dispatcher, b"client-7", send, bcast)
+
     frame = MessageCodec.encode_ownership_request(
-        OwnershipRequestMessage(entity_id=100, requester_short_id=7, expected_epoch=0)
+        OwnershipRequestMessage(
+            entity_id=100, requester_short_id=client_no, expected_epoch=0
+        )
     )
+    broadcast.clear()
     dispatcher.handle_frame(b"client-7", "lobby", frame, send, bcast)
     assert len(broadcast) == 1  # GRANTED
 
@@ -484,6 +538,83 @@ def test_state_batch_from_unknown_identity_is_dropped() -> None:
     result = dispatcher.handle_frame(b"stranger", "lobby", state_frame, send, bcast)
     assert result.handled is True
     assert result.accepted is False
+
+
+def test_ownership_request_from_unknown_identity_is_rejected() -> None:
+    """Identity must be registered via JOIN_ROOM before OWNERSHIP_REQUEST is accepted."""
+    dispatcher, registry, sent, broadcast, send, bcast = _make_dispatcher()
+    _seed_room_with_entity(registry)
+
+    frame = MessageCodec.encode_ownership_request(
+        OwnershipRequestMessage(entity_id=100, requester_short_id=1, expected_epoch=0)
+    )
+    result = dispatcher.handle_frame(b"stranger", "lobby", frame, send, bcast)
+
+    assert result.handled is True
+    assert result.accepted is False
+    # No reply or broadcast for unregistered identity.
+    assert sent == []
+    assert broadcast == []
+
+
+def test_ownership_request_from_evicted_client_is_rejected() -> None:
+    """Once a client is evicted by the disconnect sweep, ownership requests
+    from the same identity must be rejected."""
+    registry = RoomRegistry()
+    _seed_room_with_entity(registry)
+    broadcast: list[tuple[str, bytes]] = []
+    sent: list[tuple[bytes, bytes]] = []
+
+    tick = {"t": 100.0}
+    dispatcher = ReplicationDispatcher(
+        room_registry=registry,
+        snapshot_service=SnapshotService(time_source=lambda: 0),
+        transform_codec=TransformCodecV1(),
+        ownership_arbiter=OwnershipArbiter(lease_sec=2.0),
+        state_relay=StateRelay(
+            room_registry=registry,
+            broadcast=lambda r, f: broadcast.append((r, f)),
+            transform_codec=TransformCodecV1(),
+            lease_sec=2.0,
+            clock=lambda: tick["t"],
+        ),
+        client_timeout_sec=10.0,
+        clock=lambda: tick["t"],
+    )
+
+    def send_fn(identity: bytes, frame: bytes) -> None:
+        sent.append((identity, frame))
+
+    def bcast_fn(room_id: str, frame: bytes) -> None:
+        broadcast.append((room_id, frame))
+
+    # Join the client.
+    client_no = _join_client(dispatcher, b"client-a", send_fn, bcast_fn)
+
+    # Advance clock past timeout and sweep.
+    tick["t"] = 115.0
+    dispatcher.sweep_disconnected_clients(bcast_fn)
+
+    # Ownership request from the now-evicted identity must be rejected.
+    sent.clear()
+    broadcast.clear()
+    frame = MessageCodec.encode_ownership_request(
+        OwnershipRequestMessage(
+            entity_id=100, requester_short_id=client_no, expected_epoch=0
+        )
+    )
+    result = dispatcher.handle_frame(b"client-a", "lobby", frame, send_fn, bcast_fn)
+
+    assert result.handled is True
+    assert result.accepted is False
+    assert sent == []
+    assert broadcast == []
+
+    # Entity must remain unowned.
+    room = registry.get("lobby")
+    assert room is not None
+    record = room.entities[100]
+    assert record.owner_client_no == 0
 
 
 def test_unhandled_message_type_reports_not_handled() -> None:

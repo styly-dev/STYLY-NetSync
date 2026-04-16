@@ -318,10 +318,11 @@ class MessageCodec:
         _write_header(buf, MSG_REPL_OWNERSHIP_REQUEST)
         buf.extend(
             struct.pack(
-                "<QII",
+                "<QIIB",
                 message.entity_id,
                 message.requester_short_id,
                 message.expected_epoch,
+                1 if message.release else 0,
             )
         )
         return bytes(buf)
@@ -329,11 +330,14 @@ class MessageCodec:
     @staticmethod
     def decode_ownership_request(data: bytes) -> OwnershipRequestMessage:
         offset = _read_header(data, MSG_REPL_OWNERSHIP_REQUEST)
-        entity_id, requester, expected_epoch = struct.unpack_from("<QII", data, offset)
+        entity_id, requester, expected_epoch, release_byte = struct.unpack_from(
+            "<QIIB", data, offset
+        )
         return OwnershipRequestMessage(
             entity_id=entity_id,
             requester_short_id=requester,
             expected_epoch=expected_epoch,
+            release=release_byte != 0,
         )
 
     # --- OWNERSHIP_EVENT ---

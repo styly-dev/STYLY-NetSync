@@ -861,6 +861,11 @@ namespace Styly.NetSync
             {
                 _hasInvokedReady = true;
                 DebugLog("NetSyncManager is now Ready (connected, handshaken, and network variables synced)");
+
+                // Auto-join the replication room so the ownership subsystem
+                // receives a ROOM_SNAPSHOT and learns LocalClientNo.
+                JoinReplicationRoom(_roomId);
+
                 OnReady?.Invoke();
 
                 // Don't flush immediately - let Update() handle it on next frame

@@ -200,7 +200,8 @@ def test_sweep_ignores_unowned_entities() -> None:
     assert arbiter.sweep_expired(room, now=10_000.0) == []
 
 
-def test_unknown_entity_returns_hard_deny() -> None:
+def test_unknown_entity_auto_registers_on_acquire() -> None:
+    """First acquire for an unknown entity auto-creates a SceneObject record."""
     arbiter = OwnershipArbiter(lease_sec=LEASE_SEC)
     registry = RoomRegistry()
     room = registry.get_or_create("room", "hash")
@@ -208,6 +209,27 @@ def test_unknown_entity_returns_hard_deny() -> None:
     outcome = arbiter.handle_request(
         room,
         OwnershipRequest(entity_id=999, sender_client_no=1, expected_epoch=0),
+        now=1.0,
+    )
+
+    assert outcome.result is OwnershipResult.GRANTED
+    assert outcome.new_owner_client_no == 1
+    assert outcome.entity_id == 999
+    # The entity should now exist in the room.
+    assert 999 in room.entities
+
+
+def test_unknown_entity_release_returns_hard_deny() -> None:
+    """Release for an unknown entity is still denied."""
+    arbiter = OwnershipArbiter(lease_sec=LEASE_SEC)
+    registry = RoomRegistry()
+    room = registry.get_or_create("room", "hash")
+
+    outcome = arbiter.handle_request(
+        room,
+        OwnershipRequest(
+            entity_id=999, sender_client_no=1, expected_epoch=0, release=True
+        ),
         now=1.0,
     )
 

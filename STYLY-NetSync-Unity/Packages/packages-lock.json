@@ -24,11 +24,11 @@
         "org.nuget.netmq": "4.0.2",
         "com.unity.xr.core-utils": "2.1.1",
         "com.unity.nuget.newtonsoft-json": "3.2.1",
-        "com.styly.styly-xr-rig": "0.4.14"
+        "com.styly.styly-xr-rig": "0.4.17"
       }
     },
     "com.styly.styly-xr-rig": {
-      "version": "0.4.14",
+      "version": "0.4.17",
       "depth": 1,
       "source": "registry",
       "dependencies": {
@@ -345,7 +345,7 @@
     },
     "com.unity.xr.legacyinputhelpers": {
       "version": "2.1.12",
-      "depth": 3,
+      "depth": 2,
       "source": "registry",
       "dependencies": {
         "com.unity.modules.vr": "1.0.0",
@@ -367,7 +367,7 @@
     },
     "com.unity.xr.openxr": {
       "version": "1.16.1",
-      "depth": 2,
+      "depth": 1,
       "source": "registry",
       "dependencies": {
         "com.unity.inputsystem": "1.6.3",
@@ -377,6 +377,16 @@
         "com.unity.xr.legacyinputhelpers": "2.1.2"
       },
       "url": "https://packages.unity.com"
+    },
+    "com.unity.xr.openxr.picoxr": {
+      "version": "https://github.com/Pico-Developer/PICO-Unity-OpenXR-SDK.git#release_1.4.0",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {
+        "com.unity.xr.core-utils": "2.2.0",
+        "com.unity.xr.openxr": "1.8.2"
+      },
+      "hash": "3aa3e62bff41df618529eeb60ff02c29a515dafe"
     },
     "org.nuget.asyncio": {
       "version": "0.1.69",

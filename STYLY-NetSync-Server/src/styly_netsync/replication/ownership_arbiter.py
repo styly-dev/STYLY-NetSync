@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .messages import OwnershipEventReasonCode, OwnershipResult
-from .models import EntityRecord
+from .models import EntityKind, EntityRecord
 from .room_registry import RoomState
 
 # TODO: plumb from replication profile (§5.4). Hardcoded default for
@@ -79,16 +79,23 @@ class OwnershipArbiter:
         """Apply an acquire or release request against ``room``."""
         record = room.entities.get(request.entity_id)
         if record is None:
-            # Entity is unknown to this room — the dispatcher must
-            # reject at a higher layer; treat it as a hard deny so the
-            # arbiter stays total.
-            return OwnershipOutcome(
+            if request.release:
+                # Cannot release an entity the server has never seen.
+                return OwnershipOutcome(
+                    entity_id=request.entity_id,
+                    new_owner_client_no=0,
+                    new_authority_epoch=0,
+                    result=OwnershipResult.DENIED,
+                    reason=OwnershipEventReasonCode.NOT_OWNER,
+                )
+            # Auto-register the entity as a SceneObject on first acquire.
+            # Clients declare entities in their scene; the server learns
+            # about them on the first ownership request.
+            record = EntityRecord(
                 entity_id=request.entity_id,
-                new_owner_client_no=0,
-                new_authority_epoch=0,
-                result=OwnershipResult.DENIED,
-                reason=OwnershipEventReasonCode.NOT_OWNER,
+                entity_kind=EntityKind.SceneObject,
             )
+            room.entities[request.entity_id] = record
 
         if request.release:
             return self._release(record, request)

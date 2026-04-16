@@ -35,12 +35,35 @@ def test_get_or_create_returns_same_room_on_matching_hash() -> None:
     assert first is second
 
 
-def test_get_or_create_raises_on_scene_hash_mismatch() -> None:
+def test_get_or_create_raises_on_scene_hash_mismatch_with_connected_clients() -> None:
     registry = RoomRegistry()
-    registry.get_or_create("room-a", "hash-1")
+    room = registry.get_or_create("room-a", "hash-1")
+    # Simulate a connected client so the hash is enforced.
+    from styly_netsync.replication.room_registry import ClientState
+
+    room.connected_clients[1] = ClientState(client_no=1)
 
     with pytest.raises(SceneHashMismatchError):
         registry.get_or_create("room-a", "hash-2")
+
+
+def test_get_or_create_updates_hash_when_room_empty() -> None:
+    """An empty room adopts a new scene hash instead of rejecting."""
+    registry = RoomRegistry()
+    room = registry.get_or_create("room-a", "hash-1")
+    # Seed stale entity state that should be cleared on hash change.
+    registry.upsert_entity(
+        room, EntityRecord(entity_id=42, entity_kind=EntityKind.SceneObject)
+    )
+    registry.add_dirty(room, 42)
+
+    # No connected clients — hash should be adopted, not rejected.
+    same_room = registry.get_or_create("room-a", "hash-2")
+
+    assert same_room is room
+    assert room.scene_hash == "hash-2"
+    assert room.entities == {}
+    assert room.dirty_entity_ids == set()
 
 
 def test_dirty_set_add_and_pop_clears() -> None:

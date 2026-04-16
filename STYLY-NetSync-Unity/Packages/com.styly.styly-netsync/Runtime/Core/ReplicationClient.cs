@@ -108,6 +108,14 @@ namespace Styly.NetSync.Internal
         private bool _resyncPending;
         private int _consecutiveUnknownEntities;
 
+        // Keepalive: an empty STATE_BATCH sent periodically while in
+        // Joined state to prevent the server's disconnect sweep from
+        // evicting idle clients. Without this, clients that join but
+        // take a while to request ownership would be evicted after the
+        // server's 10-second timeout.
+        private const float KeepaliveIntervalSec = 5.0f;
+        private float _lastKeepaliveAt;
+
         public JoinState State => _state;
         public string RoomId => _pendingRoomId;
         public JoinRejectReason LastRejectReason => _lastRejectReason;
@@ -228,6 +236,7 @@ namespace Styly.NetSync.Internal
             _pendingSceneHash = null;
             _resyncPending = false;
             _consecutiveUnknownEntities = 0;
+            _lastKeepaliveAt = 0f;
             PoseBuffer buffer = Buffer;
             if (buffer != null)
             {
@@ -287,6 +296,8 @@ namespace Styly.NetSync.Internal
                 {
                     publisher.Tick();
                 }
+
+                SendKeepaliveIfDue();
             }
 
             PoseInterpolator interp = Interpolator;
@@ -341,6 +352,9 @@ namespace Styly.NetSync.Internal
                     case ReplMessageIds.ResyncReply:
                         HandleResyncReply(MessageCodec.DecodeResyncReply(payload, _codec));
                         break;
+                    case ReplMessageIds.JoinReject:
+                        HandleJoinReject(MessageCodec.DecodeJoinReject(payload));
+                        break;
                     default:
                         // Unknown / client-only outbound IDs appearing in inbound
                         // traffic: ignore.
@@ -393,6 +407,19 @@ namespace Styly.NetSync.Internal
 
             // Step (g): transition to Joined.
             TransitionTo(JoinState.Joined);
+        }
+
+        private void HandleJoinReject(JoinRejectMessage msg)
+        {
+            if (_state != JoinState.Joining)
+            {
+                // Late or stale reject — ignore.
+                return;
+            }
+            _lastRejectReason = msg.Reason;
+            Debug.LogError(
+                $"[NetSync] JOIN_ROOM rejected by server: {msg.Reason} ({msg.ReasonText})");
+            TransitionTo(JoinState.Rejected);
         }
 
         private void HandleStateBatch(StateBatchMessage msg)
@@ -648,11 +675,37 @@ namespace Styly.NetSync.Internal
             }
         }
 
+        /// <summary>
+        /// Send an empty STATE_BATCH as a keepalive if enough time has
+        /// elapsed since the last one. Only called while in Joined state.
+        /// </summary>
+        private void SendKeepaliveIfDue()
+        {
+            float now = Time.unscaledTime;
+            if (now - _lastKeepaliveAt < KeepaliveIntervalSec)
+            {
+                return;
+            }
+            _lastKeepaliveAt = now;
+
+            byte[] payload = MessageCodec.EncodeStateBatch(new StateBatchMessage
+            {
+                RoomSeq = 0,
+                ServerTimeUs = 0,
+                Updates = new List<StateUpdate>(0),
+            }, _codec);
+            _transport.SendControl(_pendingRoomId ?? string.Empty, payload);
+        }
+
         private void TransitionTo(JoinState next)
         {
             if (_state == next)
             {
                 return;
+            }
+            if (next == JoinState.Joined)
+            {
+                _lastKeepaliveAt = Time.unscaledTime;
             }
             _state = next;
             JoinStateChanged?.Invoke(next);

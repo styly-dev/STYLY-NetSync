@@ -41,9 +41,10 @@ MonoBehaviour:
   m_Name: Android Providers
   m_EditorClassIdentifier: 
   m_RequiresSettingsUpdate: 0
-  m_AutomaticLoading: 0
-  m_AutomaticRunning: 0
-  m_Loaders: []
+  m_AutomaticLoading: 1
+  m_AutomaticRunning: 1
+  m_Loaders:
+  - {fileID: 11400000, guid: b7d7ec3dc507e412e89df195467c3199, type: 2}
 --- !u!114 &-1393021108573903878
 MonoBehaviour:
   m_ObjectHideFlags: 0

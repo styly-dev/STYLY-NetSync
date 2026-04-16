@@ -166,6 +166,7 @@ class OwnershipRequestMessage:
     entity_id: int
     requester_short_id: int
     expected_epoch: int
+    release: bool = False
 
 
 @dataclass

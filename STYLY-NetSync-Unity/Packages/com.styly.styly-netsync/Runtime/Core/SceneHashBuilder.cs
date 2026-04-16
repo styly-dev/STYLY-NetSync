@@ -20,13 +20,15 @@ namespace Styly.NetSync.Internal
     /// Deterministic scene-hash helper.
     ///
     /// Contributing inputs, in order:
-    ///   1. Scene name
-    ///   2. For each NetSyncObject (sorted by ObjectId ascending):
-    ///        - ObjectId
-    ///        - authored default local position (x,y,z)
-    ///        - authored default local rotation (x,y,z,w)
-    ///        - authored default local scale (x,y,z)
-    ///        - profile version
+    ///   For each NetSyncObject (sorted by ObjectId ascending):
+    ///     - ObjectId
+    ///     - authored default local position (x,y,z)
+    ///     - authored default local rotation (x,y,z,w)
+    ///     - authored default local scale (x,y,z)
+    ///     - profile version
+    ///
+    /// Scene name is intentionally excluded so that differently-named
+    /// scenes containing the same NetSyncObjects can join the same room.
     ///
     /// Floats are formatted with "R" so round-trip precision is preserved
     /// and the hash is stable across platforms that agree on IEEE-754.
@@ -82,7 +84,9 @@ namespace Styly.NetSync.Internal
             });
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("scene:").Append(sceneName ?? string.Empty).Append('\n');
+            // Scene name is intentionally excluded from the hash so that
+            // different scene files containing the same NetSyncObjects can
+            // join the same replication room (e.g. manager vs. user scenes).
             for (int i = 0; i < all.Count; i++)
             {
                 NetSyncObject o = all[i];

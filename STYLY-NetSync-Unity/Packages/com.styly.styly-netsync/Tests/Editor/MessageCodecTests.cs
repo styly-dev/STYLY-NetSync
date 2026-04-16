@@ -147,6 +147,7 @@ namespace Styly.NetSync.Tests.Editor
                 EntityId = 0x1122334455667788UL,
                 RequesterShortId = 12,
                 ExpectedEpoch = 3,
+                Release = false,
             };
             var bytes = MessageCodec.EncodeOwnershipRequest(msg);
             Assert.AreEqual(ReplMessageIds.OwnershipRequest, bytes[0]);
@@ -154,6 +155,19 @@ namespace Styly.NetSync.Tests.Editor
             Assert.AreEqual(msg.EntityId, decoded.EntityId);
             Assert.AreEqual(msg.RequesterShortId, decoded.RequesterShortId);
             Assert.AreEqual(msg.ExpectedEpoch, decoded.ExpectedEpoch);
+            Assert.AreEqual(false, decoded.Release);
+
+            // Verify release flag round-trips correctly.
+            var releaseMsg = new OwnershipRequestMessage
+            {
+                EntityId = 42,
+                RequesterShortId = 1,
+                ExpectedEpoch = 5,
+                Release = true,
+            };
+            var releaseBytes = MessageCodec.EncodeOwnershipRequest(releaseMsg);
+            var releaseDecoded = MessageCodec.DecodeOwnershipRequest(releaseBytes);
+            Assert.AreEqual(true, releaseDecoded.Release);
         }
 
         [Test]
