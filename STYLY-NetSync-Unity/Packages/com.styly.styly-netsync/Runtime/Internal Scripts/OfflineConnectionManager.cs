@@ -33,6 +33,7 @@ namespace Styly.NetSync
         public void DrainMainThreadActions() { }
         public bool TryEnqueueControl(string roomId, byte[] payload) => true;
         public void SetLatestTransform(string roomId, byte[] payload) { }
+        public void SetLatestObjectTransform(string roomId, string objectId, byte[] payload) { }
         public void StartDiscovery(ServerDiscoveryManager discoveryManager, string roomId) { }
         public void ProcessDiscoveredServer(string serverAddress, int dealerPort, int subPort) { }
     }

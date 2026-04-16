@@ -120,7 +120,9 @@ namespace Styly.NetSync
                 var length = (int)_buf.Stream.Position;
                 var payload = new byte[length];
                 Buffer.BlockCopy(_buf.GetBufferUnsafe(), 0, payload, 0, length);
-                _connectionManager.SetLatestTransform(roomId, payload);
+                // Per-objectId latest-wins: avoids clobbering avatar slot and
+                // other owned objects' slots.
+                _connectionManager.SetLatestObjectTransform(roomId, objectId, payload);
             }
         }
 
@@ -179,8 +181,11 @@ namespace Styly.NetSync
                 var obj = kvp.Value;
                 if (obj == null) continue;
                 if (obj.IsOwnedByMe) continue;
-                if (!obj.HasOwner) continue;
 
+                // Tick the applier even when the object is unowned so the final
+                // snapshot from the previous owner (delivered via HandleRoomObjects)
+                // actually gets applied — otherwise the object would freeze at its
+                // pre-release position on every remote client.
                 var applier = obj.TransformApplier;
                 if (applier != null)
                 {

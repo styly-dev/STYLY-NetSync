@@ -414,8 +414,29 @@ class TestServerObjectOwnership:
         assert server.room_objects["test_room"]["obj1"]["pose_seq"] == 0
         assert server.room_object_dirty["test_room"] is False
 
-    def test_dirty_flag_set_on_claim(self, server) -> None:  # type: ignore[no-untyped-def]
-        """Dirty flag should be set when ownership changes."""
+    def test_dirty_flag_not_set_on_claim_without_pose(self, server) -> None:  # type: ignore[no-untyped-def]
+        """Ownership-only Claim must NOT mark the room dirty when no pose exists.
+
+        Rationale: ownership changes are delivered via ROUTER ownership_changed.
+        Marking the room dirty with empty body_bytes would cause the next PUB
+        snapshot to broadcast identity-at-origin and snap non-owners.
+        """
+        server.room_object_dirty["test_room"] = False
+        server._handle_object_ownership_request(
+            b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
+        )
+        assert server.room_object_dirty["test_room"] is False
+
+    def test_dirty_flag_set_on_claim_with_existing_pose(self, server) -> None:  # type: ignore[no-untyped-def]
+        """Claim on an object that already has a real pose should mark dirty
+        so the new owner is reflected in the next PUB snapshot."""
+        # Seed with an existing pose.
+        server.room_objects["test_room"]["obj1"] = {
+            "owner_client_no": 0,
+            "pose_time": 1.0,
+            "pose_seq": 7,
+            "body_bytes": b"\x00" * 13,
+        }
         server.room_object_dirty["test_room"] = False
         server._handle_object_ownership_request(
             b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
