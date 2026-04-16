@@ -137,7 +137,6 @@ namespace Styly.NetSync.Internal
                 {
                     ApplyState(obj, b.State, b.Mask);
                     _buffer.MarkApplied(entityId, b.PoseSeq);
-                    obj.RaiseRemoteTeleport();
                     return;
                 }
                 else
@@ -170,10 +169,6 @@ namespace Styly.NetSync.Internal
 
             ApplyState(obj, chosen.State, chosen.Mask);
             _buffer.MarkApplied(entityId, chosen.PoseSeq);
-            if ((chosen.Flags & StateFlags.Teleport) != 0)
-            {
-                obj.RaiseRemoteTeleport();
-            }
         }
 
         private static void ApplyState(NetSyncObject obj, TransformState state, ChangedMask mask)

@@ -106,24 +106,6 @@ namespace Styly.NetSync
         public event Action<OwnershipChangedEvent> OnOwnershipChanged;
 
         /// <summary>
-        /// Fires when the interpolator snaps this entity due to a Teleport
-        /// flag or a distance spike beyond the teleport threshold.
-        /// </summary>
-        public event Action OnRemoteTeleport;
-
-        /// <summary>
-        /// Invoked by PoseInterpolator when a teleport snap is applied.
-        /// </summary>
-        internal void RaiseRemoteTeleport()
-        {
-            Action handler = OnRemoteTeleport;
-            if (handler != null)
-            {
-                handler();
-            }
-        }
-
-        /// <summary>
         /// Dispatch an OWNERSHIP_REQUEST to acquire this entity. Returns
         /// true only when the request was handed to the transport. The
         /// actual grant/deny is surfaced via <see cref="OnOwnershipChanged"/>.

@@ -94,53 +94,6 @@ namespace Styly.NetSync.Tests.EditorTests
         }
 
         [Test]
-        public void TeleportFlag_SnapsAndFiresEvent()
-        {
-            PoseBuffer buf = new PoseBuffer();
-            FakeClock clock = new FakeClock();
-            PoseInterpolator interp = new PoseInterpolator(buf, clock)
-            {
-                InterpolationBackTimeSec = 0f,
-            };
-
-            int teleportFires = 0;
-            _obj.OnRemoteTeleport += () => teleportFires++;
-
-            buf.Add(_entityId, Sample(1, 1_000_000, new Vector3(0f, 0f, 0f)));
-            buf.Add(_entityId, Sample(2, 2_000_000, new Vector3(50f, 0f, 0f), StateFlags.Teleport));
-
-            clock.NowUs = 2_000_000UL;
-            interp.Tick();
-
-            Assert.AreEqual(new Vector3(50f, 0f, 0f), _obj.transform.localPosition);
-            Assert.AreEqual(1, teleportFires);
-        }
-
-        [Test]
-        public void DistanceSpike_SnapsAndFiresEvent()
-        {
-            PoseBuffer buf = new PoseBuffer();
-            FakeClock clock = new FakeClock();
-            PoseInterpolator interp = new PoseInterpolator(buf, clock)
-            {
-                InterpolationBackTimeSec = 0f,
-                TeleportDistanceMeters = 2f,
-            };
-
-            int teleportFires = 0;
-            _obj.OnRemoteTeleport += () => teleportFires++;
-
-            buf.Add(_entityId, Sample(1, 1_000_000, new Vector3(0f, 0f, 0f)));
-            buf.Add(_entityId, Sample(2, 2_000_000, new Vector3(10f, 0f, 0f)));
-
-            clock.NowUs = 2_000_000UL;
-            interp.Tick();
-
-            Assert.AreEqual(new Vector3(10f, 0f, 0f), _obj.transform.localPosition);
-            Assert.AreEqual(1, teleportFires);
-        }
-
-        [Test]
         public void SkipsOwnedEntities()
         {
             PoseBuffer buf = new PoseBuffer();
