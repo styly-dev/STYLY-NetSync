@@ -91,8 +91,8 @@ namespace Styly.NetSync.Tests.EditorTests
             };
             OwnershipClient.Active = client;
 
-            List<OwnershipChangedEvent> perObject = new List<OwnershipChangedEvent>();
-            _obj.OnOwnershipChanged += perObject.Add;
+            List<(int newOwner, int prevOwner)> perObject = new List<(int, int)>();
+            _obj.OnOwnershipChanged.AddListener((newOwner, prevOwner) => perObject.Add((newOwner, prevOwner)));
 
             Assert.IsFalse(_obj.IsOwnedByMe);
 
@@ -109,7 +109,7 @@ namespace Styly.NetSync.Tests.EditorTests
             Assert.AreEqual(7u, _obj.AuthorityEpoch);
             Assert.AreEqual(LocalClientNo, _obj.CurrentOwnerClientNo);
             Assert.AreEqual(1, perObject.Count);
-            Assert.AreEqual(OwnershipChangeReason.Granted, perObject[0].Reason);
+            Assert.AreEqual(LocalClientNo, perObject[0].newOwner);
             Assert.IsFalse(client.HasPending(_entityId));
         }
 
@@ -124,8 +124,8 @@ namespace Styly.NetSync.Tests.EditorTests
             };
             OwnershipClient.Active = client;
 
-            List<OwnershipChangedEvent> perObject = new List<OwnershipChangedEvent>();
-            _obj.OnOwnershipChanged += perObject.Add;
+            List<(int newOwner, int prevOwner)> perObject = new List<(int, int)>();
+            _obj.OnOwnershipChanged.AddListener((newOwner, prevOwner) => perObject.Add((newOwner, prevOwner)));
 
             _obj.RequestOwnership();
             // Server rejects: owner stays at 0 (server-owned), epoch 1.
@@ -134,7 +134,7 @@ namespace Styly.NetSync.Tests.EditorTests
             Assert.IsFalse(_obj.IsOwnedByMe);
             Assert.AreEqual(0, _obj.CurrentOwnerClientNo);
             Assert.AreEqual(1, perObject.Count);
-            Assert.AreEqual(OwnershipChangeReason.Rejected, perObject[0].Reason);
+            Assert.AreEqual(0, perObject[0].newOwner);
             Assert.IsFalse(client.HasPending(_entityId));
         }
 
@@ -203,8 +203,8 @@ namespace Styly.NetSync.Tests.EditorTests
             };
             OwnershipClient.Active = client;
 
-            List<OwnershipChangedEvent> events = new List<OwnershipChangedEvent>();
-            _obj.OnOwnershipChanged += events.Add;
+            List<(int newOwner, int prevOwner)> events = new List<(int, int)>();
+            _obj.OnOwnershipChanged.AddListener((newOwner, prevOwner) => events.Add((newOwner, prevOwner)));
 
             _obj.RequestOwnership();
             Assert.IsTrue(client.HasPending(_entityId));
@@ -215,7 +215,6 @@ namespace Styly.NetSync.Tests.EditorTests
 
             Assert.IsFalse(client.HasPending(_entityId));
             Assert.AreEqual(1, events.Count);
-            Assert.AreEqual(OwnershipChangeReason.Timeout, events[0].Reason);
             Assert.IsFalse(_obj.IsOwnedByMe);
         }
 

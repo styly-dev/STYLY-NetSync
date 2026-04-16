@@ -2,9 +2,9 @@
 // Authoring-time marker component for a replicated entity.
 // Phase 1 scope: identity only — no networking logic.
 
-using System;
 using Styly.NetSync.Internal;
 using UnityEngine;
+using UnityEngine.Events;
 
 namespace Styly.NetSync
 {
@@ -102,8 +102,12 @@ namespace Styly.NetSync
 
         /// <summary>
         /// Fired on ownership transitions affecting this entity.
+        /// Invoked with (newOwnerClientNo, previousOwnerClientNo).
         /// </summary>
-        public event Action<OwnershipChangedEvent> OnOwnershipChanged;
+        [SerializeField]
+        private UnityEvent<int, int> _onOwnershipChanged = new UnityEvent<int, int>();
+
+        public UnityEvent<int, int> OnOwnershipChanged => _onOwnershipChanged;
 
         /// <summary>
         /// Dispatch an OWNERSHIP_REQUEST to acquire this entity. Returns
@@ -141,11 +145,7 @@ namespace Styly.NetSync
         /// </summary>
         internal void RaiseOwnershipChanged(OwnershipChangedEvent change)
         {
-            Action<OwnershipChangedEvent> handler = OnOwnershipChanged;
-            if (handler != null)
-            {
-                handler(change);
-            }
+            _onOwnershipChanged.Invoke(change.NewOwnerClientNo, change.PreviousOwnerClientNo);
         }
 
         private void OnEnable()
