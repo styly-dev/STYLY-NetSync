@@ -29,8 +29,6 @@ namespace Styly.NetSync
             }
         }
 
-        public bool HasOwner => _ownerClientNo != 0;
-
         [Header("Events")]
         public UnityEvent<int, int> OnOwnershipChanged = new UnityEvent<int, int>();
 
