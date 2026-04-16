@@ -91,7 +91,7 @@ namespace Styly.NetSync
         /// <summary>
         /// Monotonic authority epoch. Bumps on every ownership transition.
         /// </summary>
-        public uint AuthorityEpoch
+        internal uint AuthorityEpoch
         {
             get
             {
