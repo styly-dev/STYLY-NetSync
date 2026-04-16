@@ -67,7 +67,7 @@ namespace Styly.NetSync
         /// entity. Flipped to true only by a matching OWNERSHIP_EVENT grant;
         /// never speculatively.
         /// </summary>
-        public bool IsOwnedByLocalClient
+        public bool IsOwnedByMe
         {
             get
             {
@@ -127,7 +127,7 @@ namespace Styly.NetSync
         /// Dispatch an OWNERSHIP_REQUEST to acquire this entity. Returns
         /// true only when the request was handed to the transport. The
         /// actual grant/deny is surfaced via <see cref="OnOwnershipChanged"/>.
-        /// Does NOT flip <see cref="IsOwnedByLocalClient"/> speculatively.
+        /// Does NOT flip <see cref="IsOwnedByMe"/> speculatively.
         /// </summary>
         public bool RequestOwnership()
         {

@@ -94,18 +94,18 @@ namespace Styly.NetSync.Tests.EditorTests
             List<OwnershipChangedEvent> perObject = new List<OwnershipChangedEvent>();
             _obj.OnOwnershipChanged += perObject.Add;
 
-            Assert.IsFalse(_obj.IsOwnedByLocalClient);
+            Assert.IsFalse(_obj.IsOwnedByMe);
 
             bool dispatched = _obj.RequestOwnership();
             Assert.IsTrue(dispatched);
             Assert.AreEqual(1, transport.SendCount);
             Assert.IsTrue(client.HasPending(_entityId));
             // Speculative update forbidden.
-            Assert.IsFalse(_obj.IsOwnedByLocalClient);
+            Assert.IsFalse(_obj.IsOwnedByMe);
 
             client.HandleOwnershipEvent(Event(_entityId, LocalClientNo, 7u, OwnershipResult.Granted));
 
-            Assert.IsTrue(_obj.IsOwnedByLocalClient);
+            Assert.IsTrue(_obj.IsOwnedByMe);
             Assert.AreEqual(7u, _obj.AuthorityEpoch);
             Assert.AreEqual(LocalClientNo, _obj.CurrentOwnerClientNo);
             Assert.AreEqual(1, perObject.Count);
@@ -131,7 +131,7 @@ namespace Styly.NetSync.Tests.EditorTests
             // Server rejects: owner stays at 0 (server-owned), epoch 1.
             client.HandleOwnershipEvent(Event(_entityId, 0, 1u, OwnershipResult.Denied));
 
-            Assert.IsFalse(_obj.IsOwnedByLocalClient);
+            Assert.IsFalse(_obj.IsOwnedByMe);
             Assert.AreEqual(0, _obj.CurrentOwnerClientNo);
             Assert.AreEqual(1, perObject.Count);
             Assert.AreEqual(OwnershipChangeReason.Rejected, perObject[0].Reason);
@@ -152,7 +152,7 @@ namespace Styly.NetSync.Tests.EditorTests
             // Establish local ownership.
             _obj.RequestOwnership();
             client.HandleOwnershipEvent(Event(_entityId, LocalClientNo, 3u, OwnershipResult.Granted));
-            Assert.IsTrue(_obj.IsOwnedByLocalClient);
+            Assert.IsTrue(_obj.IsOwnedByMe);
 
             bool dispatched = _obj.ReleaseOwnership();
             Assert.IsTrue(dispatched);
@@ -160,7 +160,7 @@ namespace Styly.NetSync.Tests.EditorTests
 
             client.HandleOwnershipEvent(Event(_entityId, 0, 4u, OwnershipResult.Released));
 
-            Assert.IsFalse(_obj.IsOwnedByLocalClient);
+            Assert.IsFalse(_obj.IsOwnedByMe);
             Assert.AreEqual(0, _obj.CurrentOwnerClientNo);
             Assert.AreEqual(4u, _obj.AuthorityEpoch);
         }
@@ -189,7 +189,7 @@ namespace Styly.NetSync.Tests.EditorTests
 
             Assert.AreEqual(OtherClientNo, _obj.CurrentOwnerClientNo);
             Assert.AreEqual(9u, _obj.AuthorityEpoch);
-            Assert.IsFalse(_obj.IsOwnedByLocalClient);
+            Assert.IsFalse(_obj.IsOwnedByMe);
         }
 
         [Test]
@@ -216,7 +216,7 @@ namespace Styly.NetSync.Tests.EditorTests
             Assert.IsFalse(client.HasPending(_entityId));
             Assert.AreEqual(1, events.Count);
             Assert.AreEqual(OwnershipChangeReason.Timeout, events[0].Reason);
-            Assert.IsFalse(_obj.IsOwnedByLocalClient);
+            Assert.IsFalse(_obj.IsOwnedByMe);
         }
 
         [Test]
