@@ -35,7 +35,7 @@ namespace Styly.NetSync
         /// Raw GUID string as authored. Empty when not yet assigned. Do NOT
         /// mutate at runtime; EntityId is derived from this value.
         /// </summary>
-        public string Guid => _guid;
+        public string ObjectId => _guid;
 
         /// <summary>
         /// 64-bit network-facing identifier derived from <see cref="Guid"/>.
@@ -43,7 +43,7 @@ namespace Styly.NetSync
         /// does not change. See <see cref="EntityIdUtils.FromGuidString"/>
         /// for the derivation.
         /// </summary>
-        public ulong EntityId
+        internal ulong EntityId
         {
             get
             {
@@ -195,7 +195,7 @@ namespace Styly.NetSync
         /// Editor-only accessor for the stored GUID field. Used by build
         /// validators and scene-hash tooling.
         /// </summary>
-        internal string GuidForEditor => _guid;
+        internal string ObjectIdForEditor => _guid;
 #endif
     }
 }

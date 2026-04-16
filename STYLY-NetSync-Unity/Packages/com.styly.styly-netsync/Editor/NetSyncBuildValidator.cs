@@ -83,7 +83,7 @@ namespace Styly.NetSync.Internal.EditorTools
                     {
                         continue;
                     }
-                    string guid = o.GuidForEditor;
+                    string guid = o.ObjectIdForEditor;
                     if (string.IsNullOrEmpty(guid) || !System.Guid.TryParse(guid, out _))
                     {
                         missingNames.Add(o.name);

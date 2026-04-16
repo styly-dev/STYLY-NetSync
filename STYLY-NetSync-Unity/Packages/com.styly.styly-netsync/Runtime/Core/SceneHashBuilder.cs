@@ -76,8 +76,8 @@ namespace Styly.NetSync.Internal
             // Sort by GUID for determinism.
             all.Sort((a, b) =>
             {
-                string ga = a != null ? a.Guid : string.Empty;
-                string gb = b != null ? b.Guid : string.Empty;
+                string ga = a != null ? a.ObjectId : string.Empty;
+                string gb = b != null ? b.ObjectId : string.Empty;
                 return string.CompareOrdinal(ga, gb);
             });
 
@@ -95,7 +95,7 @@ namespace Styly.NetSync.Internal
                 Quaternion r = t.localRotation;
                 Vector3 s = t.localScale;
 
-                sb.Append(o.Guid).Append('|');
+                sb.Append(o.ObjectId).Append('|');
                 AppendFloat(sb, p.x); sb.Append(',');
                 AppendFloat(sb, p.y); sb.Append(',');
                 AppendFloat(sb, p.z); sb.Append('|');

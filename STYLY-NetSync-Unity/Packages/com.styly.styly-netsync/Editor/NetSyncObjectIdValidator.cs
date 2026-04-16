@@ -62,7 +62,7 @@ namespace Styly.NetSync.Internal.EditorTools
                 {
                     continue;
                 }
-                string guid = obj.GuidForEditor;
+                string guid = obj.ObjectIdForEditor;
                 if (string.IsNullOrEmpty(guid) || !System.Guid.TryParse(guid, out _))
                 {
                     missing.Add(obj);
@@ -233,7 +233,7 @@ namespace Styly.NetSync.Internal.EditorTools
                 {
                     continue;
                 }
-                string guid = o.GuidForEditor;
+                string guid = o.ObjectIdForEditor;
                 if (string.IsNullOrEmpty(guid) || !System.Guid.TryParse(guid, out _))
                 {
                     o.RegenerateGuid_EditorOnly();
