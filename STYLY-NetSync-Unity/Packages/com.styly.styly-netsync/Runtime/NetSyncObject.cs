@@ -36,25 +36,18 @@ namespace Styly.NetSync
 
         internal NetSyncTransformApplier TransformApplier => _transformApplier;
 
-        public void Claim()
-        {
-            var manager = NetSyncManager.Instance;
-            if (manager == null) return;
-            manager.RequestObjectOwnership(0, _objectId);
-        }
-
-        public void Release()
-        {
-            var manager = NetSyncManager.Instance;
-            if (manager == null) return;
-            manager.RequestObjectOwnership(1, _objectId);
-        }
-
-        public void ForceClaim()
+        public void RequestOwnership()
         {
             var manager = NetSyncManager.Instance;
             if (manager == null) return;
             manager.RequestObjectOwnership(2, _objectId);
+        }
+
+        public void ReleaseOwnership()
+        {
+            var manager = NetSyncManager.Instance;
+            if (manager == null) return;
+            manager.RequestObjectOwnership(1, _objectId);
         }
 
         internal void SetOwnerClientNoInternal(int ownerClientNo)

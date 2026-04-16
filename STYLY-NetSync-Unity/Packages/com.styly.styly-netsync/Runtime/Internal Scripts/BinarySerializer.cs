@@ -24,7 +24,7 @@ namespace Styly.NetSync
         public const byte MSG_ROOM_POSE = 12;  // Room pose snapshot (quaternion + timestamps)
         public const byte MSG_OBJECT_POSE = 13;              // Client → Server: owned object Transform
         public const byte MSG_ROOM_OBJECTS = 14;             // Server → Clients (PUB): room object states
-        public const byte MSG_OBJECT_OWNERSHIP_REQUEST = 15; // Client → Server: Claim/Release/ForceClaim
+        public const byte MSG_OBJECT_OWNERSHIP_REQUEST = 15; // Client → Server: RequestOwnership/ReleaseOwnership
         public const byte MSG_OBJECT_OWNERSHIP_CHANGED = 16; // Server → Clients: ownership changed
         public const byte MSG_OBJECT_OWNERSHIP_REJECTED = 17; // Server → Client: request rejected
 

@@ -21,7 +21,7 @@ MSG_CLIENT_POSE = 11
 MSG_ROOM_POSE = 12
 MSG_OBJECT_POSE = 13  # Client → Server: owned object Transform
 MSG_ROOM_OBJECTS = 14  # Server → Clients (PUB): room object states
-MSG_OBJECT_OWNERSHIP_REQUEST = 15  # Client → Server: Claim/Release/ForceClaim
+MSG_OBJECT_OWNERSHIP_REQUEST = 15  # Client → Server: RequestOwnership/ReleaseOwnership
 MSG_OBJECT_OWNERSHIP_CHANGED = 16  # Server → Clients (ROUTER): ownership changed
 MSG_OBJECT_OWNERSHIP_REJECTED = 17  # Server → Client (ROUTER): request rejected
 

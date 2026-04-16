@@ -1356,7 +1356,7 @@ class NetSyncServer:
         sender_client_no: int,
         data: dict[str, Any],
     ) -> None:
-        """Handle object ownership request (Claim/Release/ForceClaim)."""
+        """Handle object ownership request (RequestOwnership/ReleaseOwnership)."""
         operation_type = data.get("operationType", 0)
         object_id = data.get("objectId", "")
         if not object_id:
@@ -1386,30 +1386,7 @@ class NetSyncServer:
             # below, so clients still see the transition in real time.
             has_real_pose = bool(obj_state["body_bytes"])
 
-            if operation_type == 0:  # Claim
-                if previous_owner == 0:
-                    # Accept
-                    obj_state["owner_client_no"] = sender_client_no
-                    logger.info(
-                        f"Object '{object_id}' claimed by client {sender_client_no} "
-                        f"in room {room_id}"
-                    )
-                    changed_msg = binary_serializer.serialize_object_ownership_changed(
-                        object_id, sender_client_no, previous_owner
-                    )
-                    self._send_ctrl_to_room_via_router(room_id, changed_msg)
-                    if has_real_pose:
-                        self.room_object_dirty[room_id] = True
-                else:
-                    # Reject
-                    rejected_msg = (
-                        binary_serializer.serialize_object_ownership_rejected(
-                            object_id, previous_owner, 0  # reason: already_owned
-                        )
-                    )
-                    self._enqueue_router(client_identity, room_id, rejected_msg)
-
-            elif operation_type == 1:  # Release
+            if operation_type == 1:  # ReleaseOwnership
                 if previous_owner == sender_client_no:
                     obj_state["owner_client_no"] = 0
                     logger.info(
@@ -1431,10 +1408,10 @@ class NetSyncServer:
                     )
                     self._enqueue_router(client_identity, room_id, rejected_msg)
 
-            elif operation_type == 2:  # ForceClaim
+            elif operation_type == 2:  # RequestOwnership
                 obj_state["owner_client_no"] = sender_client_no
                 logger.info(
-                    f"Object '{object_id}' force-claimed by client "
+                    f"Object '{object_id}' ownership taken by client "
                     f"{sender_client_no} in room {room_id}"
                 )
                 changed_msg = binary_serializer.serialize_object_ownership_changed(

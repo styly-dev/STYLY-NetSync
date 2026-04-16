@@ -170,37 +170,24 @@ class TestRoomObjectsSerialization:
 class TestOwnershipRequestSerialization:
     """Test MSG_OBJECT_OWNERSHIP_REQUEST (15) deserialize."""
 
-    def test_claim(self) -> None:
-        # Build request manually
+    def test_release_ownership(self) -> None:
         buf = bytearray()
         buf.append(MSG_OBJECT_OWNERSHIP_REQUEST)
-        buf.append(0)  # operationType = claim
-        obj_id = b"test_obj"
+        buf.append(1)  # ReleaseOwnership
+        obj_id = b"obj"
         buf.append(len(obj_id))
         buf.extend(obj_id)
 
         msg_type, result, _ = deserialize(bytes(buf))
         assert msg_type == MSG_OBJECT_OWNERSHIP_REQUEST
         assert result is not None
-        assert result["operationType"] == 0
-        assert result["objectId"] == "test_obj"
-
-    def test_release(self) -> None:
-        buf = bytearray()
-        buf.append(MSG_OBJECT_OWNERSHIP_REQUEST)
-        buf.append(1)  # release
-        obj_id = b"obj"
-        buf.append(len(obj_id))
-        buf.extend(obj_id)
-
-        _, result, _ = deserialize(bytes(buf))
-        assert result is not None
         assert result["operationType"] == 1
+        assert result["objectId"] == "obj"
 
-    def test_force_claim(self) -> None:
+    def test_request_ownership(self) -> None:
         buf = bytearray()
         buf.append(MSG_OBJECT_OWNERSHIP_REQUEST)
-        buf.append(2)  # force_claim
+        buf.append(2)  # RequestOwnership
         obj_id = b"obj"
         buf.append(len(obj_id))
         buf.extend(obj_id)
@@ -317,30 +304,31 @@ class TestServerObjectOwnership:
 
         return srv
 
-    def test_claim_empty_object(self, server) -> None:  # type: ignore[no-untyped-def]
-        """Claiming an unowned object should succeed."""
-        data = {"operationType": 0, "objectId": "obj1"}
+    def test_request_ownership_empty_object(self, server) -> None:  # type: ignore[no-untyped-def]
+        """RequestOwnership on an unowned object should take ownership."""
+        data = {"operationType": 2, "objectId": "obj1"}
         server._handle_object_ownership_request(b"ident_a", "test_room", 1, data)
 
         assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 1
 
-    def test_claim_owned_object_rejected(self, server) -> None:  # type: ignore[no-untyped-def]
-        """Claiming an object already owned by another should be rejected."""
-        # First claim by client 1
-        data = {"operationType": 0, "objectId": "obj1"}
-        server._handle_object_ownership_request(b"ident_a", "test_room", 1, data)
-
-        # Then try to claim by client 2
-        server._handle_object_ownership_request(b"ident_b", "test_room", 2, data)
-
-        # Should still be owned by client 1
-        assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 1
-
-    def test_release(self, server) -> None:  # type: ignore[no-untyped-def]
-        """Releasing an owned object should set owner to 0."""
-        # Claim
+    def test_request_ownership_takes_over_existing_owner(self, server) -> None:  # type: ignore[no-untyped-def]
+        """RequestOwnership should take ownership regardless of prior owner."""
+        # Client 1 takes ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
+        )
+        # Client 2 takes over
+        server._handle_object_ownership_request(
+            b"ident_b", "test_room", 2, {"operationType": 2, "objectId": "obj1"}
+        )
+
+        assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 2
+
+    def test_release_ownership(self, server) -> None:  # type: ignore[no-untyped-def]
+        """Releasing an owned object should set owner to 0."""
+        # Take ownership
+        server._handle_object_ownership_request(
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
         )
         # Release
         server._handle_object_ownership_request(
@@ -351,9 +339,9 @@ class TestServerObjectOwnership:
 
     def test_release_by_non_owner_rejected(self, server) -> None:  # type: ignore[no-untyped-def]
         """Releasing by a non-owner should be rejected."""
-        # Claim by client 1
+        # Client 1 takes ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
         )
         # Try to release by client 2
         server._handle_object_ownership_request(
@@ -363,24 +351,11 @@ class TestServerObjectOwnership:
         # Still owned by client 1
         assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 1
 
-    def test_force_claim(self, server) -> None:  # type: ignore[no-untyped-def]
-        """Force claim should take ownership regardless."""
-        # Claim by client 1
-        server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
-        )
-        # Force claim by client 2
-        server._handle_object_ownership_request(
-            b"ident_b", "test_room", 2, {"operationType": 2, "objectId": "obj1"}
-        )
-
-        assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 2
-
     def test_object_pose_from_owner(self, server) -> None:  # type: ignore[no-untyped-def]
         """Object pose from owner should update state."""
-        # Claim
+        # Take ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
         )
         # Send pose
         data = {
@@ -395,9 +370,9 @@ class TestServerObjectOwnership:
 
     def test_object_pose_from_non_owner_ignored(self, server) -> None:  # type: ignore[no-untyped-def]
         """Object pose from non-owner should be ignored."""
-        # Claim by client 1
+        # Client 1 takes ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
         )
         # Reset dirty flag
         server.room_object_dirty["test_room"] = False
@@ -414,8 +389,8 @@ class TestServerObjectOwnership:
         assert server.room_objects["test_room"]["obj1"]["pose_seq"] == 0
         assert server.room_object_dirty["test_room"] is False
 
-    def test_dirty_flag_not_set_on_claim_without_pose(self, server) -> None:  # type: ignore[no-untyped-def]
-        """Ownership-only Claim must NOT mark the room dirty when no pose exists.
+    def test_dirty_flag_not_set_on_request_without_pose(self, server) -> None:  # type: ignore[no-untyped-def]
+        """Ownership-only RequestOwnership must NOT mark the room dirty when no pose exists.
 
         Rationale: ownership changes are delivered via ROUTER ownership_changed.
         Marking the room dirty with empty body_bytes would cause the next PUB
@@ -423,12 +398,12 @@ class TestServerObjectOwnership:
         """
         server.room_object_dirty["test_room"] = False
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
         )
         assert server.room_object_dirty["test_room"] is False
 
-    def test_dirty_flag_set_on_claim_with_existing_pose(self, server) -> None:  # type: ignore[no-untyped-def]
-        """Claim on an object that already has a real pose should mark dirty
+    def test_dirty_flag_set_on_request_with_existing_pose(self, server) -> None:  # type: ignore[no-untyped-def]
+        """RequestOwnership on an object that already has a real pose should mark dirty
         so the new owner is reflected in the next PUB snapshot."""
         # Seed with an existing pose.
         server.room_objects["test_room"]["obj1"] = {
@@ -439,6 +414,6 @@ class TestServerObjectOwnership:
         }
         server.room_object_dirty["test_room"] = False
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 0, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
         )
         assert server.room_object_dirty["test_room"] is True

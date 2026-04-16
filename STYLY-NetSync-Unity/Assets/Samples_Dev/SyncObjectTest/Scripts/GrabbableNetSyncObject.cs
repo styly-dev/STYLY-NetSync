@@ -65,7 +65,7 @@ public class GrabbableNetSyncObject : MonoBehaviour
         if (!_claimOnOwnerDisconnect) return;
         if (_netSyncObject.OwnerClientNo != clientNo) return;
 
-        _netSyncObject.ForceClaim();
+        _netSyncObject.RequestOwnership();
     }
 
     private void OnXRSelectEntered(SelectEnterEventArgs args)
@@ -87,7 +87,7 @@ public class GrabbableNetSyncObject : MonoBehaviour
     public void Grab()
     {
         _isGrabbed = true;
-        _netSyncObject.ForceClaim();
+        _netSyncObject.RequestOwnership();
         _rb.isKinematic = false;
     }
 
