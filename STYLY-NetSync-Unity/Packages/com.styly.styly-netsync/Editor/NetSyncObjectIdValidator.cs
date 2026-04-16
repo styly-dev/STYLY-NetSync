@@ -18,6 +18,8 @@ namespace Styly.NetSync.Internal.EditorTools
         {
             EditorSceneManager.sceneOpened += OnSceneOpened;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            // Run once after domain reload to catch issues in already-loaded scenes.
+            EditorApplication.delayCall += ValidateAndFix;
         }
 
         private static void OnSceneOpened(Scene scene, OpenSceneMode mode)
