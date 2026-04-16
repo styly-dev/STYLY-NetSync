@@ -72,8 +72,10 @@ namespace Styly.NetSync
             _connectionManager.TryEnqueueControl(roomId, payload);
         }
 
-        public void Tick(string roomId, float currentTime, int localClientNo)
+        public void Tick(string roomId, float currentTime, int localClientNo, float transformSendRate)
         {
+            float sendInterval = 1f / Mathf.Max(0.5f, transformSendRate);
+
             // Send owned object transforms
             foreach (var kvp in _registeredObjects)
             {
@@ -88,7 +90,6 @@ namespace Styly.NetSync
                     state = new ObjectSendState();
                 }
 
-                float sendInterval = 1f / Mathf.Max(0.5f, obj.SendRate);
                 if (currentTime - state.LastSendTime < sendInterval) continue;
 
                 var t = obj.transform;

@@ -616,7 +616,7 @@ namespace Styly.NetSync
                 // Object sync: send owned object transforms and apply received transforms
                 if (_objectSyncManager != null)
                 {
-                    _objectSyncManager.Tick(_roomId, Time.time, _clientNo);
+                    _objectSyncManager.Tick(_roomId, Time.time, _clientNo, _transformSendRate);
                     _objectSyncManager.TickTransformAppliers(Time.deltaTime, NetSyncClock.NowSeconds());
                 }
             }

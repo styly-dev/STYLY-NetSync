@@ -9,15 +9,11 @@ namespace Styly.NetSync
         [SerializeField, Tooltip("Unique ID for this object within the room. Must be the same on all clients.")]
         private string _objectId;
 
-        [SerializeField, Range(0.5f, 60f), Tooltip("Maximum send rate in Hz")]
-        private float _sendRate = 10f;
-
         private int _ownerClientNo;
         private NetSyncTransformApplier _transformApplier;
 
         public string ObjectId => _objectId;
         public int OwnerClientNo => _ownerClientNo;
-        public float SendRate => _sendRate;
 
         public bool IsOwnedByMe
         {
@@ -72,7 +68,7 @@ namespace Styly.NetSync
                     NetSyncTransformApplier.SpaceMode.World,
                     manager.TimeEstimator,
                     null,
-                    _sendRate);
+                    manager.TransformSendRate);
                 manager.RegisterNetSyncObject(this);
             }
         }
