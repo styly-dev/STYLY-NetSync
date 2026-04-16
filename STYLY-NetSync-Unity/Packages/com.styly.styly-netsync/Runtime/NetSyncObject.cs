@@ -79,7 +79,7 @@ namespace Styly.NetSync
         /// <summary>
         /// Short id of the current owner (0 = server-owned / unowned).
         /// </summary>
-        public int CurrentOwnerClientNo
+        public int OwnerClientNo
         {
             get
             {

@@ -107,7 +107,7 @@ namespace Styly.NetSync.Tests.EditorTests
 
             Assert.IsTrue(_obj.IsOwnedByMe);
             Assert.AreEqual(7u, _obj.AuthorityEpoch);
-            Assert.AreEqual(LocalClientNo, _obj.CurrentOwnerClientNo);
+            Assert.AreEqual(LocalClientNo, _obj.OwnerClientNo);
             Assert.AreEqual(1, perObject.Count);
             Assert.AreEqual(LocalClientNo, perObject[0].newOwner);
             Assert.IsFalse(client.HasPending(_entityId));
@@ -132,7 +132,7 @@ namespace Styly.NetSync.Tests.EditorTests
             client.HandleOwnershipEvent(Event(_entityId, 0, 1u, OwnershipResult.Denied));
 
             Assert.IsFalse(_obj.IsOwnedByMe);
-            Assert.AreEqual(0, _obj.CurrentOwnerClientNo);
+            Assert.AreEqual(0, _obj.OwnerClientNo);
             Assert.AreEqual(1, perObject.Count);
             Assert.AreEqual(0, perObject[0].newOwner);
             Assert.IsFalse(client.HasPending(_entityId));
@@ -161,7 +161,7 @@ namespace Styly.NetSync.Tests.EditorTests
             client.HandleOwnershipEvent(Event(_entityId, 0, 4u, OwnershipResult.Released));
 
             Assert.IsFalse(_obj.IsOwnedByMe);
-            Assert.AreEqual(0, _obj.CurrentOwnerClientNo);
+            Assert.AreEqual(0, _obj.OwnerClientNo);
             Assert.AreEqual(4u, _obj.AuthorityEpoch);
         }
 
@@ -187,7 +187,7 @@ namespace Styly.NetSync.Tests.EditorTests
             };
             client.HandleSnapshotEntity(rec);
 
-            Assert.AreEqual(OtherClientNo, _obj.CurrentOwnerClientNo);
+            Assert.AreEqual(OtherClientNo, _obj.OwnerClientNo);
             Assert.AreEqual(9u, _obj.AuthorityEpoch);
             Assert.IsFalse(_obj.IsOwnedByMe);
         }

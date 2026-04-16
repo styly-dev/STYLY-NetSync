@@ -23,7 +23,7 @@ steps below to exercise the new Phase 5 APIs against a running server.
    - a **Force Resync** button calling `NetSyncManager.Instance
      .RequestReplicationResync()`
    - a status `TMP_Text` whose `text` property is refreshed each frame from
-     `$"owned={cube.IsOwnedByMe} owner={cube.CurrentOwnerClientNo}"`.
+     `$"owned={cube.IsOwnedByMe} owner={cube.OwnerClientNo}"`.
 
 ## Triggering the new flow
 
