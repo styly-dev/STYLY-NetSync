@@ -1,6 +1,6 @@
 // NetSyncBuildValidator.cs
 // IPreprocessBuildWithReport hook that fails the build if any scene in the
-// build list contains duplicate or missing NetSyncObject GUIDs.
+// build list contains duplicate or missing NetSyncObject ObjectIds.
 
 using System.Collections.Generic;
 using Styly.NetSync;
@@ -56,7 +56,7 @@ namespace Styly.NetSync.Internal.EditorTools
             {
                 string joined = string.Join("\n  - ", failures);
                 throw new BuildFailedException(
-                    $"[NetSync] Build aborted: {totalDuplicates} duplicate GUID group(s), {totalMissing} missing GUID(s).\n  - {joined}");
+                    $"[NetSync] Build aborted: {totalDuplicates} duplicate ObjectId group(s), {totalMissing} missing ObjectId(s).\n  - {joined}");
             }
         }
 
@@ -64,7 +64,7 @@ namespace Styly.NetSync.Internal.EditorTools
         {
             duplicates = 0;
             missing = 0;
-            Dictionary<string, List<string>> byGuid = new Dictionary<string, List<string>>();
+            Dictionary<string, List<string>> byObjectId = new Dictionary<string, List<string>>();
             List<string> missingNames = new List<string>();
 
             GameObject[] roots = scene.GetRootGameObjects();
@@ -83,33 +83,33 @@ namespace Styly.NetSync.Internal.EditorTools
                     {
                         continue;
                     }
-                    string guid = o.ObjectIdForEditor;
-                    if (string.IsNullOrEmpty(guid) || !System.Guid.TryParse(guid, out _))
+                    string objectId = o.ObjectIdForEditor;
+                    if (string.IsNullOrEmpty(objectId) || !System.Guid.TryParse(objectId, out _))
                     {
                         missingNames.Add(o.name);
                         continue;
                     }
-                    if (!byGuid.TryGetValue(guid, out List<string> names))
+                    if (!byObjectId.TryGetValue(objectId, out List<string> names))
                     {
                         names = new List<string>();
-                        byGuid[guid] = names;
+                        byObjectId[objectId] = names;
                     }
                     names.Add(o.name);
                 }
             }
 
-            foreach (KeyValuePair<string, List<string>> kv in byGuid)
+            foreach (KeyValuePair<string, List<string>> kv in byObjectId)
             {
                 if (kv.Value.Count > 1)
                 {
                     duplicates++;
-                    failures.Add($"{scene.path}: duplicate GUID {kv.Key} on [{string.Join(", ", kv.Value)}]");
+                    failures.Add($"{scene.path}: duplicate ObjectId {kv.Key} on [{string.Join(", ", kv.Value)}]");
                 }
             }
             for (int i = 0; i < missingNames.Count; i++)
             {
                 missing++;
-                failures.Add($"{scene.path}: missing GUID on '{missingNames[i]}'");
+                failures.Add($"{scene.path}: missing ObjectId on '{missingNames[i]}'");
             }
         }
     }

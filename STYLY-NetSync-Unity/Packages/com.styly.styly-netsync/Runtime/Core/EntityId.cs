@@ -1,6 +1,6 @@
 // EntityId.cs
-// Deterministic GUID -> ulong derivation used to address replicated entities
-// on the wire. Same input GUID always produces the same EntityId across
+// Deterministic ObjectId -> ulong derivation used to address replicated entities
+// on the wire. Same input ObjectId always produces the same EntityId across
 // processes and machines.
 
 using System;
@@ -8,10 +8,10 @@ using System;
 namespace Styly.NetSync.Internal
 {
     /// <summary>
-    /// Helpers to derive a 64-bit network EntityId from an authored GUID.
+    /// Helpers to derive a 64-bit network EntityId from an authored ObjectId.
     ///
     /// Derivation:
-    ///   1. Parse the GUID string into its 16-byte big-endian RFC form
+    ///   1. Parse the ObjectId string (GUID format) into its 16-byte big-endian RFC form
     ///      (via <see cref="Guid.ToByteArray"/> then normalized to
     ///      big-endian so the layout is independent of host endianness).
     ///   2. Fold the 16 bytes into two little-endian uint64 halves
@@ -31,7 +31,7 @@ namespace Styly.NetSync.Internal
         public const ulong Invalid = 0UL;
 
         /// <summary>
-        /// Derive an EntityId from an authored GUID string. Returns
+        /// Derive an EntityId from an authored ObjectId string. Returns
         /// <see cref="Invalid"/> when the string cannot be parsed.
         /// </summary>
         public static ulong FromGuidString(string guidString)

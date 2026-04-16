@@ -53,7 +53,7 @@ namespace Styly.NetSync.Tests.EditorTests
         {
             // Guid whose hi and lo halves are identical will XOR to zero.
             // Build one manually: 16 bytes where first 8 == last 8 (after
-            // normalization). Easiest: all-zero GUID folds to zero, but
+            // normalization). Easiest: all-zero ObjectId folds to zero, but
             // Guid.Empty's normalized bytes are all zero too → expect 1.
             ulong id = EntityIdUtils.FromGuid(Guid.Empty);
             Assert.AreEqual(1UL, id);

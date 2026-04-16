@@ -21,8 +21,8 @@ namespace Styly.NetSync.Internal
     ///
     /// Contributing inputs, in order:
     ///   1. Scene name
-    ///   2. For each NetSyncObject (sorted by GUID ascending):
-    ///        - GUID
+    ///   2. For each NetSyncObject (sorted by ObjectId ascending):
+    ///        - ObjectId
     ///        - authored default local position (x,y,z)
     ///        - authored default local rotation (x,y,z,w)
     ///        - authored default local scale (x,y,z)
@@ -73,7 +73,7 @@ namespace Styly.NetSync.Internal
                 }
             }
 
-            // Sort by GUID for determinism.
+            // Sort by ObjectId for determinism.
             all.Sort((a, b) =>
             {
                 string ga = a != null ? a.ObjectId : string.Empty;

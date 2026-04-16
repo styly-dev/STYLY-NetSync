@@ -1,5 +1,5 @@
 // NetSyncObjectIdValidator.cs
-// Automatically detects and fixes duplicate / missing NetSyncObject GUIDs
+// Automatically detects and fixes duplicate / missing NetSyncObject ObjectIds
 // when scenes are opened or Play Mode is entered.
 
 using System.Collections.Generic;
@@ -73,14 +73,14 @@ namespace Styly.NetSync.Internal.EditorTools
         }
 
         /// <summary>
-        /// Regenerate missing GUIDs, and for any duplicate group keep the
+        /// Regenerate missing ObjectIds, and for any duplicate group keep the
         /// first occurrence and regenerate the rest. Returns the number of
-        /// components whose GUID was changed.
+        /// components whose ObjectId was changed.
         /// </summary>
         private static int FixAll()
         {
             List<NetSyncObject> all = CollectAllInLoadedScenes();
-            Dictionary<string, List<NetSyncObject>> byGuid = new Dictionary<string, List<NetSyncObject>>();
+            Dictionary<string, List<NetSyncObject>> byObjectId = new Dictionary<string, List<NetSyncObject>>();
             List<NetSyncObject> missing = new List<NetSyncObject>();
 
             for (int i = 0; i < all.Count; i++)
@@ -90,16 +90,16 @@ namespace Styly.NetSync.Internal.EditorTools
                 {
                     continue;
                 }
-                string guid = obj.ObjectIdForEditor;
-                if (string.IsNullOrEmpty(guid) || !System.Guid.TryParse(guid, out _))
+                string objectId = obj.ObjectIdForEditor;
+                if (string.IsNullOrEmpty(objectId) || !System.Guid.TryParse(objectId, out _))
                 {
                     missing.Add(obj);
                     continue;
                 }
-                if (!byGuid.TryGetValue(guid, out List<NetSyncObject> list))
+                if (!byObjectId.TryGetValue(objectId, out List<NetSyncObject> list))
                 {
                     list = new List<NetSyncObject>();
-                    byGuid[guid] = list;
+                    byObjectId[objectId] = list;
                 }
                 list.Add(obj);
             }
@@ -116,7 +116,7 @@ namespace Styly.NetSync.Internal.EditorTools
                 }
             }
 
-            foreach (KeyValuePair<string, List<NetSyncObject>> kv in byGuid)
+            foreach (KeyValuePair<string, List<NetSyncObject>> kv in byObjectId)
             {
                 List<NetSyncObject> list = kv.Value;
                 if (list.Count <= 1)
@@ -124,7 +124,7 @@ namespace Styly.NetSync.Internal.EditorTools
                     continue;
                 }
                 // Skip index 0 — keep the first occurrence as the canonical
-                // owner of the authored GUID.
+                // owner of the authored ObjectId.
                 for (int i = 1; i < list.Count; i++)
                 {
                     NetSyncObject o = list[i];
@@ -142,7 +142,7 @@ namespace Styly.NetSync.Internal.EditorTools
 
     /// <summary>
     /// Asset postprocessor: when a prefab is (re)imported, sweep any
-    /// NetSyncObject with a missing GUID and assign one. This covers
+    /// NetSyncObject with a missing ObjectId and assign one. This covers
     /// duplicated prefabs that land in the project without passing
     /// through OnValidate.
     /// </summary>
@@ -185,8 +185,8 @@ namespace Styly.NetSync.Internal.EditorTools
                 {
                     continue;
                 }
-                string guid = o.ObjectIdForEditor;
-                if (string.IsNullOrEmpty(guid) || !System.Guid.TryParse(guid, out _))
+                string objectId = o.ObjectIdForEditor;
+                if (string.IsNullOrEmpty(objectId) || !System.Guid.TryParse(objectId, out _))
                 {
                     o.RegenerateGuid_EditorOnly();
                     changed = true;

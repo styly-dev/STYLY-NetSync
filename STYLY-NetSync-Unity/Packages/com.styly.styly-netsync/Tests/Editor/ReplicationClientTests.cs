@@ -38,7 +38,7 @@ namespace Styly.NetSync.Tests.EditorTests
         {
             _go = new GameObject("ReplTestObj");
             _obj = _go.AddComponent<NetSyncObject>();
-            // Force a deterministic GUID and register with the registry.
+            // Force a deterministic ObjectId and register with the registry.
             SerializedObject so = new SerializedObject(_obj);
             SerializedProperty guidProp = so.FindProperty("_guid");
             guidProp.stringValue = "11111111-2222-3333-4444-555566667777";

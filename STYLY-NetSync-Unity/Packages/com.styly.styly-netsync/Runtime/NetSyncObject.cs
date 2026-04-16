@@ -10,7 +10,7 @@ namespace Styly.NetSync
 {
     /// <summary>
     /// Attach to any GameObject that should participate in network
-    /// replication. Holds a stable authored GUID and a replication profile.
+    /// replication. Holds a stable authored ObjectId and a replication profile.
     ///
     /// Network behavior (ownership, snapshot application, state emission)
     /// is added in later phases.
@@ -32,14 +32,14 @@ namespace Styly.NetSync
         private string _cachedGuidForEntityId;
 
         /// <summary>
-        /// Raw GUID string as authored. Empty when not yet assigned. Do NOT
+        /// Raw ObjectId string as authored. Empty when not yet assigned. Do NOT
         /// mutate at runtime; EntityId is derived from this value.
         /// </summary>
         public string ObjectId => _guid;
 
         /// <summary>
-        /// 64-bit network-facing identifier derived from <see cref="Guid"/>.
-        /// Stable across processes and builds as long as the authored GUID
+        /// 64-bit network-facing identifier derived from <see cref="ObjectId"/>.
+        /// Stable across processes and builds as long as the authored ObjectId
         /// does not change. See <see cref="EntityIdUtils.FromGuidString"/>
         /// for the derivation.
         /// </summary>
@@ -161,8 +161,8 @@ namespace Styly.NetSync
 #if UNITY_EDITOR
         private void OnValidate()
         {
-            // Auto-assign a GUID at authoring time so designers don't have
-            // to think about it. Runs in the editor only.
+            // Auto-assign an ObjectId at authoring time so designers don't
+            // have to think about it. Runs in the editor only.
             if (string.IsNullOrEmpty(_guid))
             {
                 _guid = System.Guid.NewGuid().ToString("D");
@@ -170,18 +170,18 @@ namespace Styly.NetSync
             }
             else if (!System.Guid.TryParse(_guid, out _))
             {
-                // Malformed GUID — regenerate and warn.
-                Debug.LogWarning($"[NetSync] NetSyncObject '{name}' had a malformed GUID; regenerating.", this);
+                // Malformed ObjectId — regenerate and warn.
+                Debug.LogWarning($"[NetSync] NetSyncObject '{name}' had a malformed ObjectId; regenerating.", this);
                 _guid = System.Guid.NewGuid().ToString("D");
                 UnityEditor.EditorUtility.SetDirty(this);
             }
-            // Invalidate the EntityId cache so a freshly-assigned GUID is
+            // Invalidate the EntityId cache so a freshly-assigned ObjectId is
             // reflected on the next access.
             _cachedGuidForEntityId = null;
         }
 
         /// <summary>
-        /// Editor-only: force-regenerate the GUID. Used by validators when
+        /// Editor-only: force-regenerate the ObjectId. Used by validators when
         /// resolving duplicates. Marks the object dirty.
         /// </summary>
         internal void RegenerateGuid_EditorOnly()
@@ -192,7 +192,7 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Editor-only accessor for the stored GUID field. Used by build
+        /// Editor-only accessor for the stored ObjectId field. Used by build
         /// validators and scene-hash tooling.
         /// </summary>
         internal string ObjectIdForEditor => _guid;

@@ -95,7 +95,7 @@ namespace Styly.NetSync.Internal
             ulong id = obj.EntityId;
             if (id == EntityIdUtils.Invalid)
             {
-                Debug.LogError($"[NetSync] Refusing to register NetSyncObject '{obj.name}' with invalid EntityId (missing or malformed GUID).", obj);
+                Debug.LogError($"[NetSync] Refusing to register NetSyncObject '{obj.name}' with invalid EntityId (missing or malformed ObjectId).", obj);
                 return;
             }
 
