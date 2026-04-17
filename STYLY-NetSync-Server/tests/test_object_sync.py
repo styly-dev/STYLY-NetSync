@@ -20,13 +20,20 @@ from styly_netsync.binary_serializer import (
     serialize_room_objects,
 )
 
+# Arbitrary uint32 ObjectId values used as test fixtures. The client side derives
+# these from GlobalObjectId in the editor; for these protocol-level tests any
+# stable non-zero uint32 works.
+_OBJ_ID_1 = 0xDEADBEEF
+_OBJ_ID_A = 0xA0A0A0A0
+_OBJ_ID_B = 0xB0B0B0B0
+
 
 class TestObjectPoseSerialization:
     """Test MSG_OBJECT_POSE (13) serialize/deserialize round-trip."""
 
     def test_basic_round_trip(self) -> None:
         data = {
-            "objectId": "test_obj_1",
+            "objectId": _OBJ_ID_1,
             "poseSeq": 42,
             "posX": 1.5,
             "posY": 2.0,
@@ -42,7 +49,7 @@ class TestObjectPoseSerialization:
         msg_type, result, _ = deserialize(raw)
         assert msg_type == MSG_OBJECT_POSE
         assert result is not None
-        assert result["objectId"] == "test_obj_1"
+        assert result["objectId"] == _OBJ_ID_1
         assert result["poseSeq"] == 42
         assert abs(result["posX"] - 1.5) < 0.02
         assert abs(result["posY"] - 2.0) < 0.02
@@ -50,7 +57,7 @@ class TestObjectPoseSerialization:
 
     def test_body_bytes_extracted(self) -> None:
         data = {
-            "objectId": "obj",
+            "objectId": _OBJ_ID_1,
             "poseSeq": 1,
             "posX": 0.0,
             "posY": 0.0,
@@ -67,9 +74,10 @@ class TestObjectPoseSerialization:
         assert "bodyBytes" in result
         assert len(result["bodyBytes"]) == 13
 
-    def test_long_object_id_clamped(self) -> None:
+    def test_object_id_upper_bound(self) -> None:
+        """uint32 accepts the full 32-bit range including 0xFFFFFFFF."""
         data = {
-            "objectId": "a" * 100,
+            "objectId": 0xFFFFFFFF,
             "poseSeq": 0,
             "posX": 0.0,
             "posY": 0.0,
@@ -82,7 +90,7 @@ class TestObjectPoseSerialization:
         raw = serialize_object_pose(data)
         _, result, _ = deserialize(raw)
         assert result is not None
-        assert len(result["objectId"]) == 64
+        assert result["objectId"] == 0xFFFFFFFF
 
 
 class TestRoomObjectsSerialization:
@@ -101,7 +109,7 @@ class TestRoomObjectsSerialization:
     def test_multiple_objects(self) -> None:
         objects = [
             {
-                "objectId": "obj_A",
+                "objectId": _OBJ_ID_A,
                 "ownerClientNo": 1,
                 "poseSeq": 10,
                 "poseTime": 100.0,
@@ -114,7 +122,7 @@ class TestRoomObjectsSerialization:
                 "rotW": 1.0,
             },
             {
-                "objectId": "obj_B",
+                "objectId": _OBJ_ID_B,
                 "ownerClientNo": 0,
                 "poseSeq": 0,
                 "poseTime": 0.0,
@@ -131,10 +139,10 @@ class TestRoomObjectsSerialization:
         _, result, _ = deserialize(raw)
         assert result is not None
         assert len(result["objects"]) == 2
-        assert result["objects"][0]["objectId"] == "obj_A"
+        assert result["objects"][0]["objectId"] == _OBJ_ID_A
         assert result["objects"][0]["ownerClientNo"] == 1
         assert result["objects"][0]["poseSeq"] == 10
-        assert result["objects"][1]["objectId"] == "obj_B"
+        assert result["objects"][1]["objectId"] == _OBJ_ID_B
         assert result["objects"][1]["ownerClientNo"] == 0
 
     def test_with_body_bytes(self) -> None:
@@ -153,7 +161,7 @@ class TestRoomObjectsSerialization:
 
         objects = [
             {
-                "objectId": "obj_cached",
+                "objectId": _OBJ_ID_1,
                 "ownerClientNo": 2,
                 "poseSeq": 5,
                 "poseTime": 50.0,
@@ -164,7 +172,7 @@ class TestRoomObjectsSerialization:
         _, result, _ = deserialize(raw)
         assert result is not None
         assert len(result["objects"]) == 1
-        assert result["objects"][0]["objectId"] == "obj_cached"
+        assert result["objects"][0]["objectId"] == _OBJ_ID_1
 
 
 class TestOwnershipRequestSerialization:
@@ -174,23 +182,19 @@ class TestOwnershipRequestSerialization:
         buf = bytearray()
         buf.append(MSG_OBJECT_OWNERSHIP_REQUEST)
         buf.append(1)  # ReleaseOwnership
-        obj_id = b"obj"
-        buf.append(len(obj_id))
-        buf.extend(obj_id)
+        buf.extend(struct.pack("<I", _OBJ_ID_1))
 
         msg_type, result, _ = deserialize(bytes(buf))
         assert msg_type == MSG_OBJECT_OWNERSHIP_REQUEST
         assert result is not None
         assert result["operationType"] == 1
-        assert result["objectId"] == "obj"
+        assert result["objectId"] == _OBJ_ID_1
 
     def test_request_ownership(self) -> None:
         buf = bytearray()
         buf.append(MSG_OBJECT_OWNERSHIP_REQUEST)
         buf.append(2)  # RequestOwnership
-        obj_id = b"obj"
-        buf.append(len(obj_id))
-        buf.extend(obj_id)
+        buf.extend(struct.pack("<I", _OBJ_ID_1))
 
         _, result, _ = deserialize(bytes(buf))
         assert result is not None
@@ -201,13 +205,13 @@ class TestOwnershipChangedSerialization:
     """Test MSG_OBJECT_OWNERSHIP_CHANGED (16) round-trip."""
 
     def test_round_trip(self) -> None:
-        raw = serialize_object_ownership_changed("my_obj", 5, 3)
+        raw = serialize_object_ownership_changed(_OBJ_ID_1, 5, 3)
         assert raw[0] == MSG_OBJECT_OWNERSHIP_CHANGED
 
         msg_type, result, _ = deserialize(raw)
         assert msg_type == MSG_OBJECT_OWNERSHIP_CHANGED
         assert result is not None
-        assert result["objectId"] == "my_obj"
+        assert result["objectId"] == _OBJ_ID_1
         assert result["newOwnerClientNo"] == 5
         assert result["previousOwnerClientNo"] == 3
 
@@ -216,18 +220,18 @@ class TestOwnershipRejectedSerialization:
     """Test MSG_OBJECT_OWNERSHIP_REJECTED (17) round-trip."""
 
     def test_round_trip(self) -> None:
-        raw = serialize_object_ownership_rejected("my_obj", 2, 0)
+        raw = serialize_object_ownership_rejected(_OBJ_ID_1, 2, 0)
         assert raw[0] == MSG_OBJECT_OWNERSHIP_REJECTED
 
         msg_type, result, _ = deserialize(raw)
         assert msg_type == MSG_OBJECT_OWNERSHIP_REJECTED
         assert result is not None
-        assert result["objectId"] == "my_obj"
+        assert result["objectId"] == _OBJ_ID_1
         assert result["currentOwnerClientNo"] == 2
         assert result["reasonCode"] == 0
 
     def test_not_owner_reason(self) -> None:
-        raw = serialize_object_ownership_rejected("obj", 1, 1)
+        raw = serialize_object_ownership_rejected(_OBJ_ID_1, 1, 1)
         _, result, _ = deserialize(raw)
         assert result is not None
         assert result["reasonCode"] == 1
@@ -306,87 +310,87 @@ class TestServerObjectOwnership:
 
     def test_request_ownership_empty_object(self, server) -> None:  # type: ignore[no-untyped-def]
         """RequestOwnership on an unowned object should take ownership."""
-        data = {"operationType": 2, "objectId": "obj1"}
+        data = {"operationType": 2, "objectId": _OBJ_ID_1}
         server._handle_object_ownership_request(b"ident_a", "test_room", 1, data)
 
-        assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 1
+        assert server.room_objects["test_room"][_OBJ_ID_1]["owner_client_no"] == 1
 
     def test_request_ownership_takes_over_existing_owner(self, server) -> None:  # type: ignore[no-untyped-def]
         """RequestOwnership should take ownership regardless of prior owner."""
         # Client 1 takes ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": _OBJ_ID_1}
         )
         # Client 2 takes over
         server._handle_object_ownership_request(
-            b"ident_b", "test_room", 2, {"operationType": 2, "objectId": "obj1"}
+            b"ident_b", "test_room", 2, {"operationType": 2, "objectId": _OBJ_ID_1}
         )
 
-        assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 2
+        assert server.room_objects["test_room"][_OBJ_ID_1]["owner_client_no"] == 2
 
     def test_release_ownership(self, server) -> None:  # type: ignore[no-untyped-def]
         """Releasing an owned object should set owner to 0."""
         # Take ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": _OBJ_ID_1}
         )
         # Release
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 1, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 1, "objectId": _OBJ_ID_1}
         )
 
-        assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 0
+        assert server.room_objects["test_room"][_OBJ_ID_1]["owner_client_no"] == 0
 
     def test_release_by_non_owner_rejected(self, server) -> None:  # type: ignore[no-untyped-def]
         """Releasing by a non-owner should be rejected."""
         # Client 1 takes ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": _OBJ_ID_1}
         )
         # Try to release by client 2
         server._handle_object_ownership_request(
-            b"ident_b", "test_room", 2, {"operationType": 1, "objectId": "obj1"}
+            b"ident_b", "test_room", 2, {"operationType": 1, "objectId": _OBJ_ID_1}
         )
 
         # Still owned by client 1
-        assert server.room_objects["test_room"]["obj1"]["owner_client_no"] == 1
+        assert server.room_objects["test_room"][_OBJ_ID_1]["owner_client_no"] == 1
 
     def test_object_pose_from_owner(self, server) -> None:  # type: ignore[no-untyped-def]
         """Object pose from owner should update state."""
         # Take ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": _OBJ_ID_1}
         )
         # Send pose
         data = {
-            "objectId": "obj1",
+            "objectId": _OBJ_ID_1,
             "poseSeq": 5,
             "bodyBytes": b"\x00" * 13,
         }
         server._handle_object_pose("test_room", 1, data)
 
-        assert server.room_objects["test_room"]["obj1"]["pose_seq"] == 5
+        assert server.room_objects["test_room"][_OBJ_ID_1]["pose_seq"] == 5
         assert server.room_object_dirty["test_room"] is True
 
     def test_object_pose_from_non_owner_ignored(self, server) -> None:  # type: ignore[no-untyped-def]
         """Object pose from non-owner should be ignored."""
         # Client 1 takes ownership
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": _OBJ_ID_1}
         )
         # Reset dirty flag
         server.room_object_dirty["test_room"] = False
 
         # Try to send pose from client 2
         data = {
-            "objectId": "obj1",
+            "objectId": _OBJ_ID_1,
             "poseSeq": 5,
             "bodyBytes": b"\x00" * 13,
         }
         server._handle_object_pose("test_room", 2, data)
 
         # Should not have updated
-        assert server.room_objects["test_room"]["obj1"]["pose_seq"] == 0
+        assert server.room_objects["test_room"][_OBJ_ID_1]["pose_seq"] == 0
         assert server.room_object_dirty["test_room"] is False
 
     def test_dirty_flag_not_set_on_request_without_pose(self, server) -> None:  # type: ignore[no-untyped-def]
@@ -398,7 +402,7 @@ class TestServerObjectOwnership:
         """
         server.room_object_dirty["test_room"] = False
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": _OBJ_ID_1}
         )
         assert server.room_object_dirty["test_room"] is False
 
@@ -406,7 +410,7 @@ class TestServerObjectOwnership:
         """RequestOwnership on an object that already has a real pose should mark dirty
         so the new owner is reflected in the next PUB snapshot."""
         # Seed with an existing pose.
-        server.room_objects["test_room"]["obj1"] = {
+        server.room_objects["test_room"][_OBJ_ID_1] = {
             "owner_client_no": 0,
             "pose_time": 1.0,
             "pose_seq": 7,
@@ -414,6 +418,23 @@ class TestServerObjectOwnership:
         }
         server.room_object_dirty["test_room"] = False
         server._handle_object_ownership_request(
-            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": "obj1"}
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": _OBJ_ID_1}
         )
         assert server.room_object_dirty["test_room"] is True
+
+    def test_zero_object_id_rejected_for_ownership(self, server) -> None:  # type: ignore[no-untyped-def]
+        """objectId == 0 is the "unassigned" sentinel and must never create state."""
+        server._handle_object_ownership_request(
+            b"ident_a", "test_room", 1, {"operationType": 2, "objectId": 0}
+        )
+        assert server.room_objects["test_room"] == {}
+
+    def test_zero_object_id_rejected_for_pose(self, server) -> None:  # type: ignore[no-untyped-def]
+        """Pose updates with objectId == 0 must be ignored (no auto-register)."""
+        server._handle_object_pose(
+            "test_room",
+            1,
+            {"objectId": 0, "poseSeq": 1, "bodyBytes": b"\x00" * 13},
+        )
+        assert server.room_objects["test_room"] == {}
+        assert server.room_object_dirty["test_room"] is False

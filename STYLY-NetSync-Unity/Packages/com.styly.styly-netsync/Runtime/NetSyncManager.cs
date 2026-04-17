@@ -231,7 +231,7 @@ namespace Styly.NetSync
             }
         }
 
-        public void RequestObjectOwnership(byte operationType, string objectId)
+        public void RequestObjectOwnership(byte operationType, uint objectId)
         {
             if (_objectSyncManager != null)
             {

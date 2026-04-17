@@ -1267,10 +1267,8 @@ def serialize_object_pose(data: dict[str, Any]) -> bytes:
     buffer = bytearray()
     buffer.append(MSG_OBJECT_POSE)
     buffer.append(PROTOCOL_VERSION)
-    object_id = data.get("objectId", "")
-    object_id_bytes = object_id.encode("utf-8")[:64]
-    buffer.append(len(object_id_bytes))
-    buffer.extend(object_id_bytes)
+    object_id = int(data.get("objectId", 0)) & 0xFFFFFFFF
+    buffer.extend(struct.pack("<I", object_id))
     buffer.extend(struct.pack("<H", int(data.get("poseSeq", 0)) & 0xFFFF))
     # Position: int24 x3
     _pack_int24_le(
@@ -1302,10 +1300,8 @@ def serialize_room_objects(
     buffer.extend(struct.pack("<d", broadcast_time))
     buffer.extend(struct.pack("<H", len(objects)))
     for obj in objects:
-        object_id = obj.get("objectId", "")
-        object_id_bytes = object_id.encode("utf-8")[:64]
-        buffer.append(len(object_id_bytes))
-        buffer.extend(object_id_bytes)
+        object_id = int(obj.get("objectId", 0)) & 0xFFFFFFFF
+        buffer.extend(struct.pack("<I", object_id))
         buffer.extend(struct.pack("<H", int(obj.get("ownerClientNo", 0)) & 0xFFFF))
         buffer.extend(struct.pack("<H", int(obj.get("poseSeq", 0)) & 0xFFFF))
         buffer.extend(struct.pack("<d", float(obj.get("poseTime", 0.0))))
@@ -1338,28 +1334,24 @@ def serialize_room_objects(
 
 
 def serialize_object_ownership_changed(
-    object_id: str, new_owner: int, previous_owner: int
+    object_id: int, new_owner: int, previous_owner: int
 ) -> bytes:
     """Serialize ownership changed notification (Server -> Clients via ROUTER)."""
     buffer = bytearray()
     buffer.append(MSG_OBJECT_OWNERSHIP_CHANGED)
-    object_id_bytes = object_id.encode("utf-8")[:64]
-    buffer.append(len(object_id_bytes))
-    buffer.extend(object_id_bytes)
+    buffer.extend(struct.pack("<I", object_id & 0xFFFFFFFF))
     buffer.extend(struct.pack("<H", new_owner & 0xFFFF))
     buffer.extend(struct.pack("<H", previous_owner & 0xFFFF))
     return bytes(buffer)
 
 
 def serialize_object_ownership_rejected(
-    object_id: str, current_owner: int, reason_code: int
+    object_id: int, current_owner: int, reason_code: int
 ) -> bytes:
     """Serialize ownership rejected notification (Server -> Client via ROUTER)."""
     buffer = bytearray()
     buffer.append(MSG_OBJECT_OWNERSHIP_REJECTED)
-    object_id_bytes = object_id.encode("utf-8")[:64]
-    buffer.append(len(object_id_bytes))
-    buffer.extend(object_id_bytes)
+    buffer.extend(struct.pack("<I", object_id & 0xFFFFFFFF))
     buffer.extend(struct.pack("<H", current_owner & 0xFFFF))
     buffer.append(reason_code & 0xFF)
     return bytes(buffer)
@@ -1372,7 +1364,8 @@ def _deserialize_object_pose(data: bytes, offset: int) -> dict[str, Any]:
     offset += 1
     if protocol_version != PROTOCOL_VERSION:
         raise ValueError(f"Unsupported protocol version: {protocol_version}")
-    result["objectId"], offset = _unpack_string(data, offset)
+    result["objectId"] = struct.unpack("<I", data[offset : offset + 4])[0]
+    offset += 4
     result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
     # Extract body bytes (pos 9B + rot 4B = 13 bytes) for caching
@@ -1408,7 +1401,8 @@ def _deserialize_room_objects(data: bytes, offset: int) -> dict[str, Any]:
     objects: list[dict[str, Any]] = []
     for _ in range(object_count):
         obj: dict[str, Any] = {}
-        obj["objectId"], offset = _unpack_string(data, offset)
+        obj["objectId"] = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
         obj["ownerClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
         offset += 2
         obj["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
@@ -1438,14 +1432,16 @@ def _deserialize_object_ownership_request(data: bytes, offset: int) -> dict[str,
     result: dict[str, Any] = {}
     result["operationType"] = data[offset]
     offset += 1
-    result["objectId"], offset = _unpack_string(data, offset)
+    result["objectId"] = struct.unpack("<I", data[offset : offset + 4])[0]
+    offset += 4
     return result
 
 
 def _deserialize_object_ownership_changed(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize ownership changed notification."""
     result: dict[str, Any] = {}
-    result["objectId"], offset = _unpack_string(data, offset)
+    result["objectId"] = struct.unpack("<I", data[offset : offset + 4])[0]
+    offset += 4
     result["newOwnerClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
     result["previousOwnerClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
@@ -1456,7 +1452,8 @@ def _deserialize_object_ownership_changed(data: bytes, offset: int) -> dict[str,
 def _deserialize_object_ownership_rejected(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize ownership rejected notification."""
     result: dict[str, Any] = {}
-    result["objectId"], offset = _unpack_string(data, offset)
+    result["objectId"] = struct.unpack("<I", data[offset : offset + 4])[0]
+    offset += 4
     result["currentOwnerClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
     result["reasonCode"] = data[offset]

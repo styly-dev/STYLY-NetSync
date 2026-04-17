@@ -333,9 +333,9 @@ class NetSyncServer:
         self.nv_monitor_threshold = config.nv_monitor_threshold
 
         # Object sync state
-        # room_id -> objectId -> {"owner_client_no": int, "pose_time": float,
+        # room_id -> object_id (uint32) -> {"owner_client_no": int, "pose_time": float,
         #                         "pose_seq": int, "body_bytes": bytes}
-        self.room_objects: dict[str, dict[str, dict[str, Any]]] = {}
+        self.room_objects: dict[str, dict[int, dict[str, Any]]] = {}
         self.room_object_dirty: dict[str, bool] = {}
         self._room_last_object_broadcast: dict[str, float] = {}
 
@@ -1303,8 +1303,8 @@ class NetSyncServer:
         self, room_id: str, sender_client_no: int, data: dict[str, Any]
     ) -> None:
         """Handle object pose update from client."""
-        object_id = data.get("objectId", "")
-        if not object_id:
+        object_id = int(data.get("objectId", 0))
+        if object_id == 0:
             return
         body_bytes = data.get("bodyBytes", b"")
         pose_seq = int(data.get("poseSeq", 0))
@@ -1358,8 +1358,8 @@ class NetSyncServer:
     ) -> None:
         """Handle object ownership request (RequestOwnership/ReleaseOwnership)."""
         operation_type = data.get("operationType", 0)
-        object_id = data.get("objectId", "")
-        if not object_id:
+        object_id = int(data.get("objectId", 0))
+        if object_id == 0:
             return
 
         with self._rooms_lock:

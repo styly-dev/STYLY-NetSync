@@ -568,14 +568,11 @@ namespace Styly.NetSync
             writer.Write((byte)0);
         }
 
-        public static void SerializeObjectPoseInto(BinaryWriter writer, string objectId, ushort poseSeq, Vector3 position, Quaternion rotation)
+        public static void SerializeObjectPoseInto(BinaryWriter writer, uint objectId, ushort poseSeq, Vector3 position, Quaternion rotation)
         {
             writer.Write(MSG_OBJECT_POSE);
             writer.Write(PROTOCOL_VERSION);
-            var objectIdBytes = System.Text.Encoding.UTF8.GetBytes(objectId ?? string.Empty);
-            var idLen = Mathf.Min(objectIdBytes.Length, 64);
-            writer.Write((byte)idLen);
-            writer.Write(objectIdBytes, 0, idLen);
+            writer.Write(objectId);
             writer.Write(poseSeq);
             WriteInt24(writer, QuantizeSignedInt24(position.x, ABS_POS_SCALE));
             WriteInt24(writer, QuantizeSignedInt24(position.y, ABS_POS_SCALE));
@@ -583,14 +580,11 @@ namespace Styly.NetSync
             writer.Write(CompressQuaternionSmallestThree(NormalizeQuaternionSafe(rotation)));
         }
 
-        public static void SerializeObjectOwnershipRequestInto(BinaryWriter writer, byte operationType, string objectId)
+        public static void SerializeObjectOwnershipRequestInto(BinaryWriter writer, byte operationType, uint objectId)
         {
             writer.Write(MSG_OBJECT_OWNERSHIP_REQUEST);
             writer.Write(operationType);
-            var objectIdBytes = System.Text.Encoding.UTF8.GetBytes(objectId ?? string.Empty);
-            var idLen = Mathf.Min(objectIdBytes.Length, 64);
-            writer.Write((byte)idLen);
-            writer.Write(objectIdBytes, 0, idLen);
+            writer.Write(objectId);
         }
 
         #region === Deserialization ===
@@ -854,8 +848,7 @@ namespace Styly.NetSync
             for (int i = 0; i < objectCount; i++)
             {
                 var obj = new ObjectStateData();
-                var idLen = reader.ReadByte();
-                obj.objectId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(idLen));
+                obj.objectId = reader.ReadUInt32();
                 obj.ownerClientNo = reader.ReadUInt16();
                 obj.poseSeq = reader.ReadUInt16();
                 obj.poseTime = reader.ReadDouble();
@@ -872,8 +865,7 @@ namespace Styly.NetSync
         private static OwnershipChangedData DeserializeObjectOwnershipChanged(BinaryReader reader)
         {
             var data = new OwnershipChangedData();
-            var idLen = reader.ReadByte();
-            data.objectId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(idLen));
+            data.objectId = reader.ReadUInt32();
             data.newOwnerClientNo = reader.ReadUInt16();
             data.previousOwnerClientNo = reader.ReadUInt16();
             return data;
@@ -882,8 +874,7 @@ namespace Styly.NetSync
         private static OwnershipRejectedData DeserializeObjectOwnershipRejected(BinaryReader reader)
         {
             var data = new OwnershipRejectedData();
-            var idLen = reader.ReadByte();
-            data.objectId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(idLen));
+            data.objectId = reader.ReadUInt32();
             data.currentOwnerClientNo = reader.ReadUInt16();
             data.reasonCode = reader.ReadByte();
             return data;

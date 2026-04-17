@@ -151,7 +151,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9fd00ff2a8bc54cf3bb4dcaecd32b6d3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _objectId: cube_red
+  _objectId: 0
   OnOwnershipChanged:
     m_PersistentCalls:
       m_Calls: []
@@ -447,7 +447,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9fd00ff2a8bc54cf3bb4dcaecd32b6d3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _objectId: cube_green
+  _objectId: 0
   OnOwnershipChanged:
     m_PersistentCalls:
       m_Calls: []
@@ -779,7 +779,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9fd00ff2a8bc54cf3bb4dcaecd32b6d3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _objectId: cube_blue
+  _objectId: 0
   OnOwnershipChanged:
     m_PersistentCalls:
       m_Calls: []

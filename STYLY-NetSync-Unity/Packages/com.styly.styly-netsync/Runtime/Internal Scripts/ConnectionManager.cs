@@ -92,7 +92,7 @@ namespace Styly.NetSync
         /// Each owned object gets its own slot so object updates do not clobber
         /// the avatar slot and multiple owned objects do not clobber each other.
         /// </summary>
-        private readonly ConcurrentDictionary<string, OutboundPacket> _latestObjectTransforms = new();
+        private readonly ConcurrentDictionary<uint, OutboundPacket> _latestObjectTransforms = new();
 
         /// <summary>
         /// Counter for tracking backpressure events (EAGAIN/would-block).
@@ -229,11 +229,11 @@ namespace Styly.NetSync
         /// Uses per-objectId latest-wins semantics so avatar sends and other objects
         /// are not overwritten.
         /// </summary>
-        public void SetLatestObjectTransform(string roomId, string objectId, byte[] payload)
+        public void SetLatestObjectTransform(string roomId, uint objectId, byte[] payload)
         {
             if (_receiveThread == null || _shouldStop || _connectionError) { return; }
             if (_dealerSocket == null) { return; }
-            if (string.IsNullOrEmpty(objectId)) { return; }
+            if (objectId == 0u) { return; }
 
             var packet = new OutboundPacket
             {
@@ -460,8 +460,8 @@ namespace Styly.NetSync
                 {
                     // Clear only if still the same packet — a newer SetLatestObjectTransform
                     // may have overwritten the slot while we were sending.
-                    ((ICollection<KeyValuePair<string, OutboundPacket>>)_latestObjectTransforms)
-                        .Remove(new KeyValuePair<string, OutboundPacket>(objectId, packet));
+                    ((ICollection<KeyValuePair<uint, OutboundPacket>>)_latestObjectTransforms)
+                        .Remove(new KeyValuePair<uint, OutboundPacket>(objectId, packet));
                     didWork = true;
                 }
                 else

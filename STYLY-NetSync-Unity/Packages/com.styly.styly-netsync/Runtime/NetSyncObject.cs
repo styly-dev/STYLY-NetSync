@@ -6,13 +6,16 @@ namespace Styly.NetSync
 {
     public class NetSyncObject : MonoBehaviour
     {
-        [SerializeField, Tooltip("Unique ID for this object within the room. Must be the same on all clients.")]
-        private string _objectId;
+        // Auto-assigned 32-bit ID derived from Unity's GlobalObjectId in the editor.
+        // 0 means "unassigned" — the editor pipeline will fill it in on validate,
+        // hierarchy change, or scene post-process.
+        [SerializeField, HideInInspector]
+        private uint _objectId;
 
         private int _ownerClientNo;
         private NetSyncTransformApplier _transformApplier;
 
-        public string ObjectId => _objectId;
+        public uint ObjectId => _objectId;
         public int OwnerClientNo => _ownerClientNo;
 
         public bool IsOwnedByMe
@@ -32,6 +35,7 @@ namespace Styly.NetSync
 
         public void RequestOwnership()
         {
+            if (!EnsureObjectIdAssigned()) return;
             var manager = NetSyncManager.Instance;
             if (manager == null) return;
             manager.RequestObjectOwnership(2, _objectId);
@@ -39,9 +43,19 @@ namespace Styly.NetSync
 
         public void ReleaseOwnership()
         {
+            if (!EnsureObjectIdAssigned()) return;
             var manager = NetSyncManager.Instance;
             if (manager == null) return;
             manager.RequestObjectOwnership(1, _objectId);
+        }
+
+        private bool EnsureObjectIdAssigned()
+        {
+            if (_objectId != 0u) return true;
+            Debug.LogWarning(
+                $"[NetSyncObject] '{name}' has no ObjectId assigned. Open the scene in the editor so the auto-assign pipeline can populate it.",
+                this);
+            return false;
         }
 
         internal void SetOwnerClientNoInternal(int ownerClientNo)
@@ -56,6 +70,18 @@ namespace Styly.NetSync
                 OnOwnershipChanged.Invoke(newOwner, previousOwner);
             }
         }
+
+#if UNITY_EDITOR
+        // Editor-only accessor used by the auto-assign pipeline to read the
+        // current persisted value. Writes go through SerializedProperty so Unity
+        // records them correctly on prefab instances.
+        internal uint ObjectIdEditorOnly => _objectId;
+
+        private void OnValidate()
+        {
+            NetSyncObjectIdAssigner.RequestAssignForObject(this);
+        }
+#endif
 
         private void OnEnable()
         {

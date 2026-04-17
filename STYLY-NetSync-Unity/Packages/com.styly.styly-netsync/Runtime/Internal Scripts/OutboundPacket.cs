@@ -20,7 +20,7 @@ namespace Styly.NetSync
 
         /// <summary>
         /// NetSyncObject transform updates. Lower priority like Transform, but uses a
-        /// per-objectId latest-wins slot so avatar and object updates do not clobber
+        /// per-object latest-wins slot so avatar and object updates do not clobber
         /// each other and multiple owned objects do not overwrite one another.
         /// </summary>
         ObjectTransform

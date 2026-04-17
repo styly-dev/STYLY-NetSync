@@ -17,7 +17,22 @@ namespace Styly.NetSync.Editor
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
-            DrawDefaultInspector();
+
+            // ObjectId: auto-assigned 32-bit value derived from GlobalObjectId.
+            // Displayed read-only as hex so users can verify uniqueness at a glance.
+            var objectIdProp = serializedObject.FindProperty("_objectId");
+            if (objectIdProp != null)
+            {
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    uint currentId = unchecked((uint)objectIdProp.longValue);
+                    EditorGUILayout.TextField("Object ID", currentId == 0u ? "(unassigned)" : $"0x{currentId:X8}");
+                }
+            }
+
+            // Draw everything else (Events etc.) but skip the hidden _objectId field.
+            DrawPropertiesExcluding(serializedObject, "m_Script", "_objectId");
+            serializedObject.ApplyModifiedProperties();
 
             if (!Application.isPlaying)
             {

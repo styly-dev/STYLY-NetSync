@@ -13,11 +13,11 @@ namespace Styly.NetSync
         private readonly NetSyncTimeEstimator _timeEstimator;
         private readonly bool _enableDebugLogs;
 
-        private readonly Dictionary<string, NetSyncObject> _registeredObjects = new();
+        private readonly Dictionary<uint, NetSyncObject> _registeredObjects = new();
         private readonly ReusableBufferWriter _buf = new ReusableBufferWriter(256);
 
         // Per-object send state
-        private readonly Dictionary<string, ObjectSendState> _sendStates = new();
+        private readonly Dictionary<uint, ObjectSendState> _sendStates = new();
 
         private const float HEARTBEAT_INTERVAL_SECONDS = 1f;
 
@@ -48,19 +48,27 @@ namespace Styly.NetSync
 
         public void Register(NetSyncObject obj)
         {
-            if (obj == null || string.IsNullOrEmpty(obj.ObjectId)) return;
+            if (obj == null) return;
+            if (obj.ObjectId == 0u)
+            {
+                // Setup mistake, not runtime noise — always surface it so the user
+                // notices the NetSyncObject will not participate in sync.
+                Debug.LogWarning($"[ObjectSyncManager] NetSyncObject on '{obj.name}' has no ObjectId assigned; skipping registration.", obj);
+                return;
+            }
             _registeredObjects[obj.ObjectId] = obj;
         }
 
         public void Unregister(NetSyncObject obj)
         {
-            if (obj == null || string.IsNullOrEmpty(obj.ObjectId)) return;
+            if (obj == null || obj.ObjectId == 0u) return;
             _registeredObjects.Remove(obj.ObjectId);
             _sendStates.Remove(obj.ObjectId);
         }
 
-        public void SendOwnershipRequest(string roomId, byte operationType, string objectId)
+        public void SendOwnershipRequest(string roomId, byte operationType, uint objectId)
         {
+            if (objectId == 0u) return;
             _buf.EnsureCapacity(128);
             _buf.Stream.Position = 0;
             BinarySerializer.SerializeObjectOwnershipRequestInto(_buf.Writer, operationType, objectId);
@@ -162,7 +170,7 @@ namespace Styly.NetSync
 
             if (_enableDebugLogs)
             {
-                Debug.Log($"[ObjectSyncManager] Ownership changed: {data.objectId} {data.previousOwnerClientNo} → {data.newOwnerClientNo}");
+                Debug.Log($"[ObjectSyncManager] Ownership changed: 0x{data.objectId:X8} {data.previousOwnerClientNo} → {data.newOwnerClientNo}");
             }
         }
 
@@ -171,7 +179,7 @@ namespace Styly.NetSync
             if (data == null) return;
             if (_enableDebugLogs)
             {
-                Debug.LogWarning($"[ObjectSyncManager] Ownership rejected: {data.objectId} (owner={data.currentOwnerClientNo}, reason={data.reasonCode})");
+                Debug.LogWarning($"[ObjectSyncManager] Ownership rejected: 0x{data.objectId:X8} (owner={data.currentOwnerClientNo}, reason={data.reasonCode})");
             }
         }
 

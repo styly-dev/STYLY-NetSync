@@ -126,7 +126,7 @@ namespace Styly.NetSync
     [Serializable]
     internal class ObjectStateData
     {
-        public string objectId;
+        public uint objectId;
         public int ownerClientNo;
         public ushort poseSeq;
         public double poseTime;
@@ -144,7 +144,7 @@ namespace Styly.NetSync
     [Serializable]
     internal class OwnershipChangedData
     {
-        public string objectId;
+        public uint objectId;
         public int newOwnerClientNo;
         public int previousOwnerClientNo;
     }
@@ -152,7 +152,7 @@ namespace Styly.NetSync
     [Serializable]
     internal class OwnershipRejectedData
     {
-        public string objectId;
+        public uint objectId;
         public int currentOwnerClientNo;
         public byte reasonCode;
     }
