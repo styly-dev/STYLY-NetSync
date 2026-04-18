@@ -30,28 +30,38 @@ namespace Styly.NetSync.Editor
                 }
             }
 
+            // Owner Client No: read-only runtime state. Shown always so the field
+            // is discoverable in edit mode, but only meaningful during Play.
+            int ownerClientNo = _netSyncObject.OwnerClientNo;
+            string ownerLabel;
+            if (!Application.isPlaying)
+            {
+                ownerLabel = "(runtime only)";
+            }
+            else if (ownerClientNo == 0)
+            {
+                ownerLabel = "None";
+            }
+            else if (_netSyncObject.IsOwnedByMe)
+            {
+                ownerLabel = $"Client #{ownerClientNo} (Me)";
+            }
+            else
+            {
+                ownerLabel = $"Client #{ownerClientNo}";
+            }
+
+            using (new EditorGUI.DisabledScope(true))
+            {
+                EditorGUILayout.TextField("Owner Client No", ownerLabel);
+            }
+
             // Draw everything else (Events etc.) but skip the hidden _objectId field.
             DrawPropertiesExcluding(serializedObject, "m_Script", "_objectId");
             serializedObject.ApplyModifiedProperties();
 
-            if (!Application.isPlaying)
-            {
-                return;
-            }
-
-            EditorGUILayout.Space();
-
-            int ownerClientNo = _netSyncObject.OwnerClientNo;
-            string ownerLabel = ownerClientNo == 0
-                ? "None"
-                : _netSyncObject.IsOwnedByMe
-                    ? $"Client #{ownerClientNo} (Me)"
-                    : $"Client #{ownerClientNo}";
-
-            EditorGUILayout.LabelField("Owner Client No", ownerLabel);
-
-            // Throttle inspector repaint during Play mode.
-            if (Event.current.type == EventType.Layout)
+            // Throttle inspector repaint during Play mode so the owner field stays live.
+            if (Application.isPlaying && Event.current.type == EventType.Layout)
             {
                 double now = EditorApplication.timeSinceStartup;
                 if (now - _lastRepaint > 0.2d)
