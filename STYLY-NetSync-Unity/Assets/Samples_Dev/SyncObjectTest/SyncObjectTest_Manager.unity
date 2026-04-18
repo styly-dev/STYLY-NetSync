@@ -127,6 +127,10 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 814627828764220059, guid: 9a5defab160da480bbd9086bb11218b6, type: 3}
+      propertyPath: _objectId
+      value: 1502758125
+      objectReference: {fileID: 0}
     - target: {fileID: 1632923170649146010, guid: 9a5defab160da480bbd9086bb11218b6, type: 3}
       propertyPath: m_Name
       value: Common
@@ -134,6 +138,10 @@ PrefabInstance:
     - target: {fileID: 2141157963954670382, guid: 9a5defab160da480bbd9086bb11218b6, type: 3}
       propertyPath: _claimOnOwnerDisconnect
       value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 2544798644611134372, guid: 9a5defab160da480bbd9086bb11218b6, type: 3}
+      propertyPath: _objectId
+      value: 583126841
       objectReference: {fileID: 0}
     - target: {fileID: 3172702273303132903, guid: 9a5defab160da480bbd9086bb11218b6, type: 3}
       propertyPath: m_LocalPosition.x
@@ -174,6 +182,10 @@ PrefabInstance:
     - target: {fileID: 3172702273303132903, guid: 9a5defab160da480bbd9086bb11218b6, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6091143890581346834, guid: 9a5defab160da480bbd9086bb11218b6, type: 3}
+      propertyPath: _objectId
+      value: 820720883
       objectReference: {fileID: 0}
     - target: {fileID: 8244692343114920628, guid: 9a5defab160da480bbd9086bb11218b6, type: 3}
       propertyPath: _claimOnOwnerDisconnect
@@ -247,10 +259,6 @@ PrefabInstance:
     - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
       propertyPath: _localAvatarPrefab
       value: 
-      objectReference: {fileID: 0}
-    - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
-      propertyPath: _serverDiscoveryPort
-      value: 19999
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
