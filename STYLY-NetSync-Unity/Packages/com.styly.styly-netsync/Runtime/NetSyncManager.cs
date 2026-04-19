@@ -34,16 +34,23 @@ namespace Styly.NetSync
 
         [Header("Events")]
         // Initialize UnityEvents at declaration to ensure they are always non-null
+        [Tooltip("Fired when a remote avatar connects. Parameter: clientNo (int) — the unique client number assigned to the connected avatar.")]
         public UnityEvent<int> OnAvatarConnected = new UnityEvent<int>();
+        [Tooltip("Fired when a remote avatar disconnects. Parameter: clientNo (int) — the unique client number of the disconnected avatar.")]
         public UnityEvent<int> OnAvatarDisconnected = new UnityEvent<int>();
+        [Tooltip("Fired when an RPC is received. Parameters: senderClientNo (int), functionName (string), args (string[]).")]
         public UnityEvent<int, string, string[]> OnRPCReceived;
+        [Tooltip("Fired when a global network variable changes. Parameters: name (string), oldValue (string), newValue (string).")]
         public UnityEvent<string, string, string> OnGlobalVariableChanged;
+        [Tooltip("Fired when a client-specific network variable changes. Parameters: clientNo (int), name (string), oldValue (string), newValue (string).")]
         public UnityEvent<int, string, string, string> OnClientVariableChanged;
+        [Tooltip("Fired when the client is fully connected and synchronized (connected, handshaked, and network variables synced).")]
         public UnityEvent OnReady;
         /// <summary>
         /// Event fired when server and client versions do not match.
         /// Parameters: (serverVersion, clientVersion) as strings like "0.7.5"
         /// </summary>
+        [Tooltip("Fired when server and client versions do not match. Parameters: serverVersion (string), clientVersion (string) — e.g. \"0.7.5\".")]
         public UnityEvent<string, string> OnVersionMismatch = new UnityEvent<string, string>();
 
         // Advanced Options (drawn by NetSyncManagerEditor in a foldout)

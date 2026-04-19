@@ -37,6 +37,7 @@ namespace Styly.NetSync
 
         // Events
         [Header("Network Variable Events")]
+        [Tooltip("Fired when a client variable changes for this avatar's owner. Parameters: name (string), oldValue (string), newValue (string).")]
         public UnityEvent<string, string, string> OnClientVariableChanged;
 
         [Header("Hand Tracking Events")]
@@ -44,12 +45,14 @@ namespace Styly.NetSync
         /// Invoked when hand tracking is lost (true hand tracking loss, not controller switch).
         /// Parameter: Hand (Left or Right)
         /// </summary>
+        [Tooltip("Fired when hand tracking is lost (true hand tracking loss, not controller switch). Parameter: hand (Hand) — Left or Right.")]
         public UnityEvent<Hand> OnHandTrackingLost;
 
         /// <summary>
         /// Invoked when hand tracking is restored.
         /// Parameter: Hand (Left or Right)
         /// </summary>
+        [Tooltip("Fired when hand tracking is restored. Parameter: hand (Hand) — Left or Right.")]
         public UnityEvent<Hand> OnHandTrackingRestored;
 
         // --- Cached objects for zero-allocation transform packaging on send ---
