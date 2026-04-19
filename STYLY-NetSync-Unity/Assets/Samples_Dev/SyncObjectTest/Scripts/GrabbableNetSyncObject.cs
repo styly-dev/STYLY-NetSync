@@ -21,9 +21,8 @@ public class GrabbableNetSyncObject : MonoBehaviour
     {
         _netSyncObject = GetComponent<NetSyncObject>();
         _rb = GetComponent<Rigidbody>();
-        _rb.isKinematic = true;
-
         _xrGrab = GetComponent<XRGrabInteractable>();
+        ApplyKinematicForOwnership();
     }
 
     void OnEnable()
@@ -41,6 +40,10 @@ public class GrabbableNetSyncObject : MonoBehaviour
         {
             manager.OnAvatarDisconnected.AddListener(OnAvatarDisconnected);
         }
+
+        // Re-evaluate on scene load / re-enable: HandleRoomObjects may have
+        // already assigned an owner before our listener was registered.
+        ApplyKinematicForOwnership();
     }
 
     void OnDisable()
@@ -76,19 +79,15 @@ public class GrabbableNetSyncObject : MonoBehaviour
     private void OnXRSelectExited(SelectExitEventArgs args)
     {
         Release();
-        // XRGrabInteractable restores isKinematic to its original state on release.
-        // Override it so physics continues while we still own the object.
-        if (_netSyncObject.IsOwnedByMe)
-        {
-            _rb.isKinematic = false;
-        }
+        // XRGrabInteractable may have flipped isKinematic on release; re-apply
+        // the ownership-derived state so it survives the XR toolkit override.
+        ApplyKinematicForOwnership();
     }
 
     public void Grab()
     {
         _isGrabbed = true;
         _netSyncObject.RequestOwnership();
-        _rb.isKinematic = false;
     }
 
     public void Release()
@@ -98,16 +97,36 @@ public class GrabbableNetSyncObject : MonoBehaviour
 
     private void OnOwnershipChanged(int newOwner, int previousOwner)
     {
-        if (_netSyncObject.IsOwnedByMe)
-        {
-            _rb.isKinematic = false;
-        }
-        else
+        if (!_netSyncObject.IsOwnedByMe)
         {
             _isGrabbed = false;
-            _rb.isKinematic = true;
+        }
+        ApplyKinematicForOwnership();
+    }
+
+    // Single source of truth for Rigidbody.isKinematic:
+    //   OwnerClientNo == 0        -> dynamic (local physics, unowned)
+    //   IsOwnedByMe               -> dynamic (local physics, I'm authority)
+    //   someone else owns         -> kinematic (sync-driven)
+    private void ApplyKinematicForOwnership()
+    {
+        bool shouldBeKinematic =
+            _netSyncObject.OwnerClientNo != 0 && !_netSyncObject.IsOwnedByMe;
+
+        if (shouldBeKinematic)
+        {
+            if (!_rb.isKinematic)
+            {
+                _rb.linearVelocity = Vector3.zero;
+                _rb.angularVelocity = Vector3.zero;
+                _rb.isKinematic = true;
+            }
+        }
+        else if (_rb.isKinematic)
+        {
             _rb.linearVelocity = Vector3.zero;
             _rb.angularVelocity = Vector3.zero;
+            _rb.isKinematic = false;
         }
     }
 }

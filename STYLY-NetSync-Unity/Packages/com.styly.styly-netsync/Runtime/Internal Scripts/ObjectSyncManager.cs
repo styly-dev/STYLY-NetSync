@@ -144,8 +144,17 @@ namespace Styly.NetSync
                 if (!_registeredObjects.TryGetValue(objState.objectId, out var obj)) continue;
                 if (obj == null) continue;
 
-                // Update ownership info
-                obj.SetOwnerClientNoInternal(objState.ownerClientNo);
+                // Update ownership info. Fire OnOwnershipChanged when the value
+                // actually changes so listeners (e.g. GrabbableNetSyncObject)
+                // see scene-load ownership and any room-broadcast transitions,
+                // not just out-of-band OwnershipChanged control messages.
+                int previousOwner = obj.OwnerClientNo;
+                int newOwner = objState.ownerClientNo;
+                obj.SetOwnerClientNoInternal(newOwner);
+                if (previousOwner != newOwner)
+                {
+                    obj.InvokeOwnershipChanged(newOwner, previousOwner);
+                }
 
                 // Apply transform for non-owned objects
                 if (!obj.IsOwnedByMe)
@@ -190,6 +199,9 @@ namespace Styly.NetSync
                 var obj = kvp.Value;
                 if (obj == null) continue;
                 if (obj.IsOwnedByMe) continue;
+                // Skip unowned objects so local physics, not stale snapshots
+                // from a prior owner, drives the transform.
+                if (obj.OwnerClientNo == 0) continue;
 
                 // Tick the applier even when the object is unowned so the final
                 // snapshot from the previous owner (delivered via HandleRoomObjects)
