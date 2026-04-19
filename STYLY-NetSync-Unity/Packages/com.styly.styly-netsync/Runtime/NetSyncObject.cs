@@ -34,7 +34,8 @@ namespace Styly.NetSync
             }
         }
 
-        [Header("Events")]
+        // Tooltip and "Events" header are rendered by NetSyncObjectEditor so
+        // that UnityEventDrawer doesn't swallow them.
         public UnityEvent<int, int> OnOwnershipChanged = new UnityEvent<int, int>();
 
         internal NetSyncTransformApplier TransformApplier => _transformApplier;

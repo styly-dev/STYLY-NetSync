@@ -24,6 +24,15 @@ namespace Styly.NetSync.Editor
             "Owner Client No",
             "Runtime-only field showing which client currently owns this object. 'None' means no owner yet; '(Me)' marks your own client. Only meaningful during Play mode.");
 
+        private static readonly GUIContent s_OwnershipChangedLabel = new GUIContent("On Ownership Changed");
+
+        // UnityEventDrawer swallows the header tooltip, so we overlay an empty
+        // GUI.Label carrying only a tooltip on the event's header rect. No
+        // visible element is added; the hover tooltip still fires.
+        private static readonly GUIContent s_OwnershipChangedTooltip = new GUIContent(
+            string.Empty,
+            "Raised when ownership transfers. Args: (newOwnerClientNo, previousOwnerClientNo). 0 means no owner.");
+
         private void OnEnable()
         {
             _netSyncObject = (NetSyncObject)target;
@@ -82,8 +91,27 @@ namespace Styly.NetSync.Editor
                 }
             }
 
-            // Draw everything else (Events etc.) but skip the hidden fields.
-            DrawPropertiesExcluding(serializedObject, "m_Script", "_objectId", "_manualObjectId");
+            // Draw everything else but skip the hidden fields and the event we render ourselves.
+            DrawPropertiesExcluding(serializedObject, "m_Script", "_objectId", "_manualObjectId", "OnOwnershipChanged");
+
+            // Re-draw the "Events" header (lost because [Header] only renders
+            // under the default drawer) and the event. Overlay an invisible
+            // tooltip label on the header row so hover reveals the arg order.
+            var ownershipEventProp = serializedObject.FindProperty("OnOwnershipChanged");
+            if (ownershipEventProp != null)
+            {
+                EditorGUILayout.Space();
+                EditorGUILayout.LabelField("Events", EditorStyles.boldLabel);
+                EditorGUILayout.PropertyField(ownershipEventProp, s_OwnershipChangedLabel, true);
+                var eventRect = GUILayoutUtility.GetLastRect();
+                var headerRect = new Rect(
+                    eventRect.x,
+                    eventRect.y,
+                    eventRect.width,
+                    EditorGUIUtility.singleLineHeight);
+                GUI.Label(headerRect, s_OwnershipChangedTooltip);
+            }
+
             serializedObject.ApplyModifiedProperties();
 
             // Throttle inspector repaint during Play mode so the owner field stays live.
