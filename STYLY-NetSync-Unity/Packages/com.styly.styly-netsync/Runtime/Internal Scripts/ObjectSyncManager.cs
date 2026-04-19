@@ -195,8 +195,11 @@ namespace Styly.NetSync
                 // snapshot from the previous owner (delivered via HandleRoomObjects)
                 // actually gets applied — otherwise the object would freeze at its
                 // pre-release position on every remote client.
+                // However, skip while no snapshot has arrived yet: PoseChannel
+                // samples an empty buffer as default(PoseSampleData), which would
+                // teleport the transform to origin on the very first Tick.
                 var applier = obj.TransformApplier;
-                if (applier != null)
+                if (applier != null && applier.HasAnySnapshot)
                 {
                     applier.Tick(deltaTime, localNow);
                 }
