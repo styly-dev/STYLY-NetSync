@@ -63,6 +63,18 @@ namespace Styly.NetSync.Editor
                 EditorGUILayout.TextField("Owner Client No", ownerLabel);
             }
 
+            // Runtime-only ownership controls.
+            if (Application.isPlaying)
+            {
+                using (new EditorGUI.DisabledScope(_netSyncObject.IsOwnedByMe))
+                {
+                    if (GUILayout.Button("Request Ownership"))
+                    {
+                        _netSyncObject.RequestOwnership();
+                    }
+                }
+            }
+
             // Draw everything else (Events etc.) but skip the hidden _objectId field.
             DrawPropertiesExcluding(serializedObject, "m_Script", "_objectId");
             serializedObject.ApplyModifiedProperties();
