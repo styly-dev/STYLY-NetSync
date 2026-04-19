@@ -12,6 +12,12 @@ namespace Styly.NetSync
         [SerializeField, HideInInspector]
         private uint _objectId;
 
+        // When true, _objectId is user-specified and the auto-assign pipeline
+        // must leave it alone. Enables matching the same logical entity across
+        // separate scenes (e.g., a player scene and an admin console scene).
+        [SerializeField, HideInInspector]
+        private bool _manualObjectId;
+
         private int _ownerClientNo;
         private NetSyncTransformApplier _transformApplier;
 
@@ -73,6 +79,7 @@ namespace Styly.NetSync
         // current persisted value. Writes go through SerializedProperty so Unity
         // records them correctly on prefab instances.
         internal uint ObjectIdEditorOnly => _objectId;
+        internal bool IsManualObjectIdEditorOnly => _manualObjectId;
 
         private void OnValidate()
         {

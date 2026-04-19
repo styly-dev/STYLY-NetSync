@@ -150,8 +150,40 @@ namespace Styly.NetSync
             var taken = new HashSet<uint>();
             var pendingChanges = new List<(NetSyncObject obj, uint newId)>();
 
+            // Phase 1 (read-only): reserve ids from objects flagged as manual so
+            // the auto pass below cannot clobber user-specified ids. A manual id
+            // of 0 is invalid (reserved as "unassigned") and falls through to
+            // Phase 2, which will probe a fresh value — the user can re-enter.
             foreach (var entry in entries)
             {
+                if (!entry.obj.IsManualObjectIdEditorOnly) continue;
+                var current = entry.obj.ObjectIdEditorOnly;
+                if (current == UnassignedId)
+                {
+                    Debug.LogWarning(
+                        $"[NetSyncObject] '{entry.obj.name}' has manual ObjectID enabled but ID is 0; falling back to auto until a non-zero ID is entered.",
+                        entry.obj);
+                    continue;
+                }
+                if (!taken.Add(current))
+                {
+                    // Another manual object in a loaded scene already claimed this id.
+                    // Intentional cross-scene matching is the feature's purpose, so we
+                    // do not rewrite — just surface the collision for the author.
+                    Debug.LogWarning(
+                        $"[NetSyncObject] Manual ObjectID 0x{current:X8} on '{entry.obj.name}' collides with another manual ID in a loaded scene.",
+                        entry.obj);
+                }
+            }
+
+            // Phase 2 (write): run the existing reconcile logic on non-manual
+            // entries. Any auto object whose persisted id clashes with a manual
+            // reservation gets re-probed to a free slot.
+            foreach (var entry in entries)
+            {
+                if (entry.obj.IsManualObjectIdEditorOnly &&
+                    entry.obj.ObjectIdEditorOnly != UnassignedId) continue;
+
                 var current = entry.obj.ObjectIdEditorOnly;
                 uint resolved;
 
