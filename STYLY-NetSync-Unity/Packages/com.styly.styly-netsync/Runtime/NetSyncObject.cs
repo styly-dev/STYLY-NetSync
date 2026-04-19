@@ -65,10 +65,7 @@ namespace Styly.NetSync
 
         internal void InvokeOwnershipChanged(int newOwner, int previousOwner)
         {
-            if (OnOwnershipChanged != null)
-            {
-                OnOwnershipChanged.Invoke(newOwner, previousOwner);
-            }
+            OnOwnershipChanged.Invoke(newOwner, previousOwner);
         }
 
 #if UNITY_EDITOR

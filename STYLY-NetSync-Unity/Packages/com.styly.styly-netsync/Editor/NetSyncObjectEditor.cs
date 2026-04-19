@@ -32,6 +32,13 @@ namespace Styly.NetSync.Editor
 
             // Owner Client No: read-only runtime state. Shown always so the field
             // is discoverable in edit mode, but only meaningful during Play.
+            // Guard against destroyed target (domain reload / exiting Play) to
+            // avoid MissingReferenceException from a "fake null" target.
+            if (_netSyncObject == null)
+            {
+                serializedObject.ApplyModifiedProperties();
+                return;
+            }
             int ownerClientNo = _netSyncObject.OwnerClientNo;
             string ownerLabel;
             if (!Application.isPlaying)

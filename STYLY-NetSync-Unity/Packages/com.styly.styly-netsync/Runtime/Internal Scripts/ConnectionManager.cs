@@ -448,20 +448,20 @@ namespace Styly.NetSync
 
             bool didWork = false;
 
-            // Snapshot keys so removal during iteration is safe
-            foreach (var objectId in _latestObjectTransforms.Keys)
+            // ConcurrentDictionary's enumerator returns a moment-in-time snapshot,
+            // so removal during iteration is safe. Iterate kvps directly to avoid
+            // allocating a separate Keys collection plus a second TryGetValue.
+            foreach (var kvp in _latestObjectTransforms)
             {
-                if (!_latestObjectTransforms.TryGetValue(objectId, out var packet) || packet == null)
-                {
-                    continue;
-                }
+                var packet = kvp.Value;
+                if (packet == null) { continue; }
 
                 if (TrySendDealer(dealer, packet.RoomId, packet.Payload))
                 {
                     // Clear only if still the same packet — a newer SetLatestObjectTransform
                     // may have overwritten the slot while we were sending.
                     ((ICollection<KeyValuePair<uint, OutboundPacket>>)_latestObjectTransforms)
-                        .Remove(new KeyValuePair<uint, OutboundPacket>(objectId, packet));
+                        .Remove(kvp);
                     didWork = true;
                 }
                 else
