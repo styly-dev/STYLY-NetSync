@@ -12,6 +12,18 @@ namespace Styly.NetSync.Editor
         private NetSyncObject _netSyncObject;
         private double _lastRepaint;
 
+        private static readonly GUIContent s_ManualToggleLabel = new GUIContent(
+            "Manual Object ID",
+            "When enabled, the Object ID is user-specified and the auto-assign pipeline leaves it alone. Use this to match the same logical entity across separate scenes (e.g., a player scene and an admin console scene).");
+
+        private static readonly GUIContent s_ObjectIdLabel = new GUIContent(
+            "Object ID",
+            "32-bit identifier used on the wire to address this NetSyncObject. Auto-derived from Unity's GlobalObjectId in the editor, or user-specified when Manual Object ID is on. 0 means unassigned. Shown in hex.");
+
+        private static readonly GUIContent s_OwnerLabel = new GUIContent(
+            "Owner Client No",
+            "Runtime-only field showing which client currently owns this object. 'None' means no owner yet; '(Me)' marks your own client. Only meaningful during Play mode.");
+
         private void OnEnable()
         {
             _netSyncObject = (NetSyncObject)target;
@@ -55,7 +67,7 @@ namespace Styly.NetSync.Editor
 
             using (new EditorGUI.DisabledScope(true))
             {
-                EditorGUILayout.TextField("Owner Client No", ownerLabel);
+                EditorGUILayout.TextField(s_OwnerLabel, ownerLabel);
             }
 
             // Runtime-only ownership controls.
@@ -94,7 +106,7 @@ namespace Styly.NetSync.Editor
             if (objectIdProp == null || manualProp == null) return;
 
             EditorGUI.BeginChangeCheck();
-            bool newManual = EditorGUILayout.Toggle("Manual Object ID", manualProp.boolValue);
+            bool newManual = EditorGUILayout.Toggle(s_ManualToggleLabel, manualProp.boolValue);
             if (EditorGUI.EndChangeCheck() && newManual != manualProp.boolValue)
             {
                 // Auto → Manual: keep the currently-visible ID as the starting
@@ -122,7 +134,7 @@ namespace Styly.NetSync.Editor
                     string display = manualProp.hasMultipleDifferentValues
                         ? "—"
                         : (currentId == 0u ? "(unassigned)" : $"0x{currentId:X8}");
-                    EditorGUILayout.TextField("Object ID", display);
+                    EditorGUILayout.TextField(s_ObjectIdLabel, display);
                 }
             }
         }
@@ -134,7 +146,7 @@ namespace Styly.NetSync.Editor
             {
                 string initial = multi ? "—" : $"0x{currentId:X8}";
                 EditorGUI.BeginChangeCheck();
-                string entered = EditorGUILayout.DelayedTextField("Object ID", initial);
+                string entered = EditorGUILayout.DelayedTextField(s_ObjectIdLabel, initial);
                 if (EditorGUI.EndChangeCheck() && !multi)
                 {
                     if (TryParseHexUInt(entered, out uint parsed))
