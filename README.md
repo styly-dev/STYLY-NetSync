@@ -64,7 +64,7 @@ npm install -g openupm-cli
 cd YOUR_UNITY_PROJECT_DIR
 
 # Add/Update NetSync package with specific version
-openupm add -f com.styly.styly-netsync@0.10.2
+openupm add -f com.styly.styly-netsync@0.10.3
 ```
 
 ## Setup
@@ -75,12 +75,11 @@ openupm add -f com.styly.styly-netsync@0.10.2
 ```shell
 # Start NetSync server
 # Use the same version of the Unity package
-uvx --exclude-newer "5 days" --exclude-newer-package styly-netsync-server=false styly-netsync-server@0.10.2
+uvx styly-netsync-server@0.10.3
 
 # [Optional] Start client simulator
-uvx --exclude-newer "5 days" --exclude-newer-package styly-netsync-server=false --from styly-netsync-server@0.10.2 styly-netsync-simulator --clients 10
+uvx --from styly-netsync-server@0.10.3 styly-netsync-simulator --clients 10
 ```
-> **Note:** `--exclude-newer "5 days"` restricts transitive dependencies to versions published at least 5 days ago as a supply chain protection measure. The `--exclude-newer-package styly-netsync-server=false` flag exempts the server package itself so the specified version can be used.
 The uvx command automatically downloads the package, creates an isolated virtual environment, installs dependencies, and runs the python server program.
 
 ### Version compatibility note
@@ -154,6 +153,8 @@ The uvx command automatically downloads the package, creates an isolated virtual
     </tr>
   </tbody>
 </table>
+
+> **Note:** On HMD, a media access permission dialog may appear on the first launch. This is required by [Device-ID-Provider](https://github.com/styly-dev/Device-ID-Provider) to generate a stable device ID that persists across app reinstalls and remains consistent across different app vendors on the same device. The ID is stored as a small file in MediaStore. If permission is denied, the system falls back to `SystemInfo.deviceUniqueIdentifier`.
 
 
 ## Unity C# API Reference

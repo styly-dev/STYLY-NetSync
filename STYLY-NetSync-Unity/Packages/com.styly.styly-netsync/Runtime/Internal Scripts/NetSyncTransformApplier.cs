@@ -44,6 +44,12 @@ namespace Styly.NetSync
         private PoseChannel _singleChannel;
         private TransformBinding _singleBinding;
 
+        // True once any snapshot (avatar or single-object) has been ingested.
+        // Callers should skip Tick while false — an empty PoseChannel samples as
+        // default(PoseSampleData) which would snap the bound transform to origin.
+        private bool _hasAnySnapshot;
+        public bool HasAnySnapshot => _hasAnySnapshot;
+
         public void InitializeForAvatar(
             Transform physical,
             Transform head,
@@ -80,6 +86,7 @@ namespace Styly.NetSync
             }
 
             _singleChannel = null;
+            _hasAnySnapshot = false;
             _intervalEstimator.Reset();
         }
 
@@ -104,6 +111,7 @@ namespace Styly.NetSync
             _virtuals.Clear();
             _virtualBindings.Clear();
 
+            _hasAnySnapshot = false;
             _intervalEstimator.Reset();
         }
 
@@ -120,6 +128,7 @@ namespace Styly.NetSync
                 return;
             }
 
+            _hasAnySnapshot = true;
             _intervalEstimator.OnPoseTime(data.poseTime);
 
             if ((data.flags & PoseFlags.PhysicalValid) != 0 && data.physical != null)
@@ -184,6 +193,7 @@ namespace Styly.NetSync
                 return;
             }
 
+            _hasAnySnapshot = true;
             _intervalEstimator.OnPoseTime(poseTime);
             _singleChannel.AddSnapshot(poseTime, poseSeq, new PoseSampleData(position, rotation));
         }
@@ -199,6 +209,7 @@ namespace Styly.NetSync
             {
                 _virtuals[i].Clear();
             }
+            _hasAnySnapshot = false;
         }
 
         public void Tick(float deltaTime, double localNow)

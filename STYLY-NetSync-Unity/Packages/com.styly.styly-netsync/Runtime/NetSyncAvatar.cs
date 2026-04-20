@@ -10,18 +10,26 @@ namespace Styly.NetSync
     public class NetSyncAvatar : MonoBehaviour
     {
         [Header("Network Settings")]
-        [SerializeField, ReadOnly] private string _deviceId;
-        [SerializeField, ReadOnly] private int _clientNo;
+        [SerializeField, ReadOnly, Tooltip("Runtime-only device identifier assigned by the server. Empty in Edit mode.")]
+        private string _deviceId;
+        [SerializeField, ReadOnly, Tooltip("Runtime-only client number assigned by the server. 0 until the client is assigned.")]
+        private int _clientNo;
 
         [Header("Physical Transform Data")]
-        [ReadOnly] public Vector3 PhysicalPosition;
-        [ReadOnly] public Quaternion PhysicalRotation;
+        [ReadOnly, Tooltip("Physical (real-world) position of this avatar relative to the XR rig. Updated every sync tick at runtime.")]
+        public Vector3 PhysicalPosition;
+        [ReadOnly, Tooltip("Physical (real-world) rotation of this avatar relative to the XR rig. Updated every sync tick at runtime.")]
+        public Quaternion PhysicalRotation;
 
         [Header("Body Parts")]
+        [Tooltip("Head transform (typically the XR camera). Synced as an absolute pose.")]
         public Transform _head;
+        [Tooltip("Right hand transform (controller or tracked hand root). Synced relative to the head.")]
         public Transform _rightHand;
+        [Tooltip("Left hand transform (controller or tracked hand root). Synced relative to the head.")]
         public Transform _leftHand;
-        public Transform[] _virtualTransforms; // Object array to sync Virtual position (world coordinate system)
+        [Tooltip("Additional transforms synchronized in world space (e.g. held objects). Order must match across peers.")]
+        public Transform[] _virtualTransforms;
 
         // Properties
         public string DeviceId => _deviceId;
@@ -35,22 +43,25 @@ namespace Styly.NetSync
         private readonly NetSyncTransformApplier _transformApplier = new NetSyncTransformApplier();
         private readonly NetSyncSmoothingSettings _smoothingSettings = new NetSyncSmoothingSettings();
 
-        // Events
-        [Header("Network Variable Events")]
-        public UnityEvent<string, string, string> OnClientVariableChanged;
+        // Event-group headers and per-event tooltips are rendered by
+        // NetSyncAvatarEditor so UnityEventDrawer doesn't swallow them.
+        // Initialize UnityEvents at declaration to ensure they are always non-null.
+        [Tooltip("Fired when a client variable changes for this avatar's owner. Parameters: name (string), oldValue (string), newValue (string).")]
+        public UnityEvent<string, string, string> OnClientVariableChanged = new UnityEvent<string, string, string>();
 
-        [Header("Hand Tracking Events")]
         /// <summary>
         /// Invoked when hand tracking is lost (true hand tracking loss, not controller switch).
         /// Parameter: Hand (Left or Right)
         /// </summary>
-        public UnityEvent<Hand> OnHandTrackingLost;
+        [Tooltip("Fired when hand tracking is lost (true hand tracking loss, not controller switch). Parameter: hand (Hand) — Left or Right.")]
+        public UnityEvent<Hand> OnHandTrackingLost = new UnityEvent<Hand>();
 
         /// <summary>
         /// Invoked when hand tracking is restored.
         /// Parameter: Hand (Left or Right)
         /// </summary>
-        public UnityEvent<Hand> OnHandTrackingRestored;
+        [Tooltip("Fired when hand tracking is restored. Parameter: hand (Hand) — Left or Right.")]
+        public UnityEvent<Hand> OnHandTrackingRestored = new UnityEvent<Hand>();
 
         // --- Cached objects for zero-allocation transform packaging on send ---
         // These are reused every frame to avoid GC pressure from frequent network sends.

@@ -1,6 +1,7 @@
 // ConnectionManager.cs - Handles network connection management
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text;
@@ -85,6 +86,13 @@ namespace Styly.NetSync
         /// Only the most recent transform is sent; older ones are overwritten.
         /// </summary>
         private volatile OutboundPacket _latestTransform;
+
+        /// <summary>
+        /// Per-objectId latest-wins slots for NetSyncObject transform sends.
+        /// Each owned object gets its own slot so object updates do not clobber
+        /// the avatar slot and multiple owned objects do not clobber each other.
+        /// </summary>
+        private readonly ConcurrentDictionary<uint, OutboundPacket> _latestObjectTransforms = new();
 
         /// <summary>
         /// Counter for tracking backpressure events (EAGAIN/would-block).
@@ -217,6 +225,29 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Set the latest transform packet for a specific NetSyncObject.
+        /// Uses per-objectId latest-wins semantics so avatar sends and other objects
+        /// are not overwritten.
+        /// </summary>
+        public void SetLatestObjectTransform(string roomId, uint objectId, byte[] payload)
+        {
+            if (_receiveThread == null || _shouldStop || _connectionError) { return; }
+            if (_dealerSocket == null) { return; }
+            if (objectId == 0u) { return; }
+
+            var packet = new OutboundPacket
+            {
+                Lane = OutboundLane.ObjectTransform,
+                RoomId = roomId,
+                Payload = payload,
+                EnqueuedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0,
+                Attempts = 0
+            };
+
+            _latestObjectTransforms[objectId] = packet;
+        }
+
+        /// <summary>
         /// Build a ZeroMQ connect address from a server address and port.
         /// Note: NetMQ (pure C# ZeroMQ) does not support the libzmq extended TCP
         /// format (tcp://source:0;dest:port) for source-NIC binding, so we use
@@ -270,37 +301,58 @@ namespace Styly.NetSync
                     var sentAny = FlushOutgoing(dealer);
                     bool receivedAny = false;
 
-                    byte[] lastPayload = null;
-                    bool gotPayload = false;
-                    int framesReceived = 0;
+                    byte[] lastAvatarPayload = null;
+                    byte[] lastObjectPayload = null;
+                    bool gotAvatar = false;
+                    bool gotObject = false;
+                    int avatarFramesReceived = 0;
 
                     while (sub.TryReceiveFrameBytes(TimeSpan.Zero, out var topicBytes))
                     {
                         if (!sub.TryReceiveFrameBytes(TimeSpan.Zero, out var payload)) { break; }
 
-                        if (TopicMatches(topicBytes, roomIdBytes))
+                        // Strict routing: avatar = exact roomId; object = exact roomId + "\0obj".
+                        // Anything else (including other rooms sharing a prefix) is ignored.
+                        if (IsAvatarTopic(topicBytes, roomIdBytes))
                         {
-                            lastPayload = payload;
-                            gotPayload = true;
-                            framesReceived++;
+                            lastAvatarPayload = payload;
+                            gotAvatar = true;
+                            avatarFramesReceived++;
+                        }
+                        else if (IsObjectTopic(topicBytes, roomIdBytes))
+                        {
+                            lastObjectPayload = payload;
+                            gotObject = true;
                         }
                     }
 
-                    if (gotPayload)
+                    if (gotAvatar)
                     {
-                        // Track dropped frames for diagnostics (only process the last one)
-                        if (framesReceived > 1)
+                        if (avatarFramesReceived > 1)
                         {
-                            Interlocked.Add(ref _droppedTransformFrames, framesReceived - 1);
+                            Interlocked.Add(ref _droppedTransformFrames, avatarFramesReceived - 1);
                         }
 
                         try
                         {
-                            _messageProcessor.ProcessIncomingMessage(lastPayload);
+                            _messageProcessor.ProcessIncomingMessage(lastAvatarPayload);
                         }
                         catch (Exception ex)
                         {
                             _pendingLogs.Enqueue((LogLevel.Error, $"Transform parse error: {ex.Message}"));
+                        }
+                        receivedAny = true;
+                    }
+
+                    if (gotObject)
+                    {
+                        try
+                        {
+                            _messageProcessor.ProcessIncomingMessage(lastObjectPayload);
+                        }
+                        catch (Exception ex)
+                        {
+                            _pendingLogs.Enqueue((LogLevel.Error, $"Object sync parse error: {ex.Message}"));
                         }
                         receivedAny = true;
                     }
@@ -381,6 +433,44 @@ namespace Styly.NetSync
 
             didWork |= DrainControlSends(dealer, maxBatch: 64);
             didWork |= TrySendLatestTransform(dealer);
+            didWork |= TrySendLatestObjectTransforms(dealer);
+
+            return didWork;
+        }
+
+        /// <summary>
+        /// Try to send the latest transform packet for each owned NetSyncObject.
+        /// Uses per-objectId latest-wins semantics: each object has its own slot.
+        /// </summary>
+        private bool TrySendLatestObjectTransforms(DealerSocket dealer)
+        {
+            if (_latestObjectTransforms.IsEmpty) { return false; }
+
+            bool didWork = false;
+
+            // ConcurrentDictionary's enumerator returns a moment-in-time snapshot,
+            // so removal during iteration is safe. Iterate kvps directly to avoid
+            // allocating a separate Keys collection plus a second TryGetValue.
+            foreach (var kvp in _latestObjectTransforms)
+            {
+                var packet = kvp.Value;
+                if (packet == null) { continue; }
+
+                if (TrySendDealer(dealer, packet.RoomId, packet.Payload))
+                {
+                    // Clear only if still the same packet — a newer SetLatestObjectTransform
+                    // may have overwritten the slot while we were sending.
+                    ((ICollection<KeyValuePair<uint, OutboundPacket>>)_latestObjectTransforms)
+                        .Remove(kvp);
+                    didWork = true;
+                }
+                else
+                {
+                    // Backpressure - keep the packet; stop draining this tick.
+                    Interlocked.Increment(ref _wouldBlockCount);
+                    break;
+                }
+            }
 
             return didWork;
         }
@@ -483,7 +573,14 @@ namespace Styly.NetSync
             }
         }
 
-        private static bool TopicMatches(byte[] topicBytes, byte[] roomIdBytes)
+        // Object topic suffix: "\0obj" (4 bytes). Must match the server's topic builder.
+        private static readonly byte[] ObjectTopicSuffix = new byte[] { 0x00, (byte)'o', (byte)'b', (byte)'j' };
+
+        /// <summary>
+        /// True iff <paramref name="topicBytes"/> is exactly the room topic (no suffix).
+        /// Strict equality — a longer topic sharing the room-ID prefix is rejected.
+        /// </summary>
+        private static bool IsAvatarTopic(byte[] topicBytes, byte[] roomIdBytes)
         {
             if (topicBytes == null || roomIdBytes == null) { return false; }
             if (topicBytes.Length != roomIdBytes.Length) { return false; }
@@ -492,7 +589,25 @@ namespace Styly.NetSync
             {
                 if (topicBytes[i] != roomIdBytes[i]) { return false; }
             }
+            return true;
+        }
 
+        /// <summary>
+        /// True iff <paramref name="topicBytes"/> is exactly <c>roomId + "\0obj"</c>.
+        /// </summary>
+        private static bool IsObjectTopic(byte[] topicBytes, byte[] roomIdBytes)
+        {
+            if (topicBytes == null || roomIdBytes == null) { return false; }
+            if (topicBytes.Length != roomIdBytes.Length + ObjectTopicSuffix.Length) { return false; }
+
+            for (int i = 0; i < roomIdBytes.Length; i++)
+            {
+                if (topicBytes[i] != roomIdBytes[i]) { return false; }
+            }
+            for (int i = 0; i < ObjectTopicSuffix.Length; i++)
+            {
+                if (topicBytes[roomIdBytes.Length + i] != ObjectTopicSuffix[i]) { return false; }
+            }
             return true;
         }
 
@@ -504,6 +619,9 @@ namespace Styly.NetSync
 
             // Clear latest transform
             Volatile.Write(ref _latestTransform, null);
+
+            // Clear per-object latest transforms
+            _latestObjectTransforms.Clear();
         }
 
         private static void WaitThreadExit(Thread t, int ms)

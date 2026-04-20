@@ -1,6 +1,7 @@
 // NetSyncManager.cs
 using System;
 using System.Collections.Generic;
+using Styly.NetSync.Internal;
 using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
@@ -31,18 +32,26 @@ namespace Styly.NetSync
         private bool _logTransformDetail = false;
         private bool _logNetworkTraffic = false;
 
-        [Header("Events")]
+        // The "Events" header and per-event tooltips are rendered by
+        // NetSyncManagerEditor so UnityEventDrawer doesn't swallow them.
         // Initialize UnityEvents at declaration to ensure they are always non-null
+        [Tooltip("Fired when a remote avatar connects. Parameter: clientNo (int) — the unique client number assigned to the connected avatar.")]
         public UnityEvent<int> OnAvatarConnected = new UnityEvent<int>();
+        [Tooltip("Fired when a remote avatar disconnects. Parameter: clientNo (int) — the unique client number of the disconnected avatar.")]
         public UnityEvent<int> OnAvatarDisconnected = new UnityEvent<int>();
-        public UnityEvent<int, string, string[]> OnRPCReceived;
-        public UnityEvent<string, string, string> OnGlobalVariableChanged;
-        public UnityEvent<int, string, string, string> OnClientVariableChanged;
-        public UnityEvent OnReady;
+        [Tooltip("Fired when an RPC is received. Parameters: senderClientNo (int), functionName (string), args (string[]).")]
+        public UnityEvent<int, string, string[]> OnRPCReceived = new UnityEvent<int, string, string[]>();
+        [Tooltip("Fired when a global network variable changes. Parameters: name (string), oldValue (string), newValue (string).")]
+        public UnityEvent<string, string, string> OnGlobalVariableChanged = new UnityEvent<string, string, string>();
+        [Tooltip("Fired when a client-specific network variable changes. Parameters: clientNo (int), name (string), oldValue (string), newValue (string).")]
+        public UnityEvent<int, string, string, string> OnClientVariableChanged = new UnityEvent<int, string, string, string>();
+        [Tooltip("Fired when the client is fully connected and synchronized (connected, handshaked, and network variables synced).")]
+        public UnityEvent OnReady = new UnityEvent();
         /// <summary>
         /// Event fired when server and client versions do not match.
         /// Parameters: (serverVersion, clientVersion) as strings like "0.7.5"
         /// </summary>
+        [Tooltip("Fired when server and client versions do not match. Parameters: serverVersion (string), clientVersion (string) — e.g. \"0.7.5\".")]
         public UnityEvent<string, string> OnVersionMismatch = new UnityEvent<string, string>();
 
         // Advanced Options (drawn by NetSyncManagerEditor in a foldout)
@@ -214,6 +223,30 @@ namespace Styly.NetSync
             return arr;
         }
 
+        internal void RegisterNetSyncObject(NetSyncObject obj)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.Register(obj);
+            }
+        }
+
+        internal void UnregisterNetSyncObject(NetSyncObject obj)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.Unregister(obj);
+            }
+        }
+
+        public void RequestObjectOwnership(byte operationType, uint objectId)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.SendOwnershipRequest(_roomId, operationType, objectId);
+            }
+        }
+
         /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and
@@ -249,6 +282,7 @@ namespace Styly.NetSync
 
             // Clear room-scoped state to prevent leaks across rooms
             _messageProcessor?.ClearRoomScopedState();
+            _objectSyncManager?.ClearRoomScopedState();
             _timeEstimator.Reset();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
@@ -275,6 +309,7 @@ namespace Styly.NetSync
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
+        private ObjectSyncManager _objectSyncManager;
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -331,6 +366,10 @@ namespace Styly.NetSync
         private long _transformBackpressureCount;
         private float _lastBackpressureWarnAt;
         private const float BackpressureWarnCooldown = 1f; // Log backpressure warning at most once per second
+
+        // Async device ID resolution
+        private DeviceIdResolver _deviceIdResolver;
+        private bool _networkingPending;
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
@@ -391,21 +430,21 @@ namespace Styly.NetSync
 
             if (!_netMqInit) { AsyncIO.ForceDotNet.Force(); _netMqInit = true; }
 
-            // Generate device ID - use Android device ID if available, otherwise generate GUID
-            _deviceId = GenerateDeviceId();
             _instance = this;
-
-            // UnityEvents are initialized at declaration time (no runtime initialization needed)
 
             // Detect stealth mode based on local avatar prefab
             _isStealthMode = (_localAvatarPrefab == null);
 
-            InitializeManagers();
-            DebugLog($"Device ID: {_deviceId}");
-            if (_isStealthMode)
+            // Resolve device ID (may complete asynchronously on Android when permission dialog is shown)
+            _deviceIdResolver = new DeviceIdResolver(_enableDebugLogs);
+            _deviceIdResolver.Resolve();
+
+            if (_deviceIdResolver.IsResolved)
             {
-                DebugLog("Stealth mode enabled (no local avatar prefab)");
+                CompleteDeviceIdResolution();
+                _networkingPending = false; // Prevent double-init by disabling the deferred Update() initialization path
             }
+            // Otherwise, Update() will complete initialization when the resolver finishes
         }
 
         void Start()
@@ -423,14 +462,29 @@ namespace Styly.NetSync
 
         private void OnEnable()
         {
-            _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
-            StartNetworking();
+            if (_deviceIdResolver != null && _deviceIdResolver.IsResolved)
+            {
+                _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
+                StartNetworking();
+            }
+            else
+            {
+                // Device ID not yet resolved (async permission dialog on Android).
+                // Networking will start once the resolver completes.
+                _networkingPending = true;
+            }
         }
 
         private void OnDisable()
         {
-            StopNetworking();
-            _avatarManager.CleanupRemoteAvatars();
+            _networkingPending = false;
+
+            if (_connectionManager != null)
+            {
+                StopNetworking();
+            }
+
+            if (_avatarManager != null) { _avatarManager.CleanupRemoteAvatars(); }
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
 
             // Dispose pooled serialization resources to return buffers to ArrayPool
@@ -441,7 +495,10 @@ namespace Styly.NetSync
 
         private void OnApplicationQuit()
         {
-            StopNetworking();
+            if (_connectionManager != null)
+            {
+                StopNetworking();
+            }
             // Be explicit on quit as well in case OnDisable order varies
             DisposeManagers();
         }
@@ -450,6 +507,9 @@ namespace Styly.NetSync
         {
             // This is a wourkaround to ignore initial pause for ANdroid devices
             if (Time.time < 1) { return; }
+
+            // Managers not yet initialized (async device ID resolution in progress)
+            if (_connectionManager == null) { return; }
 
             if (paused)
             {
@@ -484,7 +544,7 @@ namespace Styly.NetSync
             else
             {
                 DebugLog("Application gained focus");
-                if (!_connectionManager.IsConnected && !_isDiscovering)
+                if (_connectionManager != null && !_connectionManager.IsConnected && !_isDiscovering)
                 {
                     StartNetworking();
                 }
@@ -493,6 +553,24 @@ namespace Styly.NetSync
 
         private void Update()
         {
+            // Process deferred permission callbacks on main thread (safe for Unity APIs)
+            if (_deviceIdResolver != null)
+            {
+                _deviceIdResolver.Tick();
+            }
+
+            // Complete deferred device ID resolution (async Android permission path)
+            if (_networkingPending && _deviceIdResolver != null && _deviceIdResolver.IsResolved)
+            {
+                _networkingPending = false;
+                CompleteDeviceIdResolution();
+                _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
+                StartNetworking();
+            }
+
+            // Skip main loop until managers are initialized
+            if (_connectionManager == null) { return; }
+
             // Check ready state on main thread
             if (_shouldCheckReady)
             {
@@ -542,6 +620,13 @@ namespace Styly.NetSync
 
                 // Send transform updates (lower priority, can be dropped if backpressured)
                 SendTransformUpdates();
+
+                // Object sync: send owned object transforms and apply received transforms
+                if (_objectSyncManager != null)
+                {
+                    _objectSyncManager.Tick(_roomId, Time.time, _clientNo, _transformSendRate);
+                    _objectSyncManager.TickTransformAppliers(Time.deltaTime, NetSyncClock.NowSeconds());
+                }
             }
 
             // Check for initial sync timeout (important for rooms with no variables)
@@ -567,29 +652,22 @@ namespace Styly.NetSync
         #endregion ------------------------------------------------------------------------
 
         #region === Initialization ===
-        private string GenerateDeviceId()
+        /// <summary>
+        /// Completes device ID resolution by reading the result from the resolver
+        /// and initializing all managers. Called either synchronously from Awake()
+        /// or deferred from Update() when the Android permission dialog was shown.
+        /// </summary>
+        private void CompleteDeviceIdResolution()
         {
-#if UNITY_EDITOR
-            // Always use GUID in Unity Editor for development
-            var guid = Guid.NewGuid().ToString();
-            DebugLog($"Unity Editor: using generated GUID: {guid}");
-            return guid;
-#else
-            // Try to get Unity's device unique identifier on actual devices
-            string deviceId = SystemInfo.deviceUniqueIdentifier;
+            _deviceId = _deviceIdResolver.DeviceId;
+            DebugLog($"Device ID: {_deviceId}");
 
-            // Check if the device ID is valid
-            if (!string.IsNullOrEmpty(deviceId) && deviceId != SystemInfo.unsupportedIdentifier)
+            InitializeManagers();
+
+            if (_isStealthMode)
             {
-                DebugLog($"Using SystemInfo.deviceUniqueIdentifier: {deviceId}");
-                return deviceId;
+                DebugLog("Stealth mode enabled (no local avatar prefab)");
             }
-
-            // Fallback to GUID if SystemInfo.deviceUniqueIdentifier is not available
-            var fallbackGuid = Guid.NewGuid().ToString();
-            DebugLog($"SystemInfo.deviceUniqueIdentifier not available, using generated GUID: {fallbackGuid}");
-            return fallbackGuid;
-#endif
         }
 
         private void InitializeManagers()
@@ -611,6 +689,7 @@ namespace Styly.NetSync
             _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
+            _objectSyncManager = new ObjectSyncManager(_connectionManager, _messageProcessor, _timeEstimator, _enableDebugLogs);
 
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
@@ -1137,6 +1216,8 @@ namespace Styly.NetSync
             _transformSyncManager = null;
             _networkVariableManager?.Dispose();
             _networkVariableManager = null;
+            _objectSyncManager?.Dispose();
+            _objectSyncManager = null;
         }
 
         /// <summary>
