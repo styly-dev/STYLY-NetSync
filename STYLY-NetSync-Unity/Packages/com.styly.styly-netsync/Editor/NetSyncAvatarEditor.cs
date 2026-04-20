@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
 
@@ -10,19 +11,40 @@ namespace Styly.NetSync.Editor
         private bool _showClientVariables = true;
         // Timestamp of the last inspector repaint. Used to throttle repaint calls in play mode.
         private double _lastRepaint;
-        
+
+        // UnityEventDrawer swallows the [Tooltip] on UnityEvent fields, so these
+        // event properties are rendered manually and get an invisible GUI.Label
+        // overlay on the header rect to restore hover tooltips.
+        private static readonly HashSet<string> EventProperties = new HashSet<string>
+        {
+            "OnClientVariableChanged",
+            "OnHandTrackingLost",
+            "OnHandTrackingRestored"
+        };
+
+        // Group headers drawn before the mapped event. [Header] lives in the
+        // runtime file normally, but a Header decorator shifts GetLastRect so
+        // the tooltip overlay lands on the header label instead of the event
+        // foldout — so we render the header here instead.
+        private static readonly Dictionary<string, string> EventGroupHeaders = new Dictionary<string, string>
+        {
+            { "OnClientVariableChanged", "Network Variable Events" },
+            { "OnHandTrackingLost", "Hand Tracking Events" }
+        };
+
         private void OnEnable()
         {
             _netSyncAvatar = (NetSyncAvatar)target;
         }
-        
+
         public override void OnInspectorGUI()
         {
             // Update serialized object to reflect runtime changes
             serializedObject.Update();
 
-            // Draw default inspector
-            DrawDefaultInspector();
+            DrawInspectorProperties();
+
+            serializedObject.ApplyModifiedProperties();
 
             // Only show network variables during play mode
             if (!Application.isPlaying)
@@ -97,6 +119,63 @@ namespace Styly.NetSync.Editor
                     _lastRepaint = now;
                 }
             }
+        }
+
+        private void DrawInspectorProperties()
+        {
+            var iterator = serializedObject.GetIterator();
+            bool enterChildren = true;
+
+            while (iterator.NextVisible(enterChildren))
+            {
+                enterChildren = false;
+
+                if (iterator.propertyPath == "m_Script")
+                {
+                    using (new EditorGUI.DisabledScope(true))
+                    {
+                        EditorGUILayout.PropertyField(iterator, true);
+                    }
+                    continue;
+                }
+
+                if (EventProperties.Contains(iterator.propertyPath))
+                {
+                    if (EventGroupHeaders.TryGetValue(iterator.propertyPath, out var header))
+                    {
+                        EditorGUILayout.Space();
+                        EditorGUILayout.LabelField(header, EditorStyles.boldLabel);
+                    }
+                    DrawEventWithTooltip(iterator);
+                    continue;
+                }
+
+                EditorGUILayout.PropertyField(iterator, true);
+            }
+        }
+
+        // Reserves the PropertyField's rect explicitly so we know its top
+        // position, then draws the UnityEvent and overlays an invisible
+        // GUI.Label on its foldout header row. GetLastRect is unreliable here
+        // because an expanded UnityEvent's last sub-control is the "+/-" row
+        // at the bottom, not the foldout header.
+        private static void DrawEventWithTooltip(SerializedProperty property)
+        {
+            var height = EditorGUI.GetPropertyHeight(property, true);
+            var rect = EditorGUILayout.GetControlRect(true, height);
+            EditorGUI.PropertyField(rect, property, true);
+
+            if (string.IsNullOrEmpty(property.tooltip))
+            {
+                return;
+            }
+
+            var headerRect = new Rect(
+                rect.x,
+                rect.y,
+                rect.width,
+                EditorGUIUtility.singleLineHeight);
+            GUI.Label(headerRect, new GUIContent(string.Empty, property.tooltip));
         }
     }
 }
