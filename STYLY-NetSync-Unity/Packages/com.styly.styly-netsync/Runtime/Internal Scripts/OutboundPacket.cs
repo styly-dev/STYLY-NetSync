@@ -16,7 +16,14 @@ namespace Styly.NetSync
         /// Transform updates. Lower priority - only sent after control queue is drained.
         /// Uses latest-wins semantics (only the most recent transform is sent).
         /// </summary>
-        Transform
+        Transform,
+
+        /// <summary>
+        /// NetSyncObject transform updates. Lower priority like Transform, but uses a
+        /// per-object latest-wins slot so avatar and object updates do not clobber
+        /// each other and multiple owned objects do not overwrite one another.
+        /// </summary>
+        ObjectTransform
     }
 
     /// <summary>
