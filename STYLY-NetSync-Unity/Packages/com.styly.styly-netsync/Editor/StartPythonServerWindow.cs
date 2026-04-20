@@ -55,26 +55,6 @@ namespace Styly.NetSync.Editor
             // --- Server Discovery Port ---
             _serverDiscoveryPort = PortField("Server Discovery Port", _serverDiscoveryPort);
 
-            EditorGUILayout.Space(4);
-
-            // --- Config File ---
-            EditorGUILayout.LabelField("Config File", EditorStyles.boldLabel);
-            EditorGUILayout.BeginHorizontal();
-            _configFile = EditorGUILayout.TextField(_configFile);
-            if (GUILayout.Button("Browse...", GUILayout.Width(80)))
-            {
-                string path = EditorUtility.OpenFilePanel("Select Config File", "", "toml");
-                if (!string.IsNullOrEmpty(path))
-                {
-                    _configFile = path;
-                }
-            }
-            if (GUILayout.Button("Clear", GUILayout.Width(50)))
-            {
-                _configFile = "";
-            }
-            EditorGUILayout.EndHorizontal();
-
             EditorGUILayout.Space(8);
 
             // --- Advanced Options (foldout) ---
@@ -82,6 +62,32 @@ namespace Styly.NetSync.Editor
             if (_showAdvancedOptions)
             {
                 EditorGUI.indentLevel++;
+
+                // Config File
+                EditorGUILayout.LabelField("Config File", EditorStyles.boldLabel);
+                EditorGUILayout.BeginHorizontal();
+                _configFile = EditorGUILayout.TextField(_configFile);
+                if (GUILayout.Button("Browse...", GUILayout.Width(80)))
+                {
+                    string path = EditorUtility.OpenFilePanel("Select Config File", "", "toml");
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        _configFile = path;
+                    }
+                }
+                if (GUILayout.Button("Clear", GUILayout.Width(50)))
+                {
+                    _configFile = "";
+                }
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.HelpBox(
+                    "Config File is loaded as the base configuration. " +
+                    "The settings below override the corresponding values from the Config File " +
+                    "(priority: fields below > Config File > server defaults).",
+                    MessageType.Info);
+
+                EditorGUILayout.Space(4);
 
                 // Port settings
                 EditorGUILayout.LabelField("Ports", EditorStyles.boldLabel);
