@@ -41,3 +41,12 @@
 2. Check Unity Console for connection status
 3. Verify Python server is running
 4. Test with `Assets/Samples_Dev/Debug/Debug Scene.unity`
+
+## Adding a New UnityEvent Field
+
+`UnityEventDrawer` swallows `[Tooltip]`, so event fields need a custom-editor overlay.
+
+- Add `[Tooltip("…")]` and initialize at declaration (`= new UnityEvent<…>()`). No `[Header]` on event fields.
+- In the custom editor, register the field name in `EventProperties` (and `EventGroupHeaders` if it starts a new section). Existing `DrawEventWithTooltip` handles the rest.
+
+Non-UnityEvent fields: plain `[Tooltip]` is enough.
