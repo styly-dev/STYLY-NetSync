@@ -127,25 +127,25 @@ namespace Styly.NetSync.Editor
 
                 _logJsonConsole = EditorGUILayout.Toggle("JSON Console Output", _logJsonConsole);
 
+                EditorGUILayout.Space(8);
+
+                // --- Command Preview ---
+                EditorGUILayout.LabelField("Command Preview", EditorStyles.boldLabel);
+                string command = BuildConfig().BuildCommand(_serverVersion);
+
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUILayout.TextArea(command, EditorStyles.wordWrappedLabel);
+                EditorGUI.EndDisabledGroup();
+
+                if (GUILayout.Button("Copy Command"))
+                {
+                    EditorGUIUtility.systemCopyBuffer = command;
+                    Debug.Log("STYLY NetSync: Command copied to clipboard.");
+                }
+
                 EditorGUI.indentLevel--;
             }
             EditorGUILayout.EndFoldoutHeaderGroup();
-
-            EditorGUILayout.Space(8);
-
-            // --- Command Preview ---
-            EditorGUILayout.LabelField("Command Preview", EditorStyles.boldLabel);
-            string command = BuildConfig().BuildCommand(_serverVersion);
-
-            EditorGUI.BeginDisabledGroup(true);
-            EditorGUILayout.TextArea(command, EditorStyles.wordWrappedLabel);
-            EditorGUI.EndDisabledGroup();
-
-            if (GUILayout.Button("Copy Command"))
-            {
-                EditorGUIUtility.systemCopyBuffer = command;
-                Debug.Log("STYLY NetSync: Command copied to clipboard.");
-            }
 
             EditorGUILayout.Space(12);
 
