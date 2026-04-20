@@ -32,7 +32,8 @@ namespace Styly.NetSync
         private bool _logTransformDetail = false;
         private bool _logNetworkTraffic = false;
 
-        [Header("Events")]
+        // The "Events" header and per-event tooltips are rendered by
+        // NetSyncManagerEditor so UnityEventDrawer doesn't swallow them.
         // Initialize UnityEvents at declaration to ensure they are always non-null
         [Tooltip("Fired when a remote avatar connects. Parameter: clientNo (int) — the unique client number assigned to the connected avatar.")]
         public UnityEvent<int> OnAvatarConnected = new UnityEvent<int>();
