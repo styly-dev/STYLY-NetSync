@@ -40,13 +40,13 @@ namespace Styly.NetSync
         [Tooltip("Fired when a remote avatar disconnects. Parameter: clientNo (int) — the unique client number of the disconnected avatar.")]
         public UnityEvent<int> OnAvatarDisconnected = new UnityEvent<int>();
         [Tooltip("Fired when an RPC is received. Parameters: senderClientNo (int), functionName (string), args (string[]).")]
-        public UnityEvent<int, string, string[]> OnRPCReceived;
+        public UnityEvent<int, string, string[]> OnRPCReceived = new UnityEvent<int, string, string[]>();
         [Tooltip("Fired when a global network variable changes. Parameters: name (string), oldValue (string), newValue (string).")]
-        public UnityEvent<string, string, string> OnGlobalVariableChanged;
+        public UnityEvent<string, string, string> OnGlobalVariableChanged = new UnityEvent<string, string, string>();
         [Tooltip("Fired when a client-specific network variable changes. Parameters: clientNo (int), name (string), oldValue (string), newValue (string).")]
-        public UnityEvent<int, string, string, string> OnClientVariableChanged;
+        public UnityEvent<int, string, string, string> OnClientVariableChanged = new UnityEvent<int, string, string, string>();
         [Tooltip("Fired when the client is fully connected and synchronized (connected, handshaked, and network variables synced).")]
-        public UnityEvent OnReady;
+        public UnityEvent OnReady = new UnityEvent();
         /// <summary>
         /// Event fired when server and client versions do not match.
         /// Parameters: (serverVersion, clientVersion) as strings like "0.7.5"

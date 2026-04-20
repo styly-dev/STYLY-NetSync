@@ -45,22 +45,23 @@ namespace Styly.NetSync
 
         // Event-group headers and per-event tooltips are rendered by
         // NetSyncAvatarEditor so UnityEventDrawer doesn't swallow them.
+        // Initialize UnityEvents at declaration to ensure they are always non-null.
         [Tooltip("Fired when a client variable changes for this avatar's owner. Parameters: name (string), oldValue (string), newValue (string).")]
-        public UnityEvent<string, string, string> OnClientVariableChanged;
+        public UnityEvent<string, string, string> OnClientVariableChanged = new UnityEvent<string, string, string>();
 
         /// <summary>
         /// Invoked when hand tracking is lost (true hand tracking loss, not controller switch).
         /// Parameter: Hand (Left or Right)
         /// </summary>
         [Tooltip("Fired when hand tracking is lost (true hand tracking loss, not controller switch). Parameter: hand (Hand) — Left or Right.")]
-        public UnityEvent<Hand> OnHandTrackingLost;
+        public UnityEvent<Hand> OnHandTrackingLost = new UnityEvent<Hand>();
 
         /// <summary>
         /// Invoked when hand tracking is restored.
         /// Parameter: Hand (Left or Right)
         /// </summary>
         [Tooltip("Fired when hand tracking is restored. Parameter: hand (Hand) — Left or Right.")]
-        public UnityEvent<Hand> OnHandTrackingRestored;
+        public UnityEvent<Hand> OnHandTrackingRestored = new UnityEvent<Hand>();
 
         // --- Cached objects for zero-allocation transform packaging on send ---
         // These are reused every frame to avoid GC pressure from frequent network sends.
