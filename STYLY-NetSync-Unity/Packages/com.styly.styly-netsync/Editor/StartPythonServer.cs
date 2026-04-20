@@ -44,7 +44,7 @@ namespace Styly.NetSync.Editor
         public string BuildCommand(string serverVersion, Func<string, string> quoteValue)
         {
             var sb = new StringBuilder();
-            sb.Append($"uvx --exclude-newer {quoteValue("5 days")} --exclude-newer-package styly-netsync-server=false styly-netsync-server@{serverVersion}");
+            sb.Append($"uvx --exclude-newer {quoteValue("5 days")} --exclude-newer-package {quoteValue("styly-netsync-server=2999-12-31")} styly-netsync-server@{serverVersion}");
 
             if (!string.IsNullOrEmpty(ConfigFile))
                 sb.Append($" --config {quoteValue(ConfigFile)}");
