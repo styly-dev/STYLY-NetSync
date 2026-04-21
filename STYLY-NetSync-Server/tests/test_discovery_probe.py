@@ -65,7 +65,9 @@ class TestDiscoveryProbe:
 
         t = threading.Thread(target=fake_server, daemon=True)
         t.start()
-        ready_event.wait(timeout=2)
+        assert ready_event.wait(
+            timeout=2
+        ), "Fake discovery server did not become ready in time"
 
         try:
             server = NetSyncServer(

@@ -2014,16 +2014,28 @@ class NetSyncServer:
             try:
                 data, addr = probe_sock.recvfrom(1024)
                 response = data.decode("utf-8", errors="replace")
+                # Match the client-side validation (see client.py):
+                # payload must be "STYLY-NETSYNC|<dealerPort>|<pubPort>|<name>"
+                # with at least 4 pipe-separated fields and int-parseable ports.
                 if response.startswith("STYLY-NETSYNC|"):
-                    # Highlight the marker in red on color-capable sinks.
-                    # File/JSON sinks strip color tags automatically.
-                    logger.opt(colors=True).warning(
-                        f"<red>⚠ DISCOVERY PORT CONFLICT:</red> "
-                        f"Another STYLY-NetSync server is already responding "
-                        f"on discovery port {self.server_discovery_port} "
-                        f"(from {addr[0]}:{addr[1]}). Clients on this "
-                        f"LAN may connect to the wrong server."
-                    )
+                    parts = response.rstrip().split("|")
+                    if len(parts) >= 4:
+                        try:
+                            int(parts[1])
+                            int(parts[2])
+                        except ValueError:
+                            return
+                        server_name = parts[3]
+                        # Highlight the marker in red on color-capable sinks.
+                        # File/JSON sinks strip color tags automatically.
+                        logger.opt(colors=True).warning(
+                            f"<red>⚠ DISCOVERY PORT CONFLICT:</red> "
+                            f"Another STYLY-NetSync server "
+                            f"('{server_name}') is already responding "
+                            f"on discovery port {self.server_discovery_port} "
+                            f"(from {addr[0]}:{addr[1]}). Clients on this "
+                            f"LAN may connect to the wrong server."
+                        )
             except TimeoutError:
                 # No response — no conflict detected
                 pass
