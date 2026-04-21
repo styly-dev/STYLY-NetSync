@@ -101,7 +101,7 @@ If the diff touches **any** of these trigger files or keywords, a protocol chang
 3. **Simulator** — `client_simulator.py` must generate valid messages in new format; `MESSAGE_TYPE_NAMES` must include any new message type
 4. **Server handling** — `server.py` routing, `adapters.py` field mappings, `client.py` API
 5. **Unity handling** — `MessageProcessor.cs` routing, related managers (Transform/RPC/NV)
-6. **Documentation** — All three `CLAUDE.md` files (root, server, Unity) must reflect protocol changes
+6. **Documentation** — All three `AGENTS.md` files (root, server, Unity) must reflect protocol changes
 
 ## Detailed Rule References
 

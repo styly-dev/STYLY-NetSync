@@ -19,6 +19,29 @@ namespace Styly.NetSync.Editor
         };
         private static readonly HashSet<string> AdvancedProperties = new HashSet<string>(AdvancedPropertyOrder);
 
+        // UnityEventDrawer swallows the [Tooltip] on UnityEvent fields, so these
+        // event properties are rendered manually and get an invisible GUI.Label
+        // overlay on the header rect to restore hover tooltips.
+        private static readonly HashSet<string> EventProperties = new HashSet<string>
+        {
+            "OnAvatarConnected",
+            "OnAvatarDisconnected",
+            "OnRPCReceived",
+            "OnGlobalVariableChanged",
+            "OnClientVariableChanged",
+            "OnReady",
+            "OnVersionMismatch"
+        };
+
+        // Group headers drawn before the mapped event. [Header] lives in the
+        // runtime file normally, but a Header decorator shifts GetLastRect so
+        // the tooltip overlay lands on the header label instead of the event
+        // foldout — so we render the header here instead.
+        private static readonly Dictionary<string, string> EventGroupHeaders = new Dictionary<string, string>
+        {
+            { "OnAvatarConnected", "Events" }
+        };
+
         public override bool RequiresConstantRepaint()
         {
             return Application.isPlaying;
@@ -56,6 +79,17 @@ namespace Styly.NetSync.Editor
                     continue;
                 }
 
+                if (EventProperties.Contains(iterator.propertyPath))
+                {
+                    if (EventGroupHeaders.TryGetValue(iterator.propertyPath, out var header))
+                    {
+                        EditorGUILayout.Space();
+                        EditorGUILayout.LabelField(header, EditorStyles.boldLabel);
+                    }
+                    DrawEventWithTooltip(iterator);
+                    continue;
+                }
+
                 bool isTargetField = iterator.propertyPath == "_serverAddress" || iterator.propertyPath == "_roomId";
                 bool disable = EditorApplication.isPlaying && isTargetField;
 
@@ -70,6 +104,30 @@ namespace Styly.NetSync.Editor
             DrawGlobalVariablesSection();
 
             serializedObject.ApplyModifiedProperties();
+        }
+
+        // Reserves the PropertyField's rect explicitly so we know its top
+        // position, then draws the UnityEvent and overlays an invisible
+        // GUI.Label on its foldout header row. GetLastRect is unreliable here
+        // because an expanded UnityEvent's last sub-control is the "+/-" row
+        // at the bottom, not the foldout header.
+        private static void DrawEventWithTooltip(SerializedProperty property)
+        {
+            var height = EditorGUI.GetPropertyHeight(property, true);
+            var rect = EditorGUILayout.GetControlRect(true, height);
+            EditorGUI.PropertyField(rect, property, true);
+
+            if (string.IsNullOrEmpty(property.tooltip))
+            {
+                return;
+            }
+
+            var headerRect = new Rect(
+                rect.x,
+                rect.y,
+                rect.width,
+                EditorGUIUtility.singleLineHeight);
+            GUI.Label(headerRect, new GUIContent(string.Empty, property.tooltip));
         }
 
         private void DrawAdvancedSection(List<string> advancedPropertyPaths)

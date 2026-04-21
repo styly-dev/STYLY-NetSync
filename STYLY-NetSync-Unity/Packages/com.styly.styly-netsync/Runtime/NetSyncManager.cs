@@ -32,18 +32,26 @@ namespace Styly.NetSync
         private bool _logTransformDetail = false;
         private bool _logNetworkTraffic = false;
 
-        [Header("Events")]
+        // The "Events" header and per-event tooltips are rendered by
+        // NetSyncManagerEditor so UnityEventDrawer doesn't swallow them.
         // Initialize UnityEvents at declaration to ensure they are always non-null
+        [Tooltip("Fired when a remote avatar connects. Parameter: clientNo (int) — the unique client number assigned to the connected avatar.")]
         public UnityEvent<int> OnAvatarConnected = new UnityEvent<int>();
+        [Tooltip("Fired when a remote avatar disconnects. Parameter: clientNo (int) — the unique client number of the disconnected avatar.")]
         public UnityEvent<int> OnAvatarDisconnected = new UnityEvent<int>();
-        public UnityEvent<int, string, string[]> OnRPCReceived;
-        public UnityEvent<string, string, string> OnGlobalVariableChanged;
-        public UnityEvent<int, string, string, string> OnClientVariableChanged;
-        public UnityEvent OnReady;
+        [Tooltip("Fired when an RPC is received. Parameters: senderClientNo (int), functionName (string), args (string[]).")]
+        public UnityEvent<int, string, string[]> OnRPCReceived = new UnityEvent<int, string, string[]>();
+        [Tooltip("Fired when a global network variable changes. Parameters: name (string), oldValue (string), newValue (string).")]
+        public UnityEvent<string, string, string> OnGlobalVariableChanged = new UnityEvent<string, string, string>();
+        [Tooltip("Fired when a client-specific network variable changes. Parameters: clientNo (int), name (string), oldValue (string), newValue (string).")]
+        public UnityEvent<int, string, string, string> OnClientVariableChanged = new UnityEvent<int, string, string, string>();
+        [Tooltip("Fired when the client is fully connected and synchronized (connected, handshaked, and network variables synced).")]
+        public UnityEvent OnReady = new UnityEvent();
         /// <summary>
         /// Event fired when server and client versions do not match.
         /// Parameters: (serverVersion, clientVersion) as strings like "0.7.5"
         /// </summary>
+        [Tooltip("Fired when server and client versions do not match. Parameters: serverVersion (string), clientVersion (string) — e.g. \"0.7.5\".")]
         public UnityEvent<string, string> OnVersionMismatch = new UnityEvent<string, string>();
 
         // Advanced Options (drawn by NetSyncManagerEditor in a foldout)
@@ -215,6 +223,30 @@ namespace Styly.NetSync
             return arr;
         }
 
+        internal void RegisterNetSyncObject(NetSyncObject obj)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.Register(obj);
+            }
+        }
+
+        internal void UnregisterNetSyncObject(NetSyncObject obj)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.Unregister(obj);
+            }
+        }
+
+        public void RequestObjectOwnership(byte operationType, uint objectId)
+        {
+            if (_objectSyncManager != null)
+            {
+                _objectSyncManager.SendOwnershipRequest(_roomId, operationType, objectId);
+            }
+        }
+
         /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and
@@ -250,6 +282,7 @@ namespace Styly.NetSync
 
             // Clear room-scoped state to prevent leaks across rooms
             _messageProcessor?.ClearRoomScopedState();
+            _objectSyncManager?.ClearRoomScopedState();
             _timeEstimator.Reset();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
@@ -276,6 +309,7 @@ namespace Styly.NetSync
         private ServerDiscoveryManager _discoveryManager;
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
+        private ObjectSyncManager _objectSyncManager;
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -586,6 +620,13 @@ namespace Styly.NetSync
 
                 // Send transform updates (lower priority, can be dropped if backpressured)
                 SendTransformUpdates();
+
+                // Object sync: send owned object transforms and apply received transforms
+                if (_objectSyncManager != null)
+                {
+                    _objectSyncManager.Tick(_roomId, Time.time, _clientNo, _transformSendRate);
+                    _objectSyncManager.TickTransformAppliers(Time.deltaTime, NetSyncClock.NowSeconds());
+                }
             }
 
             // Check for initial sync timeout (important for rooms with no variables)
@@ -648,6 +689,7 @@ namespace Styly.NetSync
             _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
+            _objectSyncManager = new ObjectSyncManager(_connectionManager, _messageProcessor, _timeEstimator, _enableDebugLogs);
 
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
@@ -1174,6 +1216,8 @@ namespace Styly.NetSync
             _transformSyncManager = null;
             _networkVariableManager?.Dispose();
             _networkVariableManager = null;
+            _objectSyncManager?.Dispose();
+            _objectSyncManager = null;
         }
 
         /// <summary>
