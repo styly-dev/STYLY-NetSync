@@ -2015,7 +2015,10 @@ class NetSyncServer:
                 data, addr = probe_sock.recvfrom(1024)
                 response = data.decode("utf-8", errors="replace")
                 if response.startswith("STYLY-NETSYNC|"):
-                    logger.warning(
+                    # Highlight the marker in red on color-capable sinks.
+                    # File/JSON sinks strip color tags automatically.
+                    logger.opt(colors=True).warning(
+                        f"<red>⚠ DISCOVERY PORT CONFLICT:</red> "
                         f"Another STYLY-NetSync server is already responding "
                         f"on discovery port {self.server_discovery_port} "
                         f"(from {addr[0]}:{addr[1]}). Clients on this "
