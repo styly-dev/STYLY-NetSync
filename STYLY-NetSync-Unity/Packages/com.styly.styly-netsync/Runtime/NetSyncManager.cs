@@ -378,6 +378,13 @@ namespace Styly.NetSync
         public string RoomId => _roomId;
 
         /// <summary>
+        /// Server address the client is configured to connect to, or the
+        /// address resolved via auto-discovery when the inspector field is left empty.
+        /// Empty string until auto-discovery completes.
+        /// </summary>
+        public string ServerAddress => _serverAddress;
+
+        /// <summary>
         /// UDP port used for server discovery.
         /// </summary>
         public int ServerDiscoveryPort
