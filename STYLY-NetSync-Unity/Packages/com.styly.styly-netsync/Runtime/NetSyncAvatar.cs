@@ -4,6 +4,9 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using Unity.XR.CoreUtils;
+#if UNITY_EDITOR
+using UnityEngine.XR;
+#endif
 
 namespace Styly.NetSync
 {
@@ -200,6 +203,43 @@ namespace Styly.NetSync
             }
         }
 
+#if UNITY_EDITOR
+        private Camera _cachedEditorMainCamera;
+        private Transform _cachedEditorMainCameraTransform;
+
+        // Editor-only fallback: when no XR device is active, TrackedPoseDriver leaves
+        // _head at (0,0,0). Return Camera.main.transform so the local avatar reflects
+        // CameraYOffset. Returns null when an XR device (Meta Link, XR Device Simulator,
+        // etc.) is active, so real tracked poses are never overwritten.
+        private Transform GetCachedEditorMainCameraTransform()
+        {
+            if (_cachedEditorMainCamera == null)
+            {
+                _cachedEditorMainCamera = Camera.main;
+                _cachedEditorMainCameraTransform = _cachedEditorMainCamera != null ? _cachedEditorMainCamera.transform : null;
+            }
+
+            return _cachedEditorMainCameraTransform;
+        }
+
+        private Transform TryGetEditorHeadOverride()
+        {
+            if (XRSettings.isDeviceActive) { return null; }
+            return GetCachedEditorMainCameraTransform();
+        }
+
+        void LateUpdate()
+        {
+            if (!IsLocalAvatar || _head == null) { return; }
+            var overrideTransform = TryGetEditorHeadOverride();
+            if (overrideTransform != null)
+            {
+                _head.position = overrideTransform.position;
+                _head.rotation = overrideTransform.rotation;
+            }
+        }
+#endif
+
         // Get current transform data for sending
         internal ClientTransformData GetTransformData()
         {
@@ -228,9 +268,18 @@ namespace Styly.NetSync
             _tx.physical = _txPhysical;
 
             // World space transforms.
+            // In the Editor without an active XR device, TrackedPoseDriver returns (0,0,0).
+            // TryGetEditorHeadOverride() substitutes Camera.main.transform so the transmitted
+            // head pose reflects CameraYOffset. When an XR device is active (Meta Link, XR
+            // Device Simulator, on-device builds), _head is used directly.
+            Transform headForSync = _head;
+#if UNITY_EDITOR
+            var overrideTransform = TryGetEditorHeadOverride();
+            if (overrideTransform != null) { headForSync = overrideTransform; }
+#endif
             Fill(_txHead,
-                _head != null ? _head.position : Vector3.zero,
-                _head != null ? _head.rotation : Quaternion.identity);
+                headForSync != null ? headForSync.position : Vector3.zero,
+                headForSync != null ? headForSync.rotation : Quaternion.identity);
             _tx.head = _txHead;
 
             Fill(_txRight,
