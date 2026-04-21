@@ -14,7 +14,6 @@ if sys.version_info < MIN_PY:
 
 import argparse
 import base64
-import json
 import os
 import platform
 import socket
@@ -1175,33 +1174,6 @@ class NetSyncServer:
                 self._increment_stat("ctrl_unicast_wouldblock")
             except Exception as exc:
                 logger.error(f"Router send error: {exc}")
-
-    def _process_message(
-        self, client_identity: bytes, room_id: str, message: str
-    ) -> None:
-        """Process incoming client message"""
-        try:
-            msg_data = json.loads(message)
-            msg_type = msg_data.get("type")
-            data_str = msg_data.get("data", "{}")
-            data = json.loads(data_str) if data_str else {}
-
-            # Process client transform messages (support both enum and string formats)
-            if msg_type in [0, "ClientTransform", "client_transform"]:
-                self._handle_client_transform(client_identity, room_id, data)
-            # JSON-based RPC broadcast
-            elif msg_type in ["Rpc", "rpc"]:
-                logger.info(f"JSON RPC received in room {room_id}: {data}")
-                self._send_rpc_to_room(room_id, data)
-            else:
-                logger.warning(f"Unknown message type: {msg_type}")
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON: {e}")
-            logger.error(f"Raw message: {message}")
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            logger.error(traceback.format_exc())
 
     def _handle_client_transform(
         self,
