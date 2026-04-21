@@ -193,15 +193,28 @@ namespace Styly.NetSync
         }
 
 #if UNITY_EDITOR
+        private Camera _cachedEditorMainCamera;
+        private Transform _cachedEditorMainCameraTransform;
+
         // Editor-only fallback: when no XR device is active, TrackedPoseDriver leaves
         // _head at (0,0,0). Return Camera.main.transform so the local avatar reflects
         // CameraYOffset. Returns null when an XR device (Meta Link, XR Device Simulator,
         // etc.) is active, so real tracked poses are never overwritten.
+        private Transform GetCachedEditorMainCameraTransform()
+        {
+            if (_cachedEditorMainCamera == null)
+            {
+                _cachedEditorMainCamera = Camera.main;
+                _cachedEditorMainCameraTransform = _cachedEditorMainCamera != null ? _cachedEditorMainCamera.transform : null;
+            }
+
+            return _cachedEditorMainCameraTransform;
+        }
+
         private Transform TryGetEditorHeadOverride()
         {
             if (XRSettings.isDeviceActive) { return null; }
-            var mainCam = Camera.main;
-            return mainCam != null ? mainCam.transform : null;
+            return GetCachedEditorMainCameraTransform();
         }
 
         void LateUpdate()
