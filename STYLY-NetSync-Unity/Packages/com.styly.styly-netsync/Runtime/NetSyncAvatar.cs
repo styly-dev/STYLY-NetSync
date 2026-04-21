@@ -4,6 +4,9 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using Unity.XR.CoreUtils;
+#if UNITY_EDITOR
+using UnityEngine.XR;
+#endif
 
 namespace Styly.NetSync
 {
@@ -190,15 +193,25 @@ namespace Styly.NetSync
         }
 
 #if UNITY_EDITOR
+        // Editor-only fallback: when no XR device is active, TrackedPoseDriver leaves
+        // _head at (0,0,0). Return Camera.main.transform so the local avatar reflects
+        // CameraYOffset. Returns null when an XR device (Meta Link, XR Device Simulator,
+        // etc.) is active, so real tracked poses are never overwritten.
+        private Transform TryGetEditorHeadOverride()
+        {
+            if (XRSettings.isDeviceActive) { return null; }
+            var mainCam = Camera.main;
+            return mainCam != null ? mainCam.transform : null;
+        }
+
         void LateUpdate()
         {
-            // In the Editor there is no XR device, so TrackedPoseDriver leaves _head at (0,0,0).
-            // Override the local avatar head transform to Camera.main so the avatar renders at
-            // the correct height (CameraYOffset applied) during editor play-mode testing.
-            if (IsLocalAvatar && _head != null && Camera.main != null)
+            if (!IsLocalAvatar || _head == null) { return; }
+            var overrideTransform = TryGetEditorHeadOverride();
+            if (overrideTransform != null)
             {
-                _head.position = Camera.main.transform.position;
-                _head.rotation = Camera.main.transform.rotation;
+                _head.position = overrideTransform.position;
+                _head.rotation = overrideTransform.rotation;
             }
         }
 #endif
@@ -231,20 +244,18 @@ namespace Styly.NetSync
             _tx.physical = _txPhysical;
 
             // World space transforms.
-            // In the Editor there is no XR device, so TrackedPoseDriver returns (0,0,0).
-            // Camera.main.transform.position correctly reflects CameraYOffset (e.g. 1.3 m)
-            // that was set for a comfortable editor view, matching the visual camera height.
-            // On-device builds use _head.position (floor-relative XR tracking) directly.
+            // In the Editor without an active XR device, TrackedPoseDriver returns (0,0,0).
+            // TryGetEditorHeadOverride() substitutes Camera.main.transform so the transmitted
+            // head pose reflects CameraYOffset. When an XR device is active (Meta Link, XR
+            // Device Simulator, on-device builds), _head is used directly.
+            Transform headForSync = _head;
 #if UNITY_EDITOR
-            var headForSync = Camera.main != null ? Camera.main.transform : _head;
+            var overrideTransform = TryGetEditorHeadOverride();
+            if (overrideTransform != null) { headForSync = overrideTransform; }
+#endif
             Fill(_txHead,
                 headForSync != null ? headForSync.position : Vector3.zero,
                 headForSync != null ? headForSync.rotation : Quaternion.identity);
-#else
-            Fill(_txHead,
-                _head != null ? _head.position : Vector3.zero,
-                _head != null ? _head.rotation : Quaternion.identity);
-#endif
             _tx.head = _txHead;
 
             Fill(_txRight,
