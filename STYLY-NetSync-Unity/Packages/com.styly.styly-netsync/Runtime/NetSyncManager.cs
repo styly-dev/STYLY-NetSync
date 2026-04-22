@@ -214,6 +214,8 @@ namespace Styly.NetSync
         /// Returns 0 when the mapping is not yet known (e.g. before the device has
         /// been observed in this room, or before the local handshake has completed),
         /// or when <paramref name="deviceId"/> is null or empty.
+        /// When network traffic logging is enabled, unresolved lookups may also
+        /// emit a warning from the underlying message processor.
         /// </summary>
         /// <param name="deviceId">The stable device identifier.</param>
         /// <returns>The client number, or 0 if no mapping is known.</returns>
