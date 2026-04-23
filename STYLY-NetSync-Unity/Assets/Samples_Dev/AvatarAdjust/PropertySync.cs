@@ -44,7 +44,7 @@ namespace Styly.NetSync.AvatarAdjust
                 case VarName_BodyOffsetY:
                 {
                     var offsetY = float.Parse(newValue);
-                    bodyTransformSolver.offsetY = offsetY;
+                    bodyTransformSolver.bodyOffsetY = offsetY;
                     break;
                 }
             }
@@ -60,7 +60,7 @@ namespace Styly.NetSync.AvatarAdjust
             // 値が変わらなければ実際に送信されずネットワーク負荷がかからない
             NetSyncManager.Instance.SetGlobalVariable(VarName_HeadScale, head.localScale.x.ToString());
             NetSyncManager.Instance.SetGlobalVariable(VarName_BodyScale, body.localScale.x.ToString());
-            NetSyncManager.Instance.SetGlobalVariable(VarName_BodyOffsetY, bodyTransformSolver.offsetY.ToString());
+            NetSyncManager.Instance.SetGlobalVariable(VarName_BodyOffsetY, bodyTransformSolver.bodyOffsetY.ToString());
         }
     }
 }

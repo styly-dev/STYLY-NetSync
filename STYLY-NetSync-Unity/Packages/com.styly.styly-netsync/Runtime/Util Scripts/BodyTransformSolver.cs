@@ -12,8 +12,8 @@ namespace Styly.NetSync
         // ---- Public (as requested) ----
         public NetSyncAvatar netSyncAvatar; // Source of head transform
         public Transform body;              // Torso object to drive (optional)
+        public float bodyOffsetY = 0.2f;        // Vertical offset of body below the head (in meters)
         public Transform foot;              // Foot object to drive (optional)
-        public float offsetY = 0.2f;        // Vertical offset of body below the head (in meters)
 
         void LateUpdate()
         {
@@ -31,7 +31,7 @@ namespace Styly.NetSync
             if (body != null)
             {
                 Vector3 bodyPosition = head.position;
-                bodyPosition.y -= offsetY;
+                bodyPosition.y -= bodyOffsetY;
                 body.position = bodyPosition;
 
                 if (hasYaw)

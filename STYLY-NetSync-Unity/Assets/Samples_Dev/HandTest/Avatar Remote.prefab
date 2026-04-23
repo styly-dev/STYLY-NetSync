@@ -178,7 +178,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   body: {fileID: 6481340575715535886}
   head: {fileID: 2041796224729081718}
-  offsetY: 0.4
+  bodyOffsetY: 0.4
 --- !u!1 &7927846321792083688
 GameObject:
   m_ObjectHideFlags: 0

@@ -236,7 +236,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: com.styly.styly-netsync::Styly.NetSync.BodyTransformSolver2
   body: {fileID: 46711611}
   head: {fileID: 46711613}
-  offsetY: 0.4
+  bodyOffsetY: 0.4
 --- !u!1 &186923346
 GameObject:
   m_ObjectHideFlags: 0

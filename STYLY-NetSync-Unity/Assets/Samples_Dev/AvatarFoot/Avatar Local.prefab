@@ -143,7 +143,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   body: {fileID: 0}
   head: {fileID: 4016732908201917923}
-  offsetY: 0.4
+  bodyOffsetY: 0.4
   foot: {fileID: 6304478315096661574}
   netSyncAvatar: {fileID: 5547396249573188791}
 --- !u!1 &5582494831680522701
