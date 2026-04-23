@@ -4,13 +4,13 @@ namespace Styly.NetSync
 {
     /// <summary>
     /// Solves body and foot transforms to follow the NetSyncAvatar's head (HMD) with Y-axis rotation only.
-    /// Body is driven to the head position with a vertical offset; foot is driven to the ground directly
-    /// below the head, using PhysicalPosition.y as the HMD local height so it snaps to the rig floor.
+    /// Body is driven to the head position with a vertical offset; foot is snapped to the head's parent
+    /// (rig) Y directly below the head, so it sits on the rig floor regardless of rig Y translation.
     /// </summary>
     public class BodyTransformSolver : MonoBehaviour
     {
         // ---- Public (as requested) ----
-        public NetSyncAvatar netSyncAvatar; // Source of head transform and PhysicalPosition.y
+        public NetSyncAvatar netSyncAvatar; // Source of head transform
         public Transform body;              // Torso object to drive (optional)
         public Transform foot;              // Foot object to drive (optional)
         public float offsetY = 0.2f;        // Vertical offset of body below the head (in meters)
@@ -40,11 +40,11 @@ namespace Styly.NetSync
                 }
             }
 
-            // Drive foot: ground position below head (using HMD local height) with yaw-only rotation
-            if (foot != null)
+            // Drive foot: X/Z of the head at the rig floor Y (head's parent Y), with yaw-only rotation
+            if (foot != null && head.parent != null)
             {
                 Vector3 footPosition = head.position;
-                footPosition.y -= netSyncAvatar.PhysicalPosition.y;
+                footPosition.y = head.parent.position.y;
                 foot.position = footPosition;
 
                 if (hasYaw)
