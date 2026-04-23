@@ -4,8 +4,12 @@ namespace Styly.NetSync
 {
     /// <summary>
     /// Solves body and foot transforms to follow the NetSyncAvatar's head (HMD) with Y-axis rotation only.
-    /// Body is driven to the head position with a vertical offset; foot is snapped to the head's parent
-    /// (rig) Y directly below the head, so it sits on the rig floor regardless of rig Y translation.
+    /// Body is driven to the head position with a vertical offset. Foot is snapped to the rig floor Y
+    /// directly below the head: for the local avatar the head's parent Y is used (the XR rig);
+    /// for remote avatars the network protocol does not carry vertical rig movement, so the foot
+    /// effectively tracks the world-origin Y (see BinarySerializer decoder; xrOriginDelta.y is
+    /// hardcoded to 0). Remote foot placement is correct only while the sender's rig floor stays
+    /// at its startup Y.
     /// </summary>
     public class BodyTransformSolver : MonoBehaviour
     {
@@ -40,11 +44,23 @@ namespace Styly.NetSync
                 }
             }
 
-            // Drive foot: X/Z of the head at the rig floor Y (head's parent Y), with yaw-only rotation
-            if (foot != null && head.parent != null)
+            // Drive foot: X/Z of the head at the rig floor Y, with yaw-only rotation
+            if (foot != null)
             {
                 Vector3 footPosition = head.position;
-                footPosition.y = head.parent.position.y;
+                if (netSyncAvatar.IsLocalAvatar && head.parent != null)
+                {
+                    // Local: head is parented under the XR rig, so the rig floor Y is head.parent.y
+                    footPosition.y = head.parent.position.y;
+                }
+                else
+                {
+                    // Remote: the wire protocol does not carry rig Y movement (xrOriginDelta.y
+                    // is always 0 — see BinarySerializer.cs:713/743), so PhysicalPosition.y ends
+                    // up equal to head.position.y and the subtraction pins the foot to world Y=0.
+                    // This is correct only while the sender's rig stays at its startup Y.
+                    footPosition.y -= netSyncAvatar.PhysicalPosition.y;
+                }
                 foot.position = footPosition;
 
                 if (hasYaw)
