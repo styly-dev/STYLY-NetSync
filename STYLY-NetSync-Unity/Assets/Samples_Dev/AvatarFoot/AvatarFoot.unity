@@ -178,7 +178,7 @@ PrefabInstance:
     - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
       propertyPath: _remoteAvatarPrefab
       value: 
-      objectReference: {fileID: 7715607727795320353, guid: 0b601e82d981e4c01860d01f8cc673c6, type: 3}
+      objectReference: {fileID: 7715607727795320353, guid: 7506ac317541b473f98a4b6a7fc13a60, type: 3}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
