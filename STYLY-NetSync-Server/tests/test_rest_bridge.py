@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient
 from styly_netsync.rest_bridge import (
     MAX_GLOBAL_VARS,
     GlobalVarStore,
+    PreseedStore,
     RoomBridge,
     create_app,
 )
@@ -270,3 +272,179 @@ class TestGlobalVariablesEndpoint:
                 assert rest_bridge.global_store.get("room1") == {}
         finally:
             rest_bridge.global_store = original_store
+
+
+# ---------------------------------------------------------------------------
+# GET global-variables endpoint tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def client_with_global_vars() -> TestClient:
+    """TestClient with BridgeManager mocked to expose live global variables."""
+    with patch("styly_netsync.rest_bridge.BridgeManager") as MockBridgeManager:
+        mock_mgr = MagicMock()
+        mock_mgr.get_all_global_variables.return_value = {"score": "42", "level": "3"}
+        mock_bridge = MagicMock()
+        mock_bridge.manager = mock_mgr
+        MockBridgeManager.return_value.get.return_value = mock_bridge
+
+        app = create_app("localhost", 5555, 5556)
+        return TestClient(app)
+
+
+class TestGetGlobalVariablesEndpoint:
+    def test_get_all_returns_200(self, client_with_global_vars: TestClient) -> None:
+        resp = client_with_global_vars.get("/v1/rooms/room1/global-variables")
+        assert resp.status_code == 200
+
+    def test_get_all_response_structure(
+        self, client_with_global_vars: TestClient
+    ) -> None:
+        resp = client_with_global_vars.get("/v1/rooms/room1/global-variables")
+        body = resp.json()
+        assert body["roomId"] == "room1"
+        assert "vars" in body
+        assert body["vars"]["score"] == "42"
+        assert body["vars"]["level"] == "3"
+
+    def test_get_all_empty_room_returns_empty_vars(self) -> None:
+        with patch("styly_netsync.rest_bridge.BridgeManager") as MockBM:
+            mock_mgr = MagicMock()
+            mock_mgr.get_all_global_variables.return_value = {}
+            mock_bridge = MagicMock()
+            mock_bridge.manager = mock_mgr
+            MockBM.return_value.get.return_value = mock_bridge
+
+            app = create_app("localhost", 5555, 5556)
+            tc = TestClient(app)
+            resp = tc.get("/v1/rooms/empty_room/global-variables")
+        assert resp.status_code == 200
+        assert resp.json()["vars"] == {}
+
+    def test_get_all_merges_pending_with_live(self) -> None:
+        """Pending (queued) vars should overlay live vars in the response."""
+        from styly_netsync import rest_bridge
+
+        original_store = rest_bridge.global_store
+        rest_bridge.global_store = GlobalVarStore()
+        rest_bridge.global_store.upsert("room1", {"score": "99", "pending": "yes"})
+        try:
+            with patch("styly_netsync.rest_bridge.BridgeManager") as MockBM:
+                mock_mgr = MagicMock()
+                mock_mgr.get_all_global_variables.return_value = {
+                    "score": "42",
+                    "live": "yes",
+                }
+                mock_bridge = MagicMock()
+                mock_bridge.manager = mock_mgr
+                MockBM.return_value.get.return_value = mock_bridge
+
+                app = create_app("localhost", 5555, 5556)
+                tc = TestClient(app)
+                resp = tc.get("/v1/rooms/room1/global-variables")
+        finally:
+            rest_bridge.global_store = original_store
+
+        body = resp.json()
+        assert body["vars"]["score"] == "99"  # pending overrides live
+        assert body["vars"]["live"] == "yes"  # live-only key preserved
+        assert body["vars"]["pending"] == "yes"  # pending-only key present
+
+    def test_get_single_returns_200(self, client_with_global_vars: TestClient) -> None:
+        resp = client_with_global_vars.get("/v1/rooms/room1/global-variables/score")
+        assert resp.status_code == 200
+
+    def test_get_single_response_structure(
+        self, client_with_global_vars: TestClient
+    ) -> None:
+        resp = client_with_global_vars.get("/v1/rooms/room1/global-variables/score")
+        body = resp.json()
+        assert body["roomId"] == "room1"
+        assert body["name"] == "score"
+        assert body["value"] == "42"
+
+    def test_get_single_not_found_returns_404(
+        self, client_with_global_vars: TestClient
+    ) -> None:
+        resp = client_with_global_vars.get("/v1/rooms/room1/global-variables/missing")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET client-variables endpoint tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def client_with_device_vars() -> Generator[TestClient, None, None]:
+    """TestClient with BridgeManager mocked (client vars come from PreseedStore)."""
+    from styly_netsync import rest_bridge
+
+    original_store = rest_bridge.store
+    new_store = PreseedStore()
+    new_store.upsert("room1", "device-abc", {"hp": "100", "name": "hero"})
+    rest_bridge.store = new_store
+
+    with patch("styly_netsync.rest_bridge.BridgeManager") as MockBM:
+        mock_bridge = MagicMock()
+        MockBM.return_value.get.return_value = mock_bridge
+        app = create_app("localhost", 5555, 5556)
+        yield TestClient(app)
+
+    rest_bridge.store = original_store
+
+
+class TestGetClientVariablesEndpoint:
+    def test_get_all_returns_200(self, client_with_device_vars: TestClient) -> None:
+        resp = client_with_device_vars.get(
+            "/v1/rooms/room1/devices/device-abc/client-variables"
+        )
+        assert resp.status_code == 200
+
+    def test_get_all_response_structure(
+        self, client_with_device_vars: TestClient
+    ) -> None:
+        resp = client_with_device_vars.get(
+            "/v1/rooms/room1/devices/device-abc/client-variables"
+        )
+        body = resp.json()
+        assert body["roomId"] == "room1"
+        assert body["deviceId"] == "device-abc"
+        assert body["vars"]["hp"] == "100"
+        assert body["vars"]["name"] == "hero"
+
+    def test_get_all_unknown_device_returns_empty_vars(
+        self, client_with_device_vars: TestClient
+    ) -> None:
+        resp = client_with_device_vars.get(
+            "/v1/rooms/room1/devices/unknown-device/client-variables"
+        )
+        assert resp.status_code == 200
+        assert resp.json()["vars"] == {}
+
+    def test_get_single_returns_200(self, client_with_device_vars: TestClient) -> None:
+        resp = client_with_device_vars.get(
+            "/v1/rooms/room1/devices/device-abc/client-variables/hp"
+        )
+        assert resp.status_code == 200
+
+    def test_get_single_response_structure(
+        self, client_with_device_vars: TestClient
+    ) -> None:
+        resp = client_with_device_vars.get(
+            "/v1/rooms/room1/devices/device-abc/client-variables/hp"
+        )
+        body = resp.json()
+        assert body["roomId"] == "room1"
+        assert body["deviceId"] == "device-abc"
+        assert body["name"] == "hp"
+        assert body["value"] == "100"
+
+    def test_get_single_not_found_returns_404(
+        self, client_with_device_vars: TestClient
+    ) -> None:
+        resp = client_with_device_vars.get(
+            "/v1/rooms/room1/devices/device-abc/client-variables/missing"
+        )
+        assert resp.status_code == 404
