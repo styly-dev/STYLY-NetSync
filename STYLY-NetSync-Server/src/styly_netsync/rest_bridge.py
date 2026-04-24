@@ -187,6 +187,25 @@ class RoomBridge:
             logger.debug("Failed to lookup client number for %s: %s", device_id, exc)
             return None
 
+    def get_global_variables(self) -> dict[str, str]:
+        """Return a snapshot of cached global variables for this room."""
+        try:
+            return self._manager.get_all_global_variables()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("get_all_global_variables failed: %s", exc)
+            return {}
+
+    def get_client_variables(self, device_id: str) -> tuple[int | None, dict[str, str]]:
+        """Return (client_no, snapshot) for device; client_no is None if unmapped."""
+        client_no = self.get_client_no(device_id)
+        if client_no is None:
+            return None, {}
+        try:
+            return client_no, self._manager.get_all_client_variables(client_no)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("get_all_client_variables failed: %s", exc)
+            return client_no, {}
+
     def _apply_to_client(self, client_no: int, kvs: dict[str, str]) -> set[str]:
         """Apply stored variables to the target client via set_client_variable."""
         applied: set[str] = set()
@@ -349,6 +368,63 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
         return {
             "roomId": room_id,
             "result": {name: {"state": state} for name, state in statuses.items()},
+        }
+
+    @app.get("/v1/rooms/{room_id}/global-variables")
+    def get_global_variables(room_id: str) -> dict[str, object]:
+        bridge = manager.get(room_id)
+        return {
+            "roomId": room_id,
+            "variables": bridge.get_global_variables(),
+        }
+
+    @app.get("/v1/rooms/{room_id}/global-variables/{name}")
+    def get_global_variable(room_id: str, name: VarName) -> dict[str, object]:
+        bridge = manager.get(room_id)
+        variables = bridge.get_global_variables()
+        if name not in variables:
+            raise HTTPException(
+                status_code=404, detail=f"Global variable '{name}' not found"
+            )
+        return {
+            "roomId": room_id,
+            "variableName": name,
+            "variableValue": variables[name],
+        }
+
+    @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
+    def get_client_variables(room_id: str, device_id: str) -> dict[str, object]:
+        bridge = manager.get(room_id)
+        client_no, variables = bridge.get_client_variables(device_id)
+        return {
+            "roomId": room_id,
+            "deviceId": device_id,
+            "mapping": {"clientNo": client_no},
+            "variables": variables,
+        }
+
+    @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables/{name}")
+    def get_client_variable(
+        room_id: str, device_id: str, name: VarName
+    ) -> dict[str, object]:
+        bridge = manager.get(room_id)
+        client_no, variables = bridge.get_client_variables(device_id)
+        if client_no is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Device '{device_id}' has no client mapping",
+            )
+        if name not in variables:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Client variable '{name}' not found for device '{device_id}'",
+            )
+        return {
+            "roomId": room_id,
+            "deviceId": device_id,
+            "mapping": {"clientNo": client_no},
+            "variableName": name,
+            "variableValue": variables[name],
         }
 
     return app

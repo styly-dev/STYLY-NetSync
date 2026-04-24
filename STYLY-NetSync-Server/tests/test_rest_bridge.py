@@ -270,3 +270,172 @@ class TestGlobalVariablesEndpoint:
                 assert rest_bridge.global_store.get("room1") == {}
         finally:
             rest_bridge.global_store = original_store
+
+
+# ---------------------------------------------------------------------------
+# RoomBridge read method tests
+# ---------------------------------------------------------------------------
+
+
+class TestRoomBridgeReadMethods:
+    def test_get_global_variables_delegates_to_manager(self) -> None:
+        bridge = _make_bridge(client_no=1)
+        bridge._manager.get_all_global_variables.return_value = {"a": "1", "b": "2"}
+        result = bridge.get_global_variables()
+        assert result == {"a": "1", "b": "2"}
+        bridge._manager.get_all_global_variables.assert_called_once_with()
+
+    def test_get_global_variables_swallows_exceptions(self) -> None:
+        bridge = _make_bridge(client_no=1)
+        bridge._manager.get_all_global_variables.side_effect = RuntimeError("boom")
+        assert bridge.get_global_variables() == {}
+
+    def test_get_client_variables_unmapped_returns_none_and_empty(self) -> None:
+        bridge = _make_bridge(client_no=1)
+        bridge._manager.get_client_no.return_value = None
+        client_no, variables = bridge.get_client_variables("device-x")
+        assert client_no is None
+        assert variables == {}
+        bridge._manager.get_all_client_variables.assert_not_called()
+
+    def test_get_client_variables_mapped_returns_snapshot(self) -> None:
+        bridge = _make_bridge(client_no=1)
+        bridge._manager.get_client_no.return_value = 7
+        bridge._manager.get_all_client_variables.return_value = {"name": "alice"}
+        client_no, variables = bridge.get_client_variables("device-x")
+        assert client_no == 7
+        assert variables == {"name": "alice"}
+        bridge._manager.get_all_client_variables.assert_called_once_with(7)
+
+    def test_get_client_variables_swallows_exceptions(self) -> None:
+        bridge = _make_bridge(client_no=1)
+        bridge._manager.get_client_no.return_value = 7
+        bridge._manager.get_all_client_variables.side_effect = RuntimeError("boom")
+        client_no, variables = bridge.get_client_variables("device-x")
+        assert client_no == 7
+        assert variables == {}
+
+
+# ---------------------------------------------------------------------------
+# GET endpoint tests via TestClient
+# ---------------------------------------------------------------------------
+
+
+def _make_get_client(mock_bridge: MagicMock) -> TestClient:
+    """Build a TestClient whose BridgeManager always returns the given bridge."""
+    with patch("styly_netsync.rest_bridge.BridgeManager") as MockBM:
+        MockBM.return_value.get.return_value = mock_bridge
+        app = create_app("localhost", 5555, 5556)
+        return TestClient(app)
+
+
+class TestGlobalVariablesGetEndpoint:
+    def test_get_all_returns_snapshot(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_global_variables.return_value = {"score": "10", "level": "3"}
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/global-variables")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "roomId": "room1",
+            "variables": {"score": "10", "level": "3"},
+        }
+
+    def test_get_all_returns_empty_when_cache_empty(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_global_variables.return_value = {}
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/global-variables")
+        assert resp.status_code == 200
+        assert resp.json() == {"roomId": "room1", "variables": {}}
+
+    def test_get_single_returns_value(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_global_variables.return_value = {"score": "10"}
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/global-variables/score")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "roomId": "room1",
+            "variableName": "score",
+            "variableValue": "10",
+        }
+
+    def test_get_single_missing_returns_404(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_global_variables.return_value = {}
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/global-variables/missing")
+        assert resp.status_code == 404
+
+    def test_get_single_name_too_long_returns_422(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_global_variables.return_value = {}
+        tc = _make_get_client(mock_bridge)
+        long_name = "x" * 65
+        resp = tc.get(f"/v1/rooms/room1/global-variables/{long_name}")
+        assert resp.status_code == 422
+
+
+class TestClientVariablesGetEndpoint:
+    def test_get_all_unknown_device_returns_null_mapping_and_empty(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_client_variables.return_value = (None, {})
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/devices/device-x/client-variables")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "roomId": "room1",
+            "deviceId": "device-x",
+            "mapping": {"clientNo": None},
+            "variables": {},
+        }
+
+    def test_get_all_mapped_device_returns_snapshot(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_client_variables.return_value = (7, {"name": "alice"})
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/devices/device-x/client-variables")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "roomId": "room1",
+            "deviceId": "device-x",
+            "mapping": {"clientNo": 7},
+            "variables": {"name": "alice"},
+        }
+
+    def test_get_single_returns_value(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_client_variables.return_value = (7, {"name": "alice"})
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/devices/device-x/client-variables/name")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "roomId": "room1",
+            "deviceId": "device-x",
+            "mapping": {"clientNo": 7},
+            "variableName": "name",
+            "variableValue": "alice",
+        }
+
+    def test_get_single_unknown_device_returns_404(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_client_variables.return_value = (None, {})
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/devices/device-x/client-variables/name")
+        assert resp.status_code == 404
+
+    def test_get_single_missing_variable_returns_404(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_client_variables.return_value = (7, {})
+        tc = _make_get_client(mock_bridge)
+        resp = tc.get("/v1/rooms/room1/devices/device-x/client-variables/name")
+        assert resp.status_code == 404
+
+    def test_get_single_name_too_long_returns_422(self) -> None:
+        mock_bridge = MagicMock()
+        mock_bridge.get_client_variables.return_value = (7, {})
+        tc = _make_get_client(mock_bridge)
+        long_name = "x" * 65
+        resp = tc.get(f"/v1/rooms/room1/devices/device-x/client-variables/{long_name}")
+        assert resp.status_code == 422
