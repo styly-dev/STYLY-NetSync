@@ -88,7 +88,7 @@ namespace Styly.NetSync.Editor
 
     internal static class StartPythonServer
     {
-        internal static int GetDefaultServerDiscoveryPort()
+        internal static bool TryGetServerDiscoveryPortFromScene(out int port)
         {
             // Try to find NetSyncManager in the active scene first, then other loaded scenes
             Scene activeScene = SceneManager.GetActiveScene();
@@ -111,13 +111,19 @@ namespace Styly.NetSync.Editor
                     NetSyncManager manager = rootObject.GetComponentInChildren<NetSyncManager>(true);
                     if (manager != null)
                     {
-                        return manager.ServerDiscoveryPort;
+                        port = manager.ServerDiscoveryPort;
+                        return true;
                     }
                 }
             }
 
-            // Return default port if NetSyncManager is not found
-            return 9999;
+            port = 9999;
+            return false;
+        }
+
+        internal static int GetDefaultServerDiscoveryPort()
+        {
+            return TryGetServerDiscoveryPortFromScene(out int port) ? port : 9999;
         }
 
         internal static string GetServerVersionSafe()
