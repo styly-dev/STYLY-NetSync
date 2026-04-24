@@ -121,7 +121,7 @@ The server launches an embedded FastAPI application that exposes REST endpoints 
 
 ```json
 {
-  "vars": {
+  "variables": {
     "name": "Jack",
     "lang": "EN"
   }
@@ -140,7 +140,7 @@ The server launches an embedded FastAPI application that exposes REST endpoints 
 ```bash
 curl -sS -X POST "http://127.0.0.1:8800/v1/rooms/default_room/devices/00000000-0000-0000-0000-000000000000/client-variables" \
   -H "Content-Type: application/json" \
-  -d '{"vars":{"name":"Jack","lang":"EN"}}'
+  -d '{"variables":{"name":"Jack","lang":"EN"}}'
 ```
 
 The response includes the current mapping status (`clientNo` or `null`) and whether each key was `"applied"` or `"queued"`.
@@ -176,7 +176,7 @@ The response includes the current mapping status (`clientNo` or `null`) and whet
 
 ```json
 {
-  "vars": {
+  "variables": {
     "score": "42",
     "stage": "lobby"
   }
@@ -195,7 +195,7 @@ The response includes the current mapping status (`clientNo` or `null`) and whet
 ```bash
 curl -sS -X POST "http://127.0.0.1:8800/v1/rooms/default_room/global-variables" \
   -H "Content-Type: application/json" \
-  -d '{"vars":{"score":"42","stage":"lobby"}}'
+  -d '{"variables":{"score":"42","stage":"lobby"}}'
 ```
 
 The response includes the room ID and whether each key was `"applied"`, `"queued"`, or `"failed"`.

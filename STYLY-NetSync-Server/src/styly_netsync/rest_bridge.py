@@ -29,7 +29,7 @@ VarValue = Annotated[str, StringConstraints(max_length=MAX_VALUE)]
 class UpsertBody(BaseModel):
     """Request body for client or global variable upsert."""
 
-    vars: dict[VarName, VarValue] = Field(default_factory=dict)
+    variables: dict[VarName, VarValue] = Field(default_factory=dict)
 
 
 class PreseedStore:
@@ -327,15 +327,15 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
     @app.post("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
     def upsert(room_id: str, device_id: str, body: UpsertBody) -> dict[str, object]:
-        if not body.vars:
-            raise HTTPException(status_code=400, detail="vars must not be empty")
+        if not body.variables:
+            raise HTTPException(status_code=400, detail="variables must not be empty")
         try:
-            store.upsert(room_id, device_id, body.vars)
+            store.upsert(room_id, device_id, body.variables)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         bridge = manager.get(room_id)
-        statuses = bridge.apply_now_or_queue(device_id, body.vars)
+        statuses = bridge.apply_now_or_queue(device_id, body.variables)
         client_no = bridge.get_client_no(device_id)
 
         return {
@@ -347,15 +347,15 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
     @app.post("/v1/rooms/{room_id}/global-variables")
     def upsert_global(room_id: str, body: UpsertBody) -> dict[str, object]:
-        if not body.vars:
-            raise HTTPException(status_code=400, detail="vars must not be empty")
+        if not body.variables:
+            raise HTTPException(status_code=400, detail="variables must not be empty")
 
         bridge = manager.get(room_id)
-        statuses = bridge.apply_global_now_or_queue(body.vars)
+        statuses = bridge.apply_global_now_or_queue(body.variables)
 
         # Only store variables that were queued (not applied immediately)
         queued = {
-            name: body.vars[name]
+            name: body.variables[name]
             for name, state in statuses.items()
             if state != "applied"
         }

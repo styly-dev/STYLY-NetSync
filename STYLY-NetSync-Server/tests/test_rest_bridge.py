@@ -177,14 +177,14 @@ class TestGlobalVariablesEndpoint:
     def test_post_returns_200(self, client: TestClient) -> None:
         resp = client.post(
             "/v1/rooms/room1/global-variables",
-            json={"vars": {"score": "42"}},
+            json={"variables": {"score": "42"}},
         )
         assert resp.status_code == 200
 
     def test_post_response_structure(self, client: TestClient) -> None:
         resp = client.post(
             "/v1/rooms/room1/global-variables",
-            json={"vars": {"score": "42"}},
+            json={"variables": {"score": "42"}},
         )
         body = resp.json()
         assert body["roomId"] == "room1"
@@ -194,7 +194,7 @@ class TestGlobalVariablesEndpoint:
     def test_post_empty_vars_returns_400(self, client: TestClient) -> None:
         resp = client.post(
             "/v1/rooms/room1/global-variables",
-            json={"vars": {}},
+            json={"variables": {}},
         )
         assert resp.status_code == 400
 
@@ -206,14 +206,14 @@ class TestGlobalVariablesEndpoint:
         long_name = "x" * 65
         resp = client.post(
             "/v1/rooms/room1/global-variables",
-            json={"vars": {long_name: "v"}},
+            json={"variables": {long_name: "v"}},
         )
         assert resp.status_code == 422
 
     def test_post_var_value_too_long_returns_422(self, client: TestClient) -> None:
         resp = client.post(
             "/v1/rooms/room1/global-variables",
-            json={"vars": {"k": "x" * 1025}},
+            json={"variables": {"k": "x" * 1025}},
         )
         assert resp.status_code == 422
 
@@ -240,7 +240,7 @@ class TestGlobalVariablesEndpoint:
                 tc = TestClient(app)
                 resp = tc.post(
                     "/v1/rooms/room_full/global-variables",
-                    json={"vars": {"overflow": "x"}},
+                    json={"variables": {"overflow": "x"}},
                 )
                 assert resp.status_code == 409
         finally:
@@ -263,7 +263,7 @@ class TestGlobalVariablesEndpoint:
                 tc = TestClient(app)
                 resp = tc.post(
                     "/v1/rooms/room1/global-variables",
-                    json={"vars": {"k": "v"}},
+                    json={"variables": {"k": "v"}},
                 )
                 assert resp.status_code == 200
                 # Store should remain empty since the var was applied
