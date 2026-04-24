@@ -284,6 +284,24 @@ class BridgeManager:
                 self._bridges[room_id] = bridge
             return bridge
 
+    def peek(self, room_id: str) -> RoomBridge | None:
+        """Return an existing bridge for the room, or None if not yet created."""
+        with self._lock:
+            return self._bridges.get(room_id)
+
+
+def _live_client_variables(
+    manager: BridgeManager, room_id: str, device_id: str
+) -> dict[str, str]:
+    """Return live client variables from the bridge cache, or {} if unavailable."""
+    bridge = manager.peek(room_id)
+    if bridge is None:
+        return {}
+    client_no = bridge.get_client_no(device_id)
+    if not client_no:
+        return {}
+    return bridge.manager.get_all_client_variables(client_no)
+
 
 def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
     """Create the FastAPI application hosting the REST bridge."""
@@ -308,15 +326,20 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
     @app.get("/v1/rooms/{room_id}/global-variables")
     def get_global_vars(room_id: str) -> dict[str, object]:
-        bridge = manager.get(room_id)
-        live = bridge.manager.get_all_global_variables()
+        # Use peek to avoid spawning a bridge for read traffic.
+        bridge = manager.peek(room_id)
+        live: dict[str, str] = (
+            bridge.manager.get_all_global_variables() if bridge is not None else {}
+        )
         pending = global_store.get(room_id)
         return {"roomId": room_id, "vars": {**live, **pending}}
 
     @app.get("/v1/rooms/{room_id}/global-variables/{name}")
     def get_global_var(room_id: str, name: str) -> dict[str, object]:
-        bridge = manager.get(room_id)
-        live = bridge.manager.get_all_global_variables()
+        bridge = manager.peek(room_id)
+        live: dict[str, str] = (
+            bridge.manager.get_all_global_variables() if bridge is not None else {}
+        )
         pending = global_store.get(room_id)
         merged = {**live, **pending}
         if name not in merged:
@@ -325,19 +348,22 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
     @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
     def get_client_vars(room_id: str, device_id: str) -> dict[str, object]:
-        data = store.get(room_id, device_id)
-        return {"roomId": room_id, "deviceId": device_id, "vars": data}
+        pending = store.get(room_id, device_id)
+        live = _live_client_variables(manager, room_id, device_id)
+        return {"roomId": room_id, "deviceId": device_id, "vars": {**live, **pending}}
 
     @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables/{name}")
     def get_client_var(room_id: str, device_id: str, name: str) -> dict[str, object]:
-        data = store.get(room_id, device_id)
-        if name not in data:
+        pending = store.get(room_id, device_id)
+        live = _live_client_variables(manager, room_id, device_id)
+        merged = {**live, **pending}
+        if name not in merged:
             raise HTTPException(status_code=404, detail=f"Variable '{name}' not found")
         return {
             "roomId": room_id,
             "deviceId": device_id,
             "name": name,
-            "value": data[name],
+            "value": merged[name],
         }
 
     @app.post("/v1/rooms/{room_id}/devices/{device_id}/client-variables")

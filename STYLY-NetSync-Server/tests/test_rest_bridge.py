@@ -287,7 +287,9 @@ def client_with_global_vars() -> TestClient:
         mock_mgr.get_all_global_variables.return_value = {"score": "42", "level": "3"}
         mock_bridge = MagicMock()
         mock_bridge.manager = mock_mgr
+        # GETs use peek; POSTs use get. Configure both so either path works.
         MockBridgeManager.return_value.get.return_value = mock_bridge
+        MockBridgeManager.return_value.peek.return_value = mock_bridge
 
         app = create_app("localhost", 5555, 5556)
         return TestClient(app)
@@ -315,12 +317,36 @@ class TestGetGlobalVariablesEndpoint:
             mock_bridge = MagicMock()
             mock_bridge.manager = mock_mgr
             MockBM.return_value.get.return_value = mock_bridge
+            MockBM.return_value.peek.return_value = mock_bridge
 
             app = create_app("localhost", 5555, 5556)
             tc = TestClient(app)
             resp = tc.get("/v1/rooms/empty_room/global-variables")
         assert resp.status_code == 200
         assert resp.json()["vars"] == {}
+
+    def test_get_all_no_bridge_returns_pending_only(self) -> None:
+        """GET must not spawn a bridge; pending-only response when none exists."""
+        from styly_netsync import rest_bridge
+
+        original_store = rest_bridge.global_store
+        rest_bridge.global_store = GlobalVarStore()
+        rest_bridge.global_store.upsert("cold_room", {"queued": "v"})
+        try:
+            with patch("styly_netsync.rest_bridge.BridgeManager") as MockBM:
+                MockBM.return_value.peek.return_value = None
+
+                app = create_app("localhost", 5555, 5556)
+                tc = TestClient(app)
+                resp = tc.get("/v1/rooms/cold_room/global-variables")
+
+                # peek() used, get() must not have been called for read traffic.
+                MockBM.return_value.get.assert_not_called()
+        finally:
+            rest_bridge.global_store = original_store
+
+        assert resp.status_code == 200
+        assert resp.json()["vars"] == {"queued": "v"}
 
     def test_get_all_merges_pending_with_live(self) -> None:
         """Pending (queued) vars should overlay live vars in the response."""
@@ -339,6 +365,7 @@ class TestGetGlobalVariablesEndpoint:
                 mock_bridge = MagicMock()
                 mock_bridge.manager = mock_mgr
                 MockBM.return_value.get.return_value = mock_bridge
+                MockBM.return_value.peek.return_value = mock_bridge
 
                 app = create_app("localhost", 5555, 5556)
                 tc = TestClient(app)
@@ -388,6 +415,8 @@ def client_with_device_vars() -> Generator[TestClient, None, None]:
 
     with patch("styly_netsync.rest_bridge.BridgeManager") as MockBM:
         mock_bridge = MagicMock()
+        # No live bridge — pending store is the only source in these cases.
+        MockBM.return_value.peek.return_value = None
         MockBM.return_value.get.return_value = mock_bridge
         app = create_app("localhost", 5555, 5556)
         yield TestClient(app)
@@ -448,3 +477,55 @@ class TestGetClientVariablesEndpoint:
             "/v1/rooms/room1/devices/device-abc/client-variables/missing"
         )
         assert resp.status_code == 404
+
+    def test_get_all_merges_live_with_pending(self) -> None:
+        """Live client vars from bridge should merge with pending; pending overlays."""
+        from styly_netsync import rest_bridge
+
+        original_store = rest_bridge.store
+        rest_bridge.store = PreseedStore()
+        rest_bridge.store.upsert("room1", "device-abc", {"hp": "50", "pending": "yes"})
+        try:
+            with patch("styly_netsync.rest_bridge.BridgeManager") as MockBM:
+                mock_mgr = MagicMock()
+                mock_mgr.get_all_client_variables.return_value = {
+                    "hp": "100",
+                    "live": "yes",
+                }
+                mock_bridge = MagicMock()
+                mock_bridge.manager = mock_mgr
+                mock_bridge.get_client_no.return_value = 7
+                MockBM.return_value.peek.return_value = mock_bridge
+
+                app = create_app("localhost", 5555, 5556)
+                tc = TestClient(app)
+                resp = tc.get("/v1/rooms/room1/devices/device-abc/client-variables")
+        finally:
+            rest_bridge.store = original_store
+
+        body = resp.json()
+        assert body["vars"]["hp"] == "50"  # pending overrides live
+        assert body["vars"]["live"] == "yes"  # live-only key preserved
+        assert body["vars"]["pending"] == "yes"  # pending-only key present
+        mock_mgr.get_all_client_variables.assert_called_once_with(7)
+
+    def test_get_all_no_bridge_does_not_spawn_bridge(self) -> None:
+        """GET must not spawn a bridge for unknown rooms."""
+        from styly_netsync import rest_bridge
+
+        original_store = rest_bridge.store
+        rest_bridge.store = PreseedStore()
+        try:
+            with patch("styly_netsync.rest_bridge.BridgeManager") as MockBM:
+                MockBM.return_value.peek.return_value = None
+
+                app = create_app("localhost", 5555, 5556)
+                tc = TestClient(app)
+                resp = tc.get("/v1/rooms/cold_room/devices/unknown/client-variables")
+
+                MockBM.return_value.get.assert_not_called()
+        finally:
+            rest_bridge.store = original_store
+
+        assert resp.status_code == 200
+        assert resp.json()["vars"] == {}
