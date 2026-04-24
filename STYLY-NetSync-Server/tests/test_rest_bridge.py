@@ -336,10 +336,7 @@ class TestGlobalVariablesGetEndpoint:
         tc = _make_get_client(mock_bridge)
         resp = tc.get("/v1/rooms/room1/global-variables")
         assert resp.status_code == 200
-        assert resp.json() == {
-            "roomId": "room1",
-            "variables": {"score": "10", "level": "3"},
-        }
+        assert resp.json() == {"variables": {"score": "10", "level": "3"}}
 
     def test_get_all_returns_empty_when_cache_empty(self) -> None:
         mock_bridge = MagicMock()
@@ -347,7 +344,7 @@ class TestGlobalVariablesGetEndpoint:
         tc = _make_get_client(mock_bridge)
         resp = tc.get("/v1/rooms/room1/global-variables")
         assert resp.status_code == 200
-        assert resp.json() == {"roomId": "room1", "variables": {}}
+        assert resp.json() == {"variables": {}}
 
     def test_get_single_returns_value(self) -> None:
         mock_bridge = MagicMock()
@@ -355,11 +352,7 @@ class TestGlobalVariablesGetEndpoint:
         tc = _make_get_client(mock_bridge)
         resp = tc.get("/v1/rooms/room1/global-variables/score")
         assert resp.status_code == 200
-        assert resp.json() == {
-            "roomId": "room1",
-            "variableName": "score",
-            "variableValue": "10",
-        }
+        assert resp.json() == {"value": "10"}
 
     def test_get_single_missing_returns_404(self) -> None:
         mock_bridge = MagicMock()
@@ -384,12 +377,7 @@ class TestClientVariablesGetEndpoint:
         tc = _make_get_client(mock_bridge)
         resp = tc.get("/v1/rooms/room1/devices/device-x/client-variables")
         assert resp.status_code == 200
-        assert resp.json() == {
-            "roomId": "room1",
-            "deviceId": "device-x",
-            "mapping": {"clientNo": None},
-            "variables": {},
-        }
+        assert resp.json() == {"clientNo": None, "variables": {}}
 
     def test_get_all_mapped_device_returns_snapshot(self) -> None:
         mock_bridge = MagicMock()
@@ -397,12 +385,7 @@ class TestClientVariablesGetEndpoint:
         tc = _make_get_client(mock_bridge)
         resp = tc.get("/v1/rooms/room1/devices/device-x/client-variables")
         assert resp.status_code == 200
-        assert resp.json() == {
-            "roomId": "room1",
-            "deviceId": "device-x",
-            "mapping": {"clientNo": 7},
-            "variables": {"name": "alice"},
-        }
+        assert resp.json() == {"clientNo": 7, "variables": {"name": "alice"}}
 
     def test_get_single_returns_value(self) -> None:
         mock_bridge = MagicMock()
@@ -410,13 +393,7 @@ class TestClientVariablesGetEndpoint:
         tc = _make_get_client(mock_bridge)
         resp = tc.get("/v1/rooms/room1/devices/device-x/client-variables/name")
         assert resp.status_code == 200
-        assert resp.json() == {
-            "roomId": "room1",
-            "deviceId": "device-x",
-            "mapping": {"clientNo": 7},
-            "variableName": "name",
-            "variableValue": "alice",
-        }
+        assert resp.json() == {"clientNo": 7, "value": "alice"}
 
     def test_get_single_unknown_device_returns_404(self) -> None:
         mock_bridge = MagicMock()

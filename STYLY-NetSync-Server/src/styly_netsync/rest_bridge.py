@@ -373,10 +373,7 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
     @app.get("/v1/rooms/{room_id}/global-variables")
     def get_global_variables(room_id: str) -> dict[str, object]:
         bridge = manager.get(room_id)
-        return {
-            "roomId": room_id,
-            "variables": bridge.get_global_variables(),
-        }
+        return {"variables": bridge.get_global_variables()}
 
     @app.get("/v1/rooms/{room_id}/global-variables/{name}")
     def get_global_variable(room_id: str, name: VarName) -> dict[str, object]:
@@ -386,22 +383,13 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
             raise HTTPException(
                 status_code=404, detail=f"Global variable '{name}' not found"
             )
-        return {
-            "roomId": room_id,
-            "variableName": name,
-            "variableValue": variables[name],
-        }
+        return {"value": variables[name]}
 
     @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
     def get_client_variables(room_id: str, device_id: str) -> dict[str, object]:
         bridge = manager.get(room_id)
         client_no, variables = bridge.get_client_variables(device_id)
-        return {
-            "roomId": room_id,
-            "deviceId": device_id,
-            "mapping": {"clientNo": client_no},
-            "variables": variables,
-        }
+        return {"clientNo": client_no, "variables": variables}
 
     @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables/{name}")
     def get_client_variable(
@@ -419,13 +407,7 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
                 status_code=404,
                 detail=f"Client variable '{name}' not found for device '{device_id}'",
             )
-        return {
-            "roomId": room_id,
-            "deviceId": device_id,
-            "mapping": {"clientNo": client_no},
-            "variableName": name,
-            "variableValue": variables[name],
-        }
+        return {"clientNo": client_no, "value": variables[name]}
 
     return app
 
