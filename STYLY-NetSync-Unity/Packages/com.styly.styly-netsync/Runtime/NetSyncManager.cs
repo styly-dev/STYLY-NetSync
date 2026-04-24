@@ -210,6 +210,36 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Gets the server-assigned client number for the specified device ID.
+        /// Returns 0 when the mapping is not yet known (e.g. before the device has
+        /// been observed in this room, or before the local handshake has completed),
+        /// or when <paramref name="deviceId"/> is null or empty.
+        /// When network traffic logging is enabled, unresolved lookups may also
+        /// emit a warning from the underlying message processor.
+        /// </summary>
+        /// <param name="deviceId">The stable device identifier.</param>
+        /// <returns>The client number, or 0 if no mapping is known.</returns>
+        public int GetClientNoByDeviceId(string deviceId)
+        {
+            if (string.IsNullOrEmpty(deviceId)) return 0;
+            return _messageProcessor != null ? _messageProcessor.GetClientNo(deviceId) : 0;
+        }
+
+        /// <summary>
+        /// Gets the stable device ID for the specified client number.
+        /// Returns null when the mapping is not yet known (e.g. before the device
+        /// has been observed in this room), or when <paramref name="clientNo"/> is
+        /// not a positive value.
+        /// </summary>
+        /// <param name="clientNo">The server-assigned client number (&gt; 0).</param>
+        /// <returns>The device ID, or null if no mapping is known.</returns>
+        public string GetDeviceIdByClientNo(int clientNo)
+        {
+            if (clientNo <= 0) return null;
+            return _messageProcessor != null ? _messageProcessor.GetDeviceIdFromClientNo(clientNo) : null;
+        }
+
+        /// <summary>
         /// Gets a list (int[]) of all currently connected client numbers.
         /// </summary>
         /// <param name="includeStealthClients">If true, includes clients in stealth mode (no visible avatar). Default is false.</param>
