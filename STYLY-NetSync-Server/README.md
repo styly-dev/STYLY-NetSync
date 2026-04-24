@@ -145,6 +145,30 @@ curl -sS -X POST "http://127.0.0.1:8800/v1/rooms/default_room/devices/00000000-0
 
 The response includes the current mapping status (`clientNo` or `null`) and whether each key was `"applied"` or `"queued"`.
 
+- Read endpoints:
+  - `GET /v1/rooms/{roomId}/devices/{deviceId}/client-variables` — returns all client variables for the device.
+
+    ```json
+    {"clientNo": 7, "variables": {"name": "Jack", "lang": "EN"}}
+    ```
+
+    If the device has no `clientNo` mapping yet, returns `{"clientNo": null, "variables": {}}`.
+
+  - `GET /v1/rooms/{roomId}/devices/{deviceId}/client-variables/{name}` — returns a single variable.
+
+    ```json
+    {"clientNo": 7, "value": "Jack"}
+    ```
+
+    Returns `404` if the device is unmapped or the variable is not set.
+
+- Example:
+
+  ```bash
+  curl -sS "http://127.0.0.1:8800/v1/rooms/default_room/devices/00000000-0000-0000-0000-000000000000/client-variables"
+  curl -sS "http://127.0.0.1:8800/v1/rooms/default_room/devices/00000000-0000-0000-0000-000000000000/client-variables/name"
+  ```
+
 ### Global variables
 
 - Endpoint: `POST /v1/rooms/{roomId}/global-variables`
@@ -175,3 +199,29 @@ curl -sS -X POST "http://127.0.0.1:8800/v1/rooms/default_room/global-variables" 
 ```
 
 The response includes the room ID and whether each key was `"applied"`, `"queued"`, or `"failed"`.
+
+- Read endpoints:
+  - `GET /v1/rooms/{roomId}/global-variables` — returns all global variables for the room.
+
+    ```json
+    {"variables": {"score": "42", "stage": "lobby"}}
+    ```
+
+  - `GET /v1/rooms/{roomId}/global-variables/{name}` — returns a single variable.
+
+    ```json
+    {"value": "42"}
+    ```
+
+    Returns `404` if the variable is not set.
+
+- Example:
+
+  ```bash
+  curl -sS "http://127.0.0.1:8800/v1/rooms/default_room/global-variables"
+  curl -sS "http://127.0.0.1:8800/v1/rooms/default_room/global-variables/score"
+  ```
+
+### Read consistency
+
+GET endpoints return a snapshot of the REST bridge's in-process cache, which is populated by PUB-SUB broadcasts from the server. The first request to a room lazily creates a bridge and may return an empty snapshot until the initial broadcasts arrive — retry after a short delay if needed.
