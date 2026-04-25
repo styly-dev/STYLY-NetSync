@@ -7,7 +7,7 @@ namespace Styly.NetSync
 {
     internal static class BinarySerializer
     {
-        public const byte PROTOCOL_VERSION = 3;
+        public const byte PROTOCOL_VERSION = 4;
 
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
@@ -360,6 +360,7 @@ namespace Styly.NetSync
             if (physicalValid)
             {
                 HashShort(ref hash, QuantizeSigned(xrOriginDelta.x, LOCO_POS_SCALE));
+                HashShort(ref hash, QuantizeSigned(xrOriginDelta.y, LOCO_POS_SCALE));
                 HashShort(ref hash, QuantizeSigned(xrOriginDelta.z, LOCO_POS_SCALE));
                 HashShort(ref hash, QuantizeSigned(xrOriginDeltaYaw, PHYSICAL_YAW_SCALE));
             }
@@ -471,6 +472,7 @@ namespace Styly.NetSync
             if (physicalValid)
             {
                 writer.Write(QuantizeSigned(xrOriginDelta.x, LOCO_POS_SCALE));
+                writer.Write(QuantizeSigned(xrOriginDelta.y, LOCO_POS_SCALE));
                 writer.Write(QuantizeSigned(xrOriginDelta.z, LOCO_POS_SCALE));
                 writer.Write(QuantizeSigned(xrOriginDeltaYaw, PHYSICAL_YAW_SCALE));
             }
@@ -696,6 +698,7 @@ namespace Styly.NetSync
                 bool virtualValid = headValid && ((client.flags & PoseFlags.VirtualsValid) != 0);
 
                 short dxQ = 0;
+                short dyQ = 0;
                 short dzQ = 0;
                 short dyawQ = 0;
                 client.xrOriginDeltaPosition = Vector3.zero;
@@ -708,9 +711,10 @@ namespace Styly.NetSync
                     }
 
                     dxQ = reader.ReadInt16();
+                    dyQ = reader.ReadInt16();
                     dzQ = reader.ReadInt16();
                     dyawQ = reader.ReadInt16();
-                    client.xrOriginDeltaPosition = new Vector3(dxQ * LOCO_POS_SCALE, 0f, dzQ * LOCO_POS_SCALE);
+                    client.xrOriginDeltaPosition = new Vector3(dxQ * LOCO_POS_SCALE, dyQ * LOCO_POS_SCALE, dzQ * LOCO_POS_SCALE);
                     client.xrOriginDeltaYaw = dyawQ * PHYSICAL_YAW_SCALE;
                 }
 

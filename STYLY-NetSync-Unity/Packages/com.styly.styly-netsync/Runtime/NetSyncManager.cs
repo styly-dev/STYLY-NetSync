@@ -1300,27 +1300,26 @@ namespace Styly.NetSync
         #endregion ------------------------------------------------------------------------
 
         /// <summary>
-        /// Compute XROrigin locomotion delta in SE(2) form relative to startup origin.
-        /// t = p1 - R(dyaw) * p0, where p0/p1 use XZ plane only.
+        /// Compute XROrigin locomotion delta relative to startup origin.
+        /// t = p1 - R(dyaw) * p0, where p0/p1 are full 3D positions and R(dyaw) is yaw-only
+        /// (so the Y component reduces to t.y = p1.y - p0.y).
         /// </summary>
-        internal void ComputeXrOriginDelta(out Vector3 tXZ, out float dyawDeg)
+        internal void ComputeXrOriginDelta(out Vector3 t, out float dyawDeg)
         {
-            var p0 = new Vector3(_physicalOffsetPosition.x, 0f, _physicalOffsetPosition.z);
+            var p0 = _physicalOffsetPosition;
             var yaw0 = _physicalOffsetRotation.y;
 
             var p1 = p0;
             var yaw1 = yaw0;
             if (_XrOriginTransform != null)
             {
-                var current = _XrOriginTransform.position;
-                p1 = new Vector3(current.x, 0f, current.z);
+                p1 = _XrOriginTransform.position;
                 yaw1 = _XrOriginTransform.eulerAngles.y;
             }
 
             dyawDeg = Mathf.DeltaAngle(yaw0, yaw1);
             var deltaRotation = Quaternion.Euler(0f, dyawDeg, 0f);
-            tXZ = p1 - (deltaRotation * p0);
-            tXZ.y = 0f;
+            t = p1 - (deltaRotation * p0);
         }
 
         /// <summary>
@@ -1362,10 +1361,13 @@ namespace Styly.NetSync
                 var localYaw = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
                 worldYaw = parent.rotation * localYaw;
 
-                // Apply local locomotion delta with the same SE(2) definition used on wire.
+                // Apply local locomotion delta. Human Presence intentionally consumes only
+                // XZ + yaw of the locomotion delta (the original SE(2) definition); vertical
+                // rig motion is left to the parent transform hierarchy.
                 ComputeXrOriginDelta(out var localDeltaPos, out var localDeltaYaw);
                 var localDeltaRot = Quaternion.Euler(0f, localDeltaYaw, 0f);
-                worldPos = localDeltaRot * worldPos + localDeltaPos;
+                var localDeltaPosXZ = new Vector3(localDeltaPos.x, 0f, localDeltaPos.z);
+                worldPos = localDeltaRot * worldPos + localDeltaPosXZ;
                 worldYaw = localDeltaRot * worldYaw;
             }
             else

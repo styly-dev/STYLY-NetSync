@@ -6,7 +6,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Message type identifiers
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call
@@ -380,6 +380,7 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     virtuals = client.get("virtuals", []) or []
     has_xr_origin_delta = (
         "xrOriginDeltaX" in client
+        or "xrOriginDeltaY" in client
         or "xrOriginDeltaZ" in client
         or "xrOriginDeltaYaw" in client
     )
@@ -421,6 +422,7 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
 
     xr_origin_delta_x = float(client.get("xrOriginDeltaX", 0.0))
+    xr_origin_delta_y = float(client.get("xrOriginDeltaY", 0.0))
     xr_origin_delta_z = float(client.get("xrOriginDeltaZ", 0.0))
     xr_origin_delta_yaw = float(client.get("xrOriginDeltaYaw", 0.0))
     head_pos = _transform_get_position(head)
@@ -430,8 +432,9 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     if physical_valid:
         buffer.extend(
             struct.pack(
-                "<hhh",
+                "<hhhh",
                 _quantize_signed(xr_origin_delta_x, LOCO_POS_SCALE),
+                _quantize_signed(xr_origin_delta_y, LOCO_POS_SCALE),
                 _quantize_signed(xr_origin_delta_z, LOCO_POS_SCALE),
                 _quantize_signed(xr_origin_delta_yaw, PHYSICAL_YAW_SCALE),
             )
@@ -874,6 +877,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     head_pos = (0.0, 0.0, 0.0)
     head_rot = (0.0, 0.0, 0.0, 1.0)
     xr_origin_delta_x = 0.0
+    xr_origin_delta_y = 0.0
     xr_origin_delta_z = 0.0
     xr_origin_delta_yaw = 0.0
 
@@ -882,11 +886,12 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             raise ValueError(
                 "PhysicalValid set but XROrigin delta encoding flag is missing"
             )
-        dx_q, dz_q, dyaw_q = struct.unpack("<hhh", data[offset : offset + 6])
+        dx_q, dy_q, dz_q, dyaw_q = struct.unpack("<hhhh", data[offset : offset + 8])
         xr_origin_delta_x = _dequantize_signed(dx_q, LOCO_POS_SCALE)
+        xr_origin_delta_y = _dequantize_signed(dy_q, LOCO_POS_SCALE)
         xr_origin_delta_z = _dequantize_signed(dz_q, LOCO_POS_SCALE)
         xr_origin_delta_yaw = _dequantize_signed(dyaw_q, PHYSICAL_YAW_SCALE)
-        offset += 6
+        offset += 8
 
     if head_valid:
         hx_q, offset = _unpack_int24_le(data, offset)
@@ -913,7 +918,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
 
     if physical_valid and head_valid:
         translated_x = head_pos[0] - xr_origin_delta_x
-        translated_y = head_pos[1]
+        translated_y = head_pos[1] - xr_origin_delta_y
         translated_z = head_pos[2] - xr_origin_delta_z
         physical_pos = _rotate_yaw_vector(
             translated_x,
@@ -1041,6 +1046,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             )
 
     result["xrOriginDeltaX"] = xr_origin_delta_x
+    result["xrOriginDeltaY"] = xr_origin_delta_y
     result["xrOriginDeltaZ"] = xr_origin_delta_z
     result["xrOriginDeltaYaw"] = xr_origin_delta_yaw
     result["physical"] = physical
