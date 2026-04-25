@@ -682,7 +682,7 @@ class TestTransformSerializationV4:
         c2["poseTime"] = 223.456
 
         room_payload = {
-            "roomId": "room-v3",
+            "roomId": "room-v4",
             "broadcastTime": 999.123,
             "clients": [c1, c2],
         }
@@ -692,7 +692,7 @@ class TestTransformSerializationV4:
         assert msg_type == binary_serializer.MSG_ROOM_POSE
         assert decoded is not None
         assert decoded["protocolVersion"] == 4
-        assert decoded["roomId"] == "room-v3"
+        assert decoded["roomId"] == "room-v4"
         assert len(decoded["clients"]) == 2
 
         for src, dst in zip(room_payload["clients"], decoded["clients"], strict=True):

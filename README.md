@@ -85,8 +85,9 @@ The uvx command automatically downloads the package, creates an isolated virtual
 ### Version compatibility note
 
 - Keep Unity package and server versions aligned.
-- Transform synchronization uses protocol version `3` and does not provide backward compatibility with older transform protocols.
-- Protocol v3 position quantization uses:
+- Transform synchronization uses protocol version `4` and does not provide backward compatibility with older transform protocols.
+- v4 vs. v3: `xrOriginDelta` adds a Y component (4×`int16`: `dx, dy, dz, dyaw`) so receivers can reconstruct vertical rig motion (e.g. elevators).
+- Protocol v4 position quantization uses:
   - Absolute scale (`Head`/`Physical`): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
   - Head-relative scale (`Right`/`Left`/`Virtual`): `0.005 m` per unit, per-axis range `[-163.84 m, 163.835 m]`.
 - This is an encoding range, not a hard world-size limit. Large virtual worlds are supported as long as each encoded value stays in range (out-of-range values are clamped).

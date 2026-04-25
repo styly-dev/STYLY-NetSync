@@ -32,7 +32,7 @@ MSG_OBJECT_OWNERSHIP_REJECTED = 17  # Server → Client (ROUTER): request reject
 _max_virtual_transforms = 50
 MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward compat
 
-# Protocol v3 transform encoding constants
+# Protocol v4 transform encoding constants
 ABS_POS_SCALE = 0.01
 LOCO_POS_SCALE = 0.01
 REL_POS_SCALE = 0.005
@@ -372,7 +372,7 @@ def _create_transform_dict(
 
 
 def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
-    """Serialize a client body in protocol v3 compact format."""
+    """Serialize a client body in protocol v4 compact format."""
     pose_seq = int(client.get("poseSeq", 0)) & 0xFFFF
     head = client.get("head", {}) or {}
     right = client.get("rightHand", {}) or {}
@@ -852,7 +852,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
 
 
 def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], int]:
-    """Deserialize protocol v3 compact pose body."""
+    """Deserialize protocol v4 compact pose body."""
     result: dict[str, Any] = {}
     result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
@@ -1058,7 +1058,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
 
 
 def _deserialize_client_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize client pose (v3) from binary data."""
+    """Deserialize client pose (v4) from binary data."""
     result: dict[str, Any] = {}
 
     protocol_version = data[offset]
@@ -1096,7 +1096,7 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
 
 
 def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize room pose (v3) with client numbers only."""
+    """Deserialize room pose (v4) with client numbers only."""
     result: dict[str, Any] = {}
 
     protocol_version = data[offset]

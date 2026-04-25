@@ -28,8 +28,7 @@ namespace Styly.NetSync
         public const byte MSG_OBJECT_OWNERSHIP_CHANGED = 16; // Server → Clients: ownership changed
         public const byte MSG_OBJECT_OWNERSHIP_REJECTED = 17; // Server → Client: request rejected
 
-        // Transform data type identifiers (deprecated - kept for reference)
-        // Protocol v3 pose encoding constants
+        // Protocol v4 pose encoding constants
         private const float ABS_POS_SCALE = 0.01f;
         private const float LOCO_POS_SCALE = 0.01f;
         private const float REL_POS_SCALE = 0.005f;
