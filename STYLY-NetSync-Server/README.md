@@ -48,7 +48,8 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 - Legacy transform protocols (v2/v3) and JSON transform fallback are not supported.
 - Deploy Unity and Python updates together when changing transform protocol behavior.
 - Protocol v4 position quantization ranges:
-  - Absolute (`physicalPos`, `headPosAbs`): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
+  - Absolute (`headPosAbs` only): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
+  - XROrigin locomotion delta (`xrOriginDelta`, 4×`int16`: `dx, dy, dz, dyaw`): `0.01 m` per unit for translation, `0.1°` for yaw. Receivers reconstruct `physicalPos = invDeltaRot * (headPos − deltaPos)`; it is not on the wire as a separate absolute field.
   - Head-relative (`right/left/virtual`): signed `int16` at `0.005 m` per unit, per-axis range `[-163.84 m, 163.835 m]`.
 - These are encoding limits, not a hard world-size cap. Worlds can be larger, but encoded axis values are clamped if they exceed the representable range.
 
@@ -57,17 +58,17 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 The following options summarize trade-offs when expanding absolute-position range.
 
 Assumed baseline (`protocolVersion=4`):
-- Client pose body with `Physical+Head+Right+Left` valid and `virtualCount=0`: `51 bytes`
-- Room per-client entry (`clientNo + poseTime + clientBody`): `61 bytes`
+- Client pose body with `Physical+Head+Right+Left` valid and `virtualCount=0`: `46 bytes` (matches `test_client_body_size_with_full_pose_no_virtuals`).
+- Room per-client entry (`clientNo + poseTime + clientBody`): `56 bytes`.
 
 | Option | Absolute Position Encoding | Per-axis Range | Client Body Delta | Room Per-client Delta |
 |---|---|---:|---:|---:|
-| A. Coarser scale (current integer width) | `int24 @ 0.02m` | `[-167,772.16m, 167,772.14m]` | `+0B` (`51 -> 51`) | `+0B` (`61 -> 61`) |
-| B. Cell + local | `cell(i16, 256m) + local(int24 @ 0.01m)` | `[-8,472,494.08m, 8,472,238.07m]` | `+6B` (`51 -> 57`, `+11.8%`) | `+6B` (`61 -> 67`, `+9.8%`) |
-| C. Cell + local (large cell) | `cell(i16, 1024m) + local(int24 @ 0.01m)` | `[-33,638,318.08m, 33,637,294.07m]` | `+6B` (`51 -> 57`, `+11.8%`) | `+6B` (`61 -> 67`, `+9.8%`) |
+| A. Coarser scale (current integer width) | `int24 @ 0.02m` | `[-167,772.16m, 167,772.14m]` | `+0B` (`46 -> 46`) | `+0B` (`56 -> 56`) |
+| B. Cell + local | `cell(i16, 256m) + local(int24 @ 0.01m)` | `[-8,472,494.08m, 8,472,238.07m]` | `+6B` (`46 -> 52`, `+13.0%`) | `+6B` (`56 -> 62`, `+10.7%`) |
+| C. Cell + local (large cell) | `cell(i16, 1024m) + local(int24 @ 0.01m)` | `[-33,638,318.08m, 33,637,294.07m]` | `+6B` (`46 -> 52`, `+13.0%`) | `+6B` (`56 -> 62`, `+10.7%`) |
 
 Notes:
-- Option B/C deltas assume both absolute transforms are present (`physicalPos` and `headPosAbs`).
+- Only `headPosAbs` is on the wire as an absolute field; `physicalPos` is reconstructed from `headPosAbs + xrOriginDelta`. Option B/C deltas therefore apply to `headPosAbs` only.
 - Option B/C can reduce average overhead if `cell` is transmitted only when changed, but that requires extra state and flags in the wire format.
 
 ## Configuration

@@ -708,10 +708,12 @@ class TestTransformSerializationV4:
     def test_foot_invariant_head_minus_physical_equals_delta_y(self) -> None:
         """head.y - reconstructed physical.y must equal xrOriginDeltaY.
 
-        This is the invariant that BodyTransformSolver's remote-foot path relies on:
-        foot.y = head.y - PhysicalPosition.y collapses to xrOriginDeltaY, which is
-        the sender's rig-Y delta from startup. Pinning this avoids regressing the
-        elevator/foot-position fix.
+        Follows by construction from `_deserialize_client_body`
+        (`translated_y = head_pos[1] - xr_origin_delta_y`) and the yaw-only
+        rotation that preserves Y. Pinning this protocol-shape invariant means
+        any future change that decouples the two (e.g. dropping delta_y from
+        the reconstruction, or adding extra Y transforms) breaks loudly here
+        rather than silently on the wire.
         """
         rng = random.Random(20260425)
         for _ in range(200):
