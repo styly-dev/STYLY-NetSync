@@ -181,9 +181,6 @@ PrefabInstance:
     m_AddedComponents:
     - targetCorrespondingSourceObject: {fileID: 7715607727795320353, guid: 122df9a4cf7b74c4fbacefa9144f883a, type: 3}
       insertIndex: -1
-      addedObject: {fileID: 46711615}
-    - targetCorrespondingSourceObject: {fileID: 7715607727795320353, guid: 122df9a4cf7b74c4fbacefa9144f883a, type: 3}
-      insertIndex: -1
       addedObject: {fileID: 46711614}
   m_SourcePrefab: {fileID: 100100000, guid: 122df9a4cf7b74c4fbacefa9144f883a, type: 3}
 --- !u!1 &46711610 stripped
@@ -201,11 +198,6 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 3393037041116556735, guid: 122df9a4cf7b74c4fbacefa9144f883a, type: 3}
   m_PrefabInstance: {fileID: 46711609}
   m_PrefabAsset: {fileID: 0}
---- !u!4 &46711613 stripped
-Transform:
-  m_CorrespondingSourceObject: {fileID: 2041796224729081718, guid: 122df9a4cf7b74c4fbacefa9144f883a, type: 3}
-  m_PrefabInstance: {fileID: 46711609}
-  m_PrefabAsset: {fileID: 0}
 --- !u!114 &46711614
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -221,22 +213,7 @@ MonoBehaviour:
   isSender: 1
   head: {fileID: 46711612}
   body: {fileID: 46711611}
-  bodyTransformSolver: {fileID: 46711615}
---- !u!114 &46711615
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 46711610}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: dfac97f15ac5b4b66978c8dca79a5a3e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: com.styly.styly-netsync::Styly.NetSync.BodyTransformSolver2
-  body: {fileID: 46711611}
-  head: {fileID: 46711613}
-  offsetY: 0.4
+  bodyTransformSolver: {fileID: 0}
 --- !u!1 &186923346
 GameObject:
   m_ObjectHideFlags: 0
@@ -369,7 +346,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _canvas: {fileID: 186923350}
-  _stylyXrRig: {fileID: 1378898228}
+  _stylyXrRig: {fileID: 0}
 --- !u!4 &451473069
 Transform:
   m_ObjectHideFlags: 0
@@ -640,17 +617,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
---- !u!114 &1378898228 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 2774931430840022790, guid: 8ea6960e82d7c419c93a7f4f18e7b06e, type: 3}
-  m_PrefabInstance: {fileID: 1746028485}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5e3eb85024d9e48048e4c26bab4eabad, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!1 &1514333464
 GameObject:
   m_ObjectHideFlags: 0
