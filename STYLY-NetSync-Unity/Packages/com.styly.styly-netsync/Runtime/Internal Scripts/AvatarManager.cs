@@ -52,27 +52,11 @@ namespace Styly.NetSync
             {
                 localGO = Object.Instantiate(localAvatarPrefab);
 
-                // Resolve a transform that the local avatar root should follow.
-                //
-                // Priority:
-                //   1. OVRCameraRig.trackingSpace (when the Meta XR SDK is present
-                //      AND an OVRCameraRig exists in the scene). MRUK's World Lock
-                //      shifts this transform every frame, so following it keeps the
-                //      avatar pinned to the tracked space even under colocation.
-                //   2. XR Interaction Toolkit's XROrigin (historical path). Used
-                //      when there is no Meta rig or as the cross-platform fallback.
-                //
-                // The OVR lookup is gated by the META_XR_SDK_PRESENT define so
-                // projects without the Meta package never pay for it.
-                Transform avatarFollowSource = OvrCameraRigBridge.TryGetTrackingSpace();
-                if (avatarFollowSource == null)
-                {
-                    var xrOrigin = Object.FindFirstObjectByType<Unity.XR.CoreUtils.XROrigin>();
-                    if (xrOrigin != null)
-                    {
-                        avatarFollowSource = xrOrigin.transform;
-                    }
-                }
+                // Resolve the transform that the local avatar root should
+                // follow. Shares its priority order (XROrigin first, then
+                // OVRCameraRig.trackingSpace) with NetSyncManager via
+                // RigTransformResolver so the two call sites cannot drift.
+                Transform avatarFollowSource = RigTransformResolver.TryResolve();
 
                 if (avatarFollowSource != null)
                 {

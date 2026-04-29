@@ -25,9 +25,9 @@ namespace Styly.NetSync.Internal
 
         /// <summary>
         /// Returns the <c>OVRCameraRig.trackingSpace</c> transform of the first
-        /// active OVRCameraRig found in the scene, or <c>null</c> when no
-        /// OVRCameraRig exists. Always returns <c>null</c> on builds where the
-        /// Meta XR SDK is not installed.
+        /// active and enabled OVRCameraRig found in the scene, or <c>null</c>
+        /// when no such OVRCameraRig exists. Always returns <c>null</c> on
+        /// builds where the Meta XR SDK is not installed.
         /// </summary>
         public static Transform TryGetTrackingSpace()
         {
@@ -38,14 +38,20 @@ namespace Styly.NetSync.Internal
             // FindFirstObjectByType(System.Type) is unreliable when the type was
             // resolved via reflection across asmdef boundaries; iterate the
             // MonoBehaviour list and use IsInstanceOfType for a robust match.
+            // FindObjectsByType returns components on active GameObjects, but
+            // the components themselves may be disabled — filter on
+            // isActiveAndEnabled so we never pick a rig that isn't running.
             // Note: Do not use null propagation with UnityEngine.Object.
             var monos = Object.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
             Component rig = null;
             for (int i = 0; i < monos.Length; i++)
             {
-                if (ovrType.IsInstanceOfType(monos[i]))
+                var mono = monos[i];
+                if (mono == null) continue;
+                if (!mono.isActiveAndEnabled) continue;
+                if (ovrType.IsInstanceOfType(mono))
                 {
-                    rig = monos[i];
+                    rig = mono;
                     break;
                 }
             }
@@ -61,9 +67,10 @@ namespace Styly.NetSync.Internal
                 }
             }
 
-            // Fallback: locate the conventional child by name. OVRCameraRig wires
-            // its trackingSpace property in Awake, so this path only matters when
-            // the rig has not been activated yet.
+            // Fallback: locate the conventional child by name. This path is
+            // only reached when reflection cannot expose `trackingSpace`
+            // (e.g. an OVR SDK version that renamed the property) or when the
+            // property has not yet been wired up by OVRCameraRig.Awake.
             var fromChild = rig.transform.Find(TrackingSpaceChildName);
             return fromChild != null ? fromChild : null;
 #else

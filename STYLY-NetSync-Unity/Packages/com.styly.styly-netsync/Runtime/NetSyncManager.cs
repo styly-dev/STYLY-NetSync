@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using Styly.NetSync.Internal;
-using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -487,19 +486,11 @@ namespace Styly.NetSync
         void Start()
         {
             // Resolve the rig transform used as the locomotion-delta reference.
-            // Same priority order as AvatarManager: OVRCameraRig.trackingSpace
-            // first when the Meta XR SDK is present (so MRUK's World Lock-shifted
-            // transform is the source of truth), then XROrigin as the
-            // cross-platform fallback.
-            Transform rigTransform = OvrCameraRigBridge.TryGetTrackingSpace();
-            if (rigTransform == null)
-            {
-                var xrOrigin = FindFirstObjectByType<XROrigin>();
-                if (xrOrigin != null)
-                {
-                    rigTransform = xrOrigin.transform;
-                }
-            }
+            // The follow source is latched here at startup; runtime rig
+            // switching (e.g. disabling XROrigin and enabling OVRCameraRig
+            // mid-session) is not supported and will keep referencing the
+            // initially resolved transform.
+            Transform rigTransform = RigTransformResolver.TryResolve();
 
             if (rigTransform != null)
             {
