@@ -1056,7 +1056,7 @@ class NetSyncServer:
                         except UnicodeDecodeError as e:
                             logger.error(f"Failed to decode room ID: {e}")
                             continue
-                        # Protocol v3 binary-only handling (no JSON fallback)
+                        # Protocol v4 binary-only handling (no JSON fallback)
                         try:
                             msg_type, data, raw_payload = binary_serializer.deserialize(
                                 message_bytes
@@ -1127,7 +1127,7 @@ class NetSyncServer:
                                 logger.warning(f"Unknown binary msg_type: {msg_type}")
                         except Exception as e:
                             logger.warning(
-                                "Failed to decode protocol v3 message from room %s: %s",
+                                "Failed to decode protocol v4 message from room %s: %s",
                                 room_id,
                                 e,
                             )

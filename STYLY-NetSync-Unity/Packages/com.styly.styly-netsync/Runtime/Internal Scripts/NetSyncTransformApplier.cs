@@ -50,6 +50,15 @@ namespace Styly.NetSync
         private bool _hasAnySnapshot;
         public bool HasAnySnapshot => _hasAnySnapshot;
 
+        // Most recent smoothed physical pose produced by Tick. The physical channel
+        // has no Transform binding (NetSyncAvatar manages PhysicalPosition itself),
+        // so consumers read the smoothed result through these properties to keep
+        // PhysicalPosition time-aligned with the head/hand channels.
+        private PoseSampleData _lastPhysicalSample;
+        private bool _hasPhysicalSample;
+        public PoseSampleData LastPhysicalSample => _lastPhysicalSample;
+        public bool HasPhysicalSample => _hasPhysicalSample;
+
         public void InitializeForAvatar(
             Transform physical,
             Transform head,
@@ -138,6 +147,7 @@ namespace Styly.NetSync
             else
             {
                 _physical.Clear();
+                _hasPhysicalSample = false;
             }
 
             if ((data.flags & PoseFlags.HeadValid) != 0 && data.head != null)
@@ -210,6 +220,7 @@ namespace Styly.NetSync
                 _virtuals[i].Clear();
             }
             _hasAnySnapshot = false;
+            _hasPhysicalSample = false;
         }
 
         public void Tick(float deltaTime, double localNow)
@@ -239,7 +250,9 @@ namespace Styly.NetSync
 
             if (_physical != null)
             {
-                ApplyBinding(_physicalBinding, _physical.Tick(renderServerTime, deltaTime));
+                _lastPhysicalSample = _physical.Tick(renderServerTime, deltaTime);
+                _hasPhysicalSample = true;
+                ApplyBinding(_physicalBinding, _lastPhysicalSample);
             }
             if (_head != null)
             {

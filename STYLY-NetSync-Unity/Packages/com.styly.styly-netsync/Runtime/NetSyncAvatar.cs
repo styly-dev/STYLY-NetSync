@@ -194,12 +194,22 @@ namespace Styly.NetSync
                 _transformApplier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
             }
 
-            // Reflect physical transform (local pose) only for the local avatar.
-            // Remote avatars keep the last received physical values from SetTransformData.
             if (IsLocalAvatar && _head != null)
             {
+                // Local avatar: physical pose follows the head's parent-local pose plus
+                // the cached startup XR-rig offset. No smoothing needed (driven by tracker).
                 PhysicalPosition = _head.localPosition + _netSyncManager._physicalOffsetPosition;
                 PhysicalRotation = _head.localRotation * Quaternion.Euler(_netSyncManager._physicalOffsetRotation);
+            }
+            else if (!IsLocalAvatar && _transformApplier.HasPhysicalSample)
+            {
+                // Remote avatar: read the smoothed physical sample produced by Tick so
+                // PhysicalPosition is time-aligned with the head channel. Reading the raw
+                // value set in SetTransformData would lag head's smoothing and cause the
+                // `head.y - PhysicalPosition.y` ground-center derivation to wobble.
+                var sample = _transformApplier.LastPhysicalSample;
+                PhysicalPosition = sample.Position;
+                PhysicalRotation = sample.Rotation;
             }
         }
 

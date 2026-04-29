@@ -166,7 +166,7 @@ namespace Styly.NetSync
 
             if (physicalValid)
             {
-                bodySize += (2 * sizeof(short)) + sizeof(short); // dx i16 + dz i16 + dyaw i16
+                bodySize += 4 * sizeof(short); // dx i16 + dy i16 + dz i16 + dyaw i16
             }
 
             if (headValid)

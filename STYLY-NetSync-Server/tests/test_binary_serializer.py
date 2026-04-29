@@ -220,6 +220,7 @@ def _build_random_client_pose(
     )
     head_rot = _random_unit_quaternion(rng)
     xr_origin_delta_x = rng.uniform(-20.0, 20.0)
+    xr_origin_delta_y = rng.uniform(-5.0, 5.0)
     xr_origin_delta_z = rng.uniform(-20.0, 20.0)
     xr_origin_delta_yaw = rng.uniform(-180.0, 180.0)
 
@@ -249,6 +250,7 @@ def _build_random_client_pose(
         "poseSeq": rng.randint(0, 65535),
         "flags": 0x3E,  # Physical + Head + Right + Left + Virtuals
         "xrOriginDeltaX": xr_origin_delta_x,
+        "xrOriginDeltaY": xr_origin_delta_y,
         "xrOriginDeltaZ": xr_origin_delta_z,
         "xrOriginDeltaYaw": xr_origin_delta_yaw,
         "head": _build_transform(head_pos, head_rot),
@@ -259,11 +261,15 @@ def _build_random_client_pose(
 
 
 def _reconstruct_physical_from_head_and_delta(
-    head: dict[str, float], delta_x: float, delta_z: float, delta_yaw: float
+    head: dict[str, float],
+    delta_x: float,
+    delta_y: float,
+    delta_z: float,
+    delta_yaw: float,
 ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
     """Reconstruct yaw-only physical pose from head pose and XROrigin delta."""
     tx = head["posX"] - delta_x
-    ty = head["posY"]
+    ty = head["posY"] - delta_y
     tz = head["posZ"] - delta_z
 
     inv_yaw_rad = math.radians(-delta_yaw)
@@ -282,12 +288,12 @@ def _reconstruct_physical_from_head_and_delta(
     return (px, ty, pz), physical_rot
 
 
-class TestTransformSerializationV3:
-    """Tests for protocol v3 transform compact serialization."""
+class TestTransformSerializationV4:
+    """Tests for protocol v4 transform compact serialization."""
 
-    def test_protocol_version_is_v3(self) -> None:
-        """Protocol version constant should be updated to v3."""
-        assert binary_serializer.PROTOCOL_VERSION == 3
+    def test_protocol_version_is_v4(self) -> None:
+        """Protocol version constant should be at v4."""
+        assert binary_serializer.PROTOCOL_VERSION == 4
 
     def test_client_roundtrip_without_flags_infers_valid_bits(self) -> None:
         """Serializer should infer valid bits when flags are omitted."""
@@ -295,6 +301,7 @@ class TestTransformSerializationV3:
             "deviceId": "infer-flags",
             "poseSeq": 77,
             "xrOriginDeltaX": 1.25,
+            "xrOriginDeltaY": 0.4,
             "xrOriginDeltaZ": -2.5,
             "xrOriginDeltaYaw": 33.3,
             "head": _build_transform(
@@ -331,6 +338,7 @@ class TestTransformSerializationV3:
         assert abs(decoded["head"]["posY"] - 1.6) <= 0.01
         assert abs(decoded["head"]["posZ"] + 2.3) <= 0.01
         assert abs(decoded["xrOriginDeltaX"] - 1.25) <= 0.01
+        assert abs(decoded["xrOriginDeltaY"] - 0.4) <= 0.01
         assert abs(decoded["xrOriginDeltaZ"] + 2.5) <= 0.01
         assert abs(decoded["xrOriginDeltaYaw"] - 33.3) <= 0.1
         assert len(decoded["virtuals"]) == 1
@@ -349,6 +357,7 @@ class TestTransformSerializationV3:
                 | binary_serializer.POSE_FLAG_VIRTUALS_VALID
             ),
             "xrOriginDeltaX": 9.0,
+            "xrOriginDeltaY": 9.0,
             "xrOriginDeltaZ": 9.0,
             "xrOriginDeltaYaw": 9.0,
             "head": _build_transform(
@@ -409,7 +418,7 @@ class TestTransformSerializationV3:
 
             assert msg_type == binary_serializer.MSG_CLIENT_POSE
             assert decoded is not None
-            assert decoded["protocolVersion"] == 3
+            assert decoded["protocolVersion"] == 4
             assert len(raw) > 0
 
             o_head = original["head"]
@@ -466,15 +475,18 @@ class TestTransformSerializationV3:
             assert left_err <= 1.0
 
             o_dx = original["xrOriginDeltaX"]
+            o_dy = original["xrOriginDeltaY"]
             o_dz = original["xrOriginDeltaZ"]
             o_dyaw = original["xrOriginDeltaYaw"]
             assert abs(o_dx - decoded["xrOriginDeltaX"]) <= 0.01
+            assert abs(o_dy - decoded["xrOriginDeltaY"]) <= 0.01
             assert abs(o_dz - decoded["xrOriginDeltaZ"]) <= 0.01
             assert abs(o_dyaw - decoded["xrOriginDeltaYaw"]) <= 0.1
 
             expected_pos, expected_rot = _reconstruct_physical_from_head_and_delta(
                 decoded["head"],
                 decoded["xrOriginDeltaX"],
+                decoded["xrOriginDeltaY"],
                 decoded["xrOriginDeltaZ"],
                 decoded["xrOriginDeltaYaw"],
             )
@@ -518,6 +530,7 @@ class TestTransformSerializationV3:
             "poseSeq": 10,
             "flags": 0x3E,
             "xrOriginDeltaX": 9999.0,
+            "xrOriginDeltaY": 9999.0,
             "xrOriginDeltaZ": -9999.0,
             "xrOriginDeltaYaw": 9999.0,
             "head": _build_transform(
@@ -551,6 +564,7 @@ class TestTransformSerializationV3:
         assert min_abs <= decoded["head"]["posY"] <= max_abs
         assert min_abs <= decoded["head"]["posZ"] <= max_abs
         assert min_loco <= decoded["xrOriginDeltaX"] <= max_loco
+        assert min_loco <= decoded["xrOriginDeltaY"] <= max_loco
         assert min_loco <= decoded["xrOriginDeltaZ"] <= max_loco
         assert (
             binary_serializer.INT16_MIN * binary_serializer.PHYSICAL_YAW_SCALE
@@ -574,6 +588,7 @@ class TestTransformSerializationV3:
             "poseSeq": 33,
             "flags": 0x3E,
             "xrOriginDeltaX": 250.12,
+            "xrOriginDeltaY": -42.5,
             "xrOriginDeltaZ": -125.34,
             "xrOriginDeltaYaw": 179.9,
             "head": _build_transform(
@@ -595,16 +610,18 @@ class TestTransformSerializationV3:
         assert abs(decoded["head"]["posY"] + 5000.9) <= 0.01
         assert abs(decoded["head"]["posZ"] - 4321.01) <= 0.01
         assert abs(decoded["xrOriginDeltaX"] - 250.12) <= 0.01
+        assert abs(decoded["xrOriginDeltaY"] + 42.5) <= 0.01
         assert abs(decoded["xrOriginDeltaZ"] + 125.34) <= 0.01
         assert abs(decoded["xrOriginDeltaYaw"] - 179.9) <= 0.1
 
     def test_client_body_size_with_full_pose_no_virtuals(self) -> None:
-        """Full pose body (no virtuals) should match current protocol v3 byte size."""
+        """Full pose body (no virtuals) should match current protocol v4 byte size."""
         payload = {
             "deviceId": "size-check",
             "poseSeq": 1,
             "flags": 0x1E,  # Physical + Head + Right + Left
             "xrOriginDeltaX": 1.0,
+            "xrOriginDeltaY": 0.5,
             "xrOriginDeltaZ": 2.0,
             "xrOriginDeltaYaw": 10.0,
             "head": _build_transform(
@@ -621,7 +638,8 @@ class TestTransformSerializationV3:
         _, _, raw = binary_serializer.deserialize(
             binary_serializer.serialize_client_transform(payload)
         )
-        assert len(raw) == 44
+        # v4 added a Y component to xrOriginDelta (+2 bytes vs. v3's 44).
+        assert len(raw) == 46
 
     def test_physical_requires_delta_encoding_flag(self) -> None:
         """PhysicalValid frames must carry the XROrigin-delta encoding bit."""
@@ -633,6 +651,7 @@ class TestTransformSerializationV3:
                 | binary_serializer.POSE_FLAG_HEAD_VALID
             ),
             "xrOriginDeltaX": 1.0,
+            "xrOriginDeltaY": 0.3,
             "xrOriginDeltaZ": -2.0,
             "xrOriginDeltaYaw": 30.0,
             "head": _build_transform(
@@ -663,7 +682,7 @@ class TestTransformSerializationV3:
         c2["poseTime"] = 223.456
 
         room_payload = {
-            "roomId": "room-v3",
+            "roomId": "room-v4",
             "broadcastTime": 999.123,
             "clients": [c1, c2],
         }
@@ -672,8 +691,8 @@ class TestTransformSerializationV3:
 
         assert msg_type == binary_serializer.MSG_ROOM_POSE
         assert decoded is not None
-        assert decoded["protocolVersion"] == 3
-        assert decoded["roomId"] == "room-v3"
+        assert decoded["protocolVersion"] == 4
+        assert decoded["roomId"] == "room-v4"
         assert len(decoded["clients"]) == 2
 
         for src, dst in zip(room_payload["clients"], decoded["clients"], strict=True):
@@ -685,6 +704,28 @@ class TestTransformSerializationV3:
             assert abs(src_head["posX"] - dst_head["posX"]) <= 0.01
             assert abs(src_head["posY"] - dst_head["posY"]) <= 0.01
             assert abs(src_head["posZ"] - dst_head["posZ"]) <= 0.01
+
+    def test_foot_invariant_head_minus_physical_equals_delta_y(self) -> None:
+        """head.y - reconstructed physical.y must equal xrOriginDeltaY.
+
+        Follows by construction from `_deserialize_client_body`
+        (`translated_y = head_pos[1] - xr_origin_delta_y`) and the yaw-only
+        rotation that preserves Y. Pinning this protocol-shape invariant means
+        any future change that decouples the two (e.g. dropping delta_y from
+        the reconstruction, or adding extra Y transforms) breaks loudly here
+        rather than silently on the wire.
+        """
+        rng = random.Random(20260425)
+        for _ in range(200):
+            payload = _build_random_client_pose(rng, virtual_count=0)
+            _, decoded, _ = binary_serializer.deserialize(
+                binary_serializer.serialize_client_transform(payload)
+            )
+            assert decoded is not None
+            d_head = decoded["head"]
+            d_phys = decoded["physical"]
+            d_dy = decoded["xrOriginDeltaY"]
+            assert abs((d_head["posY"] - d_phys["posY"]) - d_dy) <= 1e-6
 
     def test_denormalized_quaternion_roundtrip(self) -> None:
         """Non-unit quaternions should be normalized and survive roundtrip."""
