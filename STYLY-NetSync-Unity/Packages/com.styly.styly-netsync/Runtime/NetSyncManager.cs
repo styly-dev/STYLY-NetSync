@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using Styly.NetSync.Internal;
+using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.Events;
 
