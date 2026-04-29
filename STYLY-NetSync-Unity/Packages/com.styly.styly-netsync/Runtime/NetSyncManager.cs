@@ -486,12 +486,18 @@ namespace Styly.NetSync
 
         void Start()
         {
-            var xrOrigin = FindFirstObjectByType<XROrigin>();
-            if (xrOrigin != null)
+            // Resolve the rig transform used as the locomotion-delta reference.
+            // The follow source is latched here at startup; runtime rig
+            // switching (e.g. disabling XROrigin and enabling OVRCameraRig
+            // mid-session) is not supported and will keep referencing the
+            // initially resolved transform.
+            Transform rigTransform = RigTransformResolver.TryResolve();
+
+            if (rigTransform != null)
             {
-                _XrOriginTransform = xrOrigin.transform;
-                _physicalOffsetPosition = xrOrigin.transform.position;
-                _physicalOffsetRotation = xrOrigin.transform.eulerAngles;
+                _XrOriginTransform = rigTransform;
+                _physicalOffsetPosition = rigTransform.position;
+                _physicalOffsetRotation = rigTransform.eulerAngles;
             }
 
             stylyXrRig = FindFirstObjectByType<Styly.XRRig.StylyXrRig>();

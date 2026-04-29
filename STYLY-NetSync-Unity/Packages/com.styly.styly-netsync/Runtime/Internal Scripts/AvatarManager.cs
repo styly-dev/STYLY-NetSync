@@ -52,12 +52,16 @@ namespace Styly.NetSync
             {
                 localGO = Object.Instantiate(localAvatarPrefab);
 
-                // If XR Origin exists, use it as the parent using a ParentConstraint
-                var xrOrigin = Object.FindFirstObjectByType<Unity.XR.CoreUtils.XROrigin>();
-                if (xrOrigin != null)
+                // Resolve the transform that the local avatar root should
+                // follow. Shares its priority order (XROrigin first, then
+                // OVRCameraRig.trackingSpace) with NetSyncManager via
+                // RigTransformResolver so the two call sites cannot drift.
+                Transform avatarFollowSource = RigTransformResolver.TryResolve();
+
+                if (avatarFollowSource != null)
                 {
                     var parentConstraint = localGO.AddComponent<UnityEngine.Animations.ParentConstraint>();
-                    var source = new UnityEngine.Animations.ConstraintSource { sourceTransform = xrOrigin.transform, weight = 1 };
+                    var source = new UnityEngine.Animations.ConstraintSource { sourceTransform = avatarFollowSource, weight = 1 };
                     parentConstraint.AddSource(source);
                     parentConstraint.constraintActive = true;
                 }
