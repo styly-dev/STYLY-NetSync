@@ -29,7 +29,7 @@ VarValue = Annotated[str, StringConstraints(max_length=MAX_VALUE)]
 class UpsertBody(BaseModel):
     """Request body for client or global variable upsert."""
 
-    vars: dict[VarName, VarValue] = Field(default_factory=dict)
+    variables: dict[VarName, VarValue] = Field(default_factory=dict)
 
 
 class PreseedStore:
@@ -187,6 +187,25 @@ class RoomBridge:
             logger.debug("Failed to lookup client number for %s: %s", device_id, exc)
             return None
 
+    def get_global_variables(self) -> dict[str, str]:
+        """Return a snapshot of cached global variables for this room."""
+        try:
+            return self._manager.get_all_global_variables()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("get_all_global_variables failed: %s", exc)
+            return {}
+
+    def get_client_variables(self, device_id: str) -> tuple[int | None, dict[str, str]]:
+        """Return (client_no, snapshot) for device; client_no is None if unmapped."""
+        client_no = self.get_client_no(device_id)
+        if client_no is None:
+            return None, {}
+        try:
+            return client_no, self._manager.get_all_client_variables(client_no)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("get_all_client_variables failed: %s", exc)
+            return client_no, {}
+
     def _apply_to_client(self, client_no: int, kvs: dict[str, str]) -> set[str]:
         """Apply stored variables to the target client via set_client_variable."""
         applied: set[str] = set()
@@ -308,15 +327,15 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
     @app.post("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
     def upsert(room_id: str, device_id: str, body: UpsertBody) -> dict[str, object]:
-        if not body.vars:
-            raise HTTPException(status_code=400, detail="vars must not be empty")
+        if not body.variables:
+            raise HTTPException(status_code=400, detail="variables must not be empty")
         try:
-            store.upsert(room_id, device_id, body.vars)
+            store.upsert(room_id, device_id, body.variables)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         bridge = manager.get(room_id)
-        statuses = bridge.apply_now_or_queue(device_id, body.vars)
+        statuses = bridge.apply_now_or_queue(device_id, body.variables)
         client_no = bridge.get_client_no(device_id)
 
         return {
@@ -328,15 +347,15 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
     @app.post("/v1/rooms/{room_id}/global-variables")
     def upsert_global(room_id: str, body: UpsertBody) -> dict[str, object]:
-        if not body.vars:
-            raise HTTPException(status_code=400, detail="vars must not be empty")
+        if not body.variables:
+            raise HTTPException(status_code=400, detail="variables must not be empty")
 
         bridge = manager.get(room_id)
-        statuses = bridge.apply_global_now_or_queue(body.vars)
+        statuses = bridge.apply_global_now_or_queue(body.variables)
 
         # Only store variables that were queued (not applied immediately)
         queued = {
-            name: body.vars[name]
+            name: body.variables[name]
             for name, state in statuses.items()
             if state != "applied"
         }
@@ -350,6 +369,45 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
             "roomId": room_id,
             "result": {name: {"state": state} for name, state in statuses.items()},
         }
+
+    @app.get("/v1/rooms/{room_id}/global-variables")
+    def get_global_variables(room_id: str) -> dict[str, object]:
+        bridge = manager.get(room_id)
+        return {"variables": bridge.get_global_variables()}
+
+    @app.get("/v1/rooms/{room_id}/global-variables/{name}")
+    def get_global_variable(room_id: str, name: VarName) -> dict[str, object]:
+        bridge = manager.get(room_id)
+        variables = bridge.get_global_variables()
+        if name not in variables:
+            raise HTTPException(
+                status_code=404, detail=f"Global variable '{name}' not found"
+            )
+        return {"value": variables[name]}
+
+    @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
+    def get_client_variables(room_id: str, device_id: str) -> dict[str, object]:
+        bridge = manager.get(room_id)
+        client_no, variables = bridge.get_client_variables(device_id)
+        return {"clientNo": client_no, "variables": variables}
+
+    @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables/{name}")
+    def get_client_variable(
+        room_id: str, device_id: str, name: VarName
+    ) -> dict[str, object]:
+        bridge = manager.get(room_id)
+        client_no, variables = bridge.get_client_variables(device_id)
+        if client_no is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Device '{device_id}' has no client mapping",
+            )
+        if name not in variables:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Client variable '{name}' not found for device '{device_id}'",
+            )
+        return {"clientNo": client_no, "value": variables[name]}
 
     return app
 
