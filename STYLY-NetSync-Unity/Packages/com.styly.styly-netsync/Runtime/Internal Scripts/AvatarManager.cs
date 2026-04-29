@@ -52,12 +52,32 @@ namespace Styly.NetSync
             {
                 localGO = Object.Instantiate(localAvatarPrefab);
 
-                // If XR Origin exists, use it as the parent using a ParentConstraint
-                var xrOrigin = Object.FindFirstObjectByType<Unity.XR.CoreUtils.XROrigin>();
-                if (xrOrigin != null)
+                // Resolve a transform that the local avatar root should follow.
+                //
+                // Priority:
+                //   1. OVRCameraRig.trackingSpace (when the Meta XR SDK is present
+                //      AND an OVRCameraRig exists in the scene). MRUK's World Lock
+                //      shifts this transform every frame, so following it keeps the
+                //      avatar pinned to the tracked space even under colocation.
+                //   2. XR Interaction Toolkit's XROrigin (historical path). Used
+                //      when there is no Meta rig or as the cross-platform fallback.
+                //
+                // The OVR lookup is gated by the META_XR_SDK_PRESENT define so
+                // projects without the Meta package never pay for it.
+                Transform avatarFollowSource = OvrCameraRigBridge.TryGetTrackingSpace();
+                if (avatarFollowSource == null)
+                {
+                    var xrOrigin = Object.FindFirstObjectByType<Unity.XR.CoreUtils.XROrigin>();
+                    if (xrOrigin != null)
+                    {
+                        avatarFollowSource = xrOrigin.transform;
+                    }
+                }
+
+                if (avatarFollowSource != null)
                 {
                     var parentConstraint = localGO.AddComponent<UnityEngine.Animations.ParentConstraint>();
-                    var source = new UnityEngine.Animations.ConstraintSource { sourceTransform = xrOrigin.transform, weight = 1 };
+                    var source = new UnityEngine.Animations.ConstraintSource { sourceTransform = avatarFollowSource, weight = 1 };
                     parentConstraint.AddSource(source);
                     parentConstraint.constraintActive = true;
                 }
