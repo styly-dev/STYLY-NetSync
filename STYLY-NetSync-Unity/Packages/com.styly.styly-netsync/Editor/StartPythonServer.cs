@@ -18,7 +18,7 @@ namespace Styly.NetSync.Editor
         // Port settings
         public int DealerPort = 5555;
         public int PubPort = 5556;
-        public int ServerDiscoveryPort = 9999;
+        public int ServerDiscoveryPort = StartPythonServer.DefaultServerDiscoveryPort;
         public int RestApiPort = 8800;
         public bool DisableServerDiscovery = false;
         public string ConfigFile = "";
@@ -59,7 +59,7 @@ namespace Styly.NetSync.Editor
             {
                 sb.Append(" --no-server-discovery");
             }
-            else if (ServerDiscoveryPort != 9999)
+            else if (ServerDiscoveryPort != StartPythonServer.DefaultServerDiscoveryPort)
             {
                 sb.Append($" --server-discovery-port {ServerDiscoveryPort}");
             }
@@ -88,7 +88,9 @@ namespace Styly.NetSync.Editor
 
     internal static class StartPythonServer
     {
-        internal static int GetDefaultServerDiscoveryPort()
+        internal const int DefaultServerDiscoveryPort = 9999;
+
+        internal static bool TryGetServerDiscoveryPortFromScene(out int port)
         {
             // Try to find NetSyncManager in the active scene first, then other loaded scenes
             Scene activeScene = SceneManager.GetActiveScene();
@@ -111,13 +113,19 @@ namespace Styly.NetSync.Editor
                     NetSyncManager manager = rootObject.GetComponentInChildren<NetSyncManager>(true);
                     if (manager != null)
                     {
-                        return manager.ServerDiscoveryPort;
+                        port = manager.ServerDiscoveryPort;
+                        return true;
                     }
                 }
             }
 
-            // Return default port if NetSyncManager is not found
-            return 9999;
+            port = DefaultServerDiscoveryPort;
+            return false;
+        }
+
+        internal static int GetDefaultServerDiscoveryPort()
+        {
+            return TryGetServerDiscoveryPortFromScene(out int port) ? port : DefaultServerDiscoveryPort;
         }
 
         internal static string GetServerVersionSafe()

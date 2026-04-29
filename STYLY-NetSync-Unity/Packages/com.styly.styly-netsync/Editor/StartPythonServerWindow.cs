@@ -10,7 +10,7 @@ namespace Styly.NetSync.Editor
         // Port settings
         private int _dealerPort = 5555;
         private int _pubPort = 5556;
-        private int _serverDiscoveryPort = 9999;
+        private int _serverDiscoveryPort = StartPythonServer.DefaultServerDiscoveryPort;
         private int _restApiPort = 8800;
         private bool _disableServerDiscovery = false;
         private string _configFile = "";
@@ -200,8 +200,11 @@ namespace Styly.NetSync.Editor
         {
             _dealerPort = EditorPrefs.GetInt(PrefsPrefix + "DealerPort", 5555);
             _pubPort = EditorPrefs.GetInt(PrefsPrefix + "PubPort", 5556);
-            _serverDiscoveryPort = EditorPrefs.GetInt(PrefsPrefix + "ServerDiscoveryPort",
-                StartPythonServer.GetDefaultServerDiscoveryPort());
+            // Prefer the NetSyncManager in an open scene over the saved value,
+            // so the dialog reflects the port currently configured in the scene.
+            _serverDiscoveryPort = StartPythonServer.TryGetServerDiscoveryPortFromScene(out int scenePort)
+                ? scenePort
+                : EditorPrefs.GetInt(PrefsPrefix + "ServerDiscoveryPort", StartPythonServer.DefaultServerDiscoveryPort);
             _restApiPort = EditorPrefs.GetInt(PrefsPrefix + "RestApiPort", 8800);
             _disableServerDiscovery = EditorPrefs.GetBool(PrefsPrefix + "DisableServerDiscovery", false);
             _configFile = EditorPrefs.GetString(PrefsPrefix + "ConfigFile", "");
