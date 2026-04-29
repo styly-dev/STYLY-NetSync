@@ -98,6 +98,37 @@ Transform:
   - {fileID: 1902225989507462964}
   m_Father: {fileID: 400821959810210929}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &7090907356756162440
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7158107301662038248}
+  m_Layer: 0
+  m_Name: Ground Center Tracker
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &7158107301662038248
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7090907356756162440}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 400821959810210929}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &7715607727795320353
 GameObject:
   m_ObjectHideFlags: 0
@@ -133,6 +164,7 @@ Transform:
   - {fileID: 8259009603360022221}
   - {fileID: 6992804918366304625}
   - {fileID: 6481340575715535886}
+  - {fileID: 7158107301662038248}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &-6173700704778759366
@@ -150,7 +182,7 @@ MonoBehaviour:
   _deviceId: 
   _clientNo: 0
   PhysicalPosition: {x: 0, y: 0, z: 0}
-  PhysicalRotation: {x: 0, y: 0, z: 0}
+  PhysicalRotation: {x: 0, y: 0, z: 0, w: 0}
   _head: {fileID: 2041796224729081718}
   _rightHand: {fileID: 8259009603360022221}
   _leftHand: {fileID: 6992804918366304625}
@@ -176,9 +208,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: dfac97f15ac5b4b66978c8dca79a5a3e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  netSyncAvatar: {fileID: -6173700704778759366}
   body: {fileID: 6481340575715535886}
-  head: {fileID: 2041796224729081718}
   offsetY: 0.4
+  groundCenter: {fileID: 7158107301662038248}
 --- !u!1 &7927846321792083688
 GameObject:
   m_ObjectHideFlags: 0
@@ -189,7 +222,7 @@ GameObject:
   m_Component:
   - component: {fileID: 6481340575715535886}
   m_Layer: 0
-  m_Name: Body
+  m_Name: Body Tracker
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
