@@ -43,7 +43,8 @@
     "com.unity.modules.video": "1.0.0",
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
-    "com.unity.modules.xr": "1.0.0"
+    "com.unity.modules.xr": "1.0.0",
+    "com.veriorpies.parrelsync": "1.5.2"
   },
   "scopedRegistries": [
     {
@@ -51,8 +52,9 @@
       "url": "https://package.openupm.com",
       "scopes": [
         "com.styly.device-id-provider",
-        "com.styly.styly-xr-rig",
         "com.styly.shader-collection.urp",
+        "com.styly.styly-xr-rig",
+        "com.veriorpies.parrelsync",
         "org.nuget.asyncio",
         "org.nuget.nacl.net",
         "org.nuget.netmq",
