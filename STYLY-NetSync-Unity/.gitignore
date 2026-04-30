@@ -113,6 +113,11 @@ mono_crash.*.json
 /[Aa]ssets/XR/UserSimulationSettings.meta
 ContentPackages/com.unity.xr-content.xr-sim-environments-*.tgz
 
+# Unity CLI Loop
+**/.uloop/*
+!**/.uloop/settings.permissions.json
+!**/.uloop/settings.tools.json
+
 # Others
 **/.DS_Store
 .idea
