@@ -35,8 +35,9 @@ MonoBehaviour:
     m_Url: https://package.openupm.com
     m_Scopes:
     - com.styly.device-id-provider
-    - com.styly.styly-xr-rig
     - com.styly.shader-collection.urp
+    - com.styly.styly-xr-rig
+    - com.veriorpies.parrelsync
     - org.nuget.asyncio
     - org.nuget.nacl.net
     - org.nuget.netmq
