@@ -394,6 +394,17 @@
       "dependencies": {},
       "url": "https://package.openupm.com"
     },
+    "io.github.hatayama.uloopmcp": {
+      "version": "2.1.0",
+      "depth": 0,
+      "source": "registry",
+      "dependencies": {
+        "com.unity.nuget.newtonsoft-json": "3.2.1",
+        "com.unity.test-framework": "1.1.33",
+        "com.unity.ugui": "1.0.0"
+      },
+      "url": "https://package.openupm.com"
+    },
     "org.nuget.asyncio": {
       "version": "0.1.69",
       "depth": 2,

@@ -45,7 +45,8 @@
     "com.unity.modules.video": "1.0.0",
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
-    "com.unity.modules.xr": "1.0.0"
+    "com.unity.modules.xr": "1.0.0",
+    "io.github.hatayama.uloopmcp": "2.1.0"
   },
   "scopedRegistries": [
     {
@@ -56,6 +57,7 @@
         "com.styly.shader-collection.urp",
         "com.styly.styly-xr-rig",
         "com.veriorpies.parrelsync",
+        "io.github.hatayama.uloopmcp",
         "org.nuget.asyncio",
         "org.nuget.nacl.net",
         "org.nuget.netmq",

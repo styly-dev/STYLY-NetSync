@@ -38,6 +38,7 @@ MonoBehaviour:
     - com.styly.shader-collection.urp
     - com.styly.styly-xr-rig
     - com.veriorpies.parrelsync
+    - io.github.hatayama.uloopmcp
     - org.nuget.asyncio
     - org.nuget.nacl.net
     - org.nuget.netmq
