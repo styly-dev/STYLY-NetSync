@@ -277,6 +277,77 @@ namespace Styly.NetSync
             }
         }
 
+        #region === Platform Binding (issue #425) ===
+        internal PlatformBindingManager PlatformBindingManager => _platformBindingManager;
+
+        /// <summary>
+        /// Register a moving platform GameObject so receivers can resolve a remote
+        /// avatar's platform binding to a local Transform. Callers must use the
+        /// same <paramref name="platformId"/> on every client that runs the scene.
+        /// </summary>
+        public void RegisterPlatform(string platformId, GameObject platform)
+        {
+            if (_platformBindingManager == null) { return; }
+            if (platform == null) { return; }
+            _platformBindingManager.RegisterPlatform(platformId, platform.transform);
+        }
+
+        public void UnregisterPlatform(string platformId)
+        {
+            _platformBindingManager?.UnregisterPlatform(platformId);
+        }
+
+        /// <summary>
+        /// Bind the local avatar to a moving platform. While bound, remote
+        /// receivers reconstruct this avatar's head pose from their local copy of
+        /// the platform's transform plus the smoothed physical channel, so the
+        /// head no longer drifts behind the platform during fast travel.
+        ///
+        /// The platform must be registered (or registered automatically by this
+        /// call) on every receiving client under the same <paramref name="platformId"/>.
+        /// </summary>
+        public void AttachLocalAvatarToPlatform(GameObject platform, string platformId)
+        {
+            if (_platformBindingManager == null) { return; }
+            if (platform == null || string.IsNullOrEmpty(platformId))
+            {
+                Debug.LogWarning("[NetSync] AttachLocalAvatarToPlatform: platform and platformId must be non-null.");
+                return;
+            }
+            if (_XrOriginTransform == null)
+            {
+                Debug.LogWarning("[NetSync] AttachLocalAvatarToPlatform: XR Origin not yet resolved.");
+                return;
+            }
+
+            _platformBindingManager.RegisterPlatform(platformId, platform.transform);
+
+            var platformTransform = platform.transform;
+            var platformYaw = PlatformBindingManager.ExtractYawDegrees(platformTransform.rotation);
+            var xrYaw = PlatformBindingManager.ExtractYawDegrees(_XrOriginTransform.rotation);
+
+            var rigOffsetPos = platformTransform.InverseTransformPoint(_XrOriginTransform.position);
+            var rigOffsetYaw = Mathf.DeltaAngle(platformYaw, xrYaw);
+
+            var p0 = _physicalOffsetPosition;
+            var yaw0 = _physicalOffsetRotation.y;
+
+            var encoded = PlatformBindingManager.Encode(platformId, rigOffsetPos, rigOffsetYaw, p0, yaw0);
+            SetClientVariable(PlatformBindingManager.ClientVariableName, encoded);
+        }
+
+        /// <summary>
+        /// Release the local avatar's platform binding. Receivers blend their
+        /// remote avatar's head from the platform-derived pose back to the
+        /// network-smoothed pose over <see cref="PlatformBindingManager.UnbindBlendSeconds"/>.
+        /// </summary>
+        public void DetachLocalAvatar()
+        {
+            if (_platformBindingManager == null) { return; }
+            SetClientVariable(PlatformBindingManager.ClientVariableName, "");
+        }
+        #endregion
+
         /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and
@@ -317,6 +388,7 @@ namespace Styly.NetSync
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
+            _platformBindingManager?.Clear();
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
@@ -340,6 +412,7 @@ namespace Styly.NetSync
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
         private ObjectSyncManager _objectSyncManager;
+        private PlatformBindingManager _platformBindingManager;
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -733,6 +806,7 @@ namespace Styly.NetSync
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
             _objectSyncManager = new ObjectSyncManager(_connectionManager, _messageProcessor, _timeEstimator, _enableDebugLogs);
+            _platformBindingManager = new PlatformBindingManager();
 
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
@@ -901,7 +975,55 @@ namespace Styly.NetSync
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
+            if (name == PlatformBindingManager.ClientVariableName)
+            {
+                ApplyPlatformBindingChange(clientNo, newValue);
+            }
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
+        }
+
+        private void ApplyPlatformBindingChange(int clientNo, string encoded)
+        {
+            if (_platformBindingManager == null) { return; }
+
+            // Empty value means the remote released its binding. Start the blend
+            // from whichever head pose the avatar currently shows (network-driven
+            // if no binding existed yet, platform-derived otherwise).
+            if (string.IsNullOrEmpty(encoded))
+            {
+                var lastHeadPos = Vector3.zero;
+                var lastHeadRot = Quaternion.identity;
+                if (_avatarManager != null && _avatarManager.TryGetNetSyncAvatar(clientNo, out var avatar) && avatar._head != null)
+                {
+                    lastHeadPos = avatar._head.position;
+                    lastHeadRot = avatar._head.rotation;
+                }
+                _platformBindingManager.StartUnbind(clientNo, lastHeadPos, lastHeadRot);
+                return;
+            }
+
+            if (!PlatformBindingManager.TryDecode(encoded, out var platformId, out var rigOffsetPos, out var rigOffsetYaw, out var p0, out var yaw0))
+            {
+                Debug.LogWarning($"[NetSync] Could not decode platform binding for client#{clientNo}: '{encoded}'");
+                return;
+            }
+
+            _platformBindingManager.TryResolvePlatform(platformId, out var platform);
+            var state = new PlatformBindingManager.BindingState
+            {
+                Platform = platform,
+                PlatformId = platformId,
+                RigOffsetPos = rigOffsetPos,
+                RigOffsetYaw = rigOffsetYaw,
+                P0 = p0,
+                Yaw0 = yaw0,
+            };
+            _platformBindingManager.SetBinding(clientNo, state);
+
+            if (platform == null)
+            {
+                Debug.LogWarning($"[NetSync] Platform '{platformId}' is not registered on this client; client#{clientNo} will use the unbound (lagged) reconstruction until RegisterPlatform is called.");
+            }
         }
 
         private void OnLocalClientNoAssigned(int clientNo)
@@ -1348,11 +1470,28 @@ namespace Styly.NetSync
 
             // Find the remote avatar and its head parent to resolve local->world.
             Transform parent = null;
+            NetSyncAvatar net = null;
             if (_avatarManager != null &&
-                _avatarManager.TryGetNetSyncAvatar(clientNo, out var net))
+                _avatarManager.TryGetNetSyncAvatar(clientNo, out net))
             {
                 // If head exists, use its parent as the local space; otherwise fallback to avatar root.
                 parent = (net._head != null) ? net._head.parent : net.transform;
+            }
+
+            // Issue #425 v1: when the remote is bound to a moving platform, the
+            // platform-derived head already provides a real-time position. Pin the
+            // presence to the head pose so it stops drifting behind the platform.
+            // (A future revision could send a presence-in-platform offset to keep
+            // the body indicator distinct from the head.)
+            if (_platformBindingManager != null
+                && _platformBindingManager.TryGetBinding(clientNo, out var binding)
+                && binding.Platform != null
+                && net != null && net._head != null)
+            {
+                var headWorldPos = net._head.position;
+                var headWorldYaw = Quaternion.Euler(0f, PlatformBindingManager.ExtractYawDegrees(net._head.rotation), 0f);
+                _humanPresenceManager.UpdateTransform(clientNo, headWorldPos, headWorldYaw, poseTime, poseSeq);
+                return;
             }
 
             // Convert local physical to world using parent transform when available.

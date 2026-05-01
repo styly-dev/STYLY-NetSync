@@ -210,7 +210,84 @@ namespace Styly.NetSync
                 var sample = _transformApplier.LastPhysicalSample;
                 PhysicalPosition = sample.Position;
                 PhysicalRotation = sample.Rotation;
+
+                ApplyPlatformBindingOverride(sample);
             }
+        }
+
+        /// <summary>
+        /// Issue #425: when the remote avatar is bound to a moving platform, the
+        /// network-smoothed head pose lags behind the platform during fast travel.
+        /// The applier has already written the lagged values; replace them with
+        /// the platform-derived pose and shift hands/virtuals by the same SE(3)
+        /// transform so the body stays attached to the head.
+        /// </summary>
+        private void ApplyPlatformBindingOverride(in PoseSampleData physical)
+        {
+            if (_head == null || _netSyncManager == null) { return; }
+            var bindingManager = _netSyncManager.PlatformBindingManager;
+            if (bindingManager == null) { return; }
+            if (!bindingManager.TryGetBinding(_clientNo, out var binding)) { return; }
+            if (binding.Platform == null) { return; }
+
+            // Rebase smoothed physical (sender's frozen-rig frame) into xr-origin-local.
+            //   physical = R(yaw0) * head_local + p0   ⇒   head_local = R(-yaw0) * (physical - p0)
+            var invR0 = Quaternion.Euler(0f, -binding.Yaw0, 0f);
+            var headLocalPos = invR0 * (physical.Position - binding.P0);
+            var headLocalRot = invR0 * physical.Rotation;
+
+            // XR Origin world pose now = platform.world_now * rigOffset_in_platform.
+            var platform = binding.Platform;
+            var xrOriginPos = platform.TransformPoint(binding.RigOffsetPos);
+            var xrOriginRot = platform.rotation * Quaternion.Euler(0f, binding.RigOffsetYaw, 0f);
+
+            var newHeadPos = xrOriginPos + xrOriginRot * headLocalPos;
+            var newHeadRot = xrOriginRot * headLocalRot;
+
+            // Departure blend: ease from the captured platform-derived pose at the
+            // moment of unbind back to the network-smoothed pose currently on _head.
+            if (binding.IsUnbinding)
+            {
+                bindingManager.AdvanceUnbind(_clientNo, Time.deltaTime);
+                var elapsed = binding.UnbindElapsedSeconds;
+                if (elapsed >= PlatformBindingManager.UnbindBlendSeconds)
+                {
+                    // Blend complete; the binding has been removed by AdvanceUnbind.
+                    return;
+                }
+                var t = Mathf.Clamp01(elapsed / PlatformBindingManager.UnbindBlendSeconds);
+                // _head.position currently holds the network-smoothed (post-Tick) pose.
+                var smoothedPos = _head.position;
+                var smoothedRot = _head.rotation;
+                newHeadPos = Vector3.Lerp(binding.UnbindHeadPos, smoothedPos, t);
+                newHeadRot = Quaternion.Slerp(binding.UnbindHeadRot, smoothedRot, t);
+            }
+
+            // Capture the lagged head pose (set by the applier) before overwriting,
+            // so we can rebase hands/virtuals by the same SE(3) delta.
+            var lagHeadPos = _head.position;
+            var lagHeadRot = _head.rotation;
+            var rotDelta = newHeadRot * Quaternion.Inverse(lagHeadRot);
+
+            _head.position = newHeadPos;
+            _head.rotation = newHeadRot;
+
+            RebaseAround(_rightHand, lagHeadPos, rotDelta, newHeadPos);
+            RebaseAround(_leftHand, lagHeadPos, rotDelta, newHeadPos);
+            if (_virtualTransforms != null)
+            {
+                for (int i = 0; i < _virtualTransforms.Length; i++)
+                {
+                    RebaseAround(_virtualTransforms[i], lagHeadPos, rotDelta, newHeadPos);
+                }
+            }
+        }
+
+        private static void RebaseAround(Transform t, Vector3 pivot, Quaternion rotDelta, Vector3 newPivot)
+        {
+            if (t == null) { return; }
+            t.position = rotDelta * (t.position - pivot) + newPivot;
+            t.rotation = rotDelta * t.rotation;
         }
 
 #if UNITY_EDITOR
