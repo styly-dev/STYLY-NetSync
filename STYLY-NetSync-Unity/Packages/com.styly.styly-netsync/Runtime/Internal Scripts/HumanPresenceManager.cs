@@ -116,6 +116,24 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Clear interpolation snapshot buffers for every tracked client without
+        /// destroying the presence GameObjects. Used when the active pose space
+        /// changes so that buffered samples in the previous frame are not applied.
+        /// </summary>
+        public void ClearAllSnapshots()
+        {
+            if (_applierByClient.Count == 0) { return; }
+            foreach (var kv in _applierByClient)
+            {
+                var applier = kv.Value;
+                if (applier != null)
+                {
+                    applier.Clear();
+                }
+            }
+        }
+
+        /// <summary>
         /// Destroy all presence instances (used on room switch/disconnect).
         /// </summary>
         public void CleanupAll()

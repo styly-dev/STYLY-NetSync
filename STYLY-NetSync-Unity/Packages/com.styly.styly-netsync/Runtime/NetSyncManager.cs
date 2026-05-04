@@ -1673,6 +1673,7 @@ namespace Styly.NetSync
         {
             if (_avatarManager != null) { _avatarManager.ClearAllRemoteAvatarSnapshots(); }
             if (_objectSyncManager != null) { _objectSyncManager.ClearAllObjectSnapshots(); }
+            if (_humanPresenceManager != null) { _humanPresenceManager.ClearAllSnapshots(); }
         }
         #endregion ------------------------------------------------------------------------
 
@@ -1756,19 +1757,27 @@ namespace Styly.NetSync
             if (_humanPresenceManager == null) { return; }
 
             var poseSpace = ResolveClientPoseSpace(clientNo);
-            if (!IsWorldPoseSpace(poseSpace))
+            if (poseSpace != null && !IsWorldPoseSpace(poseSpace))
             {
+                // Reconstruct the remote rig's pose in its active pose space, mirroring
+                // MessageProcessor's physical decode of the wire payload. If this method
+                // diverges from MessageProcessor.ProcessRoomTransform's pose math, the
+                // Human Presence transform will silently desync from the avatar.
                 var deltaRot = Quaternion.Euler(0f, xrOriginDeltaYaw, 0f);
                 var spacePos = deltaRot * position + xrOriginDeltaPosition;
-                var spaceYaw = deltaRot * Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
+                var spaceYawRotation = deltaRot * Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
 
-                if (poseSpace.TrySpaceToWorld(spacePos, spaceYaw, out var poseSpaceWorldPos, out var poseSpaceWorldYaw))
+                if (poseSpace.TrySpaceToWorld(spacePos, spaceYawRotation, out var spaceWorldPos, out var spaceWorldRotation))
                 {
-                    _humanPresenceManager.UpdateTransform(clientNo, poseSpaceWorldPos, poseSpaceWorldYaw, poseTime, poseSeq);
+                    // Force yaw-only on the way out — a tilted/rolled pose-space transform
+                    // would otherwise leak non-yaw components into Human Presence, which is
+                    // documented as yaw-only.
+                    var spaceWorldYaw = Quaternion.Euler(0f, spaceWorldRotation.eulerAngles.y, 0f);
+                    _humanPresenceManager.UpdateTransform(clientNo, spaceWorldPos, spaceWorldYaw, poseTime, poseSeq);
                 }
                 else
                 {
-                    _humanPresenceManager.UpdateTransform(clientNo, spacePos, spaceYaw, poseTime, poseSeq);
+                    _humanPresenceManager.UpdateTransform(clientNo, spacePos, spaceYawRotation, poseTime, poseSeq);
                 }
 
                 return;
