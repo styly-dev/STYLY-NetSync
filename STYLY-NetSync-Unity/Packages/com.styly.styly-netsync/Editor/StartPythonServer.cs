@@ -228,23 +228,44 @@ namespace Styly.NetSync.Editor
             return projectRoot;
         }
 
-        private static void ScheduleTempFileCleanup(string filePath, int delayMs = 5000)
+        // Temp scripts are kept on disk so the user can stop and restart the server from
+        // the same terminal. Sweep ones older than this on editor load / domain reload.
+        private const double TempScriptMaxAgeHours = 24.0;
+        private const string TempScriptPrefix = "start_styly_netsync_server_";
+
+        [InitializeOnLoadMethod]
+        private static void SweepStaleTempScripts()
         {
-            System.Threading.Tasks.Task.Delay(delayMs).ContinueWith(_ =>
+            try
             {
-                try
+                string tempPath = Path.GetTempPath();
+                if (!Directory.Exists(tempPath)) return;
+
+                DateTime cutoff = DateTime.UtcNow.AddHours(-TempScriptMaxAgeHours);
+                string[] patterns = { TempScriptPrefix + "*.sh", TempScriptPrefix + "*.ps1" };
+
+                foreach (string pattern in patterns)
                 {
-                    if (File.Exists(filePath))
+                    foreach (string file in Directory.GetFiles(tempPath, pattern))
                     {
-                        File.Delete(filePath);
-                        Debug.Log($"Cleaned up temporary script: {filePath}");
+                        try
+                        {
+                            if (File.GetLastWriteTimeUtc(file) < cutoff)
+                            {
+                                File.Delete(file);
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore individual failures (file in use, permissions, etc.)
+                        }
                     }
                 }
-                catch (Exception e)
-                {
-                    Debug.LogWarning($"Failed to clean up temporary script: {e.Message}");
-                }
-            });
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"Failed to sweep stale NetSync server scripts: {e.Message}");
+            }
         }
 
         /// <summary>
@@ -383,7 +404,7 @@ read -p 'Press any key to exit...'
 ";
 
             // Create a unique temp file with .sh extension
-            string tempScriptPath = Path.Combine(Path.GetTempPath(), $"start_styly_netsync_server_{Guid.NewGuid():N}.sh");
+            string tempScriptPath = Path.Combine(Path.GetTempPath(), $"{TempScriptPrefix}{Guid.NewGuid():N}.sh");
             File.WriteAllText(tempScriptPath, shellScript);
 
             // Make script executable
@@ -417,9 +438,6 @@ read -p 'Press any key to exit...'
             {
                 RunInTerminal($"/bin/bash {QuoteForShell(tempScriptPath)}");
                 Debug.Log("STYLY NetSync: Starting Python server in Terminal...");
-
-                // Schedule cleanup of temporary script file
-                ScheduleTempFileCleanup(tempScriptPath);
             }
             catch (Exception e)
             {
@@ -521,8 +539,9 @@ Write-Host 'Server stopped.' -ForegroundColor Yellow
 Read-Host 'Press Enter to exit'
 ";
 
-            // Create a unique temp file and change its extension to .ps1
-            string tempScriptPath = Path.ChangeExtension(Path.GetTempFileName(), ".ps1");
+            // Create a unique temp file with .ps1 extension. The shared prefix lets the
+            // startup sweep recognize and clean up stale scripts from previous sessions.
+            string tempScriptPath = Path.Combine(Path.GetTempPath(), $"{TempScriptPrefix}{Guid.NewGuid():N}.ps1");
             File.WriteAllText(tempScriptPath, powershellScript);
 
             // Get the project root directory
@@ -553,9 +572,6 @@ Read-Host 'Press Enter to exit'
             {
                 process.Start();
                 Debug.Log("STYLY NetSync: Starting Python server in PowerShell...");
-
-                // Schedule cleanup of temporary script file
-                ScheduleTempFileCleanup(tempScriptPath);
             }
             catch (Exception e)
             {
@@ -685,7 +701,7 @@ read -p 'Press any key to exit...'
 ";
 
             // Create a unique temp file with .sh extension
-            string tempScriptPath = Path.Combine(Path.GetTempPath(), $"start_styly_netsync_server_{Guid.NewGuid():N}.sh");
+            string tempScriptPath = Path.Combine(Path.GetTempPath(), $"{TempScriptPrefix}{Guid.NewGuid():N}.sh");
             File.WriteAllText(tempScriptPath, shellScript);
 
             // Make script executable
@@ -742,9 +758,6 @@ read -p 'Press any key to exit...'
             {
                 process.Start();
                 Debug.Log($"STYLY NetSync: Starting Python server in {availableTerminal}...");
-
-                // Schedule cleanup of temporary script file
-                ScheduleTempFileCleanup(tempScriptPath);
             }
             catch (Exception e)
             {
