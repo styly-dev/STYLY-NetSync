@@ -13,4 +13,5 @@ description: "Unity C# coding guidelines and critical rules for the STYLY-NetSyn
   - ✅ **Correct:** `return transform != null ? transform : null;`
 - If Claude produced any `?.` on Unity objects, immediately refactor to explicit null checks.
 - Do **not** call any `UnityEngine` APIs from background threads — all Unity object access must run on the main Unity thread.
-- Don't generate .meta file for Unity C# script. Meta files will be automatically generated once Unity editor is opened.
+- Do not create or edit Unity `.meta` files manually or with an LLM.
+- Commit Unity-generated `.meta` files together with the corresponding new, renamed, or moved asset/script.

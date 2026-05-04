@@ -69,7 +69,8 @@ Key mappings: `NetSyncManager.cs` ↔ `client.py`, `ConnectionManager.cs` ↔ co
 
 - **Never use null propagation (`?.` / `??`) with UnityEngine.Object types**
 - All Unity API calls must be on main thread — no background thread access
-- Do not add `.meta` files manually
+- Do not create or edit Unity `.meta` files manually or with an LLM.
+- Commit Unity-generated `.meta` files together with the corresponding new, renamed, or moved asset/script.
 - Namespace: `Styly.NetSync` (public) / `Styly.NetSync.Internal` (internal)
 - Naming: private fields `_camelCase`, public `PascalCase`, 4-space indent
 
