@@ -142,8 +142,7 @@ namespace Styly.NetSync
                 {
                     if (!poseSpace.TryWorldToSpace(pos, rot, out var spacePos, out var spaceRot))
                     {
-                        spacePos = pos;
-                        spaceRot = rot;
+                        continue;
                     }
 
                     pos = spacePos;

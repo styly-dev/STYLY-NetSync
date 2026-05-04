@@ -738,15 +738,13 @@ namespace Styly.NetSync
 
                 if (physicalValid && headValid)
                 {
-                    var deltaPos = client.xrOriginDeltaPosition;
-                    var deltaYaw = client.xrOriginDeltaYaw;
-                    var deltaRot = Quaternion.Euler(0f, deltaYaw, 0f);
-                    var invDeltaRot = Quaternion.Inverse(deltaRot);
-
-                    client.physical.position = invDeltaRot * (headPos - deltaPos);
-                    var headYaw = QuaternionToYawDegrees(headRot);
-                    var physicalYaw = NormalizeYawDegrees(headYaw - deltaYaw);
-                    client.physical.rotation = Quaternion.Euler(0f, physicalYaw, 0f);
+                    NetSyncPoseMath.ReconstructPhysicalFromHead(
+                        headPos,
+                        headRot,
+                        client.xrOriginDeltaPosition,
+                        client.xrOriginDeltaYaw,
+                        out client.physical.position,
+                        out client.physical.rotation);
                 }
                 else
                 {

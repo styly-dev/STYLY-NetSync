@@ -6,6 +6,10 @@ namespace Styly.NetSync
     public interface INetSyncPoseSpace
     {
         string SpaceId { get; }
+        /// <summary>
+        /// True when this pose space is the identity world space.
+        /// </summary>
+        bool IsIdentity { get; }
         bool TryWorldToSpace(Vector3 worldPosition, Quaternion worldRotation, out Vector3 spacePosition, out Quaternion spaceRotation);
         bool TrySpaceToWorld(Vector3 spacePosition, Quaternion spaceRotation, out Vector3 worldPosition, out Quaternion worldRotation);
     }
@@ -15,6 +19,7 @@ namespace Styly.NetSync
         public static readonly NetSyncWorldPoseSpace Instance = new NetSyncWorldPoseSpace();
 
         public string SpaceId => "world";
+        public bool IsIdentity => true;
 
         private NetSyncWorldPoseSpace()
         {
@@ -41,6 +46,7 @@ namespace Styly.NetSync
         private readonly Transform _origin;
 
         public string SpaceId => _spaceId;
+        public bool IsIdentity => false;
         public Transform Origin => _origin;
 
         public TransformNetSyncPoseSpace(string spaceId, Transform origin)
@@ -80,6 +86,38 @@ namespace Styly.NetSync
             worldPosition = _origin.TransformPoint(spacePosition);
             worldRotation = _origin.rotation * spaceRotation;
             return true;
+        }
+    }
+
+    internal static class NetSyncPoseMath
+    {
+        public static void ReconstructPhysicalFromHead(
+            Vector3 headPosition,
+            Quaternion headRotation,
+            Vector3 xrOriginDeltaPosition,
+            float xrOriginDeltaYaw,
+            out Vector3 physicalPosition,
+            out Quaternion physicalRotation)
+        {
+            var deltaRot = Quaternion.Euler(0f, xrOriginDeltaYaw, 0f);
+            var invDeltaRot = Quaternion.Inverse(deltaRot);
+            physicalPosition = invDeltaRot * (headPosition - xrOriginDeltaPosition);
+            var headYaw = headRotation.eulerAngles.y;
+            var physicalYaw = Mathf.DeltaAngle(0f, headYaw - xrOriginDeltaYaw);
+            physicalRotation = Quaternion.Euler(0f, physicalYaw, 0f);
+        }
+
+        public static void ApplyXrOriginDelta(
+            Vector3 physicalPosition,
+            Quaternion physicalRotation,
+            Vector3 xrOriginDeltaPosition,
+            float xrOriginDeltaYaw,
+            out Vector3 headPosition,
+            out Quaternion headRotation)
+        {
+            var deltaRot = Quaternion.Euler(0f, xrOriginDeltaYaw, 0f);
+            headPosition = deltaRot * physicalPosition + xrOriginDeltaPosition;
+            headRotation = deltaRot * Quaternion.Euler(0f, physicalRotation.eulerAngles.y, 0f);
         }
     }
 }

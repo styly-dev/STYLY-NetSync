@@ -187,122 +187,74 @@ namespace Styly.NetSync
         #region === Pose Space API ===
         /// <summary>
         /// Registers a pose space backed by a Transform. All peers must use the same ID for the same logical space.
+        /// Pose-space selection is synchronized out-of-band and is not encoded in protocol v4 pose payloads.
         /// </summary>
         public void RegisterPoseSpace(string spaceId, Transform origin)
         {
-            if (string.IsNullOrEmpty(spaceId))
-            {
-                return;
-            }
-
-            RegisterPoseSpace(new TransformNetSyncPoseSpace(spaceId, origin));
+            PoseSpaces.RegisterPoseSpace(spaceId, origin);
         }
 
         /// <summary>
-        /// Registers a custom pose space. Pose-space selection is intentionally synchronized out-of-band.
+        /// Registers a custom pose space. Pose-space selection is synchronized out-of-band and is not encoded in protocol v4 pose payloads.
         /// </summary>
         public void RegisterPoseSpace(INetSyncPoseSpace poseSpace)
         {
-            if (poseSpace == null || string.IsNullOrEmpty(poseSpace.SpaceId))
-            {
-                return;
-            }
-
-            _poseSpaces[poseSpace.SpaceId] = poseSpace;
-            ClearPoseSpaceDrivenSnapshots();
+            PoseSpaces.RegisterPoseSpace(poseSpace);
         }
 
         public void UnregisterPoseSpace(string spaceId)
         {
-            if (string.IsNullOrEmpty(spaceId) || IsWorldPoseSpaceId(spaceId))
-            {
-                return;
-            }
-
-            _poseSpaces.Remove(spaceId);
-            ClearPoseSpaceDrivenSnapshots();
+            PoseSpaces.UnregisterPoseSpace(spaceId);
         }
 
         public void SetDefaultPoseSpace(string spaceId)
         {
-            _defaultPoseSpaceId = NormalizePoseSpaceId(spaceId);
-            ClearPoseSpaceDrivenSnapshots();
+            PoseSpaces.SetDefaultPoseSpace(spaceId);
         }
 
         public void ClearDefaultPoseSpace()
         {
-            _defaultPoseSpaceId = null;
-            ClearPoseSpaceDrivenSnapshots();
+            PoseSpaces.ClearDefaultPoseSpace();
         }
 
         public void SetLocalAvatarPoseSpace(string spaceId)
         {
-            _localAvatarPoseSpaceId = NormalizePoseSpaceId(spaceId);
+            PoseSpaces.SetLocalAvatarPoseSpace(spaceId);
         }
 
         public void ClearLocalAvatarPoseSpace()
         {
-            _localAvatarPoseSpaceId = null;
+            PoseSpaces.ClearLocalAvatarPoseSpace();
         }
 
         public void SetClientPoseSpace(int clientNo, string spaceId)
         {
-            if (clientNo <= 0)
-            {
-                return;
-            }
-
-            var normalized = NormalizePoseSpaceId(spaceId);
-            if (string.IsNullOrEmpty(normalized))
-            {
-                _clientPoseSpaceIds.Remove(clientNo);
-                ClearClientDrivenSnapshots(clientNo);
-                return;
-            }
-
-            _clientPoseSpaceIds[clientNo] = normalized;
-            ClearClientDrivenSnapshots(clientNo);
+            PoseSpaces.SetClientPoseSpace(clientNo, spaceId);
         }
 
         public void ClearClientPoseSpace(int clientNo)
         {
-            _clientPoseSpaceIds.Remove(clientNo);
-            ClearClientDrivenSnapshots(clientNo);
+            PoseSpaces.ClearClientPoseSpace(clientNo);
         }
 
+        /// <summary>
+        /// Sets the local object's pose-space override. This is local state only;
+        /// applications must synchronize object pose-space selection out-of-band before
+        /// sending non-world object poses.
+        /// </summary>
         public void SetObjectPoseSpace(uint objectId, string spaceId)
         {
-            if (objectId == 0u)
-            {
-                return;
-            }
-
-            var normalized = NormalizePoseSpaceId(spaceId);
-            if (string.IsNullOrEmpty(normalized))
-            {
-                _objectPoseSpaceIds.Remove(objectId);
-                if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
-                return;
-            }
-
-            _objectPoseSpaceIds[objectId] = normalized;
-            if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
+            PoseSpaces.SetObjectPoseSpace(objectId, spaceId);
         }
 
         public void ClearObjectPoseSpace(uint objectId)
         {
-            _objectPoseSpaceIds.Remove(objectId);
-            if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
+            PoseSpaces.ClearObjectPoseSpace(objectId);
         }
 
         internal void NotifyObjectPoseSpaceChanged(NetSyncObject obj)
         {
-            if (obj == null || obj.ObjectId == 0u)
-            {
-                return;
-            }
-
-            if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(obj.ObjectId); }
+            PoseSpaces.NotifyObjectPoseSpaceChanged(obj);
         }
         #endregion ------------------------------------------------------------------------
 
@@ -313,7 +265,7 @@ namespace Styly.NetSync
         /// </summary>
         public void RegisterPlatform(string platformId, Transform platform)
         {
-            if (string.IsNullOrEmpty(platformId) || IsWorldPoseSpaceId(platformId))
+            if (string.IsNullOrEmpty(platformId) || PoseSpaceManager.IsWorldPoseSpaceId(platformId))
             {
                 Debug.LogWarning("[NetSync] RegisterPlatform: platformId must be non-empty and not 'world'.");
                 return;
@@ -355,14 +307,14 @@ namespace Styly.NetSync
         /// </summary>
         public bool AttachLocalAvatarToPlatform(string platformId)
         {
-            var normalized = NormalizePoseSpaceId(platformId);
+            var normalized = PoseSpaceManager.NormalizePoseSpaceId(platformId);
             if (string.IsNullOrEmpty(normalized))
             {
                 Debug.LogWarning("[NetSync] AttachLocalAvatarToPlatform: platformId must be non-empty and not 'world'.");
                 return false;
             }
 
-            if (!_poseSpaces.TryGetValue(normalized, out var poseSpace) || poseSpace == null)
+            if (!PoseSpaces.HasPoseSpace(normalized))
             {
                 Debug.LogWarning($"[NetSync] AttachLocalAvatarToPlatform: platform '{normalized}' is not registered.");
                 return false;
@@ -370,22 +322,6 @@ namespace Styly.NetSync
 
             SetLocalAvatarPoseSpace(normalized);
             return SetClientVariable(PlatformPoseSpaceClientVariableName, normalized);
-        }
-
-        /// <summary>
-        /// Registers the platform locally, then attaches the local avatar to it.
-        /// </summary>
-        [Obsolete("Use AttachLocalAvatarToPlatform(string platformId, GameObject platform).")]
-        public bool AttachLocalAvatarToPlatform(GameObject platform, string platformId)
-        {
-            if (platform == null)
-            {
-                Debug.LogWarning("[NetSync] AttachLocalAvatarToPlatform: platform must be non-null.");
-                return false;
-            }
-
-            RegisterPlatform(platformId, platform);
-            return AttachLocalAvatarToPlatform(platformId);
         }
 
         /// <summary>
@@ -413,13 +349,6 @@ namespace Styly.NetSync
             return SetClientVariable(PlatformPoseSpaceClientVariableName, string.Empty);
         }
 
-        /// <summary>
-        /// Compatibility alias for callers that model platform use as attach/detach.
-        /// </summary>
-        public bool DetachLocalAvatar()
-        {
-            return DetachLocalAvatarFromPlatform();
-        }
         #endregion ------------------------------------------------------------------------
 
         /// <summary>
@@ -580,6 +509,7 @@ namespace Styly.NetSync
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
         private ObjectSyncManager _objectSyncManager;
+        private PoseSpaceManager _poseSpaceManager;
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -598,11 +528,6 @@ namespace Styly.NetSync
         private bool _hasInvokedReady = false;
         private bool _shouldCheckReady = false;
         private bool _shouldSendHandshake = false;
-        private readonly Dictionary<string, INetSyncPoseSpace> _poseSpaces = new Dictionary<string, INetSyncPoseSpace>();
-        private readonly Dictionary<int, string> _clientPoseSpaceIds = new Dictionary<int, string>();
-        private readonly Dictionary<uint, string> _objectPoseSpaceIds = new Dictionary<uint, string>();
-        private string _defaultPoseSpaceId;
-        private string _localAvatarPoseSpaceId;
         // Battery monitoring fields
         private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
         private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
@@ -646,6 +571,22 @@ namespace Styly.NetSync
         private DeviceIdResolver _deviceIdResolver;
         private bool _networkingPending;
         #endregion ------------------------------------------------------------------------
+
+        private PoseSpaceManager PoseSpaces
+        {
+            get
+            {
+                if (_poseSpaceManager == null)
+                {
+                    _poseSpaceManager = new PoseSpaceManager(
+                        ClearPoseSpaceDrivenSnapshots,
+                        ClearClientDrivenSnapshots,
+                        ClearObjectSnapshots);
+                }
+
+                return _poseSpaceManager;
+            }
+        }
 
         #region === Public Properties ===
         public string DeviceId => _deviceId;
@@ -1105,7 +1046,7 @@ namespace Styly.NetSync
 
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
-            _clientPoseSpaceIds.Remove(clientNo);
+            PoseSpaces.ClearClientPoseSpace(clientNo);
             OnAvatarDisconnected?.Invoke(clientNo);
         }
 
@@ -1162,7 +1103,7 @@ namespace Styly.NetSync
                 return;
             }
 
-            if (string.IsNullOrEmpty(platformId) || IsWorldPoseSpaceId(platformId))
+            if (string.IsNullOrEmpty(platformId) || PoseSpaceManager.IsWorldPoseSpaceId(platformId))
             {
                 ClearClientPoseSpace(clientNo);
                 return;
@@ -1170,7 +1111,7 @@ namespace Styly.NetSync
 
             SetClientPoseSpace(clientNo, platformId);
 
-            if (!_poseSpaces.ContainsKey(platformId))
+            if (!PoseSpaces.HasPoseSpace(platformId))
             {
                 Debug.LogWarning($"[NetSync] Client#{clientNo} selected platform pose space '{platformId}', but it is not registered on this client yet.");
             }
@@ -1184,9 +1125,7 @@ namespace Styly.NetSync
 
         private void ClearRoomScopedPoseSpaceSelections()
         {
-            _localAvatarPoseSpaceId = null;
-            _clientPoseSpaceIds.Clear();
-            _objectPoseSpaceIds.Clear();
+            PoseSpaces.ClearRoomScopedSelections();
         }
 
         private void OnLocalClientNoAssigned(int clientNo)
@@ -1590,83 +1529,24 @@ namespace Styly.NetSync
             }
         }
 
-        private static bool IsWorldPoseSpaceId(string spaceId)
-        {
-            return string.Equals(spaceId, NetSyncWorldPoseSpace.Instance.SpaceId, StringComparison.Ordinal);
-        }
-
-        private static string NormalizePoseSpaceId(string spaceId)
-        {
-            if (string.IsNullOrEmpty(spaceId) || IsWorldPoseSpaceId(spaceId))
-            {
-                return null;
-            }
-
-            return spaceId;
-        }
-
-        private INetSyncPoseSpace ResolvePoseSpaceById(string spaceId)
-        {
-            if (string.IsNullOrEmpty(spaceId) || IsWorldPoseSpaceId(spaceId))
-            {
-                return NetSyncWorldPoseSpace.Instance;
-            }
-
-            if (_poseSpaces.TryGetValue(spaceId, out var poseSpace) && poseSpace != null)
-            {
-                return poseSpace;
-            }
-
-            return NetSyncWorldPoseSpace.Instance;
-        }
-
-        private INetSyncPoseSpace ResolveDefaultPoseSpace()
-        {
-            return ResolvePoseSpaceById(_defaultPoseSpaceId);
-        }
-
         internal INetSyncPoseSpace ResolveLocalAvatarPoseSpace()
         {
-            if (!string.IsNullOrEmpty(_localAvatarPoseSpaceId))
-            {
-                return ResolvePoseSpaceById(_localAvatarPoseSpaceId);
-            }
-
-            return ResolveDefaultPoseSpace();
+            return PoseSpaces.ResolveLocalAvatarPoseSpace();
         }
 
         internal INetSyncPoseSpace ResolveClientPoseSpace(int clientNo)
         {
-            if (clientNo > 0 && _clientPoseSpaceIds.TryGetValue(clientNo, out var spaceId))
-            {
-                return ResolvePoseSpaceById(spaceId);
-            }
-
-            return ResolveDefaultPoseSpace();
+            return PoseSpaces.ResolveClientPoseSpace(clientNo);
         }
 
         internal INetSyncPoseSpace ResolveObjectPoseSpace(NetSyncObject obj)
         {
-            if (obj != null)
-            {
-                var objectId = obj.ObjectId;
-                if (objectId != 0u && _objectPoseSpaceIds.TryGetValue(objectId, out var spaceId))
-                {
-                    return ResolvePoseSpaceById(spaceId);
-                }
-
-                if (!string.IsNullOrEmpty(obj.PoseSpaceId))
-                {
-                    return ResolvePoseSpaceById(obj.PoseSpaceId);
-                }
-            }
-
-            return ResolveDefaultPoseSpace();
+            return PoseSpaces.ResolveObjectPoseSpace(obj);
         }
 
         internal static bool IsWorldPoseSpace(INetSyncPoseSpace poseSpace)
         {
-            return poseSpace == null || ReferenceEquals(poseSpace, NetSyncWorldPoseSpace.Instance) || IsWorldPoseSpaceId(poseSpace.SpaceId);
+            return PoseSpaceManager.IsWorldPoseSpace(poseSpace);
         }
 
         private void ClearPoseSpaceDrivenSnapshots()
@@ -1674,6 +1554,11 @@ namespace Styly.NetSync
             if (_avatarManager != null) { _avatarManager.ClearAllRemoteAvatarSnapshots(); }
             if (_objectSyncManager != null) { _objectSyncManager.ClearAllObjectSnapshots(); }
             if (_humanPresenceManager != null) { _humanPresenceManager.ClearAllSnapshots(); }
+        }
+
+        private void ClearObjectSnapshots(uint objectId)
+        {
+            if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
         }
         #endregion ------------------------------------------------------------------------
 
@@ -1759,13 +1644,13 @@ namespace Styly.NetSync
             var poseSpace = ResolveClientPoseSpace(clientNo);
             if (poseSpace != null && !IsWorldPoseSpace(poseSpace))
             {
-                // Reconstruct the remote rig's pose in its active pose space, mirroring
-                // MessageProcessor's physical decode of the wire payload. If this method
-                // diverges from MessageProcessor.ProcessRoomTransform's pose math, the
-                // Human Presence transform will silently desync from the avatar.
-                var deltaRot = Quaternion.Euler(0f, xrOriginDeltaYaw, 0f);
-                var spacePos = deltaRot * position + xrOriginDeltaPosition;
-                var spaceYawRotation = deltaRot * Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
+                NetSyncPoseMath.ApplyXrOriginDelta(
+                    position,
+                    rotation,
+                    xrOriginDeltaPosition,
+                    xrOriginDeltaYaw,
+                    out var spacePos,
+                    out var spaceYawRotation);
 
                 if (poseSpace.TrySpaceToWorld(spacePos, spaceYawRotation, out var spaceWorldPos, out var spaceWorldRotation))
                 {
@@ -1774,10 +1659,6 @@ namespace Styly.NetSync
                     // documented as yaw-only.
                     var spaceWorldYaw = Quaternion.Euler(0f, spaceWorldRotation.eulerAngles.y, 0f);
                     _humanPresenceManager.UpdateTransform(clientNo, spaceWorldPos, spaceWorldYaw, poseTime, poseSeq);
-                }
-                else
-                {
-                    _humanPresenceManager.UpdateTransform(clientNo, spacePos, spaceYawRotation, poseTime, poseSeq);
                 }
 
                 return;

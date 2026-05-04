@@ -292,8 +292,7 @@ namespace Styly.NetSync
                 {
                     if (!poseSpace.TrySpaceToWorld(pose.Position, pose.Rotation, out position, out rotation))
                     {
-                        position = pose.Position;
-                        rotation = pose.Rotation;
+                        return;
                     }
                 }
 
