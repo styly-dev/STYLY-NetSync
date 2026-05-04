@@ -67,6 +67,7 @@ namespace Styly.NetSync
         private float _discoveryTimeout = 10f;
 
         internal const string PrefixForSystem = "@system:"; // Prefix for system-only message names
+        private const string PlatformPoseSpaceClientVariableName = PrefixForSystem + "platformPoseSpace";
 
         #endregion ------------------------------------------------------------------------
 
@@ -183,11 +184,17 @@ namespace Styly.NetSync
             return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(name, clientNo, defaultValue) : defaultValue;
         }
 
+        #region === Pose Space API ===
         /// <summary>
         /// Registers a pose space backed by a Transform. All peers must use the same ID for the same logical space.
         /// </summary>
         public void RegisterPoseSpace(string spaceId, Transform origin)
         {
+            if (string.IsNullOrEmpty(spaceId))
+            {
+                return;
+            }
+
             RegisterPoseSpace(new TransformNetSyncPoseSpace(spaceId, origin));
         }
 
@@ -202,6 +209,7 @@ namespace Styly.NetSync
             }
 
             _poseSpaces[poseSpace.SpaceId] = poseSpace;
+            ClearPoseSpaceDrivenSnapshots();
         }
 
         public void UnregisterPoseSpace(string spaceId)
@@ -212,6 +220,7 @@ namespace Styly.NetSync
             }
 
             _poseSpaces.Remove(spaceId);
+            ClearPoseSpaceDrivenSnapshots();
         }
 
         public void SetDefaultPoseSpace(string spaceId)
@@ -285,6 +294,107 @@ namespace Styly.NetSync
             _objectPoseSpaceIds.Remove(objectId);
             if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
         }
+        #endregion ------------------------------------------------------------------------
+
+        #region === Platform Pose Space API ===
+        /// <summary>
+        /// Registers a moving platform as a pose space. All peers must use the same
+        /// platform ID for the same logical platform.
+        /// </summary>
+        public void RegisterPlatform(string platformId, Transform platform)
+        {
+            if (string.IsNullOrEmpty(platformId) || IsWorldPoseSpaceId(platformId))
+            {
+                Debug.LogWarning("[NetSync] RegisterPlatform: platformId must be non-empty and not 'world'.");
+                return;
+            }
+
+            if (platform == null)
+            {
+                Debug.LogWarning("[NetSync] RegisterPlatform: platform must be non-null.");
+                return;
+            }
+
+            RegisterPoseSpace(platformId, platform);
+        }
+
+        /// <summary>
+        /// Registers a moving platform as a pose space. All peers must use the same
+        /// platform ID for the same logical platform.
+        /// </summary>
+        public void RegisterPlatform(string platformId, GameObject platform)
+        {
+            if (platform == null)
+            {
+                Debug.LogWarning("[NetSync] RegisterPlatform: platform must be non-null.");
+                return;
+            }
+
+            RegisterPlatform(platformId, platform.transform);
+        }
+
+        public void UnregisterPlatform(string platformId)
+        {
+            UnregisterPoseSpace(platformId);
+        }
+
+        /// <summary>
+        /// Sends the local avatar in a registered platform's pose space and
+        /// synchronizes that selection so receivers resolve this client in the
+        /// same logical platform space.
+        /// </summary>
+        public bool AttachLocalAvatarToPlatform(string platformId)
+        {
+            var normalized = NormalizePoseSpaceId(platformId);
+            if (string.IsNullOrEmpty(normalized))
+            {
+                Debug.LogWarning("[NetSync] AttachLocalAvatarToPlatform: platformId must be non-empty and not 'world'.");
+                return false;
+            }
+
+            if (!_poseSpaces.TryGetValue(normalized, out var poseSpace) || poseSpace == null)
+            {
+                Debug.LogWarning($"[NetSync] AttachLocalAvatarToPlatform: platform '{normalized}' is not registered.");
+                return false;
+            }
+
+            SetLocalAvatarPoseSpace(normalized);
+            return SetClientVariable(PlatformPoseSpaceClientVariableName, normalized);
+        }
+
+        /// <summary>
+        /// Registers the platform locally, then attaches the local avatar to it.
+        /// </summary>
+        public bool AttachLocalAvatarToPlatform(GameObject platform, string platformId)
+        {
+            if (platform == null)
+            {
+                Debug.LogWarning("[NetSync] AttachLocalAvatarToPlatform: platform must be non-null.");
+                return false;
+            }
+
+            RegisterPlatform(platformId, platform);
+            return AttachLocalAvatarToPlatform(platformId);
+        }
+
+        /// <summary>
+        /// Returns the local avatar to the default/world pose space and notifies
+        /// receivers to clear this client's platform pose-space binding.
+        /// </summary>
+        public bool DetachLocalAvatarFromPlatform()
+        {
+            ClearLocalAvatarPoseSpace();
+            return SetClientVariable(PlatformPoseSpaceClientVariableName, string.Empty);
+        }
+
+        /// <summary>
+        /// Compatibility alias for callers that model platform use as attach/detach.
+        /// </summary>
+        public bool DetachLocalAvatar()
+        {
+            return DetachLocalAvatarFromPlatform();
+        }
+        #endregion ------------------------------------------------------------------------
 
         /// <summary>
         /// Gets all variables for a specific client (for debugging)
@@ -1012,7 +1122,33 @@ namespace Styly.NetSync
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
+            if (string.Equals(name, PlatformPoseSpaceClientVariableName, StringComparison.Ordinal))
+            {
+                ApplyPlatformPoseSpaceClientVariable(clientNo, newValue);
+            }
+
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
+        }
+
+        private void ApplyPlatformPoseSpaceClientVariable(int clientNo, string platformId)
+        {
+            if (clientNo <= 0 || clientNo == _clientNo)
+            {
+                return;
+            }
+
+            if (string.IsNullOrEmpty(platformId) || IsWorldPoseSpaceId(platformId))
+            {
+                ClearClientPoseSpace(clientNo);
+                return;
+            }
+
+            SetClientPoseSpace(clientNo, platformId);
+
+            if (!_poseSpaces.ContainsKey(platformId))
+            {
+                Debug.LogWarning($"[NetSync] Client#{clientNo} selected platform pose space '{platformId}', but it is not registered on this client yet.");
+            }
         }
 
         private void OnLocalClientNoAssigned(int clientNo)
@@ -1568,14 +1704,33 @@ namespace Styly.NetSync
         /// <param name="clientNo">Remote client number</param>
         /// <param name="position">Local position (physical, relative to remote head's parent)</param>
         /// <param name="rotation">Local rotation (physical); only yaw is used</param>
+        /// <param name="xrOriginDeltaPosition">Remote client's locomotion delta in its active pose space</param>
+        /// <param name="xrOriginDeltaYaw">Remote client's yaw delta in its active pose space</param>
         internal void UpdateHumanPresenceTransform(
             int clientNo,
             Vector3 position,
             Quaternion rotation,
+            Vector3 xrOriginDeltaPosition,
+            float xrOriginDeltaYaw,
             double poseTime,
             ushort poseSeq)
         {
             if (_humanPresenceManager == null) { return; }
+
+            var poseSpace = ResolveClientPoseSpace(clientNo);
+            if (!IsWorldPoseSpace(poseSpace))
+            {
+                var deltaRot = Quaternion.Euler(0f, xrOriginDeltaYaw, 0f);
+                var spacePos = deltaRot * position + xrOriginDeltaPosition;
+                var spaceYaw = deltaRot * Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
+
+                if (poseSpace.TrySpaceToWorld(spacePos, spaceYaw, out var poseSpaceWorldPos, out var poseSpaceWorldYaw))
+                {
+                    _humanPresenceManager.UpdateTransform(clientNo, poseSpaceWorldPos, poseSpaceWorldYaw, poseTime, poseSeq);
+                }
+
+                return;
+            }
 
             // Find the remote avatar and its head parent to resolve local->world.
             Transform parent = null;

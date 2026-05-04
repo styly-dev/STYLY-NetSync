@@ -390,7 +390,14 @@ namespace Styly.NetSync
                     {
                         var localPos = physical.GetPosition();
                         var localRot = physical.GetRotation();
-                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, localPos, localRot, c.poseTime, c.poseSeq);
+                        netSyncManager.UpdateHumanPresenceTransform(
+                            c.clientNo,
+                            localPos,
+                            localRot,
+                            c.xrOriginDeltaPosition,
+                            c.xrOriginDeltaYaw,
+                            c.poseTime,
+                            c.poseSeq);
                     }
                 }
 
