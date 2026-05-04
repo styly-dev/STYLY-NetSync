@@ -18,11 +18,19 @@ namespace Styly.NetSync
         [SerializeField, HideInInspector]
         private bool _manualObjectId;
 
+        [SerializeField, Tooltip("Optional pose space ID used for this object. Leave empty to use the NetSyncManager default pose space.")]
+        private string _poseSpaceId;
+
         private int _ownerClientNo;
         private NetSyncTransformApplier _transformApplier;
 
         public uint ObjectId => _objectId;
         public int OwnerClientNo => _ownerClientNo;
+        public string PoseSpaceId
+        {
+            get => _poseSpaceId;
+            set => _poseSpaceId = value;
+        }
 
         public bool IsOwnedByMe
         {
@@ -99,7 +107,8 @@ namespace Styly.NetSync
                     NetSyncTransformApplier.SpaceMode.World,
                     manager.TimeEstimator,
                     null,
-                    manager.TransformSendRate);
+                    manager.TransformSendRate,
+                    () => manager.ResolveObjectPoseSpace(this));
                 manager.RegisterNetSyncObject(this);
             }
         }

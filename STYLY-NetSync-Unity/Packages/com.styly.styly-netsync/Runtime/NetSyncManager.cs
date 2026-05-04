@@ -184,6 +184,109 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Registers a pose space backed by a Transform. All peers must use the same ID for the same logical space.
+        /// </summary>
+        public void RegisterPoseSpace(string spaceId, Transform origin)
+        {
+            RegisterPoseSpace(new TransformNetSyncPoseSpace(spaceId, origin));
+        }
+
+        /// <summary>
+        /// Registers a custom pose space. Pose-space selection is intentionally synchronized out-of-band.
+        /// </summary>
+        public void RegisterPoseSpace(INetSyncPoseSpace poseSpace)
+        {
+            if (poseSpace == null || string.IsNullOrEmpty(poseSpace.SpaceId))
+            {
+                return;
+            }
+
+            _poseSpaces[poseSpace.SpaceId] = poseSpace;
+        }
+
+        public void UnregisterPoseSpace(string spaceId)
+        {
+            if (string.IsNullOrEmpty(spaceId) || IsWorldPoseSpaceId(spaceId))
+            {
+                return;
+            }
+
+            _poseSpaces.Remove(spaceId);
+        }
+
+        public void SetDefaultPoseSpace(string spaceId)
+        {
+            _defaultPoseSpaceId = NormalizePoseSpaceId(spaceId);
+            ClearPoseSpaceDrivenSnapshots();
+        }
+
+        public void ClearDefaultPoseSpace()
+        {
+            _defaultPoseSpaceId = null;
+            ClearPoseSpaceDrivenSnapshots();
+        }
+
+        public void SetLocalAvatarPoseSpace(string spaceId)
+        {
+            _localAvatarPoseSpaceId = NormalizePoseSpaceId(spaceId);
+        }
+
+        public void ClearLocalAvatarPoseSpace()
+        {
+            _localAvatarPoseSpaceId = null;
+        }
+
+        public void SetClientPoseSpace(int clientNo, string spaceId)
+        {
+            if (clientNo <= 0)
+            {
+                return;
+            }
+
+            var normalized = NormalizePoseSpaceId(spaceId);
+            if (string.IsNullOrEmpty(normalized))
+            {
+                _clientPoseSpaceIds.Remove(clientNo);
+                if (_avatarManager != null) { _avatarManager.ClearRemoteAvatarSnapshots(clientNo); }
+                return;
+            }
+
+            _clientPoseSpaceIds[clientNo] = normalized;
+            if (_avatarManager != null) { _avatarManager.ClearRemoteAvatarSnapshots(clientNo); }
+        }
+
+        public void ClearClientPoseSpace(int clientNo)
+        {
+            _clientPoseSpaceIds.Remove(clientNo);
+            if (_avatarManager != null) { _avatarManager.ClearRemoteAvatarSnapshots(clientNo); }
+        }
+
+        public void SetObjectPoseSpace(uint objectId, string spaceId)
+        {
+            if (objectId == 0u)
+            {
+                return;
+            }
+
+            var normalized = NormalizePoseSpaceId(spaceId);
+            if (string.IsNullOrEmpty(normalized))
+            {
+                _objectPoseSpaceIds.Remove(objectId);
+                if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
+                return;
+            }
+
+            _objectPoseSpaceIds[objectId] = normalized;
+            if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
+        }
+
+        public void ClearObjectPoseSpace(uint objectId)
+        {
+            _objectPoseSpaceIds.Remove(objectId);
+            if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
+        }
+
+        /// <summary>
         /// Gets all variables for a specific client (for debugging)
         /// </summary>
         public Dictionary<string, string> GetAllClientVariables(int clientNo)
@@ -313,6 +416,8 @@ namespace Styly.NetSync
             // Clear room-scoped state to prevent leaks across rooms
             _messageProcessor?.ClearRoomScopedState();
             _objectSyncManager?.ClearRoomScopedState();
+            _clientPoseSpaceIds.Clear();
+            _objectPoseSpaceIds.Clear();
             _timeEstimator.Reset();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
@@ -358,6 +463,11 @@ namespace Styly.NetSync
         private bool _hasInvokedReady = false;
         private bool _shouldCheckReady = false;
         private bool _shouldSendHandshake = false;
+        private readonly Dictionary<string, INetSyncPoseSpace> _poseSpaces = new Dictionary<string, INetSyncPoseSpace>();
+        private readonly Dictionary<int, string> _clientPoseSpaceIds = new Dictionary<int, string>();
+        private readonly Dictionary<uint, string> _objectPoseSpaceIds = new Dictionary<uint, string>();
+        private string _defaultPoseSpaceId;
+        private string _localAvatarPoseSpaceId;
         // Battery monitoring fields
         private float _batteryUpdateInterval = 60.0f; // Update every 60 seconds
         private float _lastBatteryUpdate = 0.0f; // Last time we updated battery level
@@ -860,6 +970,7 @@ namespace Styly.NetSync
 
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
+            _clientPoseSpaceIds.Remove(clientNo);
             OnAvatarDisconnected?.Invoke(clientNo);
         }
 
@@ -1181,6 +1292,7 @@ namespace Styly.NetSync
                 // Cleanup avatars and presence
                 _avatarManager?.CleanupRemoteAvatars();
                 _humanPresenceManager?.CleanupAll();
+                _clientPoseSpaceIds.Clear();
 
                 // Clear error state for next reconnect attempt
                 _connectionManager?.ClearConnectionError();
@@ -1303,6 +1415,91 @@ namespace Styly.NetSync
                 }
             }
         }
+
+        private static bool IsWorldPoseSpaceId(string spaceId)
+        {
+            return string.Equals(spaceId, NetSyncWorldPoseSpace.Instance.SpaceId, StringComparison.Ordinal);
+        }
+
+        private static string NormalizePoseSpaceId(string spaceId)
+        {
+            if (string.IsNullOrEmpty(spaceId) || IsWorldPoseSpaceId(spaceId))
+            {
+                return null;
+            }
+
+            return spaceId;
+        }
+
+        private INetSyncPoseSpace ResolvePoseSpaceById(string spaceId)
+        {
+            if (string.IsNullOrEmpty(spaceId) || IsWorldPoseSpaceId(spaceId))
+            {
+                return NetSyncWorldPoseSpace.Instance;
+            }
+
+            if (_poseSpaces.TryGetValue(spaceId, out var poseSpace) && poseSpace != null)
+            {
+                return poseSpace;
+            }
+
+            return NetSyncWorldPoseSpace.Instance;
+        }
+
+        private INetSyncPoseSpace ResolveDefaultPoseSpace()
+        {
+            return ResolvePoseSpaceById(_defaultPoseSpaceId);
+        }
+
+        internal INetSyncPoseSpace ResolveLocalAvatarPoseSpace()
+        {
+            if (!string.IsNullOrEmpty(_localAvatarPoseSpaceId))
+            {
+                return ResolvePoseSpaceById(_localAvatarPoseSpaceId);
+            }
+
+            return ResolveDefaultPoseSpace();
+        }
+
+        internal INetSyncPoseSpace ResolveClientPoseSpace(int clientNo)
+        {
+            if (clientNo > 0 && _clientPoseSpaceIds.TryGetValue(clientNo, out var spaceId))
+            {
+                return ResolvePoseSpaceById(spaceId);
+            }
+
+            return ResolveDefaultPoseSpace();
+        }
+
+        internal INetSyncPoseSpace ResolveObjectPoseSpace(NetSyncObject obj)
+        {
+            if (obj != null)
+            {
+                var objectId = obj.ObjectId;
+                if (objectId != 0u && _objectPoseSpaceIds.TryGetValue(objectId, out var spaceId))
+                {
+                    return ResolvePoseSpaceById(spaceId);
+                }
+
+                if (!string.IsNullOrEmpty(obj.PoseSpaceId))
+                {
+                    return ResolvePoseSpaceById(obj.PoseSpaceId);
+                }
+            }
+
+            return ResolveDefaultPoseSpace();
+        }
+
+        internal static bool IsWorldPoseSpace(INetSyncPoseSpace poseSpace)
+        {
+            return poseSpace == null || ReferenceEquals(poseSpace, NetSyncWorldPoseSpace.Instance) || IsWorldPoseSpaceId(poseSpace.SpaceId);
+        }
+
+        private void ClearPoseSpaceDrivenSnapshots()
+        {
+            if (_avatarManager != null) { _avatarManager.ClearAllRemoteAvatarSnapshots(); }
+            if (_objectSyncManager != null) { _objectSyncManager.ClearAllObjectSnapshots(); }
+        }
         #endregion ------------------------------------------------------------------------
 
         /// <summary>
@@ -1326,6 +1523,40 @@ namespace Styly.NetSync
             dyawDeg = Mathf.DeltaAngle(yaw0, yaw1);
             var deltaRotation = Quaternion.Euler(0f, dyawDeg, 0f);
             t = p1 - (deltaRotation * p0);
+        }
+
+        internal void ComputeXrOriginDelta(INetSyncPoseSpace poseSpace, out Vector3 t, out float dyawDeg)
+        {
+            if (IsWorldPoseSpace(poseSpace))
+            {
+                ComputeXrOriginDelta(out t, out dyawDeg);
+                return;
+            }
+
+            var p0 = _physicalOffsetPosition;
+            var yaw0 = _physicalOffsetRotation.y;
+            var p1 = p0;
+            var yaw1 = yaw0;
+            if (_XrOriginTransform != null)
+            {
+                p1 = _XrOriginTransform.position;
+                yaw1 = _XrOriginTransform.eulerAngles.y;
+            }
+
+            var r0 = Quaternion.Euler(0f, yaw0, 0f);
+            var r1 = Quaternion.Euler(0f, yaw1, 0f);
+            if (!poseSpace.TryWorldToSpace(p0, r0, out var spaceP0, out var spaceR0) ||
+                !poseSpace.TryWorldToSpace(p1, r1, out var spaceP1, out var spaceR1))
+            {
+                ComputeXrOriginDelta(out t, out dyawDeg);
+                return;
+            }
+
+            var spaceYaw0 = spaceR0.eulerAngles.y;
+            var spaceYaw1 = spaceR1.eulerAngles.y;
+            dyawDeg = Mathf.DeltaAngle(spaceYaw0, spaceYaw1);
+            var deltaRotation = Quaternion.Euler(0f, dyawDeg, 0f);
+            t = spaceP1 - (deltaRotation * spaceP0);
         }
 
         /// <summary>

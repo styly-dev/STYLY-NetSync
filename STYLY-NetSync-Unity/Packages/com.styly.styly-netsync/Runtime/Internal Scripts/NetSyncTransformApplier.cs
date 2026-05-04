@@ -11,6 +11,7 @@ namespace Styly.NetSync
     internal class NetSyncTransformApplier
     {
         public enum SpaceMode { World, Local }
+        public delegate INetSyncPoseSpace PoseSpaceResolver();
 
         private struct TransformBinding
         {
@@ -26,6 +27,7 @@ namespace Styly.NetSync
 
         private NetSyncTimeEstimator _timeEstimator;
         private NetSyncSmoothingSettings _settings;
+        private PoseSpaceResolver _poseSpaceResolver;
         private readonly SendIntervalEstimator _intervalEstimator = new SendIntervalEstimator();
         private double _configuredSendIntervalSeconds = 0.1;
 
@@ -67,10 +69,12 @@ namespace Styly.NetSync
             Transform[] virtuals,
             NetSyncTimeEstimator timeEstimator,
             NetSyncSmoothingSettings settings,
-            float sendRateHz)
+            float sendRateHz,
+            PoseSpaceResolver poseSpaceResolver = null)
         {
             _timeEstimator = timeEstimator;
             _settings = settings ?? new NetSyncSmoothingSettings();
+            _poseSpaceResolver = poseSpaceResolver;
             _configuredSendIntervalSeconds = 1.0 / Math.Max(1e-6, sendRateHz);
 
             _physical = new PoseChannel(_settings.Physical);
@@ -104,10 +108,12 @@ namespace Styly.NetSync
             SpaceMode space,
             NetSyncTimeEstimator timeEstimator,
             NetSyncSmoothingSettings settings,
-            float sendRateHz)
+            float sendRateHz,
+            PoseSpaceResolver poseSpaceResolver = null)
         {
             _timeEstimator = timeEstimator;
             _settings = settings ?? new NetSyncSmoothingSettings();
+            _poseSpaceResolver = poseSpaceResolver;
             _configuredSendIntervalSeconds = 1.0 / Math.Max(1e-6, sendRateHz);
 
             _singleChannel = new PoseChannel(_settings.Physical);
@@ -273,14 +279,25 @@ namespace Styly.NetSync
             }
         }
 
-        private static void ApplyBinding(in TransformBinding binding, in PoseSampleData pose)
+        private void ApplyBinding(in TransformBinding binding, in PoseSampleData pose)
         {
             if (binding.Transform == null) return;
 
             if (binding.Space == SpaceMode.World)
             {
-                binding.Transform.position = pose.Position;
-                binding.Transform.rotation = pose.Rotation;
+                var position = pose.Position;
+                var rotation = pose.Rotation;
+                var poseSpace = _poseSpaceResolver != null ? _poseSpaceResolver() : null;
+                if (!NetSyncManager.IsWorldPoseSpace(poseSpace))
+                {
+                    if (!poseSpace.TrySpaceToWorld(pose.Position, pose.Rotation, out position, out rotation))
+                    {
+                        return;
+                    }
+                }
+
+                binding.Transform.position = position;
+                binding.Transform.rotation = rotation;
             }
             else
             {

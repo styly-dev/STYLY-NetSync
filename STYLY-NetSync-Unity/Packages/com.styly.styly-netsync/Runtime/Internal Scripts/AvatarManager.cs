@@ -140,6 +140,25 @@ namespace Styly.NetSync
             }
         }
 
+        public void ClearRemoteAvatarSnapshots(int clientNo)
+        {
+            if (_peerAvatars.TryGetValue(clientNo, out var net) && net != null)
+            {
+                net.ClearTransformSnapshots();
+            }
+        }
+
+        public void ClearAllRemoteAvatarSnapshots()
+        {
+            foreach (var net in _peerAvatars.Values)
+            {
+                if (net != null)
+                {
+                    net.ClearTransformSnapshots();
+                }
+            }
+        }
+
         /// <summary>
         /// Try to get a cached NetSyncAvatar component for a remote client.
         /// </summary>

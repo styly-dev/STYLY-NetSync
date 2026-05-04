@@ -151,7 +151,8 @@ namespace Styly.NetSync
                 _virtualTransforms,
                 _netSyncManager != null ? _netSyncManager.TimeEstimator : null,
                 _smoothingSettings,
-                _netSyncManager != null ? _netSyncManager.TransformSendRate : 10f);
+                _netSyncManager != null ? _netSyncManager.TransformSendRate : 10f,
+                null);
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
@@ -174,7 +175,8 @@ namespace Styly.NetSync
                 _virtualTransforms,
                 _netSyncManager != null ? _netSyncManager.TimeEstimator : null,
                 _smoothingSettings,
-                _netSyncManager != null ? _netSyncManager.TransformSendRate : 10f);
+                _netSyncManager != null ? _netSyncManager.TransformSendRate : 10f,
+                () => _netSyncManager != null ? _netSyncManager.ResolveClientPoseSpace(_clientNo) : NetSyncWorldPoseSpace.Instance);
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
@@ -259,9 +261,10 @@ namespace Styly.NetSync
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
             _tx.flags = BuildPoseFlags();
+            var poseSpace = _netSyncManager != null ? _netSyncManager.ResolveLocalAvatarPoseSpace() : NetSyncWorldPoseSpace.Instance;
             if (_netSyncManager != null)
             {
-                _netSyncManager.ComputeXrOriginDelta(out var deltaPos, out var deltaYaw);
+                _netSyncManager.ComputeXrOriginDelta(poseSpace, out var deltaPos, out var deltaYaw);
                 _tx.xrOriginDeltaPosition = deltaPos;
                 _tx.xrOriginDeltaYaw = deltaYaw;
             }
@@ -319,7 +322,45 @@ namespace Styly.NetSync
             // EnsureTxBuffersAllocated already handled resizing, so just assign.
             _tx.virtuals = _txVirtuals;
 
+            ConvertWorldPosesToPoseSpace(_tx, poseSpace);
+
             return _tx;
+        }
+
+        private static void ConvertWorldPosesToPoseSpace(ClientTransformData data, INetSyncPoseSpace poseSpace)
+        {
+            if (data == null || NetSyncManager.IsWorldPoseSpace(poseSpace))
+            {
+                return;
+            }
+
+            ConvertWorldPoseToPoseSpace(data.head, poseSpace);
+            ConvertWorldPoseToPoseSpace(data.rightHand, poseSpace);
+            ConvertWorldPoseToPoseSpace(data.leftHand, poseSpace);
+
+            if (data.virtuals == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < data.virtuals.Count; i++)
+            {
+                ConvertWorldPoseToPoseSpace(data.virtuals[i], poseSpace);
+            }
+        }
+
+        private static void ConvertWorldPoseToPoseSpace(TransformData data, INetSyncPoseSpace poseSpace)
+        {
+            if (data == null)
+            {
+                return;
+            }
+
+            if (poseSpace.TryWorldToSpace(data.position, data.rotation, out var spacePosition, out var spaceRotation))
+            {
+                data.position = spacePosition;
+                data.rotation = spaceRotation;
+            }
         }
 
         // Update device ID when mapping is received
@@ -343,6 +384,11 @@ namespace Styly.NetSync
 
             // Update client number for remote avatars
             _clientNo = data.clientNo;
+        }
+
+        internal void ClearTransformSnapshots()
+        {
+            _transformApplier.Clear();
         }
 
         // Get world transform data (world space, full 6DOF)

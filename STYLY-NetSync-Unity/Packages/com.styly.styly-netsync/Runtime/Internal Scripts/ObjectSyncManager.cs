@@ -66,6 +66,40 @@ namespace Styly.NetSync
             _sendStates.Remove(obj.ObjectId);
         }
 
+        public void ClearObjectSnapshots(uint objectId)
+        {
+            if (objectId == 0u)
+            {
+                return;
+            }
+
+            if (_registeredObjects.TryGetValue(objectId, out var obj) && obj != null)
+            {
+                var applier = obj.TransformApplier;
+                if (applier != null)
+                {
+                    applier.Clear();
+                }
+            }
+        }
+
+        public void ClearAllObjectSnapshots()
+        {
+            foreach (var obj in _registeredObjects.Values)
+            {
+                if (obj == null)
+                {
+                    continue;
+                }
+
+                var applier = obj.TransformApplier;
+                if (applier != null)
+                {
+                    applier.Clear();
+                }
+            }
+        }
+
         public void SendOwnershipRequest(string roomId, byte operationType, uint objectId)
         {
             if (objectId == 0u) return;
@@ -103,6 +137,17 @@ namespace Styly.NetSync
                 var t = obj.transform;
                 var pos = t.position;
                 var rot = t.rotation;
+                var poseSpace = NetSyncManager.Instance != null ? NetSyncManager.Instance.ResolveObjectPoseSpace(obj) : NetSyncWorldPoseSpace.Instance;
+                if (!NetSyncManager.IsWorldPoseSpace(poseSpace))
+                {
+                    if (!poseSpace.TryWorldToSpace(pos, rot, out var spacePos, out var spaceRot))
+                    {
+                        continue;
+                    }
+
+                    pos = spacePos;
+                    rot = spaceRot;
+                }
 
                 // Only-on-change check (with heartbeat)
                 if (state.HasLastPose &&
