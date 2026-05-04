@@ -256,18 +256,18 @@ namespace Styly.NetSync
             if (string.IsNullOrEmpty(normalized))
             {
                 _clientPoseSpaceIds.Remove(clientNo);
-                if (_avatarManager != null) { _avatarManager.ClearRemoteAvatarSnapshots(clientNo); }
+                ClearClientDrivenSnapshots(clientNo);
                 return;
             }
 
             _clientPoseSpaceIds[clientNo] = normalized;
-            if (_avatarManager != null) { _avatarManager.ClearRemoteAvatarSnapshots(clientNo); }
+            ClearClientDrivenSnapshots(clientNo);
         }
 
         public void ClearClientPoseSpace(int clientNo)
         {
             _clientPoseSpaceIds.Remove(clientNo);
-            if (_avatarManager != null) { _avatarManager.ClearRemoteAvatarSnapshots(clientNo); }
+            ClearClientDrivenSnapshots(clientNo);
         }
 
         public void SetObjectPoseSpace(uint objectId, string spaceId)
@@ -293,6 +293,16 @@ namespace Styly.NetSync
         {
             _objectPoseSpaceIds.Remove(objectId);
             if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(objectId); }
+        }
+
+        internal void NotifyObjectPoseSpaceChanged(NetSyncObject obj)
+        {
+            if (obj == null || obj.ObjectId == 0u)
+            {
+                return;
+            }
+
+            if (_objectSyncManager != null) { _objectSyncManager.ClearObjectSnapshots(obj.ObjectId); }
         }
         #endregion ------------------------------------------------------------------------
 
@@ -365,7 +375,23 @@ namespace Styly.NetSync
         /// <summary>
         /// Registers the platform locally, then attaches the local avatar to it.
         /// </summary>
+        [Obsolete("Use AttachLocalAvatarToPlatform(string platformId, GameObject platform).")]
         public bool AttachLocalAvatarToPlatform(GameObject platform, string platformId)
+        {
+            if (platform == null)
+            {
+                Debug.LogWarning("[NetSync] AttachLocalAvatarToPlatform: platform must be non-null.");
+                return false;
+            }
+
+            RegisterPlatform(platformId, platform);
+            return AttachLocalAvatarToPlatform(platformId);
+        }
+
+        /// <summary>
+        /// Registers the platform locally, then attaches the local avatar to it.
+        /// </summary>
+        public bool AttachLocalAvatarToPlatform(string platformId, GameObject platform)
         {
             if (platform == null)
             {
@@ -526,8 +552,7 @@ namespace Styly.NetSync
             // Clear room-scoped state to prevent leaks across rooms
             _messageProcessor?.ClearRoomScopedState();
             _objectSyncManager?.ClearRoomScopedState();
-            _clientPoseSpaceIds.Clear();
-            _objectPoseSpaceIds.Clear();
+            ClearRoomScopedPoseSpaceSelections();
             _timeEstimator.Reset();
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
@@ -1151,6 +1176,19 @@ namespace Styly.NetSync
             }
         }
 
+        private void ClearClientDrivenSnapshots(int clientNo)
+        {
+            if (_avatarManager != null) { _avatarManager.ClearRemoteAvatarSnapshots(clientNo); }
+            if (_humanPresenceManager != null) { _humanPresenceManager.ClearSnapshots(clientNo); }
+        }
+
+        private void ClearRoomScopedPoseSpaceSelections()
+        {
+            _localAvatarPoseSpaceId = null;
+            _clientPoseSpaceIds.Clear();
+            _objectPoseSpaceIds.Clear();
+        }
+
         private void OnLocalClientNoAssigned(int clientNo)
         {
             _clientNo = clientNo;
@@ -1428,7 +1466,7 @@ namespace Styly.NetSync
                 // Cleanup avatars and presence
                 _avatarManager?.CleanupRemoteAvatars();
                 _humanPresenceManager?.CleanupAll();
-                _clientPoseSpaceIds.Clear();
+                ClearRoomScopedPoseSpaceSelections();
 
                 // Clear error state for next reconnect attempt
                 _connectionManager?.ClearConnectionError();
@@ -1727,6 +1765,10 @@ namespace Styly.NetSync
                 if (poseSpace.TrySpaceToWorld(spacePos, spaceYaw, out var poseSpaceWorldPos, out var poseSpaceWorldYaw))
                 {
                     _humanPresenceManager.UpdateTransform(clientNo, poseSpaceWorldPos, poseSpaceWorldYaw, poseTime, poseSeq);
+                }
+                else
+                {
+                    _humanPresenceManager.UpdateTransform(clientNo, spacePos, spaceYaw, poseTime, poseSeq);
                 }
 
                 return;

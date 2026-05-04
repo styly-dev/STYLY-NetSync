@@ -29,7 +29,20 @@ namespace Styly.NetSync
         public string PoseSpaceId
         {
             get => _poseSpaceId;
-            set => _poseSpaceId = value;
+            set
+            {
+                if (string.Equals(_poseSpaceId, value, System.StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                _poseSpaceId = value;
+                var manager = NetSyncManager.Instance;
+                if (manager != null)
+                {
+                    manager.NotifyObjectPoseSpaceChanged(this);
+                }
+            }
         }
 
         public bool IsOwnedByMe

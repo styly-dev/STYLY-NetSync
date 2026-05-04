@@ -107,6 +107,14 @@ namespace Styly.NetSync
             }
         }
 
+        public void ClearSnapshots(int clientNo)
+        {
+            if (_applierByClient.TryGetValue(clientNo, out var applier) && applier != null)
+            {
+                applier.Clear();
+            }
+        }
+
         /// <summary>
         /// Destroy all presence instances (used on room switch/disconnect).
         /// </summary>
