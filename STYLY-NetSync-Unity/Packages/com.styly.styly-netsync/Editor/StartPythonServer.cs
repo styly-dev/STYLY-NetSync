@@ -229,7 +229,7 @@ namespace Styly.NetSync.Editor
         }
 
         // Temp scripts are kept on disk so the user can stop and restart the server from
-        // the same terminal. Sweep ones older than this on Editor startup.
+        // the same terminal. Sweep ones older than this on editor load / domain reload.
         private const double TempScriptMaxAgeHours = 24.0;
         private const string TempScriptPrefix = "start_styly_netsync_server_";
 
