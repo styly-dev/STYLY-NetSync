@@ -191,7 +191,12 @@ namespace Styly.NetSync
             if (!IsLocalAvatar)
             {
                 // Use high-resolution clock for consistent time estimation
-                _transformApplier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
+                Transform referenceFrame = null;
+                if (_netSyncManager != null && _transformApplier.IsReferenceFrameLocal)
+                {
+                    _netSyncManager.TryGetReferenceFrameForClient(_clientNo, true, out referenceFrame);
+                }
+                _transformApplier.Tick(Time.deltaTime, NetSyncClock.NowSeconds(), referenceFrame);
             }
 
             if (IsLocalAvatar && _head != null)
@@ -210,6 +215,10 @@ namespace Styly.NetSync
                 var sample = _transformApplier.LastPhysicalSample;
                 PhysicalPosition = sample.Position;
                 PhysicalRotation = sample.Rotation;
+                if (_transformApplier.IsReferenceFrameLocal && _transformApplier.LastTickApplied && _netSyncManager != null)
+                {
+                    _netSyncManager.UpdateBoundHumanPresenceFromAvatar(_clientNo, this, sample);
+                }
             }
         }
 
@@ -258,7 +267,9 @@ namespace Styly.NetSync
 
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
-            _tx.flags = BuildPoseFlags();
+            Transform referenceFrame = null;
+            bool referenceFrameLocal = _netSyncManager != null && _netSyncManager.TryGetLocalReferenceFrame(out referenceFrame);
+            _tx.flags = BuildPoseFlags(referenceFrameLocal);
             if (_netSyncManager != null)
             {
                 _netSyncManager.ComputeXrOriginDelta(out var deltaPos, out var deltaYaw);
@@ -287,19 +298,13 @@ namespace Styly.NetSync
             var overrideTransform = TryGetEditorHeadOverride();
             if (overrideTransform != null) { headForSync = overrideTransform; }
 #endif
-            Fill(_txHead,
-                headForSync != null ? headForSync.position : Vector3.zero,
-                headForSync != null ? headForSync.rotation : Quaternion.identity);
+            FillFromTransform(_txHead, headForSync, referenceFrame, referenceFrameLocal);
             _tx.head = _txHead;
 
-            Fill(_txRight,
-                _rightHand != null ? _rightHand.position : Vector3.zero,
-                _rightHand != null ? _rightHand.rotation : Quaternion.identity);
+            FillFromTransform(_txRight, _rightHand, referenceFrame, referenceFrameLocal);
             _tx.rightHand = _txRight;
 
-            Fill(_txLeft,
-                _leftHand != null ? _leftHand.position : Vector3.zero,
-                _leftHand != null ? _leftHand.rotation : Quaternion.identity);
+            FillFromTransform(_txLeft, _leftHand, referenceFrame, referenceFrameLocal);
             _tx.leftHand = _txLeft;
 
             // Virtuals: reuse pre-allocated TransformData instances.
@@ -309,10 +314,7 @@ namespace Styly.NetSync
                 {
                     var t = _virtualTransforms[i];
                     var td = _txVirtuals[i];
-                    Fill(
-                        td,
-                        t != null ? t.position : Vector3.zero,
-                        t != null ? t.rotation : Quaternion.identity);
+                    FillFromTransform(td, t, referenceFrame, referenceFrameLocal);
                 }
             }
             // If _virtualTransforms is null, make sure list is empty to avoid serializing stale entries.
@@ -374,7 +376,28 @@ namespace Styly.NetSync
             return result;
         }
 
-        private PoseFlags BuildPoseFlags()
+        private static void FillFromTransform(TransformData td, Transform t, Transform referenceFrame, bool referenceFrameLocal)
+        {
+            if (t == null)
+            {
+                Fill(td, Vector3.zero, Quaternion.identity);
+                return;
+            }
+
+            if (referenceFrameLocal && referenceFrame != null)
+            {
+                var frameRotation = referenceFrame.rotation;
+                Fill(
+                    td,
+                    referenceFrame.InverseTransformPoint(t.position),
+                    Quaternion.Inverse(frameRotation) * t.rotation);
+                return;
+            }
+
+            Fill(td, t.position, t.rotation);
+        }
+
+        private PoseFlags BuildPoseFlags(bool referenceFrameLocal)
         {
             var flags = PoseFlags.None;
             if (_netSyncManager != null && _netSyncManager.IsStealthMode)
@@ -391,6 +414,10 @@ namespace Styly.NetSync
             if (hasHead && _virtualTransforms != null && _virtualTransforms.Length > 0)
             {
                 flags |= PoseFlags.VirtualsValid;
+            }
+            if (referenceFrameLocal)
+            {
+                flags |= PoseFlags.ReferenceFrameLocal;
             }
             return flags;
         }

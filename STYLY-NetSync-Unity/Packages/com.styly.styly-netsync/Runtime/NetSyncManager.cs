@@ -277,6 +277,90 @@ namespace Styly.NetSync
             }
         }
 
+        #region === Reference Frames ===
+        /// <summary>
+        /// Register a scene-stable reference frame used by protocol v5 reference-frame-local avatar poses.
+        /// The same frame id must resolve to the corresponding local Transform on every client.
+        /// </summary>
+        public bool RegisterReferenceFrame(string frameId, Transform frame)
+        {
+            if (_referenceFrameManager == null)
+            {
+                return false;
+            }
+
+            return _referenceFrameManager.RegisterFrame(frameId, frame);
+        }
+
+        /// <summary>
+        /// Remove a previously registered reference frame.
+        /// </summary>
+        public void UnregisterReferenceFrame(string frameId)
+        {
+            if (_referenceFrameManager == null)
+            {
+                return;
+            }
+
+            bool wasAttachedLocally = !string.IsNullOrEmpty(frameId) && _referenceFrameManager.LocalFrameId == frameId;
+            _referenceFrameManager.UnregisterFrame(frameId);
+            if (wasAttachedLocally)
+            {
+                _referenceFrameManager.DetachLocal();
+                SetClientVariable(ReferenceFrameManager.ClientVariableName, "");
+            }
+        }
+
+        /// <summary>
+        /// Attach the local avatar to an already registered reference frame.
+        /// While attached, the avatar pose is sent in that frame's local coordinates.
+        /// </summary>
+        public bool AttachLocalAvatarToReferenceFrame(string frameId)
+        {
+            if (_referenceFrameManager == null)
+            {
+                return false;
+            }
+
+            if (!_referenceFrameManager.AttachLocal(frameId))
+            {
+                Debug.LogWarning($"[NetSync] AttachLocalAvatarToReferenceFrame failed. Register reference frame '{frameId}' before attaching.");
+                return false;
+            }
+
+            SetClientVariable(ReferenceFrameManager.ClientVariableName, frameId);
+            return true;
+        }
+
+        /// <summary>
+        /// Register a reference frame Transform and attach the local avatar to it.
+        /// </summary>
+        public bool AttachLocalAvatarToReferenceFrame(string frameId, Transform frame)
+        {
+            if (!RegisterReferenceFrame(frameId, frame))
+            {
+                Debug.LogWarning("[NetSync] AttachLocalAvatarToReferenceFrame failed. frameId and frame must be valid.");
+                return false;
+            }
+
+            return AttachLocalAvatarToReferenceFrame(frameId);
+        }
+
+        /// <summary>
+        /// Detach the local avatar from its current reference frame and resume normal world-space pose sync.
+        /// </summary>
+        public void DetachLocalAvatarFromReferenceFrame()
+        {
+            if (_referenceFrameManager == null)
+            {
+                return;
+            }
+
+            _referenceFrameManager.DetachLocal();
+            SetClientVariable(ReferenceFrameManager.ClientVariableName, "");
+        }
+        #endregion
+
         /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and
@@ -317,6 +401,7 @@ namespace Styly.NetSync
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
+            if (_referenceFrameManager != null) { _referenceFrameManager.ClearClientStates(true); }
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
@@ -340,6 +425,7 @@ namespace Styly.NetSync
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
         private ObjectSyncManager _objectSyncManager;
+        private ReferenceFrameManager _referenceFrameManager = new ReferenceFrameManager();
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -733,7 +819,6 @@ namespace Styly.NetSync
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
             _objectSyncManager = new ObjectSyncManager(_connectionManager, _messageProcessor, _timeEstimator, _enableDebugLogs);
-
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
@@ -860,6 +945,11 @@ namespace Styly.NetSync
 
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
+            if (_referenceFrameManager != null)
+            {
+                _referenceFrameManager.RemoveClient(clientNo);
+            }
+
             OnAvatarDisconnected?.Invoke(clientNo);
         }
 
@@ -901,6 +991,11 @@ namespace Styly.NetSync
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
+            if (name == ReferenceFrameManager.ClientVariableName && _referenceFrameManager != null)
+            {
+                _referenceFrameManager.SetClientFrameId(clientNo, newValue);
+            }
+
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
         }
 
@@ -1305,6 +1400,28 @@ namespace Styly.NetSync
         }
         #endregion ------------------------------------------------------------------------
 
+        internal bool TryGetLocalReferenceFrame(out Transform frame)
+        {
+            frame = null;
+            if (_referenceFrameManager == null)
+            {
+                return false;
+            }
+
+            return _referenceFrameManager.TryGetLocalFrame(out frame);
+        }
+
+        internal bool TryGetReferenceFrameForClient(int clientNo, bool warnIfMissingId, out Transform frame)
+        {
+            frame = null;
+            if (_referenceFrameManager == null)
+            {
+                return false;
+            }
+
+            return _referenceFrameManager.TryGetFrameForClient(clientNo, warnIfMissingId, out frame);
+        }
+
         /// <summary>
         /// Compute XROrigin locomotion delta relative to startup origin.
         /// t = p1 - R(dyaw) * p0, where p0/p1 are full 3D positions and R(dyaw) is yaw-only
@@ -1383,6 +1500,19 @@ namespace Styly.NetSync
             }
 
             _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYaw, poseTime, poseSeq);
+        }
+
+        internal void UpdateBoundHumanPresenceFromAvatar(int clientNo, NetSyncAvatar avatar, in PoseSampleData physical)
+        {
+            if (_humanPresenceManager == null || avatar == null || avatar._head == null)
+            {
+                return;
+            }
+
+            var worldPos = avatar._head.position;
+            worldPos.y -= physical.Position.y;
+            var worldYaw = Quaternion.Euler(0f, ReferenceFrameManager.ExtractYawDegrees(avatar._head.rotation), 0f);
+            _humanPresenceManager.SetTransformImmediate(clientNo, worldPos, worldYaw);
         }
     }
 }

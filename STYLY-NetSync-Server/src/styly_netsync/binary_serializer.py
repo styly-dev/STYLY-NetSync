@@ -6,7 +6,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Message type identifiers
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call
@@ -32,7 +32,7 @@ MSG_OBJECT_OWNERSHIP_REJECTED = 17  # Server → Client (ROUTER): request reject
 _max_virtual_transforms = 50
 MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward compat
 
-# Protocol v4 transform encoding constants
+# Protocol v5 transform encoding constants
 ABS_POS_SCALE = 0.01
 LOCO_POS_SCALE = 0.01
 REL_POS_SCALE = 0.005
@@ -69,6 +69,15 @@ POSE_FLAG_HEAD_VALID = 1 << 2
 POSE_FLAG_RIGHT_VALID = 1 << 3
 POSE_FLAG_LEFT_VALID = 1 << 4
 POSE_FLAG_VIRTUALS_VALID = 1 << 5
+POSE_FLAG_REFERENCE_FRAME_LOCAL = 1 << 6
+
+
+def _compute_encoding_flags(flags: int) -> int:
+    """Return pose encoding flags for the sanitized pose flags."""
+    encoding_flags = ENCODING_FLAGS_DEFAULT
+    if flags & POSE_FLAG_REFERENCE_FRAME_LOCAL:
+        encoding_flags &= ~ENCODING_PHYSICAL_IS_XRORIGIN_DELTA
+    return encoding_flags & 0xFF
 
 
 def get_max_virtual_transforms() -> int:
@@ -372,7 +381,7 @@ def _create_transform_dict(
 
 
 def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
-    """Serialize a client body in protocol v4 compact format."""
+    """Serialize a client body in protocol v5 compact format."""
     pose_seq = int(client.get("poseSeq", 0)) & 0xFFFF
     head = client.get("head", {}) or {}
     right = client.get("rightHand", {}) or {}
@@ -411,34 +420,51 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
             POSE_FLAG_RIGHT_VALID | POSE_FLAG_LEFT_VALID | POSE_FLAG_VIRTUALS_VALID
         )
 
+    encoding_flags = _compute_encoding_flags(flags)
     buffer.extend(struct.pack("<H", pose_seq))
     buffer.append(flags)
-    buffer.append(ENCODING_FLAGS_DEFAULT)
+    buffer.append(encoding_flags)
 
     physical_valid = bool(flags & POSE_FLAG_PHYSICAL_VALID)
     head_valid = bool(flags & POSE_FLAG_HEAD_VALID)
     right_valid = head_valid and bool(flags & POSE_FLAG_RIGHT_VALID)
     left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
     virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
+    reference_frame_local = bool(flags & POSE_FLAG_REFERENCE_FRAME_LOCAL)
 
     xr_origin_delta_x = float(client.get("xrOriginDeltaX", 0.0))
     xr_origin_delta_y = float(client.get("xrOriginDeltaY", 0.0))
     xr_origin_delta_z = float(client.get("xrOriginDeltaZ", 0.0))
     xr_origin_delta_yaw = float(client.get("xrOriginDeltaYaw", 0.0))
+    physical = client.get("physical", {}) or {}
     head_pos = _transform_get_position(head)
     head_rot = _transform_get_quaternion(head)
     head_rot_n = _normalize_quaternion(*head_rot)
 
     if physical_valid:
-        buffer.extend(
-            struct.pack(
-                "<hhhh",
-                _quantize_signed(xr_origin_delta_x, LOCO_POS_SCALE),
-                _quantize_signed(xr_origin_delta_y, LOCO_POS_SCALE),
-                _quantize_signed(xr_origin_delta_z, LOCO_POS_SCALE),
-                _quantize_signed(xr_origin_delta_yaw, PHYSICAL_YAW_SCALE),
+        if reference_frame_local:
+            physical_pos = _transform_get_position(physical)
+            physical_rot = _transform_get_quaternion(physical)
+            physical_yaw = _quaternion_to_yaw_degrees(*physical_rot)
+            buffer.extend(
+                struct.pack(
+                    "<hhhh",
+                    _quantize_signed(physical_pos[0], LOCO_POS_SCALE),
+                    _quantize_signed(physical_pos[1], LOCO_POS_SCALE),
+                    _quantize_signed(physical_pos[2], LOCO_POS_SCALE),
+                    _quantize_signed(physical_yaw, PHYSICAL_YAW_SCALE),
+                )
             )
-        )
+        else:
+            buffer.extend(
+                struct.pack(
+                    "<hhhh",
+                    _quantize_signed(xr_origin_delta_x, LOCO_POS_SCALE),
+                    _quantize_signed(xr_origin_delta_y, LOCO_POS_SCALE),
+                    _quantize_signed(xr_origin_delta_z, LOCO_POS_SCALE),
+                    _quantize_signed(xr_origin_delta_yaw, PHYSICAL_YAW_SCALE),
+                )
+            )
 
     if head_valid:
         _pack_int24_le(buffer, _quantize_signed_int24(head_pos[0], ABS_POS_SCALE))
@@ -852,7 +878,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
 
 
 def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], int]:
-    """Deserialize protocol v4 compact pose body."""
+    """Deserialize protocol v5 compact pose body."""
     result: dict[str, Any] = {}
     result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
@@ -868,11 +894,18 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     right_valid = head_valid and bool(flags & POSE_FLAG_RIGHT_VALID)
     left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
     virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
+    reference_frame_local = bool(flags & POSE_FLAG_REFERENCE_FRAME_LOCAL)
 
     physical = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, True)
-    head = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False)
-    right = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False)
-    left = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, False)
+    head = _create_transform_dict(
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, reference_frame_local
+    )
+    right = _create_transform_dict(
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, reference_frame_local
+    )
+    left = _create_transform_dict(
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, reference_frame_local
+    )
 
     head_pos = (0.0, 0.0, 0.0)
     head_rot = (0.0, 0.0, 0.0, 1.0)
@@ -882,15 +915,19 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     xr_origin_delta_yaw = 0.0
 
     if physical_valid:
-        if (encoding_flags & ENCODING_PHYSICAL_IS_XRORIGIN_DELTA) == 0:
+        if (
+            not reference_frame_local
+            and (encoding_flags & ENCODING_PHYSICAL_IS_XRORIGIN_DELTA) == 0
+        ):
             raise ValueError(
                 "PhysicalValid set but XROrigin delta encoding flag is missing"
             )
         dx_q, dy_q, dz_q, dyaw_q = struct.unpack("<hhhh", data[offset : offset + 8])
-        xr_origin_delta_x = _dequantize_signed(dx_q, LOCO_POS_SCALE)
-        xr_origin_delta_y = _dequantize_signed(dy_q, LOCO_POS_SCALE)
-        xr_origin_delta_z = _dequantize_signed(dz_q, LOCO_POS_SCALE)
-        xr_origin_delta_yaw = _dequantize_signed(dyaw_q, PHYSICAL_YAW_SCALE)
+        if not reference_frame_local:
+            xr_origin_delta_x = _dequantize_signed(dx_q, LOCO_POS_SCALE)
+            xr_origin_delta_y = _dequantize_signed(dy_q, LOCO_POS_SCALE)
+            xr_origin_delta_z = _dequantize_signed(dz_q, LOCO_POS_SCALE)
+            xr_origin_delta_yaw = _dequantize_signed(dyaw_q, PHYSICAL_YAW_SCALE)
         offset += 8
 
     if head_valid:
@@ -913,10 +950,29 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             head_rot[1],
             head_rot[2],
             head_rot[3],
-            False,
+            reference_frame_local,
         )
 
-    if physical_valid and head_valid:
+    if physical_valid and reference_frame_local:
+        physical_pos = (
+            _dequantize_signed(dx_q, LOCO_POS_SCALE),
+            _dequantize_signed(dy_q, LOCO_POS_SCALE),
+            _dequantize_signed(dz_q, LOCO_POS_SCALE),
+        )
+        physical_rot = _yaw_degrees_to_quaternion(
+            _dequantize_signed(dyaw_q, PHYSICAL_YAW_SCALE)
+        )
+        physical = _create_transform_dict(
+            physical_pos[0],
+            physical_pos[1],
+            physical_pos[2],
+            physical_rot[0],
+            physical_rot[1],
+            physical_rot[2],
+            physical_rot[3],
+            True,
+        )
+    elif physical_valid and head_valid:
         translated_x = head_pos[0] - xr_origin_delta_x
         translated_y = head_pos[1] - xr_origin_delta_y
         translated_z = head_pos[2] - xr_origin_delta_z
@@ -970,7 +1026,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             abs_rot[1],
             abs_rot[2],
             abs_rot[3],
-            False,
+            reference_frame_local,
         )
 
     if left_valid:
@@ -999,7 +1055,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             abs_rot[1],
             abs_rot[2],
             abs_rot[3],
-            False,
+            reference_frame_local,
         )
 
     virtual_count = data[offset]
@@ -1041,7 +1097,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
                     abs_rot[1],
                     abs_rot[2],
                     abs_rot[3],
-                    False,
+                    reference_frame_local,
                 )
             )
 
@@ -1058,7 +1114,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
 
 
 def _deserialize_client_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize client pose (v4) from binary data."""
+    """Deserialize client pose (v5) from binary data."""
     result: dict[str, Any] = {}
 
     protocol_version = data[offset]
@@ -1096,7 +1152,7 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
 
 
 def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize room pose (v4) with client numbers only."""
+    """Deserialize room pose (v5) with client numbers only."""
     result: dict[str, Any] = {}
 
     protocol_version = data[offset]

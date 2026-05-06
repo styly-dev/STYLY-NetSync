@@ -56,8 +56,12 @@ namespace Styly.NetSync
         // PhysicalPosition time-aligned with the head/hand channels.
         private PoseSampleData _lastPhysicalSample;
         private bool _hasPhysicalSample;
+        private bool _isReferenceFrameLocal;
+        private bool _lastTickApplied;
         public PoseSampleData LastPhysicalSample => _lastPhysicalSample;
         public bool HasPhysicalSample => _hasPhysicalSample;
+        public bool IsReferenceFrameLocal => _isReferenceFrameLocal;
+        public bool LastTickApplied => _lastTickApplied;
 
         public void InitializeForAvatar(
             Transform physical,
@@ -96,6 +100,8 @@ namespace Styly.NetSync
 
             _singleChannel = null;
             _hasAnySnapshot = false;
+            _isReferenceFrameLocal = false;
+            _lastTickApplied = false;
             _intervalEstimator.Reset();
         }
 
@@ -121,6 +127,8 @@ namespace Styly.NetSync
             _virtualBindings.Clear();
 
             _hasAnySnapshot = false;
+            _isReferenceFrameLocal = false;
+            _lastTickApplied = false;
             _intervalEstimator.Reset();
         }
 
@@ -137,6 +145,12 @@ namespace Styly.NetSync
                 return;
             }
 
+            var referenceFrameLocal = (data.flags & PoseFlags.ReferenceFrameLocal) != 0;
+            if (_hasAnySnapshot && referenceFrameLocal != _isReferenceFrameLocal)
+            {
+                Clear();
+            }
+            _isReferenceFrameLocal = referenceFrameLocal;
             _hasAnySnapshot = true;
             _intervalEstimator.OnPoseTime(data.poseTime);
 
@@ -221,10 +235,18 @@ namespace Styly.NetSync
             }
             _hasAnySnapshot = false;
             _hasPhysicalSample = false;
+            _isReferenceFrameLocal = false;
+            _lastTickApplied = false;
         }
 
         public void Tick(float deltaTime, double localNow)
         {
+            Tick(deltaTime, localNow, null);
+        }
+
+        public void Tick(float deltaTime, double localNow, Transform referenceFrame)
+        {
+            _lastTickApplied = false;
             if (_timeEstimator == null)
             {
                 return;
@@ -245,6 +267,7 @@ namespace Styly.NetSync
             {
                 var pose = _singleChannel.Tick(renderServerTime, deltaTime);
                 ApplyBinding(_singleBinding, pose);
+                _lastTickApplied = true;
                 return;
             }
 
@@ -254,33 +277,53 @@ namespace Styly.NetSync
                 _hasPhysicalSample = true;
                 ApplyBinding(_physicalBinding, _lastPhysicalSample);
             }
+
+            if (_isReferenceFrameLocal && referenceFrame == null)
+            {
+                return;
+            }
+
             if (_head != null)
             {
-                ApplyBinding(_headBinding, _head.Tick(renderServerTime, deltaTime));
+                ApplyBinding(_headBinding, _head.Tick(renderServerTime, deltaTime), _isReferenceFrameLocal ? referenceFrame : null);
             }
             if (_rightHand != null)
             {
-                ApplyBinding(_rightBinding, _rightHand.Tick(renderServerTime, deltaTime));
+                ApplyBinding(_rightBinding, _rightHand.Tick(renderServerTime, deltaTime), _isReferenceFrameLocal ? referenceFrame : null);
             }
             if (_leftHand != null)
             {
-                ApplyBinding(_leftBinding, _leftHand.Tick(renderServerTime, deltaTime));
+                ApplyBinding(_leftBinding, _leftHand.Tick(renderServerTime, deltaTime), _isReferenceFrameLocal ? referenceFrame : null);
             }
 
             for (int i = 0; i < _virtuals.Count && i < _virtualBindings.Count; i++)
             {
-                ApplyBinding(_virtualBindings[i], _virtuals[i].Tick(renderServerTime, deltaTime));
+                ApplyBinding(_virtualBindings[i], _virtuals[i].Tick(renderServerTime, deltaTime), _isReferenceFrameLocal ? referenceFrame : null);
             }
+            _lastTickApplied = true;
         }
 
         private static void ApplyBinding(in TransformBinding binding, in PoseSampleData pose)
+        {
+            ApplyBinding(binding, pose, null);
+        }
+
+        private static void ApplyBinding(in TransformBinding binding, in PoseSampleData pose, Transform referenceFrame)
         {
             if (binding.Transform == null) return;
 
             if (binding.Space == SpaceMode.World)
             {
-                binding.Transform.position = pose.Position;
-                binding.Transform.rotation = pose.Rotation;
+                if (referenceFrame != null)
+                {
+                    binding.Transform.position = referenceFrame.TransformPoint(pose.Position);
+                    binding.Transform.rotation = referenceFrame.rotation * pose.Rotation;
+                }
+                else
+                {
+                    binding.Transform.position = pose.Position;
+                    binding.Transform.rotation = pose.Rotation;
+                }
             }
             else
             {

@@ -7,7 +7,7 @@ namespace Styly.NetSync
     /// - Estimated Body: head world position with a vertical offset (yaw-only rotation).
     /// - Calculated Ground Center: world point directly below the head at the avatar's
     ///   physical rig floor (head.y - PhysicalPosition.y); works for both local and
-    ///   remote avatars and tracks vertical rig motion (elevators, lifts) under v4.
+    ///   remote avatars and tracks vertical rig motion (elevators, lifts).
     /// </summary>
     public class BodyTransformSolver : MonoBehaviour
     {

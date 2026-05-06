@@ -108,6 +108,28 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Apply a world-space presence transform immediately from an already-smoothed avatar pose.
+        /// </summary>
+        public void SetTransformImmediate(int clientNo, Vector3 position, Quaternion rotation)
+        {
+            if (_applierByClient.TryGetValue(clientNo, out var applier))
+            {
+                if (applier != null)
+                {
+                    applier.Clear();
+                }
+            }
+
+            if (_presenceByClient.TryGetValue(clientNo, out var go))
+            {
+                if (go != null)
+                {
+                    go.transform.SetPositionAndRotation(position, rotation);
+                }
+            }
+        }
+
+        /// <summary>
         /// Destroy all presence instances (used on room switch/disconnect).
         /// </summary>
         public void CleanupAll()
