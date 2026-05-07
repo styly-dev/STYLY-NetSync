@@ -1,5 +1,6 @@
 // PlatformBindingTestController.cs
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace Styly.NetSync.Samples.PlatformBindingTest
@@ -33,6 +34,7 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
 
         private ElevatorBoardingZone _fixedZone;
         private ElevatorBoardingZone _rawZone;
+        private InputAction _rightAButtonAction;
 
         private void Start()
         {
@@ -46,6 +48,14 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
 
             netsync.OnRPCReceived.AddListener(HandleRpcReceived);
             if (_sendButton != null) { _sendButton.onClick.AddListener(BroadcastStart); }
+
+            // Right-hand A button (XR controller primaryButton) mirrors the 発信 UI button.
+            _rightAButtonAction = new InputAction(
+                name: "PlatformBindingTest.RightAButton",
+                type: InputActionType.Button,
+                binding: "<XRController>{RightHand}/primaryButton");
+            _rightAButtonAction.performed += OnRightAButtonPerformed;
+            _rightAButtonAction.Enable();
 
             if (_elevatorFixed != null) { _fixedZone = _elevatorFixed.GetComponentInChildren<ElevatorBoardingZone>(); }
             if (_elevatorRaw != null) { _rawZone = _elevatorRaw.GetComponentInChildren<ElevatorBoardingZone>(); }
@@ -86,6 +96,18 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
                 netsync.OnRPCReceived.RemoveListener(HandleRpcReceived);
             }
             if (_sendButton != null) { _sendButton.onClick.RemoveListener(BroadcastStart); }
+            if (_rightAButtonAction != null)
+            {
+                _rightAButtonAction.performed -= OnRightAButtonPerformed;
+                _rightAButtonAction.Disable();
+                _rightAButtonAction.Dispose();
+                _rightAButtonAction = null;
+            }
+        }
+
+        private void OnRightAButtonPerformed(InputAction.CallbackContext _)
+        {
+            BroadcastStart();
         }
 
         private void HandleRpcReceived(int senderClientNo, string functionName, string[] args)
