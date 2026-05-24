@@ -270,6 +270,21 @@ namespace Styly.NetSync
             Transform referenceFrame = null;
             bool referenceFrameLocal = _netSyncManager != null && _netSyncManager.TryGetLocalReferenceFrame(out referenceFrame);
             _tx.flags = BuildPoseFlags(referenceFrameLocal);
+
+            // AvatarManager wires a ParentConstraint from this avatar root to XROrigin
+            // so the avatar follows the rig. Unity evaluates ParentConstraint between
+            // Update and LateUpdate, so when user code moves XROrigin in LateUpdate
+            // (moving platforms / reference frames), the avatar root is one frame
+            // stale at next frame's NetSyncManager.Update(-1000) read time. The
+            // resulting head_local would be sent against the current reference frame
+            // but computed from the previous frame's avatar pose, causing remote
+            // avatars to visibly lag the reference frame during motion.
+            // Re-project every body transform through avatar root's matrix back into
+            // XROrigin's live matrix to recover the world pose the constraint would
+            // produce if it re-evaluated this instant.
+            Transform xrOrigin = _netSyncManager != null ? _netSyncManager._XrOriginTransform : null;
+            Transform avatarRoot = transform;
+            bool useLiveProjection = IsLocalAvatar && xrOrigin != null && avatarRoot != null;
             if (_netSyncManager != null)
             {
                 _netSyncManager.ComputeXrOriginDelta(out var deltaPos, out var deltaYaw);
@@ -294,17 +309,25 @@ namespace Styly.NetSync
             // head pose reflects CameraYOffset. When an XR device is active (Meta Link, XR
             // Device Simulator, on-device builds), _head is used directly.
             Transform headForSync = _head;
+            bool liveProjectHead = useLiveProjection;
 #if UNITY_EDITOR
             var overrideTransform = TryGetEditorHeadOverride();
-            if (overrideTransform != null) { headForSync = overrideTransform; }
+            if (overrideTransform != null)
+            {
+                headForSync = overrideTransform;
+                // Editor override is Camera.main (typically outside avatar root); a
+                // re-projection through avatar root would be a different transform
+                // chain and corrupt the value.
+                liveProjectHead = false;
+            }
 #endif
-            FillFromTransform(_txHead, headForSync, referenceFrame, referenceFrameLocal);
+            FillFromTransform(_txHead, headForSync, referenceFrame, referenceFrameLocal, avatarRoot, xrOrigin, liveProjectHead);
             _tx.head = _txHead;
 
-            FillFromTransform(_txRight, _rightHand, referenceFrame, referenceFrameLocal);
+            FillFromTransform(_txRight, _rightHand, referenceFrame, referenceFrameLocal, avatarRoot, xrOrigin, useLiveProjection);
             _tx.rightHand = _txRight;
 
-            FillFromTransform(_txLeft, _leftHand, referenceFrame, referenceFrameLocal);
+            FillFromTransform(_txLeft, _leftHand, referenceFrame, referenceFrameLocal, avatarRoot, xrOrigin, useLiveProjection);
             _tx.leftHand = _txLeft;
 
             // Virtuals: reuse pre-allocated TransformData instances.
@@ -314,7 +337,11 @@ namespace Styly.NetSync
                 {
                     var t = _virtualTransforms[i];
                     var td = _txVirtuals[i];
-                    FillFromTransform(td, t, referenceFrame, referenceFrameLocal);
+                    // Virtual transforms are public world-space slots and may point
+                    // outside the avatar hierarchy. Only descendants of avatarRoot
+                    // share the ParentConstraint stale-root issue.
+                    bool liveProjectVirtual = useLiveProjection && t != null && t.IsChildOf(avatarRoot);
+                    FillFromTransform(td, t, referenceFrame, referenceFrameLocal, avatarRoot, xrOrigin, liveProjectVirtual);
                 }
             }
             // If _virtualTransforms is null, make sure list is empty to avoid serializing stale entries.
@@ -376,7 +403,8 @@ namespace Styly.NetSync
             return result;
         }
 
-        private static void FillFromTransform(TransformData td, Transform t, Transform referenceFrame, bool referenceFrameLocal)
+        private static void FillFromTransform(TransformData td, Transform t, Transform referenceFrame, bool referenceFrameLocal,
+            Transform avatarRoot, Transform xrOrigin, bool useLiveProjection)
         {
             if (t == null)
             {
@@ -384,17 +412,34 @@ namespace Styly.NetSync
                 return;
             }
 
+            Vector3 worldPos;
+            Quaternion worldRot;
+            if (useLiveProjection)
+            {
+                // Express t in avatar root's local frame (= constraint-synced snapshot),
+                // then back into world via XROrigin's live frame.
+                var localPos = avatarRoot.InverseTransformPoint(t.position);
+                worldPos = xrOrigin.TransformPoint(localPos);
+                var localRot = Quaternion.Inverse(avatarRoot.rotation) * t.rotation;
+                worldRot = xrOrigin.rotation * localRot;
+            }
+            else
+            {
+                worldPos = t.position;
+                worldRot = t.rotation;
+            }
+
             if (referenceFrameLocal && referenceFrame != null)
             {
                 var frameRotation = referenceFrame.rotation;
                 Fill(
                     td,
-                    referenceFrame.InverseTransformPoint(t.position),
-                    Quaternion.Inverse(frameRotation) * t.rotation);
+                    referenceFrame.InverseTransformPoint(worldPos),
+                    Quaternion.Inverse(frameRotation) * worldRot);
                 return;
             }
 
-            Fill(td, t.position, t.rotation);
+            Fill(td, worldPos, worldRot);
         }
 
         private PoseFlags BuildPoseFlags(bool referenceFrameLocal)
