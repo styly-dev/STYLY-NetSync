@@ -30,5 +30,10 @@ __pycache__/
 .gemini/
 gha-creds-*.json
 
+# ParrelSync clones
+/[Cc]lones/
+*_clone/
+*_clone_*/
+
 # Misc
 nanobanana-output/*
