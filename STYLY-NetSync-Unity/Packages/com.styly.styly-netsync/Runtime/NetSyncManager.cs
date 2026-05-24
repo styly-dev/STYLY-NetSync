@@ -1447,13 +1447,12 @@ namespace Styly.NetSync
 
         /// <summary>
         /// Update a remote client's Human Presence transform from the client's "physical" pose.
-        /// The incoming position/rotation are LOCAL to the remote head's parent.
-        /// We convert them to WORLD space using the remote avatar hierarchy and apply yaw-only.
+        /// The incoming position/rotation are already the sender's physical HMD pose.
         /// This method runs on the main Unity thread (invoked from MessageProcessor).
         /// </summary>
         /// <param name="clientNo">Remote client number</param>
-        /// <param name="position">Local position (physical, relative to remote head's parent)</param>
-        /// <param name="rotation">Local rotation (physical); only yaw is used</param>
+        /// <param name="position">Physical HMD position</param>
+        /// <param name="rotation">Physical HMD rotation; only yaw is used</param>
         internal void UpdateHumanPresenceTransform(
             int clientNo,
             Vector3 position,
@@ -1463,55 +1462,24 @@ namespace Styly.NetSync
         {
             if (_humanPresenceManager == null) { return; }
 
-            // Find the remote avatar and its head parent to resolve local->world.
-            Transform parent = null;
-            if (_avatarManager != null &&
-                _avatarManager.TryGetNetSyncAvatar(clientNo, out var net))
-            {
-                // If head exists, use its parent as the local space; otherwise fallback to avatar root.
-                parent = (net._head != null) ? net._head.parent : net.transform;
-            }
-
-            // Convert local physical to world using parent transform when available.
-            Vector3 worldPos = position;
-            Quaternion worldYaw;
-            if (parent != null)
-            {
-                // Full local->world for position
-                worldPos = parent.TransformPoint(position);
-
-                // Yaw-only in local space, then compose with parent's rotation to get world yaw
-                var localYaw = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
-                worldYaw = parent.rotation * localYaw;
-
-                // Apply local locomotion delta. Human Presence intentionally consumes only
-                // XZ + yaw of the locomotion delta (the original SE(2) definition); vertical
-                // rig motion is left to the parent transform hierarchy.
-                ComputeXrOriginDelta(out var localDeltaPos, out var localDeltaYaw);
-                var localDeltaRot = Quaternion.Euler(0f, localDeltaYaw, 0f);
-                var localDeltaPosXZ = new Vector3(localDeltaPos.x, 0f, localDeltaPos.z);
-                worldPos = localDeltaRot * worldPos + localDeltaPosXZ;
-                worldYaw = localDeltaRot * worldYaw;
-            }
-            else
-            {
-                // As a safety fallback (e.g., avatar not spawned yet), treat given values as world
-                worldYaw = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
-            }
+            var worldPos = position;
+            var worldYaw = Quaternion.Euler(0f, ReferenceFrameManager.ExtractYawDegrees(rotation), 0f);
 
             _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYaw, poseTime, poseSeq);
         }
 
-        internal void UpdateBoundHumanPresenceFromAvatar(int clientNo, NetSyncAvatar avatar, in PoseSampleData physical)
+        internal void UpdateBoundHumanPresenceFromPhysical(int clientNo, in PoseSampleData physical)
         {
-            if (_humanPresenceManager == null || avatar == null || avatar._head == null)
+            if (_humanPresenceManager == null)
             {
                 return;
             }
 
-            var worldPos = avatar._head.position;
-            worldPos.y -= physical.Position.y;
-            var worldYaw = Quaternion.Euler(0f, ReferenceFrameManager.ExtractYawDegrees(avatar._head.rotation), 0f);
+            // Reference-frame-local poses carry direct physical HMD pose in the
+            // physical slot. Do not derive presence from the frame-local head,
+            // because that would make the physical marker ride the virtual frame.
+            var worldPos = physical.Position;
+            var worldYaw = Quaternion.Euler(0f, ReferenceFrameManager.ExtractYawDegrees(physical.Rotation), 0f);
             _humanPresenceManager.SetTransformImmediate(clientNo, worldPos, worldYaw);
         }
     }

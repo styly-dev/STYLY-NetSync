@@ -209,15 +209,13 @@ namespace Styly.NetSync
             else if (!IsLocalAvatar && _transformApplier.HasPhysicalSample)
             {
                 // Remote avatar: read the smoothed physical sample produced by Tick so
-                // PhysicalPosition is time-aligned with the head channel. Reading the raw
-                // value set in SetTransformData would lag head's smoothing and cause the
-                // `head.y - PhysicalPosition.y` ground-center derivation to wobble.
+                // PhysicalPosition stays time-aligned with the rendered pose.
                 var sample = _transformApplier.LastPhysicalSample;
                 PhysicalPosition = sample.Position;
                 PhysicalRotation = sample.Rotation;
                 if (_transformApplier.IsReferenceFrameLocal && _transformApplier.LastTickApplied && _netSyncManager != null)
                 {
-                    _netSyncManager.UpdateBoundHumanPresenceFromAvatar(_clientNo, this, sample);
+                    _netSyncManager.UpdateBoundHumanPresenceFromPhysical(_clientNo, sample);
                 }
             }
         }

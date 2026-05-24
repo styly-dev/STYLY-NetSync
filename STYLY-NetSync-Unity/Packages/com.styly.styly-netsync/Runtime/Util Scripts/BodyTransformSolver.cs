@@ -5,9 +5,9 @@ namespace Styly.NetSync
     /// <summary>
     /// Drives helper Transforms from a NetSyncAvatar reference.
     /// - Estimated Body: head world position with a vertical offset (yaw-only rotation).
-    /// - Calculated Ground Center: world point directly below the head at the avatar's
-    ///   physical rig floor (head.y - PhysicalPosition.y); works for both local and
-    ///   remote avatars and tracks vertical rig motion (elevators, lifts).
+    /// - Calculated Ground Center: physical floor point derived from the avatar's
+    ///   physical pose, so the marker does not ride with virtual locomotion or
+    ///   reference-frame motion.
     /// </summary>
     public class BodyTransformSolver : MonoBehaviour
     {
@@ -36,13 +36,8 @@ namespace Styly.NetSync
             Transform head = netSyncAvatar._head;
             if (head == null) return;
 
-            // Yaw-only rotation, shared by both targets.
-            Vector3 headForward = head.forward;
-            headForward.y = 0f;
-            bool hasYaw = headForward.sqrMagnitude > 0.001f;
-            Quaternion yawRotation = hasYaw
-                ? Quaternion.LookRotation(headForward, Vector3.up)
-                : Quaternion.identity;
+            // Yaw-only rotation, shared by virtual body targets.
+            bool hasYaw = TryGetYawRotation(head.rotation, out var yawRotation);
 
             if (body != null)
             {
@@ -54,11 +49,26 @@ namespace Styly.NetSync
 
             if (groundCenter != null)
             {
-                Vector3 groundPosition = head.position;
-                groundPosition.y -= netSyncAvatar.PhysicalPosition.y;
+                Vector3 groundPosition = netSyncAvatar.PhysicalPosition;
+                groundPosition.y = 0f;
                 groundCenter.position = groundPosition;
-                if (hasYaw) groundCenter.rotation = yawRotation;
+                bool hasGroundYaw = TryGetYawRotation(netSyncAvatar.PhysicalRotation, out var groundRotation);
+                if (hasGroundYaw) groundCenter.rotation = groundRotation;
             }
+        }
+
+        private static bool TryGetYawRotation(Quaternion rotation, out Quaternion yawRotation)
+        {
+            Vector3 forward = rotation * Vector3.forward;
+            forward.y = 0f;
+            if (forward.sqrMagnitude <= 0.001f)
+            {
+                yawRotation = Quaternion.identity;
+                return false;
+            }
+
+            yawRotation = Quaternion.LookRotation(forward, Vector3.up);
+            return true;
         }
     }
 }
