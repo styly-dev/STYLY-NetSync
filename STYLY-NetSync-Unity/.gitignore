@@ -119,6 +119,11 @@ ContentPackages/com.unity.xr-content.xr-sim-environments-*.tgz
 !**/.uloop/settings.permissions.json
 !**/.uloop/settings.tools.json
 
+# ParrelSync clones
+/[Cc]lones/
+*_clone/
+*_clone_*/
+
 # Others
 **/.DS_Store
 .idea
