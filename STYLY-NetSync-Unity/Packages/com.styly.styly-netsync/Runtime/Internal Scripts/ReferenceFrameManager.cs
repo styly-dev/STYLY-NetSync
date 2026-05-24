@@ -14,7 +14,7 @@ namespace Styly.NetSync
 
         private readonly Dictionary<string, Transform> _frames = new Dictionary<string, Transform>();
         private readonly Dictionary<int, string> _clientFrameIds = new Dictionary<int, string>();
-        private readonly HashSet<string> _missingWarnings = new HashSet<string>();
+        private readonly HashSet<(int clientNo, string frameId)> _missingWarnings = new HashSet<(int clientNo, string frameId)>();
 
         private string _localFrameId;
 
@@ -29,7 +29,7 @@ namespace Styly.NetSync
             }
 
             _frames[frameId] = frame;
-            _missingWarnings.RemoveWhere(key => key.EndsWith(":" + frameId));
+            _missingWarnings.RemoveWhere(key => key.frameId == frameId);
             return true;
         }
 
@@ -154,8 +154,7 @@ namespace Styly.NetSync
 
         private void WarnOnce(int clientNo, string frameId, string message)
         {
-            var warningKey = clientNo.ToString() + ":" + frameId;
-            if (_missingWarnings.Add(warningKey))
+            if (_missingWarnings.Add((clientNo, frameId)))
             {
                 Debug.LogWarning(message);
             }
@@ -163,8 +162,7 @@ namespace Styly.NetSync
 
         private void RemoveWarningKeysForClient(int clientNo)
         {
-            var prefix = clientNo.ToString() + ":";
-            _missingWarnings.RemoveWhere(key => key.StartsWith(prefix));
+            _missingWarnings.RemoveWhere(key => key.clientNo == clientNo);
         }
     }
 }

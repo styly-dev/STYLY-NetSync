@@ -157,8 +157,11 @@ namespace Styly.NetSync
             foreach (var kv in _applierByClient)
             {
                 var applier = kv.Value;
-                if (applier != null)
+                if (applier != null && applier.HasAnySnapshot)
                 {
+                    // Skip when there are no snapshots (e.g. after SetTransformImmediate cleared
+                    // the channel for bound mode) so we don't sample an empty buffer and snap the
+                    // presence transform back to the origin.
                     // Use high-resolution clock for consistent time estimation
                     applier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
                 }
