@@ -24,11 +24,11 @@
         "org.nuget.netmq": "4.0.2",
         "com.unity.xr.core-utils": "2.1.1",
         "com.unity.nuget.newtonsoft-json": "3.2.1",
-        "com.styly.styly-xr-rig": "0.4.17"
+        "com.styly.styly-xr-rig": "0.4.19"
       }
     },
     "com.styly.styly-xr-rig": {
-      "version": "0.4.17",
+      "version": "0.4.19",
       "depth": 1,
       "source": "registry",
       "dependencies": {
@@ -395,12 +395,11 @@
       "url": "https://package.openupm.com"
     },
     "io.github.hatayama.uloopmcp": {
-      "version": "2.1.0",
+      "version": "2.1.4",
       "depth": 0,
       "source": "registry",
       "dependencies": {
         "com.unity.nuget.newtonsoft-json": "3.2.1",
-        "com.unity.test-framework": "1.1.33",
         "com.unity.ugui": "1.0.0"
       },
       "url": "https://package.openupm.com"
