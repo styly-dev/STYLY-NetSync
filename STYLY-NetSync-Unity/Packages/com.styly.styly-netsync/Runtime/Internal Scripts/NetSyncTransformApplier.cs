@@ -44,6 +44,15 @@ namespace Styly.NetSync
         private PoseChannel _singleChannel;
         private TransformBinding _singleBinding;
 
+        private PoseSampleData _lastHeadSample;
+        private PoseSampleData _lastRightSample;
+        private PoseSampleData _lastLeftSample;
+        private bool _hasHeadSample;
+        private bool _hasRightSample;
+        private bool _hasLeftSample;
+        private readonly List<PoseSampleData> _lastVirtualSamples = new List<PoseSampleData>(8);
+        private readonly List<bool> _hasVirtualSamples = new List<bool>(8);
+
         // True once any snapshot (avatar or single-object) has been ingested.
         // Callers should skip Tick while false — an empty PoseChannel samples as
         // default(PoseSampleData) which would snap the bound transform to origin.
@@ -89,12 +98,16 @@ namespace Styly.NetSync
 
             _virtuals.Clear();
             _virtualBindings.Clear();
+            _lastVirtualSamples.Clear();
+            _hasVirtualSamples.Clear();
             if (virtuals != null)
             {
                 for (int i = 0; i < virtuals.Length; i++)
                 {
                     _virtuals.Add(new PoseChannel(_settings.Virtual));
                     _virtualBindings.Add(new TransformBinding(virtuals[i], SpaceMode.World));
+                    _lastVirtualSamples.Add(default);
+                    _hasVirtualSamples.Add(false);
                 }
             }
 
@@ -102,6 +115,7 @@ namespace Styly.NetSync
             _hasAnySnapshot = false;
             _isReferenceFrameLocal = false;
             _lastTickApplied = false;
+            ClearLastAvatarSamples();
             _intervalEstimator.Reset();
         }
 
@@ -125,10 +139,13 @@ namespace Styly.NetSync
             _leftHand = null;
             _virtuals.Clear();
             _virtualBindings.Clear();
+            _lastVirtualSamples.Clear();
+            _hasVirtualSamples.Clear();
 
             _hasAnySnapshot = false;
             _isReferenceFrameLocal = false;
             _lastTickApplied = false;
+            ClearLastAvatarSamples();
             _intervalEstimator.Reset();
         }
 
@@ -237,6 +254,7 @@ namespace Styly.NetSync
             _hasPhysicalSample = false;
             _isReferenceFrameLocal = false;
             _lastTickApplied = false;
+            ClearLastAvatarSamples();
         }
 
         public void Tick(float deltaTime, double localNow)
@@ -285,22 +303,75 @@ namespace Styly.NetSync
 
             if (_head != null)
             {
-                ApplyBinding(_headBinding, _head.Tick(renderServerTime, deltaTime), _isReferenceFrameLocal ? referenceFrame : null);
+                _lastHeadSample = _head.Tick(renderServerTime, deltaTime);
+                _hasHeadSample = true;
+                ApplyBinding(_headBinding, _lastHeadSample, _isReferenceFrameLocal ? referenceFrame : null);
             }
             if (_rightHand != null)
             {
-                ApplyBinding(_rightBinding, _rightHand.Tick(renderServerTime, deltaTime), _isReferenceFrameLocal ? referenceFrame : null);
+                _lastRightSample = _rightHand.Tick(renderServerTime, deltaTime);
+                _hasRightSample = true;
+                ApplyBinding(_rightBinding, _lastRightSample, _isReferenceFrameLocal ? referenceFrame : null);
             }
             if (_leftHand != null)
             {
-                ApplyBinding(_leftBinding, _leftHand.Tick(renderServerTime, deltaTime), _isReferenceFrameLocal ? referenceFrame : null);
+                _lastLeftSample = _leftHand.Tick(renderServerTime, deltaTime);
+                _hasLeftSample = true;
+                ApplyBinding(_leftBinding, _lastLeftSample, _isReferenceFrameLocal ? referenceFrame : null);
             }
 
             for (int i = 0; i < _virtuals.Count && i < _virtualBindings.Count; i++)
             {
-                ApplyBinding(_virtualBindings[i], _virtuals[i].Tick(renderServerTime, deltaTime), _isReferenceFrameLocal ? referenceFrame : null);
+                var virtualSample = _virtuals[i].Tick(renderServerTime, deltaTime);
+                _lastVirtualSamples[i] = virtualSample;
+                _hasVirtualSamples[i] = true;
+                ApplyBinding(_virtualBindings[i], virtualSample, _isReferenceFrameLocal ? referenceFrame : null);
             }
             _lastTickApplied = true;
+        }
+
+        public bool ReapplyLatestReferenceFrame(Transform referenceFrame)
+        {
+            if (!_isReferenceFrameLocal || referenceFrame == null || !_lastTickApplied)
+            {
+                return false;
+            }
+
+            // Keep the network interpolation time fixed, but project the cached
+            // frame-local pose through the latest reference-frame transform.
+            if (_head != null && _hasHeadSample)
+            {
+                ApplyBinding(_headBinding, _lastHeadSample, referenceFrame);
+            }
+            if (_rightHand != null && _hasRightSample)
+            {
+                ApplyBinding(_rightBinding, _lastRightSample, referenceFrame);
+            }
+            if (_leftHand != null && _hasLeftSample)
+            {
+                ApplyBinding(_leftBinding, _lastLeftSample, referenceFrame);
+            }
+
+            for (int i = 0; i < _virtuals.Count && i < _virtualBindings.Count; i++)
+            {
+                if (i < _hasVirtualSamples.Count && _hasVirtualSamples[i])
+                {
+                    ApplyBinding(_virtualBindings[i], _lastVirtualSamples[i], referenceFrame);
+                }
+            }
+
+            return true;
+        }
+
+        private void ClearLastAvatarSamples()
+        {
+            _hasHeadSample = false;
+            _hasRightSample = false;
+            _hasLeftSample = false;
+            for (int i = 0; i < _hasVirtualSamples.Count; i++)
+            {
+                _hasVirtualSamples[i] = false;
+            }
         }
 
         private static void ApplyBinding(in TransformBinding binding, in PoseSampleData pose)

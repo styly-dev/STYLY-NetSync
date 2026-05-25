@@ -178,6 +178,7 @@ namespace Styly.NetSync
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
+            EnsureReferenceFrameLateApplier();
         }
 
         void Update()
@@ -372,6 +373,25 @@ namespace Styly.NetSync
             _clientNo = data.clientNo;
         }
 
+        internal void ReapplyLatestReferenceFramePose()
+        {
+            if (IsLocalAvatar || _netSyncManager == null)
+            {
+                return;
+            }
+
+            if (!_transformApplier.IsReferenceFrameLocal || !_transformApplier.LastTickApplied)
+            {
+                return;
+            }
+
+            Transform referenceFrame = null;
+            if (_netSyncManager.TryGetReferenceFrameForClient(_clientNo, false, out referenceFrame))
+            {
+                _transformApplier.ReapplyLatestReferenceFrame(referenceFrame);
+            }
+        }
+
         // Get world transform data (world space, full 6DOF)
         internal TransformData GetWorldTransform(Transform transform)
         {
@@ -399,6 +419,17 @@ namespace Styly.NetSync
             var result = new List<TransformData>(transforms.Length);
             foreach (var t in transforms) result.Add(GetWorldTransform(t));
             return result;
+        }
+
+        private void EnsureReferenceFrameLateApplier()
+        {
+            var lateApplier = GetComponent<ReferenceFrameLateApplier>();
+            if (lateApplier == null)
+            {
+                lateApplier = gameObject.AddComponent<ReferenceFrameLateApplier>();
+            }
+
+            lateApplier.Initialize(this);
         }
 
         private static void FillFromTransform(TransformData td, Transform t, Transform referenceFrame, bool referenceFrameLocal,
@@ -530,5 +561,34 @@ namespace Styly.NetSync
             return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(name, clientNo, defaultValue) : defaultValue;
         }
         #endregion
+    }
+
+    // Runs after user LateUpdate motion so reference-frame-local remote avatars
+    // are projected through the frame pose that will be rendered this frame.
+    [DefaultExecutionOrder(10000)]
+    internal sealed class ReferenceFrameLateApplier : MonoBehaviour
+    {
+        private NetSyncAvatar _avatar;
+
+        internal void Initialize(NetSyncAvatar avatar)
+        {
+            _avatar = avatar;
+        }
+
+        private void Awake()
+        {
+            if (_avatar == null)
+            {
+                _avatar = GetComponent<NetSyncAvatar>();
+            }
+        }
+
+        private void LateUpdate()
+        {
+            if (_avatar != null)
+            {
+                _avatar.ReapplyLatestReferenceFramePose();
+            }
+        }
     }
 }

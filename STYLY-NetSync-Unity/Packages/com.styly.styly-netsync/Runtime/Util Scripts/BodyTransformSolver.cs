@@ -9,6 +9,9 @@ namespace Styly.NetSync
     ///   physical pose, so the marker does not ride with virtual locomotion or
     ///   reference-frame motion.
     /// </summary>
+    // Runs after ReferenceFrameLateApplier so visible body meshes read the
+    // final head pose for the rendered frame.
+    [DefaultExecutionOrder(10010)]
     public class BodyTransformSolver : MonoBehaviour
     {
         public NetSyncAvatar netSyncAvatar;
