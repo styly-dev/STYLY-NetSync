@@ -17,6 +17,19 @@
   - `Assets/Samples_Dev/HandTest/` - Hand tracking testing
   - `Assets/Samples_Dev/SimpleSyncCheck/` - Network sync verification
 
+## Sibling Project Context
+
+This Unity project is one half of the STYLY-NetSync repository. When Codex is
+started with `STYLY-NetSync-Unity/` as the current directory, also treat
+`../STYLY-NetSync-Server/` as relevant project context when it is available.
+
+- Use `../AGENTS.md` for repository-wide protocol, parity, and workflow rules.
+- Inspect `../STYLY-NetSync-Server/src/styly_netsync/` for Python server and
+  Python client behavior before changing networking, protocol serialization,
+  RPC, Network Variable, discovery, or connection behavior.
+- Keep Unity and Python feature parity in mind even when the immediate task
+  starts from the Unity directory.
+
 ## Development
 
 - **Play Mode**: Test in Unity Editor with demo scenes

@@ -6,6 +6,19 @@
 - **Tests**: `tests/` (unit + integration)
 - **Config**: `pyproject.toml`, `default.toml`
 
+## Sibling Project Context
+
+This Python server is one half of the STYLY-NetSync repository. When Codex is
+started with `STYLY-NetSync-Server/` as the current directory, also treat
+`../STYLY-NetSync-Unity/` as relevant project context when it is available.
+
+- Use `../AGENTS.md` for repository-wide protocol, parity, and workflow rules.
+- Inspect `../STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/`
+  for Unity client behavior before changing networking, protocol serialization,
+  RPC, Network Variable, discovery, or connection behavior.
+- Keep Python and Unity feature parity in mind even when the immediate task
+  starts from the server directory.
+
 ## Development Commands
 
 ```bash
