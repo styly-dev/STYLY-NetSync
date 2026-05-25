@@ -6,6 +6,11 @@
 - **Tests**: `tests/` (unit + integration)
 - **Config**: `pyproject.toml`, `default.toml`
 
+## Repository Context
+
+- Also check `../AGENTS.md` and `../STYLY-NetSync-Unity/`.
+- Keep Python/Unity behavior aligned for networking, protocol, RPC, Network Variable, discovery, and connection changes.
+
 ## Development Commands
 
 ```bash
