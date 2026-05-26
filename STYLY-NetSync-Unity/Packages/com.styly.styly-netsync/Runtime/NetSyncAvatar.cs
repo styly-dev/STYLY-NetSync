@@ -74,6 +74,20 @@ namespace Styly.NetSync
         private TransformData _txRight;
         private TransformData _txLeft;
         private readonly List<TransformData> _txVirtuals = new List<TransformData>(8);
+        private bool _isRightHandPoseValid = true;
+        private bool _isLeftHandPoseValid = true;
+        private bool _rightHandInitialActiveSelf = true;
+        private bool _leftHandInitialActiveSelf = true;
+        private Vector3 _rightHandInitialHeadRelativePosition;
+        private Vector3 _leftHandInitialHeadRelativePosition;
+        private Quaternion _rightHandInitialHeadRelativeRotation = Quaternion.identity;
+        private Quaternion _leftHandInitialHeadRelativeRotation = Quaternion.identity;
+        private const float DefaultHandPosePositionSqrMagnitude = 0.000001f;
+        private const float DefaultHandPoseRotationDegrees = 0.1f;
+        private const float EditorNoXrHandMinHeadDistanceSqrMagnitude = 0.0625f;
+        private const float EditorNoXrHandHorizontalOffset = 0.32f;
+        private const float EditorNoXrHandVerticalOffset = -0.35f;
+        private const float EditorNoXrHandForwardOffset = 0f;
 
         // Helper to ensure cached containers exist and are sized for current virtual transforms.
         private void EnsureTxBuffersAllocated()
@@ -117,6 +131,9 @@ namespace Styly.NetSync
             {
                 NetSyncManager.Instance.OnClientVariableChanged.AddListener(HandleClientVariableChanged);
             }
+#if UNITY_EDITOR
+            Application.onBeforeRender += ApplyEditorNoXrFallbackTransforms;
+#endif
         }
 
         void OnDisable()
@@ -126,6 +143,9 @@ namespace Styly.NetSync
             {
                 NetSyncManager.Instance.OnClientVariableChanged.RemoveListener(HandleClientVariableChanged);
             }
+#if UNITY_EDITOR
+            Application.onBeforeRender -= ApplyEditorNoXrFallbackTransforms;
+#endif
         }
 
         // Initialization method called from NetSyncManager
@@ -155,6 +175,7 @@ namespace Styly.NetSync
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
+            CacheInitialHandActiveStates();
         }
 
         // Initialization method for remote avatars with known client number
@@ -178,6 +199,7 @@ namespace Styly.NetSync
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
+            CacheInitialHandActiveStates();
         }
 
         void Update()
@@ -238,15 +260,46 @@ namespace Styly.NetSync
             return GetCachedEditorMainCameraTransform();
         }
 
-        void LateUpdate()
+        private void ApplyEditorNoXrFallbackTransforms()
         {
-            if (!IsLocalAvatar || _head == null) { return; }
-            var overrideTransform = TryGetEditorHeadOverride();
-            if (overrideTransform != null)
+            if (!IsLocalAvatar) { return; }
+            if (XRSettings.isDeviceActive) { return; }
+
+            var overrideTransform = GetCachedEditorMainCameraTransform();
+            if (_head != null && overrideTransform != null)
             {
                 _head.position = overrideTransform.position;
                 _head.rotation = overrideTransform.rotation;
             }
+
+            ApplyEditorNoXrHandFallback(
+                _rightHand,
+                overrideTransform,
+                _rightHandInitialHeadRelativePosition,
+                _rightHandInitialHeadRelativeRotation);
+            ApplyEditorNoXrHandFallback(
+                _leftHand,
+                overrideTransform,
+                _leftHandInitialHeadRelativePosition,
+                _leftHandInitialHeadRelativeRotation);
+        }
+
+        private static void ApplyEditorNoXrHandFallback(
+            Transform handTransform,
+            Transform headTransform,
+            Vector3 headRelativePosition,
+            Quaternion headRelativeRotation)
+        {
+            if (handTransform == null) { return; }
+            if (headTransform == null) { return; }
+
+            handTransform.position = headTransform.TransformPoint(headRelativePosition);
+            handTransform.rotation = headTransform.rotation * headRelativeRotation;
+        }
+
+        void LateUpdate()
+        {
+            ApplyEditorNoXrFallbackTransforms();
         }
 #endif
 
@@ -255,6 +308,10 @@ namespace Styly.NetSync
         {
             // Ensure buffers exist and sized (handles rare runtime changes to _virtualTransforms).
             EnsureTxBuffersAllocated();
+
+#if UNITY_EDITOR
+            ApplyEditorNoXrFallbackTransforms();
+#endif
 
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
@@ -292,14 +349,16 @@ namespace Styly.NetSync
                 headForSync != null ? headForSync.rotation : Quaternion.identity);
             _tx.head = _txHead;
 
+            var rightHandValid = IsHandPoseValid(_rightHand, Hand.Right);
             Fill(_txRight,
-                _rightHand != null ? _rightHand.position : Vector3.zero,
-                _rightHand != null ? _rightHand.rotation : Quaternion.identity);
+                rightHandValid ? _rightHand.position : Vector3.zero,
+                rightHandValid ? _rightHand.rotation : Quaternion.identity);
             _tx.rightHand = _txRight;
 
+            var leftHandValid = IsHandPoseValid(_leftHand, Hand.Left);
             Fill(_txLeft,
-                _leftHand != null ? _leftHand.position : Vector3.zero,
-                _leftHand != null ? _leftHand.rotation : Quaternion.identity);
+                leftHandValid ? _leftHand.position : Vector3.zero,
+                leftHandValid ? _leftHand.rotation : Quaternion.identity);
             _tx.leftHand = _txLeft;
 
             // Virtuals: reuse pre-allocated TransformData instances.
@@ -335,7 +394,9 @@ namespace Styly.NetSync
         internal void SetTransformData(ClientTransformData data)
         {
             if (IsLocalAvatar) { return; }
+            if (data == null) { return; }
 
+            ApplyRemoteHandVisibility(data);
             _transformApplier.AddSnapshot(data);
 
             PhysicalPosition = data.physical != null ? data.physical.GetPosition() : Vector3.zero;
@@ -385,14 +446,120 @@ namespace Styly.NetSync
 
             bool hasHead = _head != null;
             if (hasHead) { flags |= PoseFlags.HeadValid; }
-            if (hasHead && _rightHand != null) { flags |= PoseFlags.RightValid; }
-            if (hasHead && _leftHand != null) { flags |= PoseFlags.LeftValid; }
+            if (hasHead && IsHandPoseValid(_rightHand, Hand.Right)) { flags |= PoseFlags.RightValid; }
+            if (hasHead && IsHandPoseValid(_leftHand, Hand.Left)) { flags |= PoseFlags.LeftValid; }
             if (true) { flags |= PoseFlags.PhysicalValid; }
             if (hasHead && _virtualTransforms != null && _virtualTransforms.Length > 0)
             {
                 flags |= PoseFlags.VirtualsValid;
             }
             return flags;
+        }
+
+        private bool IsHandPoseValid(Transform handTransform, Hand hand)
+        {
+            if (handTransform == null) { return false; }
+
+#if UNITY_EDITOR
+            if (IsLocalAvatar && !XRSettings.isDeviceActive) { return true; }
+#endif
+
+            // TrackedPoseDriver reports this default pose when no hand/controller source is bound.
+            if (IsLocalAvatar && IsDefaultHandPose(handTransform)) { return false; }
+
+            if (hand == Hand.Right) { return _isRightHandPoseValid; }
+            return _isLeftHandPoseValid;
+        }
+
+        private bool IsDefaultHandPose(Transform handTransform)
+        {
+            if (handTransform.position.sqrMagnitude > DefaultHandPosePositionSqrMagnitude) { return false; }
+            if (Quaternion.Angle(handTransform.rotation, Quaternion.identity) > DefaultHandPoseRotationDegrees) { return false; }
+            if (_head != null && _head.position.sqrMagnitude <= DefaultHandPosePositionSqrMagnitude) { return false; }
+            return true;
+        }
+
+        private void CacheInitialHandActiveStates()
+        {
+            _rightHandInitialActiveSelf = _rightHand != null && _rightHand.gameObject.activeSelf;
+            _leftHandInitialActiveSelf = _leftHand != null && _leftHand.gameObject.activeSelf;
+
+            if (_rightHand != null)
+            {
+                CacheInitialHeadRelativePose(
+                    _rightHand,
+                    Hand.Right,
+                    out _rightHandInitialHeadRelativePosition,
+                    out _rightHandInitialHeadRelativeRotation);
+            }
+
+            if (_leftHand != null)
+            {
+                CacheInitialHeadRelativePose(
+                    _leftHand,
+                    Hand.Left,
+                    out _leftHandInitialHeadRelativePosition,
+                    out _leftHandInitialHeadRelativeRotation);
+            }
+        }
+
+        private void CacheInitialHeadRelativePose(
+            Transform targetTransform,
+            Hand hand,
+            out Vector3 headRelativePosition,
+            out Quaternion headRelativeRotation)
+        {
+            if (_head == null || targetTransform == null)
+            {
+                headRelativePosition = GetEditorNoXrDefaultHandOffset(hand);
+                headRelativeRotation = Quaternion.identity;
+                return;
+            }
+
+            headRelativePosition = _head.InverseTransformPoint(targetTransform.position);
+            headRelativeRotation = Quaternion.Inverse(_head.rotation) * targetTransform.rotation;
+
+            // Local avatar prefabs often place editor-only hand trackers at the head origin.
+            // Use a low forward rest pose so fallback hands do not cover the camera.
+            if (headRelativePosition.sqrMagnitude < EditorNoXrHandMinHeadDistanceSqrMagnitude)
+            {
+                headRelativePosition = GetEditorNoXrDefaultHandOffset(hand);
+                headRelativeRotation = Quaternion.identity;
+            }
+        }
+
+        private static Vector3 GetEditorNoXrDefaultHandOffset(Hand hand)
+        {
+            var x = hand == Hand.Right ? EditorNoXrHandHorizontalOffset : -EditorNoXrHandHorizontalOffset;
+            return new Vector3(x, EditorNoXrHandVerticalOffset, EditorNoXrHandForwardOffset);
+        }
+
+        private void ApplyRemoteHandVisibility(ClientTransformData data)
+        {
+            var headValid = data != null && (data.flags & PoseFlags.HeadValid) != 0;
+            var rightValid = headValid && (data.flags & PoseFlags.RightValid) != 0 && data.rightHand != null;
+            var leftValid = headValid && (data.flags & PoseFlags.LeftValid) != 0 && data.leftHand != null;
+
+            ApplyRemoteHandVisibility(_rightHand, _rightHandInitialActiveSelf, rightValid, rightValid ? data.rightHand : null);
+            ApplyRemoteHandVisibility(_leftHand, _leftHandInitialActiveSelf, leftValid, leftValid ? data.leftHand : null);
+        }
+
+        private static void ApplyRemoteHandVisibility(Transform handTransform, bool initialActiveSelf, bool isValid, TransformData handData)
+        {
+            if (handTransform == null) { return; }
+
+            var handObject = handTransform.gameObject;
+            var shouldBeActive = initialActiveSelf && isValid;
+            if (shouldBeActive && !handObject.activeSelf && handData != null)
+            {
+                handTransform.position = handData.GetPosition();
+                handTransform.rotation = handData.GetRotation();
+            }
+
+            if (handObject.activeSelf != shouldBeActive)
+            {
+                handObject.SetActive(shouldBeActive);
+            }
         }
 
         // Handle client variable changes from NetSyncManager
@@ -415,15 +582,35 @@ namespace Styly.NetSync
         /// </summary>
         internal void NotifyHandTrackingStateChanged(Hand hand, bool isTracking)
         {
+            SetHandPoseValidity(hand, isTracking);
+
             if (isTracking)
             {
                 Debug.Log($"[NetSyncAvatar] {hand} hand tracking restored");
-                OnHandTrackingRestored?.Invoke(hand);
+                if (OnHandTrackingRestored != null)
+                {
+                    OnHandTrackingRestored.Invoke(hand);
+                }
             }
             else
             {
                 Debug.Log($"[NetSyncAvatar] {hand} hand tracking lost");
-                OnHandTrackingLost?.Invoke(hand);
+                if (OnHandTrackingLost != null)
+                {
+                    OnHandTrackingLost.Invoke(hand);
+                }
+            }
+        }
+
+        internal void SetHandPoseValidity(Hand hand, bool isValid)
+        {
+            if (hand == Hand.Right)
+            {
+                _isRightHandPoseValid = isValid;
+            }
+            else
+            {
+                _isLeftHandPoseValid = isValid;
             }
         }
 
