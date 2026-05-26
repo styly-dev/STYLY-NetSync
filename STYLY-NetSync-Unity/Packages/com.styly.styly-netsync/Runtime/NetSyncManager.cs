@@ -279,6 +279,46 @@ namespace Styly.NetSync
 
         #region === Reference Frames ===
         /// <summary>
+        /// The reference frame id currently attached to the local avatar, or null when detached.
+        /// </summary>
+        public string LocalReferenceFrameId
+        {
+            get
+            {
+                if (_referenceFrameManager == null)
+                {
+                    return null;
+                }
+
+                return _referenceFrameManager.LocalFrameId;
+            }
+        }
+
+        /// <summary>
+        /// True when the local avatar is currently sending poses in a reference frame's local coordinates.
+        /// </summary>
+        public bool IsLocalAvatarAttachedToReferenceFrame
+        {
+            get
+            {
+                return _referenceFrameManager != null && _referenceFrameManager.HasLocalFrame;
+            }
+        }
+
+        /// <summary>
+        /// True when the local avatar is currently attached to the specified reference frame id.
+        /// </summary>
+        public bool IsLocalAvatarAttachedToReferenceFrameId(string frameId)
+        {
+            if (_referenceFrameManager == null || string.IsNullOrEmpty(frameId))
+            {
+                return false;
+            }
+
+            return _referenceFrameManager.HasLocalFrame && _referenceFrameManager.LocalFrameId == frameId;
+        }
+
+        /// <summary>
         /// Register a scene-stable reference frame used by protocol v5 reference-frame-local avatar poses.
         /// The same frame id must resolve to the corresponding local Transform on every client.
         /// </summary>
