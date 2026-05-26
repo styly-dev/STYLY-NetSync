@@ -391,6 +391,8 @@ namespace Styly.NetSync
 
         public void HandleClientVariableSync(Dictionary<string, object> data)
         {
+            // Each included client number is a full authoritative snapshot.
+            // Missing keys are removed from the local cache for that client.
             // Mark that we've received initial sync
             // Note: If sync messages arrive exactly at timeout, this takes precedence over timeout mechanism
             if (!_hasReceivedInitialSync)
@@ -442,14 +444,21 @@ namespace Styly.NetSync
                         {
                             if (!nextClientVars.ContainsKey(oldEntry.Key))
                             {
-                                _lastSentClient.Remove((clientNo, oldEntry.Key));
+                                var removedKey = (clientNo, oldEntry.Key);
+                                if (_lastSentClient.TryGetValue(removedKey, out var lastSent))
+                                {
+                                    ClearPendingClientIfMatches(removedKey, lastSent);
+                                }
+                                _lastSentClient.Remove(removedKey);
                                 OnClientVariableChanged?.Invoke(clientNo, oldEntry.Key, oldEntry.Value, null);
                             }
                         }
 
                         foreach (var newEntry in nextClientVars)
                         {
-                            _lastSentClient[(clientNo, newEntry.Key)] = newEntry.Value;
+                            var key = (clientNo, newEntry.Key);
+                            _lastSentClient[key] = newEntry.Value;
+                            ClearPendingClientIfMatches(key, newEntry.Value);
                             var oldValue = oldClientVars.TryGetValue(newEntry.Key, out var existing) ? existing : null;
                             if (!string.Equals(oldValue, newEntry.Value, StringComparison.Ordinal))
                             {
@@ -625,6 +634,16 @@ namespace Styly.NetSync
             }
 
             return allFlushed;
+        }
+
+        private void ClearPendingClientIfMatches((int targetClientNo, string name) key, string value)
+        {
+            if (_pendingClient.TryGetValue(key, out var pendingValue) &&
+                string.Equals(pendingValue, value, StringComparison.Ordinal))
+            {
+                _pendingClient.Remove(key);
+                _dueClient.Remove(key);
+            }
         }
 
         /// <summary>

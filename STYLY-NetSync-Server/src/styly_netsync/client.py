@@ -1027,7 +1027,11 @@ class net_sync_manager:
             logger.error(f"Error processing global var sync: {e}")
 
     def _process_client_var_sync(self, msg_data: dict[str, Any]) -> None:
-        """Process client variable sync."""
+        """Process client variable sync.
+
+        Each included client number is a full authoritative snapshot. Missing
+        keys are removed from the local cache for that client.
+        """
         try:
             client_variables = msg_data.get("clientVariables", {})
 

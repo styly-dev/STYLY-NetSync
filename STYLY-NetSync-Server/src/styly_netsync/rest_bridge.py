@@ -403,7 +403,7 @@ def create_app(
         client_no, deleted_count = server.delete_client_variables_for_device(
             room_id, device_id
         )
-        return {"clientNo": client_no, "deleted": deleted_count}
+        return {"clientNo": client_no, "deletedCount": deleted_count}
 
     @app.delete("/v1/rooms/{room_id}/devices/{device_id}/client-variables/{name}")
     def delete_client_variable(
@@ -417,7 +417,7 @@ def create_app(
         client_no, deleted_count = server.delete_client_variables_for_device(
             room_id, device_id, name
         )
-        return {"clientNo": client_no, "deleted": deleted_count > 0}
+        return {"clientNo": client_no, "deletedCount": deleted_count}
 
     return app
 

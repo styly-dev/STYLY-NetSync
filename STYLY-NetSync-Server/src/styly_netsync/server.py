@@ -1796,6 +1796,8 @@ class NetSyncServer:
         """Build a serialized client-variable sync payload for the given room.
 
         Returns None when there are no mapped clients to sync.
+        Each included client number is a full authoritative snapshot. An empty
+        variable list means receivers must clear local variables for that client.
         Caller must hold ``_rooms_lock``.
         """
         if room_id not in self.client_variables:

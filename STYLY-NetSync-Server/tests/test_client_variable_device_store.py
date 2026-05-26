@@ -51,6 +51,34 @@ class TestServerClientVariableDeviceStore:
         assert server.client_variables["room1"]["device-a"]["score"]["value"] == "100"
         assert 7 not in server.client_variables["room1"]
 
+    def test_client_variables_are_isolated_by_device_id(
+        self, server: NetSyncServer
+    ) -> None:
+        _map_device(server, "room1", "device-a", 7)
+        _map_device(server, "room1", "device-b", 8)
+
+        server._apply_client_var_set("room1", 2, 7, "score", "100", time.time())
+        server._apply_client_var_set("room1", 2, 8, "score", "200", time.time())
+
+        assert server.client_variables["room1"]["device-a"]["score"]["value"] == "100"
+        assert server.client_variables["room1"]["device-b"]["score"]["value"] == "200"
+
+        payload = server._build_client_var_sync_payload("room1")
+        assert payload is not None
+        client_variables = _decode_client_variables(payload)
+        assert client_variables["7"][0]["value"] == "100"
+        assert client_variables["8"][0]["value"] == "200"
+
+    def test_server_upsert_merges_without_replacing_device_variables(
+        self, server: NetSyncServer
+    ) -> None:
+        server.upsert_client_variables_for_device("room1", "device-a", {"a": "1"})
+        server.upsert_client_variables_for_device("room1", "device-a", {"b": "2"})
+
+        _, variables = server.get_client_variables_for_device("room1", "device-a")
+
+        assert variables == {"a": "1", "b": "2"}
+
     def test_sync_payload_keeps_client_no_wire_format(
         self, server: NetSyncServer
     ) -> None:
@@ -90,6 +118,23 @@ class TestServerClientVariableDeviceStore:
             == "exp-1"
         )
         assert server._build_client_var_sync_payload("room1") is None
+
+    def test_queued_variables_sync_when_unmapped_device_joins(
+        self, server: NetSyncServer
+    ) -> None:
+        server.upsert_client_variables_for_device(
+            "room1", "device-a", {"experience-id": "exp-1"}
+        )
+        server._send_ctrl_to_room_via_router.reset_mock()
+
+        server._handle_client_transform(b"ident-a", "room1", {"deviceId": "device-a"})
+
+        server._send_ctrl_to_room_via_router.assert_called_once()
+        room_id, payload = server._send_ctrl_to_room_via_router.call_args.args
+        assert room_id == "room1"
+        client_variables = _decode_client_variables(payload)
+        assert client_variables["1"][0]["name"] == "experience-id"
+        assert client_variables["1"][0]["value"] == "exp-1"
 
     def test_expired_device_cleanup_removes_client_variables(
         self, server: NetSyncServer
@@ -147,6 +192,25 @@ class TestRestClientVariableDeviceStore:
             "variables": {"experience-id": "exp-1"},
         }
 
+    def test_post_merges_without_replacing_existing_device_variables(
+        self, server: NetSyncServer
+    ) -> None:
+        tc = self._client(server)
+
+        first = tc.post(
+            "/v1/rooms/room1/devices/device-a/client-variables",
+            json={"variables": {"a": "1"}},
+        )
+        second = tc.post(
+            "/v1/rooms/room1/devices/device-a/client-variables",
+            json={"variables": {"b": "2"}},
+        )
+        get = tc.get("/v1/rooms/room1/devices/device-a/client-variables")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert get.json()["variables"] == {"a": "1", "b": "2"}
+
     def test_post_mapped_device_applies_and_broadcasts(
         self, server: NetSyncServer
     ) -> None:
@@ -193,7 +257,7 @@ class TestRestClientVariableDeviceStore:
 
         delete_one = tc.delete("/v1/rooms/room1/devices/device-a/client-variables/a")
         assert delete_one.status_code == 200
-        assert delete_one.json() == {"clientNo": 7, "deleted": True}
+        assert delete_one.json() == {"clientNo": 7, "deletedCount": 1}
         _, payload = server._send_ctrl_to_room_via_router.call_args.args
         client_variables = _decode_client_variables(payload)
         assert [var["name"] for var in client_variables["7"]] == ["b"]
@@ -201,10 +265,35 @@ class TestRestClientVariableDeviceStore:
         server._send_ctrl_to_room_via_router.reset_mock()
         delete_all = tc.delete("/v1/rooms/room1/devices/device-a/client-variables")
         assert delete_all.status_code == 200
-        assert delete_all.json() == {"clientNo": 7, "deleted": 1}
+        assert delete_all.json() == {"clientNo": 7, "deletedCount": 1}
         _, payload = server._send_ctrl_to_room_via_router.call_args.args
         client_variables = _decode_client_variables(payload)
         assert client_variables["7"] == []
+
+    def test_delete_unmapped_device_removes_without_broadcast(
+        self, server: NetSyncServer
+    ) -> None:
+        server.upsert_client_variables_for_device(
+            "room1", "device-a", {"a": "1", "b": "2"}
+        )
+        server._send_ctrl_to_room_via_router.reset_mock()
+        tc = self._client(server)
+
+        delete_one = tc.delete("/v1/rooms/room1/devices/device-a/client-variables/a")
+        delete_all = tc.delete("/v1/rooms/room1/devices/device-a/client-variables")
+
+        assert delete_one.status_code == 200
+        assert delete_one.json() == {"clientNo": None, "deletedCount": 1}
+        assert delete_all.status_code == 200
+        assert delete_all.json() == {"clientNo": None, "deletedCount": 1}
+        server._send_ctrl_to_room_via_router.assert_not_called()
+
+    def test_delete_without_injected_server_returns_501(self) -> None:
+        tc = TestClient(create_app("localhost", 5555, 5556))
+
+        response = tc.delete("/v1/rooms/room1/devices/device-a/client-variables")
+
+        assert response.status_code == 501
 
     def test_post_too_many_client_variables_returns_409(
         self, server: NetSyncServer
