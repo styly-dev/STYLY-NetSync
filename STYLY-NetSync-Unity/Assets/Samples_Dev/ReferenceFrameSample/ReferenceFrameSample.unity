@@ -344,6 +344,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 321923814}
+  - component: {fileID: 321923815}
   m_Layer: 0
   m_Name: Moving Reference Frame (reference-frame-sample/platform-a)
   m_TagString: Untagged
@@ -373,6 +374,21 @@ Transform:
   - {fileID: 1553544324}
   m_Father: {fileID: 598259758}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &321923815
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 321923813}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _frameId: reference-frame-sample/platform-a
+  _localXRRigRoot: {fileID: 765346943}
+  _carryLocalXRRigWhileAttached: 1
 --- !u!1 &481651554
 GameObject:
   m_ObjectHideFlags: 0
@@ -618,15 +634,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6b384556e8c7d49cca45dd8dbbb9af25, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _frameId: reference-frame-sample/platform-a
+  _rideFrame: {fileID: 321923815}
   _referenceFrame: {fileID: 321923814}
-  _attachOnStart: 1
   _animateFrame: 1
   _motionAmplitude: {x: 0, y: 0.75, z: 2.5}
   _motionPeriodSeconds: 8
   _yawAmplitudeDegrees: 18
-  _riderRoot: {fileID: 765346943}
-  _carryRiderRootWhileAttached: 1
   _statusRenderer: {fileID: 481651555}
   _toggleAttachKey: 32
   _toggleMotionKey: 109

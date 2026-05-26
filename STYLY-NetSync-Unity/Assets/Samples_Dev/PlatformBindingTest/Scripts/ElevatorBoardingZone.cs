@@ -8,8 +8,8 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
     /// Detects when the local player enters or leaves the trigger volume above
     /// an elevator. Detection keys off colliders tagged <c>Player</c> on the
     /// local avatar prefab. Each zone optionally calls
-    /// <see cref="NetSyncManager.AttachLocalAvatarToReferenceFrame(string)"/> so
-    /// receivers reconstruct that avatar in the elevator's reference frame (v5).
+    /// <see cref="NetSyncRideFrame.AttachLocalAvatar"/> so receivers reconstruct
+    /// that avatar in the elevator's ride frame (v5).
     ///
     /// While boarded the rig is moved by the elevator's per-frame delta in
     /// <see cref="LateUpdate"/> rather than parented under the elevator. The
@@ -25,14 +25,14 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
     public class ElevatorBoardingZone : MonoBehaviour
     {
         [Header("Platform")]
-        [SerializeField, Tooltip("Stable platform id — must match on every client running the scene.")]
-        private string _platformId;
-        [SerializeField, Tooltip("If true, AttachLocalAvatarToPlatform is called on board so receivers apply the issue #425 fix. Leave false on the 'raw' elevator to keep the legacy laggy reconstruction visible.")]
+        [SerializeField, Tooltip("If true, NetSyncRideFrame.AttachLocalAvatar is called on board so receivers apply the issue #425 fix. Leave false on the 'raw' elevator to keep the legacy laggy reconstruction visible.")]
         private bool _applyPlatformBinding;
 
         [Header("References")]
         [SerializeField, Tooltip("The elevator GameObject the rig should be parented under while inside the volume. Usually this zone's parent.")]
         private GameObject _elevatorRoot;
+        [SerializeField, Tooltip("Ride frame registered on the elevator root. Fixed elevators attach to this frame; raw elevators keep it register-only.")]
+        private NetSyncRideFrame _rideFrame;
         [SerializeField, Tooltip("Trigger volume that determines whether the rig is on the elevator. World AABB is polled each frame against the rig position.")]
         private BoxCollider _triggerVolume;
 
@@ -62,7 +62,7 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
         private static readonly int _baseColorIdLegacy = Shader.PropertyToID("_Color");
 
         public bool IsBoarded => _boarded;
-        public string PlatformId => _platformId;
+        public string PlatformId => _rideFrame != null ? _rideFrame.FrameId : "";
         public bool AppliesPlatformBinding => _applyPlatformBinding;
         public GameObject ElevatorRoot => _elevatorRoot;
 
@@ -80,11 +80,7 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
             }
             _localRig = xrOrigin.transform;
 
-            var netsync = NetSyncManager.Instance;
-            if (netsync != null && !string.IsNullOrEmpty(_platformId))
-            {
-                netsync.RegisterReferenceFrame(_platformId, _elevatorRoot.transform);
-            }
+            EnsureRideFrame();
 
             if (_glowRenderer == null && _elevatorRoot != null)
             {
@@ -130,9 +126,9 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
             _boarded = true;
             _hasPrevElevatorPose = false; // snapshot on next LateUpdate
 
-            if (_applyPlatformBinding && NetSyncManager.Instance != null)
+            if (_applyPlatformBinding && EnsureRideFrame())
             {
-                NetSyncManager.Instance.AttachLocalAvatarToReferenceFrame(_platformId);
+                _rideFrame.AttachLocalAvatar();
             }
             SetGlow(true);
             UnityEngine.Debug.Log($"[PlatformBindingTest] Boarded {_elevatorRoot.name} (binding={_applyPlatformBinding}).");
@@ -143,9 +139,9 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
             _boarded = false;
             _hasPrevElevatorPose = false;
 
-            if (_applyPlatformBinding && NetSyncManager.Instance != null)
+            if (_applyPlatformBinding && _rideFrame != null)
             {
-                NetSyncManager.Instance.DetachLocalAvatarFromReferenceFrame();
+                _rideFrame.DetachLocalAvatar();
             }
             SetGlow(false);
             UnityEngine.Debug.Log($"[PlatformBindingTest] Unboarded {_elevatorRoot.name}.");
@@ -185,6 +181,27 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
             _matInstance.color = color;
             if (_matInstance.HasProperty(_baseColorIdURP)) { _matInstance.SetColor(_baseColorIdURP, color); }
             if (_matInstance.HasProperty(_baseColorIdLegacy)) { _matInstance.SetColor(_baseColorIdLegacy, color); }
+        }
+
+        private bool EnsureRideFrame()
+        {
+            if (_rideFrame != null)
+            {
+                return true;
+            }
+
+            if (_elevatorRoot != null)
+            {
+                _rideFrame = _elevatorRoot.GetComponent<NetSyncRideFrame>();
+            }
+
+            if (_rideFrame != null)
+            {
+                return true;
+            }
+
+            UnityEngine.Debug.LogWarning("[PlatformBindingTest] ElevatorBoardingZone requires a NetSyncRideFrame on the elevator root.", this);
+            return false;
         }
     }
 }

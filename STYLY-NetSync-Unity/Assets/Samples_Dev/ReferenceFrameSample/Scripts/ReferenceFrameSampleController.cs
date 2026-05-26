@@ -4,20 +4,15 @@ using UnityEngine.XR;
 
 public class ReferenceFrameSampleController : MonoBehaviour
 {
-    [Header("Reference Frame")]
-    [SerializeField] private string _frameId = "reference-frame-sample/platform-a";
+    [Header("Ride Frame")]
+    [SerializeField] private NetSyncRideFrame _rideFrame;
     [SerializeField] private Transform _referenceFrame;
-    [SerializeField] private bool _attachOnStart = true;
 
     [Header("Motion")]
     [SerializeField] private bool _animateFrame = true;
     [SerializeField] private Vector3 _motionAmplitude = new Vector3(0f, 0.75f, 2.5f);
     [SerializeField, Min(0.1f)] private float _motionPeriodSeconds = 8f;
     [SerializeField] private float _yawAmplitudeDegrees = 18f;
-
-    [Header("Local Rider Simulation")]
-    [SerializeField] private Transform _riderRoot;
-    [SerializeField] private bool _carryRiderRootWhileAttached = true;
 
     [Header("Status")]
     [SerializeField] private Renderer _statusRenderer;
@@ -27,11 +22,6 @@ public class ReferenceFrameSampleController : MonoBehaviour
 
     private Vector3 _initialFrameLocalPosition;
     private Quaternion _initialFrameLocalRotation;
-    private Vector3 _riderFrameLocalPosition;
-    private Quaternion _riderFrameLocalRotation = Quaternion.identity;
-    private bool _hasRiderFramePose;
-    private bool _isRegistered;
-    private bool _isAttached;
     private bool _wasRightControllerAPressed;
     private GUIStyle _boxStyle;
     private GUIStyle _titleStyle;
@@ -40,6 +30,7 @@ public class ReferenceFrameSampleController : MonoBehaviour
 
     private void Awake()
     {
+        ResolveReferenceFrame();
         if (_referenceFrame != null)
         {
             _initialFrameLocalPosition = _referenceFrame.localPosition;
@@ -49,37 +40,15 @@ public class ReferenceFrameSampleController : MonoBehaviour
 
     private void Start()
     {
-        CacheRiderFramePose();
-        RegisterReferenceFrame();
-
-        if (_attachOnStart)
-        {
-            AttachLocalAvatar();
-        }
-        else
-        {
-            UpdateStatusColor();
-        }
+        EnsureRideFrame();
+        UpdateStatusColor();
     }
 
     private void OnDisable()
     {
-        var manager = NetSyncManager.Instance;
-        if (manager == null)
+        if (_rideFrame != null && _rideFrame.IsLocalAvatarAttached)
         {
-            return;
-        }
-
-        if (_isAttached)
-        {
-            manager.DetachLocalAvatarFromReferenceFrame();
-            _isAttached = false;
-        }
-
-        if (_isRegistered)
-        {
-            manager.UnregisterReferenceFrame(_frameId);
-            _isRegistered = false;
+            _rideFrame.DetachLocalAvatar();
         }
     }
 
@@ -99,11 +68,6 @@ public class ReferenceFrameSampleController : MonoBehaviour
     private void LateUpdate()
     {
         UpdateReferenceFrameMotion();
-
-        if (_carryRiderRootWhileAttached && _isAttached)
-        {
-            UpdateRiderRootPose();
-        }
     }
 
     private void OnGUI()
@@ -115,12 +79,12 @@ public class ReferenceFrameSampleController : MonoBehaviour
         GUILayout.BeginArea(new Rect(24, 24, width, height), _boxStyle);
         GUILayout.Label("Reference Frame Sample", _titleStyle);
         GUILayout.Space(8f);
-        GUILayout.Label("Frame ID: " + _frameId, _labelStyle);
-        GUILayout.Label("Attachment: " + (_isAttached ? "Attached" : "Detached"), _labelStyle);
+        GUILayout.Label("Frame ID: " + GetFrameIdLabel(), _labelStyle);
+        GUILayout.Label("Attachment: " + (IsAttached() ? "Attached" : "Detached"), _labelStyle);
         GUILayout.Label("Motion: " + (_animateFrame ? "Running" : "Paused"), _labelStyle);
         GUILayout.Space(12f);
 
-        string attachLabel = _isAttached
+        string attachLabel = IsAttached()
             ? "Detach Local Avatar (Space / Right A)"
             : "Attach Local Avatar (Space / Right A)";
         if (GUILayout.Button(attachLabel, _buttonStyle, GUILayout.Height(56f)))
@@ -136,66 +100,33 @@ public class ReferenceFrameSampleController : MonoBehaviour
         GUILayout.EndArea();
     }
 
-    public void RegisterReferenceFrame()
-    {
-        var manager = NetSyncManager.Instance;
-        if (manager == null)
-        {
-            Debug.LogWarning("[ReferenceFrameSample] NetSyncManager is not available.");
-            _isRegistered = false;
-            UpdateStatusColor();
-            return;
-        }
-
-        if (string.IsNullOrEmpty(_frameId) || _referenceFrame == null)
-        {
-            Debug.LogWarning("[ReferenceFrameSample] A frame id and reference frame Transform are required.");
-            _isRegistered = false;
-            UpdateStatusColor();
-            return;
-        }
-
-        _isRegistered = manager.RegisterReferenceFrame(_frameId, _referenceFrame);
-        Debug.Log("[ReferenceFrameSample] RegisterReferenceFrame(" + _frameId + ") => " + _isRegistered);
-        UpdateStatusColor();
-    }
-
     public void AttachLocalAvatar()
     {
-        if (!_isRegistered)
+        if (!EnsureRideFrame())
         {
-            RegisterReferenceFrame();
-        }
-
-        var manager = NetSyncManager.Instance;
-        if (manager == null || !_isRegistered)
-        {
-            _isAttached = false;
             UpdateStatusColor();
             return;
         }
 
-        _isAttached = manager.AttachLocalAvatarToReferenceFrame(_frameId);
-        Debug.Log("[ReferenceFrameSample] AttachLocalAvatarToReferenceFrame(" + _frameId + ") => " + _isAttached);
+        bool attached = _rideFrame.AttachLocalAvatar();
+        Debug.Log("[ReferenceFrameSample] AttachLocalAvatar(" + _rideFrame.FrameId + ") => " + attached);
         UpdateStatusColor();
     }
 
     public void DetachLocalAvatar()
     {
-        var manager = NetSyncManager.Instance;
-        if (manager != null)
+        if (_rideFrame != null)
         {
-            manager.DetachLocalAvatarFromReferenceFrame();
+            _rideFrame.DetachLocalAvatar();
         }
 
-        _isAttached = false;
-        Debug.Log("[ReferenceFrameSample] Detached local avatar from reference frame.");
+        Debug.Log("[ReferenceFrameSample] Detached local avatar from ride frame.");
         UpdateStatusColor();
     }
 
     public void ToggleAttachment()
     {
-        if (_isAttached)
+        if (IsAttached())
         {
             DetachLocalAvatar();
         }
@@ -210,17 +141,53 @@ public class ReferenceFrameSampleController : MonoBehaviour
         _animateFrame = !_animateFrame;
     }
 
-    private void CacheRiderFramePose()
+    private bool EnsureRideFrame()
     {
-        _hasRiderFramePose = false;
-        if (_referenceFrame == null || _riderRoot == null)
+        ResolveReferenceFrame();
+        if (_rideFrame == null)
         {
-            return;
+            if (_referenceFrame != null)
+            {
+                _rideFrame = _referenceFrame.GetComponent<NetSyncRideFrame>();
+            }
         }
 
-        _riderFrameLocalPosition = _referenceFrame.InverseTransformPoint(_riderRoot.position);
-        _riderFrameLocalRotation = Quaternion.Inverse(_referenceFrame.rotation) * _riderRoot.rotation;
-        _hasRiderFramePose = true;
+        if (_rideFrame == null)
+        {
+            Debug.LogWarning("[ReferenceFrameSample] NetSyncRideFrame is required on the moving platform.", this);
+            return false;
+        }
+
+        ResolveReferenceFrame();
+        return true;
+    }
+
+    private void ResolveReferenceFrame()
+    {
+        if (_referenceFrame == null && _rideFrame != null)
+        {
+            _referenceFrame = _rideFrame.transform;
+        }
+
+        if (_rideFrame == null && _referenceFrame != null)
+        {
+            _rideFrame = _referenceFrame.GetComponent<NetSyncRideFrame>();
+        }
+    }
+
+    private bool IsAttached()
+    {
+        return _rideFrame != null && _rideFrame.IsLocalAvatarAttached;
+    }
+
+    private string GetFrameIdLabel()
+    {
+        if (_rideFrame != null && !string.IsNullOrEmpty(_rideFrame.FrameId))
+        {
+            return _rideFrame.FrameId;
+        }
+
+        return "";
     }
 
     private void UpdateReferenceFrameMotion()
@@ -241,17 +208,6 @@ public class ReferenceFrameSampleController : MonoBehaviour
         _referenceFrame.localRotation = _initialFrameLocalRotation * Quaternion.Euler(0f, yaw, 0f);
     }
 
-    private void UpdateRiderRootPose()
-    {
-        if (!_hasRiderFramePose || _referenceFrame == null || _riderRoot == null)
-        {
-            return;
-        }
-
-        _riderRoot.position = _referenceFrame.TransformPoint(_riderFrameLocalPosition);
-        _riderRoot.rotation = _referenceFrame.rotation * _riderFrameLocalRotation;
-    }
-
     private void UpdateStatusColor()
     {
         if (_statusRenderer == null)
@@ -260,11 +216,11 @@ public class ReferenceFrameSampleController : MonoBehaviour
         }
 
         Color color = Color.red;
-        if (_isAttached)
+        if (IsAttached())
         {
             color = Color.green;
         }
-        else if (_isRegistered)
+        else if (_rideFrame != null)
         {
             color = Color.yellow;
         }

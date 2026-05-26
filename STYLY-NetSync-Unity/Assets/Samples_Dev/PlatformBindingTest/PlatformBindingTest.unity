@@ -6098,6 +6098,7 @@ GameObject:
   - component: {fileID: 1201535011}
   - component: {fileID: 1201535010}
   - component: {fileID: 1201535009}
+  - component: {fileID: 1201535014}
   m_Layer: 0
   m_Name: Elevator_Fixed
   m_TagString: Untagged
@@ -6207,6 +6208,21 @@ Transform:
   - {fileID: 1358091152}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1201535014
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1201535008}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _frameId: PlatformBindingTest.Fixed
+  _localXRRigRoot: {fileID: 0}
+  _carryLocalXRRigWhileAttached: 0
 --- !u!1 &1241206116
 GameObject:
   m_ObjectHideFlags: 0
@@ -6252,9 +6268,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 35cda0e85eaf6484eba69f496557587e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _platformId: PlatformBindingTest.Raw
   _applyPlatformBinding: 0
   _elevatorRoot: {fileID: 1719213978}
+  _rideFrame: {fileID: 1719213984}
   _triggerVolume: {fileID: 1241206119}
   _glowRenderer: {fileID: 0}
   _boundColor: {r: 0.2, g: 0.5, b: 1, a: 1}
@@ -6324,9 +6340,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 35cda0e85eaf6484eba69f496557587e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _platformId: PlatformBindingTest.Fixed
   _applyPlatformBinding: 1
   _elevatorRoot: {fileID: 1201535008}
+  _rideFrame: {fileID: 1201535014}
   _triggerVolume: {fileID: 1358091154}
   _glowRenderer: {fileID: 0}
   _boundColor: {r: 0.2, g: 0.5, b: 1, a: 1}
@@ -6600,6 +6616,7 @@ GameObject:
   - component: {fileID: 1719213981}
   - component: {fileID: 1719213980}
   - component: {fileID: 1719213979}
+  - component: {fileID: 1719213984}
   m_Layer: 0
   m_Name: Elevator_Raw
   m_TagString: Untagged
@@ -6709,6 +6726,21 @@ Transform:
   - {fileID: 1241206117}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1719213984
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1719213978}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  _frameId: PlatformBindingTest.Raw
+  _localXRRigRoot: {fileID: 0}
+  _carryLocalXRRigWhileAttached: 0
 --- !u!1 &1777788036
 GameObject:
   m_ObjectHideFlags: 0
