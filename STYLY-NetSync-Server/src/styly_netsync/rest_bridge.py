@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 MAX_NAME = 64
 MAX_VALUE = 1024
-MAX_CLIENT_VARS = 20
 MAX_GLOBAL_VARS = 100
 
 # Constrained string types for variable names and values
@@ -32,45 +31,26 @@ class UpsertBody(BaseModel):
     variables: dict[VarName, VarValue] = Field(default_factory=dict)
 
 
-class PreseedStore:
-    """In-memory storage for queued device variables."""
+class ClientVariableServer(Protocol):
+    """Server-side operations used by REST client-variable endpoints."""
 
-    def __init__(self) -> None:
-        self._data: dict[tuple[str, str], dict[str, str]] = {}
-        self._lock = threading.RLock()
+    def upsert_client_variables_for_device(
+        self, room_id: str, device_id: str, variables: dict[str, str]
+    ) -> tuple[int | None, dict[str, str]]:
+        """Upsert client variables and return mapping plus per-key states."""
+        ...
 
-    def upsert(
-        self, room_id: str, device_id: str, kvs: dict[str, str]
-    ) -> dict[str, str]:
-        """Merge incoming key-values for a device within a room."""
-        with self._lock:
-            key = (room_id, device_id)
-            current = self._data.get(key, {})
-            new_keys = [name for name in kvs if name not in current]
-            if len(current) + len(new_keys) > MAX_CLIENT_VARS:
-                raise ValueError(
-                    f"Too many client variables (> {MAX_CLIENT_VARS}) for device {device_id}"
-                )
-            current.update(kvs)
-            self._data[key] = current
-            return dict(current)
+    def get_client_variables_for_device(
+        self, room_id: str, device_id: str
+    ) -> tuple[int | None, dict[str, str]]:
+        """Return the mapped client number and current variables."""
+        ...
 
-    def get(self, room_id: str, device_id: str) -> dict[str, str]:
-        """Return a copy of stored variables for a device."""
-        with self._lock:
-            return dict(self._data.get((room_id, device_id), {}))
-
-    def all_for_room(self, room_id: str) -> dict[str, dict[str, str]]:
-        """Return all stored variables for the given room."""
-        with self._lock:
-            result: dict[str, dict[str, str]] = {}
-            for (stored_room, device_id), variables in self._data.items():
-                if stored_room == room_id:
-                    result[device_id] = dict(variables)
-            return result
-
-
-store = PreseedStore()
+    def delete_client_variables_for_device(
+        self, room_id: str, device_id: str, name: str | None = None
+    ) -> tuple[int | None, int]:
+        """Delete client variables and return mapping plus deletion count."""
+        ...
 
 
 class GlobalVarStore:
@@ -157,7 +137,6 @@ class RoomBridge:
                         next_handshake_at = now + 0.5
                 else:
                     try:
-                        self.flush_all_known_mappings()
                         self.flush_global_vars()
                     except Exception as exc:
                         logger.debug("Flush failed: %s", exc)
@@ -261,14 +240,6 @@ class RoomBridge:
                     applied.add(name)
         return applied
 
-    def flush_all_known_mappings(self) -> None:
-        """Flush queued variables for devices whose client numbers are known."""
-        pending = store.all_for_room(self.room_id)
-        for device_id, kvs in pending.items():
-            client_no = self.get_client_no(device_id)
-            if client_no:
-                self._apply_to_client(client_no, kvs)
-
     def flush_global_vars(self) -> None:
         """Flush queued global variables for this room."""
         pending = global_store.pop(self.room_id)
@@ -304,7 +275,12 @@ class BridgeManager:
             return bridge
 
 
-def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
+def create_app(
+    server_addr: str,
+    dealer_port: int,
+    sub_port: int,
+    server: ClientVariableServer | None = None,
+) -> FastAPI:
     """Create the FastAPI application hosting the REST bridge."""
     app = FastAPI(title="NetSync REST Bridge", version="1.0.0")
 
@@ -329,14 +305,17 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
     def upsert(room_id: str, device_id: str, body: UpsertBody) -> dict[str, object]:
         if not body.variables:
             raise HTTPException(status_code=400, detail="variables must not be empty")
-        try:
-            store.upsert(room_id, device_id, body.variables)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        bridge = manager.get(room_id)
-        statuses = bridge.apply_now_or_queue(device_id, body.variables)
-        client_no = bridge.get_client_no(device_id)
+        if server is not None:
+            try:
+                client_no, statuses = server.upsert_client_variables_for_device(
+                    room_id, device_id, body.variables
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        else:
+            bridge = manager.get(room_id)
+            statuses = bridge.apply_now_or_queue(device_id, body.variables)
+            client_no = bridge.get_client_no(device_id)
 
         return {
             "roomId": room_id,
@@ -387,27 +366,58 @@ def create_app(server_addr: str, dealer_port: int, sub_port: int) -> FastAPI:
 
     @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
     def get_client_variables(room_id: str, device_id: str) -> dict[str, object]:
-        bridge = manager.get(room_id)
-        client_no, variables = bridge.get_client_variables(device_id)
+        if server is not None:
+            client_no, variables = server.get_client_variables_for_device(
+                room_id, device_id
+            )
+        else:
+            bridge = manager.get(room_id)
+            client_no, variables = bridge.get_client_variables(device_id)
         return {"clientNo": client_no, "variables": variables}
 
     @app.get("/v1/rooms/{room_id}/devices/{device_id}/client-variables/{name}")
     def get_client_variable(
         room_id: str, device_id: str, name: VarName
     ) -> dict[str, object]:
-        bridge = manager.get(room_id)
-        client_no, variables = bridge.get_client_variables(device_id)
-        if client_no is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Device '{device_id}' has no client mapping",
+        if server is not None:
+            client_no, variables = server.get_client_variables_for_device(
+                room_id, device_id
             )
+        else:
+            bridge = manager.get(room_id)
+            client_no, variables = bridge.get_client_variables(device_id)
         if name not in variables:
             raise HTTPException(
                 status_code=404,
                 detail=f"Client variable '{name}' not found for device '{device_id}'",
             )
         return {"clientNo": client_no, "value": variables[name]}
+
+    @app.delete("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
+    def delete_client_variables(room_id: str, device_id: str) -> dict[str, object]:
+        if server is None:
+            raise HTTPException(
+                status_code=501,
+                detail="Client variable deletion requires an injected server",
+            )
+        client_no, deleted_count = server.delete_client_variables_for_device(
+            room_id, device_id
+        )
+        return {"clientNo": client_no, "deleted": deleted_count}
+
+    @app.delete("/v1/rooms/{room_id}/devices/{device_id}/client-variables/{name}")
+    def delete_client_variable(
+        room_id: str, device_id: str, name: VarName
+    ) -> dict[str, object]:
+        if server is None:
+            raise HTTPException(
+                status_code=501,
+                detail="Client variable deletion requires an injected server",
+            )
+        client_no, deleted_count = server.delete_client_variables_for_device(
+            room_id, device_id, name
+        )
+        return {"clientNo": client_no, "deleted": deleted_count > 0}
 
     return app
 

@@ -1037,34 +1037,50 @@ class net_sync_manager:
                 except ValueError:
                     continue
 
-                if client_no not in self._client_variables:
-                    self._client_variables[client_no] = {}
+                old_vars = self._client_variables.get(client_no, {})
+                new_vars: dict[str, str] = {}
 
                 for var in variables:
                     name = var.get("name", "")
                     value = var.get("value", "")
-                    old_value = self._client_variables[client_no].get(name)
+                    if name:
+                        new_vars[name] = value
 
-                    self._client_variables[client_no][name] = value
+                changed_events: list[tuple[int, str, str | None, str | None]] = []
+                for name in set(old_vars) - set(new_vars):
+                    changed_events.append((client_no, name, old_vars.get(name), None))
 
+                for name, value in new_vars.items():
+                    old_value = old_vars.get(name)
                     if old_value != value:
-                        with self._lock:
-                            self._stats["nv_updates"] += 1
+                        changed_events.append((client_no, name, old_value, value))
 
-                        event = ("client", client_no, name, old_value, value)
-                        if self._auto_dispatch:
-                            self.on_client_variable_changed.invoke(
-                                client_no, name, old_value, value
-                            )
-                        else:
+                self._client_variables[client_no] = new_vars
+
+                for event_client_no, name, old_value, new_value in changed_events:
+                    with self._lock:
+                        self._stats["nv_updates"] += 1
+
+                    event: tuple[str, int, str, str | None, str | None] = (
+                        "client",
+                        event_client_no,
+                        name,
+                        old_value,
+                        new_value,
+                    )
+                    if self._auto_dispatch:
+                        self.on_client_variable_changed.invoke(
+                            event_client_no, name, old_value, new_value
+                        )
+                    else:
+                        try:
+                            self._nv_queue.put_nowait(event)
+                        except Full:
                             try:
+                                self._nv_queue.get_nowait()
                                 self._nv_queue.put_nowait(event)
-                            except Full:
-                                try:
-                                    self._nv_queue.get_nowait()
-                                    self._nv_queue.put_nowait(event)
-                                except Empty:
-                                    pass
+                            except Empty:
+                                pass
 
         except Exception as e:
             logger.error(f"Error processing client var sync: {e}")

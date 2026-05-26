@@ -415,10 +415,10 @@ namespace Styly.NetSync
 
                         if (variables == null) continue;
 
-                        if (!_clientVariables.ContainsKey(clientNo))
-                            _clientVariables[clientNo] = new Dictionary<string, string>();
-
-                        var clientVars = _clientVariables[clientNo];
+                        var oldClientVars = _clientVariables.TryGetValue(clientNo, out var existingVars)
+                            ? existingVars
+                            : new Dictionary<string, string>();
+                        var nextClientVars = new Dictionary<string, string>();
 
                         foreach (var varObj in variables)
                         {
@@ -431,18 +431,29 @@ namespace Styly.NetSync
 
                                 if (!string.IsNullOrEmpty(name) && value != null)
                                 {
-                                    var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
-                                    // Skip if value is unchanged
-                                    if (string.Equals(oldValue, value, StringComparison.Ordinal))
-                                    {
-                                        continue;
-                                    }
-
-                                    clientVars[name] = value;
-
-                                    // Trigger event only when changed
-                                    OnClientVariableChanged?.Invoke(clientNo, name, oldValue, value);
+                                    nextClientVars[name] = value;
                                 }
+                            }
+                        }
+
+                        _clientVariables[clientNo] = nextClientVars;
+
+                        foreach (var oldEntry in oldClientVars)
+                        {
+                            if (!nextClientVars.ContainsKey(oldEntry.Key))
+                            {
+                                _lastSentClient.Remove((clientNo, oldEntry.Key));
+                                OnClientVariableChanged?.Invoke(clientNo, oldEntry.Key, oldEntry.Value, null);
+                            }
+                        }
+
+                        foreach (var newEntry in nextClientVars)
+                        {
+                            _lastSentClient[(clientNo, newEntry.Key)] = newEntry.Value;
+                            var oldValue = oldClientVars.TryGetValue(newEntry.Key, out var existing) ? existing : null;
+                            if (!string.Equals(oldValue, newEntry.Value, StringComparison.Ordinal))
+                            {
+                                OnClientVariableChanged?.Invoke(clientNo, newEntry.Key, oldValue, newEntry.Value);
                             }
                         }
                     }
