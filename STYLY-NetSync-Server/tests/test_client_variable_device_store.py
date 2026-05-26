@@ -24,6 +24,23 @@ def _map_device(
     server.device_id_last_seen[device_id] = time.monotonic()
 
 
+def _connect_device(
+    server: NetSyncServer,
+    room_id: str,
+    device_id: str,
+    client_no: int,
+    identity: bytes,
+) -> None:
+    _map_device(server, room_id, device_id, client_no)
+    server.rooms[room_id][device_id] = {
+        "identity": identity,
+        "last_update": time.monotonic(),
+        "transform_data": {"clientNo": client_no, "deviceId": device_id},
+        "client_no": client_no,
+        "is_stealth": False,
+    }
+
+
 def _decode_client_variables(payload: bytes) -> dict[str, object]:
     msg_type, data, _ = binary_serializer.deserialize(payload)
     assert msg_type == binary_serializer.MSG_CLIENT_VAR_SYNC
@@ -167,6 +184,58 @@ class TestServerClientVariableDeviceStore:
         assert "device-a" not in server.client_variables["room1"]
         assert 7 not in server.client_transform_body_cache
 
+    def test_client_variable_clear_removes_store_and_pending_writes(
+        self, server: NetSyncServer
+    ) -> None:
+        _connect_device(server, "room1", "device-a", 7, b"ident-a")
+        _connect_device(server, "room1", "device-b", 8, b"ident-b")
+        server.upsert_client_variables_for_device(
+            "room1", "device-a", {"a": "1", "b": "2"}
+        )
+        server.pending_client_nv["room1"][(7, "a")] = (7, "stale", time.time())
+        server.pending_client_nv["room1"][(8, "a")] = (8, "other", time.time())
+        server._send_ctrl_to_room_via_router.reset_mock()
+
+        server._handle_client_var_clear(
+            b"ident-a", "room1", {"senderClientNo": 7, "timestamp": time.time()}
+        )
+
+        assert "device-a" not in server.client_variables["room1"]
+        assert (7, "a") not in server.pending_client_nv["room1"]
+        assert (8, "a") in server.pending_client_nv["room1"]
+        server._send_ctrl_to_room_via_router.assert_called_once()
+        _, payload = server._send_ctrl_to_room_via_router.call_args.args
+        client_variables = _decode_client_variables(payload)
+        assert client_variables["7"] == []
+
+    def test_client_variable_clear_broadcasts_empty_snapshot_when_already_empty(
+        self, server: NetSyncServer
+    ) -> None:
+        _connect_device(server, "room1", "device-a", 7, b"ident-a")
+
+        server._handle_client_var_clear(
+            b"ident-a", "room1", {"senderClientNo": 7, "timestamp": time.time()}
+        )
+
+        server._send_ctrl_to_room_via_router.assert_called_once()
+        _, payload = server._send_ctrl_to_room_via_router.call_args.args
+        client_variables = _decode_client_variables(payload)
+        assert client_variables == {"7": []}
+
+    def test_client_variable_clear_ignores_unmapped_sender(
+        self, server: NetSyncServer
+    ) -> None:
+        _map_device(server, "room1", "device-a", 7)
+        server.upsert_client_variables_for_device("room1", "device-a", {"a": "1"})
+        server._send_ctrl_to_room_via_router.reset_mock()
+
+        server._handle_client_var_clear(
+            b"unknown", "room1", {"senderClientNo": 7, "timestamp": time.time()}
+        )
+
+        assert server.client_variables["room1"]["device-a"]["a"]["value"] == "1"
+        server._send_ctrl_to_room_via_router.assert_not_called()
+
 
 class TestRestClientVariableDeviceStore:
     def _client(self, server: NetSyncServer) -> TestClient:
@@ -288,6 +357,24 @@ class TestRestClientVariableDeviceStore:
         assert delete_all.json() == {"clientNo": None, "deletedCount": 1}
         server._send_ctrl_to_room_via_router.assert_not_called()
 
+    def test_delete_mapped_device_removes_pending_writes(
+        self, server: NetSyncServer
+    ) -> None:
+        _map_device(server, "room1", "device-a", 7)
+        server.upsert_client_variables_for_device("room1", "device-a", {"a": "1"})
+        server.pending_client_nv["room1"][(7, "a")] = (7, "stale", time.time())
+        server._send_ctrl_to_room_via_router.reset_mock()
+        tc = self._client(server)
+
+        delete_one = tc.delete("/v1/rooms/room1/devices/device-a/client-variables/a")
+
+        assert delete_one.status_code == 200
+        assert delete_one.json() == {"clientNo": 7, "deletedCount": 1}
+        assert (7, "a") not in server.pending_client_nv["room1"]
+        _, payload = server._send_ctrl_to_room_via_router.call_args.args
+        client_variables = _decode_client_variables(payload)
+        assert client_variables["7"] == []
+
     def test_delete_without_injected_server_returns_501(self) -> None:
         tc = TestClient(create_app("localhost", 5555, 5556))
 
@@ -341,3 +428,22 @@ class TestPythonClientClientVariableSnapshots:
         assert manager.get_all_client_variables(7) == {"b": "3"}
         assert (7, "a", "1", None) in events
         assert (7, "b", "2", "3") in events
+
+    def test_clear_my_client_variables_clears_local_cache_on_enqueue(self) -> None:
+        manager = net_sync_manager()
+        manager._running = True
+        manager._dealer_socket = object()
+        manager._client_no = 7
+        manager._client_variables[7] = {"a": "1"}
+        manager._enqueue_control = MagicMock(return_value=True)  # type: ignore[method-assign]
+        events: list[tuple[int, str, str | None, str | None]] = []
+        manager.on_client_variable_changed.add_listener(
+            lambda client_no, name, old_value, new_value: events.append(
+                (client_no, name, old_value, new_value)
+            )
+        )
+
+        assert manager.clear_my_client_variables() is True
+
+        assert manager.get_all_client_variables(7) == {}
+        assert events == [(7, "a", "1", None)]

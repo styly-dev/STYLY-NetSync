@@ -1078,3 +1078,17 @@ class TestRPCMessageSerialization:
         _, result, _ = binary_serializer.deserialize(serialized)
 
         assert result["functionName"] == "OnDamage_テスト"
+
+
+class TestClientVariableClearSerialization:
+    """Tests for client variable clear serialization/deserialization."""
+
+    def test_roundtrip_client_variable_clear(self) -> None:
+        """Client variable clear message round-trips correctly."""
+        data = {"senderClientNo": 7, "timestamp": 1234.5}
+
+        serialized = binary_serializer.serialize_client_var_clear(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_CLIENT_VAR_CLEAR
+        assert result == data

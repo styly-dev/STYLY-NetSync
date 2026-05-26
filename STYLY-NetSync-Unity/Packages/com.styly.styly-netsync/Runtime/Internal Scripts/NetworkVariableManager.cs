@@ -312,6 +312,39 @@ namespace Styly.NetSync
             }
         }
 
+        public bool ClearMyClientVariables(string roomId)
+        {
+            var clientNo = _netSyncManager != null ? _netSyncManager.ClientNo : 0;
+            if (clientNo <= 0)
+            {
+                return false;
+            }
+
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+            var data = new Dictionary<string, object>
+            {
+                ["senderClientNo"] = clientNo,
+                ["timestamp"] = timestamp
+            };
+
+            try
+            {
+                var payload = BinarySerializer.SerializeClientVarClear(data);
+                var sent = _connectionManager.TryEnqueueControl(roomId, payload);
+                if (sent)
+                {
+                    ClearLocalClientVariables(clientNo);
+                    ClearPendingClientVariables(clientNo);
+                }
+                return sent;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to clear client variables: {ex.Message}");
+                return false;
+            }
+        }
+
         public string GetClientVariable(string name, int clientNo, string defaultValue = null)
         {
             if (!_hasReceivedInitialSync)
@@ -643,6 +676,64 @@ namespace Styly.NetSync
             {
                 _pendingClient.Remove(key);
                 _dueClient.Remove(key);
+            }
+        }
+
+        private void ClearLocalClientVariables(int clientNo)
+        {
+            if (!_clientVariables.TryGetValue(clientNo, out var clientVars))
+            {
+                _clientVariables[clientNo] = new Dictionary<string, string>();
+                return;
+            }
+
+            var oldVars = new Dictionary<string, string>(clientVars);
+            _clientVariables[clientNo] = new Dictionary<string, string>();
+            foreach (var entry in oldVars)
+            {
+                OnClientVariableChanged?.Invoke(clientNo, entry.Key, entry.Value, null);
+            }
+        }
+
+        private void ClearPendingClientVariables(int clientNo)
+        {
+            var keysToRemove = new HashSet<(int, string)>();
+
+            foreach (var key in _pendingClient.Keys)
+            {
+                if (key.Item1 == clientNo)
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+            foreach (var key in _dueClient.Keys)
+            {
+                if (key.Item1 == clientNo)
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+            foreach (var key in _lastSentClient.Keys)
+            {
+                if (key.Item1 == clientNo)
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+            foreach (var key in _nextAllowedClient.Keys)
+            {
+                if (key.Item1 == clientNo)
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+
+            foreach (var key in keysToRemove)
+            {
+                _pendingClient.Remove(key);
+                _dueClient.Remove(key);
+                _lastSentClient.Remove(key);
+                _nextAllowedClient.Remove(key);
             }
         }
 

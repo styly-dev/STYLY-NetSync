@@ -27,6 +27,7 @@ namespace Styly.NetSync
         public const byte MSG_OBJECT_OWNERSHIP_REQUEST = 15; // Client → Server: RequestOwnership/ReleaseOwnership
         public const byte MSG_OBJECT_OWNERSHIP_CHANGED = 16; // Server → Clients: ownership changed
         public const byte MSG_OBJECT_OWNERSHIP_REJECTED = 17; // Server → Client: request rejected
+        public const byte MSG_CLIENT_VAR_CLEAR = 18; // Clear all client variables for the sender
 
         // Protocol v5 pose encoding constants
         private const float ABS_POS_SCALE = 0.01f;
@@ -638,7 +639,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_OBJECT_OWNERSHIP_REJECTED)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_CLIENT_VAR_CLEAR)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
@@ -1066,6 +1067,25 @@ namespace Styly.NetSync
             // Timestamp (8 bytes double)
             var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
             writer.Write(timestamp);
+        }
+
+        /// <summary>
+        /// Serialize client variable clear message.
+        /// </summary>
+        public static byte[] SerializeClientVarClear(Dictionary<string, object> data)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+
+            writer.Write(MSG_CLIENT_VAR_CLEAR);
+
+            var senderClientNo = data.TryGetValue("senderClientNo", out var senderObj) ? Convert.ToUInt16(senderObj) : (ushort)0;
+            writer.Write(senderClientNo);
+
+            var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
+            writer.Write(timestamp);
+
+            return ms.ToArray();
         }
 
         /// <summary>

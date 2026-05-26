@@ -24,6 +24,7 @@ MSG_ROOM_OBJECTS = 14  # Server → Clients (PUB): room object states
 MSG_OBJECT_OWNERSHIP_REQUEST = 15  # Client → Server: RequestOwnership/ReleaseOwnership
 MSG_OBJECT_OWNERSHIP_CHANGED = 16  # Server → Clients (ROUTER): ownership changed
 MSG_OBJECT_OWNERSHIP_REJECTED = 17  # Server → Client (ROUTER): request rejected
+MSG_CLIENT_VAR_CLEAR = 18  # Clear all client variables for the sender
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -765,6 +766,26 @@ def serialize_client_var_set(data: dict[str, Any]) -> bytes:
     return bytes(buffer)
 
 
+def serialize_client_var_clear(data: dict[str, Any]) -> bytes:
+    """Serialize client variable clear message.
+
+    Args:
+        data: Dictionary with senderClientNo and timestamp.
+    """
+    buffer = bytearray()
+
+    # Message type
+    buffer.append(MSG_CLIENT_VAR_CLEAR)
+
+    # Sender client number (2 bytes)
+    buffer.extend(struct.pack("<H", data.get("senderClientNo", 0)))
+
+    # Timestamp (8 bytes double)
+    buffer.extend(struct.pack("<d", data.get("timestamp", 0.0)))
+
+    return bytes(buffer)
+
+
 def serialize_client_var_sync(data: dict[str, Any]) -> bytes:
     """Serialize client variable sync message
 
@@ -811,10 +832,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if (
-        message_type < MSG_CLIENT_TRANSFORM
-        or message_type > MSG_OBJECT_OWNERSHIP_REJECTED
-    ):
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_CLIENT_VAR_CLEAR:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -843,6 +861,8 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_set(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_SYNC:
             return message_type, _deserialize_client_var_sync(data, offset), b""
+        elif message_type == MSG_CLIENT_VAR_CLEAR:
+            return message_type, _deserialize_client_var_clear(data, offset), b""
         elif message_type == MSG_OBJECT_POSE:
             return message_type, _deserialize_object_pose(data, offset), b""
         elif message_type == MSG_ROOM_OBJECTS:
@@ -897,15 +917,11 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     moving_floor_local = bool(flags & POSE_FLAG_MOVING_FLOOR_LOCAL)
 
     physical = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, True)
-    head = _create_transform_dict(
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local
-    )
+    head = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local)
     right = _create_transform_dict(
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local
     )
-    left = _create_transform_dict(
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local
-    )
+    left = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local)
 
     head_pos = (0.0, 0.0, 0.0)
     head_rot = (0.0, 0.0, 0.0, 1.0)
@@ -1281,6 +1297,20 @@ def _deserialize_client_var_set(data: bytes, offset: int) -> dict[str, Any]:
     # Timestamp (8 bytes double)
     result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
     offset += 8
+
+    return result
+
+
+def _deserialize_client_var_clear(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize client variable clear message."""
+    result: dict[str, Any] = {}
+
+    # Sender client number (2 bytes)
+    result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    # Timestamp (8 bytes double)
+    result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
 
     return result
 

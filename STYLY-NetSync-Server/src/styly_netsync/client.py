@@ -1255,6 +1255,28 @@ class net_sync_manager:
             logger.error(f"Error queueing client variable: {e}")
             return False
 
+    def clear_my_client_variables(self) -> bool:
+        """Queue a request to clear this client's variables on the server."""
+        if not self._running or not self._dealer_socket or self._client_no is None:
+            return False
+
+        try:
+            clear_data = {
+                "senderClientNo": self._client_no,
+                "timestamp": time.time(),
+            }
+            message = binary_serializer.serialize_client_var_clear(clear_data)
+            sent = self._enqueue_control(
+                self._room, message, msg_type="client_variable_clear"
+            )
+            if sent:
+                self._clear_local_client_variables(self._client_no)
+            return sent
+
+        except Exception as e:
+            logger.error(f"Error queueing client variable clear: {e}")
+            return False
+
     def _enqueue_control(
         self, room_id: str, payload: bytes, msg_type: str = "control"
     ) -> bool:
@@ -1313,6 +1335,34 @@ class net_sync_manager:
     def get_all_client_variables(self, client_no: int) -> dict[str, str]:
         """Return a copy of all variables for the given client."""
         return self._client_variables.get(client_no, {}).copy()
+
+    def _clear_local_client_variables(self, client_no: int) -> None:
+        """Clear local client-variable cache for a client and emit events."""
+        old_vars = self._client_variables.get(client_no, {}).copy()
+        self._client_variables[client_no] = {}
+
+        for name, old_value in old_vars.items():
+            with self._lock:
+                self._stats["nv_updates"] += 1
+
+            event: tuple[str, int, str, str | None, str | None] = (
+                "client",
+                client_no,
+                name,
+                old_value,
+                None,
+            )
+            if self._auto_dispatch:
+                self.on_client_variable_changed.invoke(client_no, name, old_value, None)
+            else:
+                try:
+                    self._nv_queue.put_nowait(event)
+                except Full:
+                    try:
+                        self._nv_queue.get_nowait()
+                        self._nv_queue.put_nowait(event)
+                    except Full:
+                        pass
 
     def is_client_stealth_mode(self, client_no: int) -> bool:
         """Check if the client is in stealth mode."""

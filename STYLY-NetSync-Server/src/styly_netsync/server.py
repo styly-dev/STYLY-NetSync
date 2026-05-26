@@ -1095,6 +1095,10 @@ class NetSyncServer:
                                 # Buffer client variable set request (no rate limit drops)
                                 self._buffer_client_var_set(room_id, data)
                                 self._monitor_nv_sliding_window(room_id)
+                            elif msg_type == binary_serializer.MSG_CLIENT_VAR_CLEAR:
+                                self._handle_client_var_clear(
+                                    client_identity, room_id, data
+                                )
                             elif msg_type == binary_serializer.MSG_OBJECT_POSE:
                                 sender_device_id = self._get_device_id_from_identity(
                                     client_identity, room_id
@@ -1742,10 +1746,76 @@ class NetSyncServer:
             else:
                 deleted_count = 0
 
-        if client_no is not None and deleted_count > 0:
+            pending_removed = self._remove_pending_client_vars_locked(
+                room_id, client_no, name
+            )
+
+        if client_no is not None and (deleted_count > 0 or pending_removed > 0):
             self._broadcast_client_var_sync(room_id, {client_no})
 
         return client_no, deleted_count
+
+    def _remove_pending_client_vars_locked(
+        self, room_id: str, client_no: int | None, name: str | None = None
+    ) -> int:
+        """Remove buffered client-variable writes for a client.
+
+        Caller must hold ``_rooms_lock``.
+        """
+        if client_no is None:
+            return 0
+
+        pending = self.pending_client_nv.get(room_id)
+        if not pending:
+            return 0
+
+        keys_to_remove = [
+            key
+            for key in pending
+            if key[0] == client_no and (name is None or key[1] == name)
+        ]
+        for key in keys_to_remove:
+            del pending[key]
+        return len(keys_to_remove)
+
+    def _handle_client_var_clear(
+        self, client_identity: bytes, room_id: str, data: dict[str, Any]
+    ) -> None:
+        """Clear all client variables for the sending client."""
+        with self._rooms_lock:
+            device_id = self._get_device_id_from_identity(client_identity, room_id)
+            if device_id is None:
+                logger.warning(
+                    "Client variable clear ignored: sender is not mapped in room %s",
+                    room_id,
+                )
+                return
+
+            client_no = self.room_device_id_to_client_no.get(room_id, {}).get(device_id)
+            if client_no is None:
+                logger.warning(
+                    "Client variable clear ignored: device %s is not mapped in room %s",
+                    device_id,
+                    room_id,
+                )
+                return
+
+            room_vars = self.client_variables.get(room_id, {})
+            deleted_count = len(room_vars.get(device_id, {}))
+            room_vars.pop(device_id, None)
+            pending_removed = self._remove_pending_client_vars_locked(
+                room_id, client_no
+            )
+
+        logger.info(
+            "Cleared client variables: room=%s, client=%s, device=%s, deleted=%s, pending=%s",
+            room_id,
+            client_no,
+            device_id,
+            deleted_count,
+            pending_removed,
+        )
+        self._broadcast_client_var_sync(room_id, {client_no})
 
     def _handle_client_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Handle client variable set request (for backward compat - immediate apply+broadcast)"""
