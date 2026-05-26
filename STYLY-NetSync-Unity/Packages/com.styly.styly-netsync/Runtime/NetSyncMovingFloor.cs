@@ -23,9 +23,13 @@ namespace Styly.NetSync
         [SerializeField, InspectorName("Carry Local XR Rig While On Floor"), Tooltip("Move Local XR Rig Root with this moving floor while the local avatar is on it.")]
         private bool _carryLocalXRRigWhileOnFloor = true;
 
-        private Vector3 _localXRRigFloorLocalPosition;
-        private Quaternion _localXRRigFloorLocalRotation = Quaternion.identity;
-        private bool _hasLocalXRRigFloorPose;
+        // Previous floor pose tracked so the rig is carried by per-frame delta
+        // rather than snapped to a cached absolute pose. This preserves any
+        // user-driven XR rig motion (snap turn, locomotion, recenter) that
+        // happens between platform updates.
+        private Vector3 _previousFloorPosition;
+        private Quaternion _previousFloorRotation = Quaternion.identity;
+        private bool _hasPreviousFloorPose;
         private bool _isRegistered;
         private bool _isLocalAvatarOnFloor;
 
@@ -61,7 +65,7 @@ namespace Styly.NetSync
                 return false;
             }
 
-            if (!CacheLocalXRRigFloorPose())
+            if (!PrepareLocalXRRigCarry())
             {
                 _isLocalAvatarOnFloor = false;
                 return false;
@@ -70,7 +74,7 @@ namespace Styly.NetSync
             _isLocalAvatarOnFloor = manager.BoardLocalAvatarOnMovingFloor(_floorId);
             if (!_isLocalAvatarOnFloor)
             {
-                _hasLocalXRRigFloorPose = false;
+                _hasPreviousFloorPose = false;
             }
 
             return _isLocalAvatarOnFloor;
@@ -85,7 +89,7 @@ namespace Styly.NetSync
             }
 
             _isLocalAvatarOnFloor = false;
-            _hasLocalXRRigFloorPose = false;
+            _hasPreviousFloorPose = false;
         }
 
         private void OnEnable()
@@ -98,6 +102,17 @@ namespace Styly.NetSync
             TryRegister(true);
         }
 
+        private void Update()
+        {
+            // Keep retrying registration until NetSyncManager.Instance is online.
+            // Components instantiated mid-game (or before the manager finishes
+            // Awake/Start) would otherwise stay unregistered forever.
+            if (!_isRegistered)
+            {
+                TryRegister(false);
+            }
+        }
+
         private void OnDisable()
         {
             var manager = NetSyncManager.Instance;
@@ -108,13 +123,14 @@ namespace Styly.NetSync
 
             _isRegistered = false;
             _isLocalAvatarOnFloor = false;
-            _hasLocalXRRigFloorPose = false;
+            _hasPreviousFloorPose = false;
         }
 
         private void LateUpdate()
         {
             if (!_carryLocalXRRigWhileOnFloor || !IsLocalAvatarOnFloor)
             {
+                _hasPreviousFloorPose = false;
                 return;
             }
 
@@ -156,9 +172,9 @@ namespace Styly.NetSync
             return _isRegistered;
         }
 
-        private bool CacheLocalXRRigFloorPose()
+        private bool PrepareLocalXRRigCarry()
         {
-            _hasLocalXRRigFloorPose = false;
+            _hasPreviousFloorPose = false;
             if (!_carryLocalXRRigWhileOnFloor)
             {
                 return true;
@@ -169,9 +185,12 @@ namespace Styly.NetSync
                 return false;
             }
 
-            _localXRRigFloorLocalPosition = transform.InverseTransformPoint(_localXRRigRoot.position);
-            _localXRRigFloorLocalRotation = Quaternion.Inverse(transform.rotation) * _localXRRigRoot.rotation;
-            _hasLocalXRRigFloorPose = true;
+            // Seed the delta tracker with the current floor pose so the first
+            // LateUpdate after boarding does not snap the rig by the floor's
+            // accumulated motion.
+            _previousFloorPosition = transform.position;
+            _previousFloorRotation = transform.rotation;
+            _hasPreviousFloorPose = true;
             return true;
         }
 
@@ -201,13 +220,29 @@ namespace Styly.NetSync
 
         private void UpdateLocalXRRigRootPose()
         {
-            if (!_hasLocalXRRigFloorPose || _localXRRigRoot == null)
+            if (_localXRRigRoot == null)
             {
                 return;
             }
 
-            _localXRRigRoot.position = transform.TransformPoint(_localXRRigFloorLocalPosition);
-            _localXRRigRoot.rotation = transform.rotation * _localXRRigFloorLocalRotation;
+            var currentFloorPosition = transform.position;
+            var currentFloorRotation = transform.rotation;
+
+            // Apply only the floor's per-frame delta on top of the rig's current
+            // pose. Any user-driven rig motion this frame (snap turn, smooth
+            // locomotion, recenter) is preserved instead of being overwritten
+            // by a cached absolute snapshot from boarding time.
+            if (_hasPreviousFloorPose)
+            {
+                var deltaRotation = currentFloorRotation * Quaternion.Inverse(_previousFloorRotation);
+                var rigOffset = _localXRRigRoot.position - _previousFloorPosition;
+                _localXRRigRoot.position = currentFloorPosition + (deltaRotation * rigOffset);
+                _localXRRigRoot.rotation = deltaRotation * _localXRRigRoot.rotation;
+            }
+
+            _previousFloorPosition = currentFloorPosition;
+            _previousFloorRotation = currentFloorRotation;
+            _hasPreviousFloorPose = true;
         }
     }
 }

@@ -559,7 +559,7 @@ namespace Styly.NetSync
             if (hasHead) { flags |= PoseFlags.HeadValid; }
             if (hasHead && IsHandPoseValid(_rightHand, Hand.Right)) { flags |= PoseFlags.RightValid; }
             if (hasHead && IsHandPoseValid(_leftHand, Hand.Left)) { flags |= PoseFlags.LeftValid; }
-            if (true) { flags |= PoseFlags.PhysicalValid; }
+            flags |= PoseFlags.PhysicalValid;
             if (hasHead && _virtualTransforms != null && _virtualTransforms.Length > 0)
             {
                 flags |= PoseFlags.VirtualsValid;

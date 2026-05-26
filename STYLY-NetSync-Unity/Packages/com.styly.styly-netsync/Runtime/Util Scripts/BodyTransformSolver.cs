@@ -52,8 +52,13 @@ namespace Styly.NetSync
 
             if (groundCenter != null)
             {
-                Vector3 groundPosition = netSyncAvatar.PhysicalPosition;
-                groundPosition.y = 0f;
+                // Drop the marker straight below the head at the rig's floor
+                // height: head world Y minus the head's height in physical
+                // (rig-local) space. Tracks vertical rig motion such as
+                // elevators, lifts, and moving-floor carry without snapping to
+                // world Y = 0.
+                Vector3 groundPosition = head.position;
+                groundPosition.y -= netSyncAvatar.PhysicalPosition.y;
                 groundCenter.position = groundPosition;
                 bool hasGroundYaw = TryGetYawRotation(netSyncAvatar.PhysicalRotation, out var groundRotation);
                 if (hasGroundYaw) groundCenter.rotation = groundRotation;

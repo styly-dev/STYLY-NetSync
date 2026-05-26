@@ -28,6 +28,16 @@ namespace Styly.NetSync
                 return false;
             }
 
+            // Reject duplicate registration with a different Transform so the
+            // second component's OnDisable cannot unregister the still-needed
+            // first one. Re-registration with the same Transform is idempotent.
+            if (_floors.TryGetValue(floorId, out var existing) && existing != null && existing != floor)
+            {
+                Debug.LogWarning(
+                    $"[NetSync] Moving floor id '{floorId}' is already registered to a different Transform. Ignoring duplicate registration.");
+                return false;
+            }
+
             _floors[floorId] = floor;
             _missingWarnings.RemoveWhere(key => key.floorId == floorId);
             return true;
