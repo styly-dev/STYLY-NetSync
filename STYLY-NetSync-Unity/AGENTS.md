@@ -17,6 +17,11 @@
   - `Assets/Samples_Dev/HandTest/` - Hand tracking testing
   - `Assets/Samples_Dev/SimpleSyncCheck/` - Network sync verification
 
+## Repository Context
+
+- Also check `../AGENTS.md` and `../STYLY-NetSync-Server/`.
+- Keep Unity/Python behavior aligned for networking, protocol, RPC, Network Variable, discovery, and connection changes.
+
 ## Development
 
 - **Play Mode**: Test in Unity Editor with demo scenes
