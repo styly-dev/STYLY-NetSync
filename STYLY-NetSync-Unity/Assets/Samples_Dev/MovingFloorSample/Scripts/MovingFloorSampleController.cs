@@ -109,7 +109,7 @@ public class MovingFloorSampleController : MonoBehaviour
         }
 
         bool boarded = _movingFloor.BoardLocalAvatar();
-        Debug.Log("[MovingFloorSample] BoardLocalAvatar(" + _movingFloor.FloorId + ") => " + boarded);
+        Debug.Log("[MovingFloorSample] BoardLocalAvatar(" + _movingFloor.FloorIdHex + ") => " + boarded);
         UpdateStatusColor();
     }
 
@@ -182,9 +182,9 @@ public class MovingFloorSampleController : MonoBehaviour
 
     private string GetFloorIdLabel()
     {
-        if (_movingFloor != null && !string.IsNullOrEmpty(_movingFloor.FloorId))
+        if (_movingFloor != null && _movingFloor.FloorId != 0u)
         {
-            return _movingFloor.FloorId;
+            return _movingFloor.FloorIdHex;
         }
 
         return "";

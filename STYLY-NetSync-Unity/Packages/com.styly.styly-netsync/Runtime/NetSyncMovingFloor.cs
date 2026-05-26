@@ -13,9 +13,17 @@ namespace Styly.NetSync
     [DefaultExecutionOrder(5000)]
     public sealed class NetSyncMovingFloor : MonoBehaviour
     {
-        [Header("Moving Floor")]
-        [SerializeField, Tooltip("Stable floor id. The same id must refer to the corresponding moving floor on every client.")]
-        private string _floorId = "";
+        // Auto-assigned 32-bit ID derived from Unity's GlobalObjectId in the editor.
+        // 0 means "unassigned" - the editor pipeline will fill it in on validate,
+        // hierarchy change, or scene post-process.
+        [SerializeField, HideInInspector]
+        private uint _floorId;
+
+        // When true, _floorId is user-specified and the auto-assign pipeline
+        // must leave it alone. Enables matching the same logical floor across
+        // separate scenes.
+        [SerializeField, HideInInspector]
+        private bool _manualFloorId;
 
         [Header("Local XR Rig")]
         [SerializeField, InspectorName("Local XR Rig Root"), Tooltip("Root transform carried by this moving floor while the local avatar is on it. Leave empty to auto-resolve the active XR rig.")]
@@ -33,7 +41,8 @@ namespace Styly.NetSync
         private bool _isRegistered;
         private bool _isLocalAvatarOnFloor;
 
-        public string FloorId => _floorId;
+        public uint FloorId => _floorId;
+        public string FloorIdHex => MovingFloorManager.FormatFloorId(_floorId);
 
         public bool IsLocalAvatarOnFloor
         {
@@ -137,6 +146,19 @@ namespace Styly.NetSync
             UpdateLocalXRRigRootPose();
         }
 
+#if UNITY_EDITOR
+        // Editor-only accessors used by the auto-assign pipeline to read the
+        // current persisted value. Writes go through SerializedProperty so Unity
+        // records them correctly on prefab instances.
+        internal uint FloorIdEditorOnly => _floorId;
+        internal bool IsManualFloorIdEditorOnly => _manualFloorId;
+
+        private void OnValidate()
+        {
+            NetSyncMovingFloorIdAssigner.RequestAssignForFloor(this);
+        }
+#endif
+
         private bool TryRegister(bool logWarning)
         {
             if (_isRegistered)
@@ -144,11 +166,13 @@ namespace Styly.NetSync
                 return true;
             }
 
-            if (string.IsNullOrEmpty(_floorId))
+            if (_floorId == 0u)
             {
                 if (logWarning)
                 {
-                    Debug.LogWarning("[NetSyncMovingFloor] Floor Id is required.", this);
+                    Debug.LogWarning(
+                        "[NetSyncMovingFloor] Floor ID is required. Open the scene in the editor so the auto-assign pipeline can populate it.",
+                        this);
                 }
                 return false;
             }
@@ -166,7 +190,7 @@ namespace Styly.NetSync
             _isRegistered = manager.RegisterMovingFloor(_floorId, transform);
             if (!_isRegistered && logWarning)
             {
-                Debug.LogWarning("[NetSyncMovingFloor] Failed to register moving floor '" + _floorId + "'.", this);
+                Debug.LogWarning("[NetSyncMovingFloor] Failed to register moving floor '" + FloorIdHex + "'.", this);
             }
 
             return _isRegistered;

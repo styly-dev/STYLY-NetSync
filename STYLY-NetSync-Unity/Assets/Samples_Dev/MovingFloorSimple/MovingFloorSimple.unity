@@ -615,7 +615,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _floorId: moving-floor-simple/floor
+  _floorId: 0
   _localXRRigRoot: {fileID: 938065906}
   _carryLocalXRRigWhileOnFloor: 1
 --- !u!23 &1233888452

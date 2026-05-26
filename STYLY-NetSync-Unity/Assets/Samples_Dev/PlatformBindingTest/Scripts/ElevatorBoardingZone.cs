@@ -62,7 +62,8 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
         private static readonly int _baseColorIdLegacy = Shader.PropertyToID("_Color");
 
         public bool IsBoarded => _boarded;
-        public string PlatformId => _movingFloor != null ? _movingFloor.FloorId : "";
+        public uint PlatformId => _movingFloor != null ? _movingFloor.FloorId : 0u;
+        public string PlatformIdHex => _movingFloor != null ? _movingFloor.FloorIdHex : "";
         public bool AppliesPlatformBinding => _applyPlatformBinding;
         public GameObject ElevatorRoot => _elevatorRoot;
 

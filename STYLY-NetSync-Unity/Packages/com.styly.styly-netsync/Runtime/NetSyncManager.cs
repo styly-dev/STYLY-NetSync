@@ -279,15 +279,15 @@ namespace Styly.NetSync
 
         #region === Moving Floors ===
         /// <summary>
-        /// The moving floor id currently carrying the local avatar, or null when off floor.
+        /// The moving floor id currently carrying the local avatar, or 0 when off floor.
         /// </summary>
-        public string LocalMovingFloorId
+        public uint LocalMovingFloorId
         {
             get
             {
                 if (_movingFloorManager == null)
                 {
-                    return null;
+                    return MovingFloorManager.UnassignedFloorId;
                 }
 
                 return _movingFloorManager.LocalFloorId;
@@ -308,9 +308,9 @@ namespace Styly.NetSync
         /// <summary>
         /// True when the local avatar is currently on the specified moving floor id.
         /// </summary>
-        public bool IsLocalAvatarOnMovingFloorId(string floorId)
+        public bool IsLocalAvatarOnMovingFloorId(uint floorId)
         {
-            if (_movingFloorManager == null || string.IsNullOrEmpty(floorId))
+            if (_movingFloorManager == null || floorId == MovingFloorManager.UnassignedFloorId)
             {
                 return false;
             }
@@ -322,7 +322,7 @@ namespace Styly.NetSync
         /// Register a scene-stable moving floor used by protocol v5 moving-floor-local avatar poses.
         /// The same floor id must resolve to the corresponding local Transform on every client.
         /// </summary>
-        public bool RegisterMovingFloor(string floorId, Transform floor)
+        public bool RegisterMovingFloor(uint floorId, Transform floor)
         {
             if (_movingFloorManager == null)
             {
@@ -335,14 +335,16 @@ namespace Styly.NetSync
         /// <summary>
         /// Remove a previously registered moving floor.
         /// </summary>
-        public void UnregisterMovingFloor(string floorId)
+        public void UnregisterMovingFloor(uint floorId)
         {
             if (_movingFloorManager == null)
             {
                 return;
             }
 
-            bool wasOnFloorLocally = !string.IsNullOrEmpty(floorId) && _movingFloorManager.LocalFloorId == floorId;
+            bool wasOnFloorLocally =
+                floorId != MovingFloorManager.UnassignedFloorId &&
+                _movingFloorManager.LocalFloorId == floorId;
             _movingFloorManager.UnregisterFloor(floorId);
             if (wasOnFloorLocally)
             {
@@ -355,7 +357,7 @@ namespace Styly.NetSync
         /// Board the local avatar onto an already registered moving floor.
         /// While on the floor, the avatar pose is sent in that floor's local coordinates.
         /// </summary>
-        public bool BoardLocalAvatarOnMovingFloor(string floorId)
+        public bool BoardLocalAvatarOnMovingFloor(uint floorId)
         {
             if (_movingFloorManager == null)
             {
@@ -364,18 +366,19 @@ namespace Styly.NetSync
 
             if (!_movingFloorManager.BoardLocal(floorId))
             {
-                Debug.LogWarning($"[NetSync] BoardLocalAvatarOnMovingFloor failed. Register moving floor '{floorId}' before boarding.");
+                Debug.LogWarning(
+                    $"[NetSync] BoardLocalAvatarOnMovingFloor failed. Register moving floor '{MovingFloorManager.FormatFloorId(floorId)}' before boarding.");
                 return false;
             }
 
-            SetClientVariable(MovingFloorManager.ClientVariableName, floorId);
+            SetClientVariable(MovingFloorManager.ClientVariableName, MovingFloorManager.EncodeFloorId(floorId));
             return true;
         }
 
         /// <summary>
         /// Register a moving floor Transform and board the local avatar onto it.
         /// </summary>
-        public bool BoardLocalAvatarOnMovingFloor(string floorId, Transform floor)
+        public bool BoardLocalAvatarOnMovingFloor(uint floorId, Transform floor)
         {
             if (!RegisterMovingFloor(floorId, floor))
             {

@@ -6220,7 +6220,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _floorId: PlatformBindingTest.FixedMovingFloor
+  _floorId: 0
   _localXRRigRoot: {fileID: 0}
   _carryLocalXRRigWhileOnFloor: 0
 --- !u!1 &1241206116
@@ -6738,7 +6738,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _floorId: PlatformBindingTest.RawMovingFloor
+  _floorId: 0
   _localXRRigRoot: {fileID: 0}
   _carryLocalXRRigWhileOnFloor: 0
 --- !u!1 &1777788036

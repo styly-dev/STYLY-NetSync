@@ -1,29 +1,33 @@
 // MovingFloorManager.cs
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEngine;
 
 namespace Styly.NetSync
 {
     /// <summary>
     /// Tracks moving floors for protocol v5 moving-floor-local avatar poses.
-    /// A moving floor is any scene-stable Transform known by the same string id on each client.
+    /// A moving floor is any scene-stable Transform known by the same 32-bit id on each client.
     /// </summary>
     internal class MovingFloorManager
     {
         public const string ClientVariableName = NetSyncManager.PrefixForSystem + "movingFloor";
 
-        private readonly Dictionary<string, Transform> _floors = new Dictionary<string, Transform>();
-        private readonly Dictionary<int, string> _clientFloorIds = new Dictionary<int, string>();
-        private readonly HashSet<(int clientNo, string floorId)> _missingWarnings = new HashSet<(int clientNo, string floorId)>();
+        public const uint UnassignedFloorId = 0u;
 
-        private string _localFloorId;
+        private readonly Dictionary<uint, Transform> _floors = new Dictionary<uint, Transform>();
+        private readonly Dictionary<int, uint> _clientFloorIds = new Dictionary<int, uint>();
+        private readonly HashSet<(int clientNo, uint floorId)> _missingWarnings = new HashSet<(int clientNo, uint floorId)>();
 
-        public string LocalFloorId => _localFloorId;
-        public bool HasLocalFloor => !string.IsNullOrEmpty(_localFloorId);
+        private uint _localFloorId;
 
-        public bool RegisterFloor(string floorId, Transform floor)
+        public uint LocalFloorId => _localFloorId;
+        public bool HasLocalFloor => _localFloorId != UnassignedFloorId;
+
+        public bool RegisterFloor(uint floorId, Transform floor)
         {
-            if (string.IsNullOrEmpty(floorId) || floor == null)
+            if (floorId == UnassignedFloorId || floor == null)
             {
                 return false;
             }
@@ -34,7 +38,7 @@ namespace Styly.NetSync
             if (_floors.TryGetValue(floorId, out var existing) && existing != null && existing != floor)
             {
                 Debug.LogWarning(
-                    $"[NetSync] Moving floor id '{floorId}' is already registered to a different Transform. Ignoring duplicate registration.");
+                    $"[NetSync] Moving floor id '{FormatFloorId(floorId)}' is already registered to a different Transform. Ignoring duplicate registration.");
                 return false;
             }
 
@@ -43,9 +47,9 @@ namespace Styly.NetSync
             return true;
         }
 
-        public void UnregisterFloor(string floorId)
+        public void UnregisterFloor(uint floorId)
         {
-            if (string.IsNullOrEmpty(floorId))
+            if (floorId == UnassignedFloorId)
             {
                 return;
             }
@@ -53,9 +57,9 @@ namespace Styly.NetSync
             _floors.Remove(floorId);
         }
 
-        public bool BoardLocal(string floorId)
+        public bool BoardLocal(uint floorId)
         {
-            if (string.IsNullOrEmpty(floorId))
+            if (floorId == UnassignedFloorId)
             {
                 return false;
             }
@@ -71,13 +75,13 @@ namespace Styly.NetSync
 
         public void LeaveLocal()
         {
-            _localFloorId = null;
+            _localFloorId = UnassignedFloorId;
         }
 
         public bool TryGetLocalFloor(out Transform floor)
         {
             floor = null;
-            if (string.IsNullOrEmpty(_localFloorId))
+            if (_localFloorId == UnassignedFloorId)
             {
                 return false;
             }
@@ -85,7 +89,7 @@ namespace Styly.NetSync
             return _floors.TryGetValue(_localFloorId, out floor) && floor != null;
         }
 
-        public void SetClientFloorId(int clientNo, string floorId)
+        public void SetClientFloorId(int clientNo, string encodedFloorId)
         {
             if (clientNo <= 0)
             {
@@ -93,9 +97,17 @@ namespace Styly.NetSync
             }
 
             RemoveWarningKeysForClient(clientNo);
-            if (string.IsNullOrEmpty(floorId))
+            if (string.IsNullOrEmpty(encodedFloorId))
             {
                 _clientFloorIds.Remove(clientNo);
+                return;
+            }
+
+            if (!TryParseFloorId(encodedFloorId, out var floorId))
+            {
+                _clientFloorIds.Remove(clientNo);
+                Debug.LogWarning(
+                    $"[NetSync] Ignoring invalid moving floor id '{encodedFloorId}' for client#{clientNo}.");
                 return;
             }
 
@@ -111,13 +123,13 @@ namespace Styly.NetSync
         public bool TryGetFloorForClient(int clientNo, bool warnIfMissingId, out Transform floor)
         {
             floor = null;
-            if (!_clientFloorIds.TryGetValue(clientNo, out var floorId) || string.IsNullOrEmpty(floorId))
+            if (!_clientFloorIds.TryGetValue(clientNo, out var floorId) || floorId == UnassignedFloorId)
             {
                 if (warnIfMissingId)
                 {
                     WarnOnce(
                         clientNo,
-                        "<missing>",
+                        UnassignedFloorId,
                         $"[NetSync] Moving-floor-local pose received for client#{clientNo}, but {ClientVariableName} is missing. Holding the last applied avatar pose until the floor id is received.");
                 }
                 return false;
@@ -131,7 +143,7 @@ namespace Styly.NetSync
             WarnOnce(
                 clientNo,
                 floorId,
-                $"[NetSync] Moving floor '{floorId}' for client#{clientNo} is not registered. Holding the last applied avatar pose until it is registered.");
+                $"[NetSync] Moving floor '{FormatFloorId(floorId)}' for client#{clientNo} is not registered. Holding the last applied avatar pose until it is registered.");
             floor = null;
             return false;
         }
@@ -142,8 +154,18 @@ namespace Styly.NetSync
             _missingWarnings.Clear();
             if (clearLocal)
             {
-                _localFloorId = null;
+                _localFloorId = UnassignedFloorId;
             }
+        }
+
+        public static string FormatFloorId(uint floorId)
+        {
+            return floorId == UnassignedFloorId ? "(unassigned)" : $"0x{floorId:X8}";
+        }
+
+        public static string EncodeFloorId(uint floorId)
+        {
+            return floorId == UnassignedFloorId ? string.Empty : $"0x{floorId:X8}";
         }
 
         /// <summary>
@@ -162,7 +184,28 @@ namespace Styly.NetSync
             return Mathf.Atan2(fwd.x, fwd.z) * Mathf.Rad2Deg;
         }
 
-        private void WarnOnce(int clientNo, string floorId, string message)
+        private static bool TryParseFloorId(string encodedFloorId, out uint floorId)
+        {
+            floorId = UnassignedFloorId;
+            if (string.IsNullOrWhiteSpace(encodedFloorId))
+            {
+                return false;
+            }
+
+            string s = encodedFloorId.Trim();
+            if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ||
+                s.StartsWith("#", StringComparison.Ordinal))
+            {
+                s = s.Substring(s[0] == '#' ? 1 : 2);
+                return uint.TryParse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out floorId) &&
+                    floorId != UnassignedFloorId;
+            }
+
+            return uint.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out floorId) &&
+                floorId != UnassignedFloorId;
+        }
+
+        private void WarnOnce(int clientNo, uint floorId, string message)
         {
             if (_missingWarnings.Add((clientNo, floorId)))
             {
