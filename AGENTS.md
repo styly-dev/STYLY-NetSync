@@ -44,9 +44,9 @@ black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 - Transform protocol is `protocolVersion=5` only (earlier versions removed)
 - Message IDs: `MSG_CLIENT_POSE=11`, `MSG_ROOM_POSE=12`
 - Unbound `Head` is absolute; `Right/Left/Virtual` are head-relative
-- Reference-frame-local poses set `PoseFlags.ReferenceFrameLocal`; `Head` is reference-frame local while `Right/Left/Virtual` remain head-relative within that frame
+- Moving-floor-local poses set `PoseFlags.MovingFloorLocal`; `Head` is moving-floor local while `Right/Left/Virtual` remain head-relative within that floor
 - Unbound `xrOriginDelta` is `(dx, dy, dz, dyaw)` quantized as 4×`int16` (`LOCO_POS_SCALE = 0.01m` for translation, `PHYSICAL_YAW_SCALE = 0.1°` for yaw); receivers reconstruct physical pose as `physical = invDeltaRot * (headPos − deltaPos)`
-- Reference-frame-local poses reuse the same 8-byte physical slot as direct physical position/yaw instead of `xrOriginDelta`
+- Moving-floor-local poses reuse the same 8-byte physical slot as direct physical position/yaw instead of `xrOriginDelta`
 - Position quantization: absolute `int24 @ 0.01m`, head-relative `int16 @ 0.005m`; out-of-range values clamped
 - Quaternion: 32-bit smallest-three compression
 - Server relays raw client pose body bytes (opaque relay, no decode)

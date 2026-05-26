@@ -132,7 +132,7 @@ GameObject:
   - component: {fileID: 141030992}
   - component: {fileID: 141030991}
   m_Layer: 0
-  m_Name: Frame Local X Axis
+  m_Name: Floor Local X Axis
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -346,7 +346,7 @@ GameObject:
   - component: {fileID: 321923814}
   - component: {fileID: 321923815}
   m_Layer: 0
-  m_Name: Moving Reference Frame (reference-frame-sample/platform-a)
+  m_Name: Moving Floor (moving-floor-sample/floor-a)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -386,9 +386,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _frameId: reference-frame-sample/platform-a
+  _floorId: moving-floor-sample/floor-a
   _localXRRigRoot: {fileID: 765346943}
-  _carryLocalXRRigWhileAttached: 1
+  _carryLocalXRRigWhileOnFloor: 1
 --- !u!1 &481651554
 GameObject:
   m_ObjectHideFlags: 0
@@ -510,7 +510,7 @@ GameObject:
   - component: {fileID: 500163678}
   - component: {fileID: 500163677}
   m_Layer: 0
-  m_Name: Frame Local Y Axis
+  m_Name: Floor Local Y Axis
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -616,7 +616,7 @@ GameObject:
   - component: {fileID: 598259758}
   - component: {fileID: 598259757}
   m_Layer: 0
-  m_Name: Reference Frame Demo
+  m_Name: Moving Floor Demo
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -634,14 +634,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6b384556e8c7d49cca45dd8dbbb9af25, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _rideFrame: {fileID: 321923815}
-  _referenceFrame: {fileID: 321923814}
-  _animateFrame: 1
+  _movingFloor: {fileID: 321923815}
+  _movingFloorTransform: {fileID: 321923814}
+  _animateFloor: 1
   _motionAmplitude: {x: 0, y: 0.75, z: 2.5}
   _motionPeriodSeconds: 8
   _yawAmplitudeDegrees: 18
   _statusRenderer: {fileID: 481651555}
-  _toggleAttachKey: 32
+  _toggleBoardingKey: 32
   _toggleMotionKey: 109
   _enableRightControllerAButton: 1
 --- !u!4 &598259758
@@ -786,7 +786,7 @@ GameObject:
   - component: {fileID: 714499091}
   - component: {fileID: 714499090}
   m_Layer: 0
-  m_Name: Frame Local Z Axis
+  m_Name: Floor Local Z Axis
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1417,7 +1417,7 @@ GameObject:
   - component: {fileID: 1285147770}
   - component: {fileID: 1285147769}
   m_Layer: 0
-  m_Name: Frame Local Marker
+  m_Name: Floor Local Marker
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1524,7 +1524,7 @@ GameObject:
   - component: {fileID: 1553544326}
   - component: {fileID: 1553544325}
   m_Layer: 0
-  m_Name: Reference Frame Label
+  m_Name: Moving Floor Label
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -1553,7 +1553,7 @@ TextMesh:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1553544323}
-  m_Text: reference-frame-sample/platform-a
+  m_Text: moving-floor-sample/floor-a
   m_OffsetZ: 0
   m_CharacterSize: 0.14
   m_LineSpacing: 1
@@ -1666,7 +1666,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
       propertyPath: _roomId
-      value: reference_frame_sample
+      value: moving_floor_sample
       objectReference: {fileID: 0}
     - target: {fileID: 5729049226429455924, guid: e143c37e2b0944c278fd43733d72fa3b, type: 3}
       propertyPath: _transformSendRate

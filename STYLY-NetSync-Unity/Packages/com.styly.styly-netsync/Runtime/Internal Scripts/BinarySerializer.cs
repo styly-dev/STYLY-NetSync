@@ -69,7 +69,7 @@ namespace Styly.NetSync
         private static byte ComputeEncodingFlags(PoseFlags flags)
         {
             int encodingFlags = ENCODING_FLAGS_DEFAULT;
-            if ((flags & PoseFlags.ReferenceFrameLocal) != 0)
+            if ((flags & PoseFlags.MovingFloorLocal) != 0)
             {
                 encodingFlags &= ~ENCODING_PHYSICAL_IS_XRORIGIN_DELTA;
             }
@@ -349,7 +349,7 @@ namespace Styly.NetSync
             bool rightValid = headValid && ((flags & PoseFlags.RightValid) != 0);
             bool leftValid = headValid && ((flags & PoseFlags.LeftValid) != 0);
             bool virtualValid = headValid && ((flags & PoseFlags.VirtualsValid) != 0);
-            bool referenceFrameLocal = (flags & PoseFlags.ReferenceFrameLocal) != 0;
+            bool movingFloorLocal = (flags & PoseFlags.MovingFloorLocal) != 0;
 
             var xrOriginDelta = data != null ? data.xrOriginDeltaPosition : Vector3.zero;
             var xrOriginDeltaYaw = data != null ? data.xrOriginDeltaYaw : 0f;
@@ -371,7 +371,7 @@ namespace Styly.NetSync
 
             if (physicalValid)
             {
-                if (referenceFrameLocal)
+                if (movingFloorLocal)
                 {
                     HashShort(ref hash, QuantizeSigned(physical.position.x, LOCO_POS_SCALE));
                     HashShort(ref hash, QuantizeSigned(physical.position.y, LOCO_POS_SCALE));
@@ -483,7 +483,7 @@ namespace Styly.NetSync
             var rightValid = headValid && ((flags & PoseFlags.RightValid) != 0);
             var leftValid = headValid && ((flags & PoseFlags.LeftValid) != 0);
             var virtualValid = headValid && ((flags & PoseFlags.VirtualsValid) != 0);
-            var referenceFrameLocal = (flags & PoseFlags.ReferenceFrameLocal) != 0;
+            var movingFloorLocal = (flags & PoseFlags.MovingFloorLocal) != 0;
 
             var xrOriginDelta = data != null ? data.xrOriginDeltaPosition : Vector3.zero;
             var xrOriginDeltaYaw = data != null ? data.xrOriginDeltaYaw : 0f;
@@ -495,7 +495,7 @@ namespace Styly.NetSync
 
             if (physicalValid)
             {
-                if (referenceFrameLocal)
+                if (movingFloorLocal)
                 {
                     writer.Write(QuantizeSigned(physical.position.x, LOCO_POS_SCALE));
                     writer.Write(QuantizeSigned(physical.position.y, LOCO_POS_SCALE));
@@ -729,7 +729,7 @@ namespace Styly.NetSync
                 bool rightValid = headValid && ((client.flags & PoseFlags.RightValid) != 0);
                 bool leftValid = headValid && ((client.flags & PoseFlags.LeftValid) != 0);
                 bool virtualValid = headValid && ((client.flags & PoseFlags.VirtualsValid) != 0);
-                bool referenceFrameLocal = (client.flags & PoseFlags.ReferenceFrameLocal) != 0;
+                bool movingFloorLocal = (client.flags & PoseFlags.MovingFloorLocal) != 0;
 
                 short dxQ = 0;
                 short dyQ = 0;
@@ -739,7 +739,7 @@ namespace Styly.NetSync
                 client.xrOriginDeltaYaw = 0f;
                 if (physicalValid)
                 {
-                    if (!referenceFrameLocal && (encodingFlags & ENCODING_PHYSICAL_IS_XRORIGIN_DELTA) == 0)
+                    if (!movingFloorLocal && (encodingFlags & ENCODING_PHYSICAL_IS_XRORIGIN_DELTA) == 0)
                     {
                         throw new InvalidDataException("PhysicalValid set but XROrigin delta encoding flag is missing.");
                     }
@@ -748,7 +748,7 @@ namespace Styly.NetSync
                     dyQ = reader.ReadInt16();
                     dzQ = reader.ReadInt16();
                     dyawQ = reader.ReadInt16();
-                    if (!referenceFrameLocal)
+                    if (!movingFloorLocal)
                     {
                         client.xrOriginDeltaPosition = new Vector3(dxQ * LOCO_POS_SCALE, dyQ * LOCO_POS_SCALE, dzQ * LOCO_POS_SCALE);
                         client.xrOriginDeltaYaw = dyawQ * PHYSICAL_YAW_SCALE;
@@ -774,7 +774,7 @@ namespace Styly.NetSync
                     client.head.rotation = Quaternion.identity;
                 }
 
-                if (physicalValid && referenceFrameLocal)
+                if (physicalValid && movingFloorLocal)
                 {
                     client.physical.position = new Vector3(dxQ * LOCO_POS_SCALE, dyQ * LOCO_POS_SCALE, dzQ * LOCO_POS_SCALE);
                     client.physical.rotation = Quaternion.Euler(0f, dyawQ * PHYSICAL_YAW_SCALE, 0f);

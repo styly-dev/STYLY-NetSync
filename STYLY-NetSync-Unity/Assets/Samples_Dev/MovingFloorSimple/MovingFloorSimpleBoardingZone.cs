@@ -2,9 +2,9 @@ using System.Collections.Generic;
 using Styly.NetSync;
 using UnityEngine;
 
-public sealed class ReferenceFramSimpleBoardingZone : MonoBehaviour
+public sealed class MovingFloorSimpleBoardingZone : MonoBehaviour
 {
-    [SerializeField] private NetSyncRideFrame _rideFrame;
+    [SerializeField] private NetSyncMovingFloor _movingFloor;
     [SerializeField] private BoxCollider _boardingZone;
 
     private readonly HashSet<Collider> _localAvatarColliders = new HashSet<Collider>();
@@ -26,9 +26,9 @@ public sealed class ReferenceFramSimpleBoardingZone : MonoBehaviour
     {
         _localAvatarColliders.Clear();
 
-        if (_rideFrame != null && _rideFrame.IsLocalAvatarAttached)
+        if (_movingFloor != null && _movingFloor.IsLocalAvatarOnFloor)
         {
-            _rideFrame.DetachLocalAvatar();
+            _movingFloor.LeaveLocalAvatar();
         }
     }
 
@@ -41,9 +41,9 @@ public sealed class ReferenceFramSimpleBoardingZone : MonoBehaviour
 
         bool wasEmpty = _localAvatarColliders.Count == 0;
         _localAvatarColliders.Add(other);
-        if (wasEmpty && _localAvatarColliders.Count > 0 && _rideFrame != null)
+        if (wasEmpty && _localAvatarColliders.Count > 0 && _movingFloor != null)
         {
-            _rideFrame.AttachLocalAvatar();
+            _movingFloor.BoardLocalAvatar();
         }
     }
 
@@ -55,9 +55,9 @@ public sealed class ReferenceFramSimpleBoardingZone : MonoBehaviour
         }
 
         _localAvatarColliders.Remove(other);
-        if (_localAvatarColliders.Count == 0 && _rideFrame != null)
+        if (_localAvatarColliders.Count == 0 && _movingFloor != null)
         {
-            _rideFrame.DetachLocalAvatar();
+            _movingFloor.LeaveLocalAvatar();
         }
     }
 

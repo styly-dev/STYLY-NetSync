@@ -6220,9 +6220,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _frameId: PlatformBindingTest.Fixed
+  _floorId: PlatformBindingTest.FixedMovingFloor
   _localXRRigRoot: {fileID: 0}
-  _carryLocalXRRigWhileAttached: 0
+  _carryLocalXRRigWhileOnFloor: 0
 --- !u!1 &1241206116
 GameObject:
   m_ObjectHideFlags: 0
@@ -6270,7 +6270,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _applyPlatformBinding: 0
   _elevatorRoot: {fileID: 1719213978}
-  _rideFrame: {fileID: 1719213984}
+  _movingFloor: {fileID: 1719213984}
   _triggerVolume: {fileID: 1241206119}
   _glowRenderer: {fileID: 0}
   _boundColor: {r: 0.2, g: 0.5, b: 1, a: 1}
@@ -6342,7 +6342,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _applyPlatformBinding: 1
   _elevatorRoot: {fileID: 1201535008}
-  _rideFrame: {fileID: 1201535014}
+  _movingFloor: {fileID: 1201535014}
   _triggerVolume: {fileID: 1358091154}
   _glowRenderer: {fileID: 0}
   _boundColor: {r: 0.2, g: 0.5, b: 1, a: 1}
@@ -6738,9 +6738,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _frameId: PlatformBindingTest.Raw
+  _floorId: PlatformBindingTest.RawMovingFloor
   _localXRRigRoot: {fileID: 0}
-  _carryLocalXRRigWhileAttached: 0
+  _carryLocalXRRigWhileOnFloor: 0
 --- !u!1 &1777788036
 GameObject:
   m_ObjectHideFlags: 0

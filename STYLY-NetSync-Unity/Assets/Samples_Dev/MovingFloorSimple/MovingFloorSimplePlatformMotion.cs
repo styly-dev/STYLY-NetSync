@@ -1,6 +1,6 @@
 using UnityEngine;
 
-public sealed class ReferenceFramSimplePlatformMotion : MonoBehaviour
+public sealed class MovingFloorSimplePlatformMotion : MonoBehaviour
 {
     [SerializeField] private float _amplitude = 2f;
     [SerializeField, Min(0.1f)] private float _periodSeconds = 6f;

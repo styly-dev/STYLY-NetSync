@@ -193,7 +193,7 @@ GameObject:
   - component: {fileID: 191932378}
   - component: {fileID: 191932380}
   m_Layer: 0
-  m_Name: Ride Platform Boarding Zone
+  m_Name: Moving Floor Boarding Zone
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -226,7 +226,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0b59fcb40f4843cf81b0a340f7d741c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _rideFrame: {fileID: 1233888451}
+  _movingFloor: {fileID: 1233888451}
   _boardingZone: {fileID: 191932379}
 --- !u!65 &191932379
 BoxCollider:
@@ -583,7 +583,7 @@ GameObject:
   - component: {fileID: 1233888451}
   - component: {fileID: 1233888450}
   m_Layer: 0
-  m_Name: Ride Platform
+  m_Name: Moving Floor
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -615,9 +615,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e60f892e5091c489e82eb79e989d9f57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _frameId: reference-frame-simple/platform
+  _floorId: moving-floor-simple/floor
   _localXRRigRoot: {fileID: 938065906}
-  _carryLocalXRRigWhileAttached: 1
+  _carryLocalXRRigWhileOnFloor: 1
 --- !u!23 &1233888452
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -715,7 +715,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Ride Platform Red
+  m_Name: Moving Floor Red
   m_Shader: {fileID: 4800000, guid: 933532a4fcc9baf4fa0491de14d08ed7, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0

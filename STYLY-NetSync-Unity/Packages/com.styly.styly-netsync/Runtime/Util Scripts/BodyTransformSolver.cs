@@ -7,9 +7,9 @@ namespace Styly.NetSync
     /// - Estimated Body: head world position with a vertical offset (yaw-only rotation).
     /// - Calculated Ground Center: physical floor point derived from the avatar's
     ///   physical pose, so the marker does not ride with virtual locomotion or
-    ///   reference-frame motion.
+    ///   moving-floor motion.
     /// </summary>
-    // Runs after ReferenceFrameLateApplier so visible body meshes read the
+    // Runs after MovingFloorLateApplier so visible body meshes read the
     // final head pose for the rendered frame.
     [DefaultExecutionOrder(10010)]
     public class BodyTransformSolver : MonoBehaviour

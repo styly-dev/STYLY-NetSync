@@ -65,11 +65,11 @@ namespace Styly.NetSync
         // PhysicalPosition time-aligned with the head/hand channels.
         private PoseSampleData _lastPhysicalSample;
         private bool _hasPhysicalSample;
-        private bool _isReferenceFrameLocal;
+        private bool _isMovingFloorLocal;
         private bool _lastTickApplied;
         public PoseSampleData LastPhysicalSample => _lastPhysicalSample;
         public bool HasPhysicalSample => _hasPhysicalSample;
-        public bool IsReferenceFrameLocal => _isReferenceFrameLocal;
+        public bool IsMovingFloorLocal => _isMovingFloorLocal;
         public bool LastTickApplied => _lastTickApplied;
 
         public void InitializeForAvatar(
@@ -113,7 +113,7 @@ namespace Styly.NetSync
 
             _singleChannel = null;
             _hasAnySnapshot = false;
-            _isReferenceFrameLocal = false;
+            _isMovingFloorLocal = false;
             _lastTickApplied = false;
             ClearLastAvatarSamples();
             _intervalEstimator.Reset();
@@ -143,7 +143,7 @@ namespace Styly.NetSync
             _hasVirtualSamples.Clear();
 
             _hasAnySnapshot = false;
-            _isReferenceFrameLocal = false;
+            _isMovingFloorLocal = false;
             _lastTickApplied = false;
             ClearLastAvatarSamples();
             _intervalEstimator.Reset();
@@ -162,12 +162,12 @@ namespace Styly.NetSync
                 return;
             }
 
-            var referenceFrameLocal = (data.flags & PoseFlags.ReferenceFrameLocal) != 0;
-            if (_hasAnySnapshot && referenceFrameLocal != _isReferenceFrameLocal)
+            var movingFloorLocal = (data.flags & PoseFlags.MovingFloorLocal) != 0;
+            if (_hasAnySnapshot && movingFloorLocal != _isMovingFloorLocal)
             {
                 Clear();
             }
-            _isReferenceFrameLocal = referenceFrameLocal;
+            _isMovingFloorLocal = movingFloorLocal;
             _hasAnySnapshot = true;
             _intervalEstimator.OnPoseTime(data.poseTime);
 
@@ -252,7 +252,7 @@ namespace Styly.NetSync
             }
             _hasAnySnapshot = false;
             _hasPhysicalSample = false;
-            _isReferenceFrameLocal = false;
+            _isMovingFloorLocal = false;
             _lastTickApplied = false;
             ClearLastAvatarSamples();
         }
@@ -262,7 +262,7 @@ namespace Styly.NetSync
             Tick(deltaTime, localNow, null);
         }
 
-        public void Tick(float deltaTime, double localNow, Transform referenceFrame)
+        public void Tick(float deltaTime, double localNow, Transform movingFloor)
         {
             _lastTickApplied = false;
             if (_timeEstimator == null)
@@ -296,7 +296,7 @@ namespace Styly.NetSync
                 ApplyBinding(_physicalBinding, _lastPhysicalSample);
             }
 
-            if (_isReferenceFrameLocal && referenceFrame == null)
+            if (_isMovingFloorLocal && movingFloor == null)
             {
                 return;
             }
@@ -305,19 +305,19 @@ namespace Styly.NetSync
             {
                 _lastHeadSample = _head.Tick(renderServerTime, deltaTime);
                 _hasHeadSample = true;
-                ApplyBinding(_headBinding, _lastHeadSample, _isReferenceFrameLocal ? referenceFrame : null);
+                ApplyBinding(_headBinding, _lastHeadSample, _isMovingFloorLocal ? movingFloor : null);
             }
             if (_rightHand != null)
             {
                 _lastRightSample = _rightHand.Tick(renderServerTime, deltaTime);
                 _hasRightSample = true;
-                ApplyBinding(_rightBinding, _lastRightSample, _isReferenceFrameLocal ? referenceFrame : null);
+                ApplyBinding(_rightBinding, _lastRightSample, _isMovingFloorLocal ? movingFloor : null);
             }
             if (_leftHand != null)
             {
                 _lastLeftSample = _leftHand.Tick(renderServerTime, deltaTime);
                 _hasLeftSample = true;
-                ApplyBinding(_leftBinding, _lastLeftSample, _isReferenceFrameLocal ? referenceFrame : null);
+                ApplyBinding(_leftBinding, _lastLeftSample, _isMovingFloorLocal ? movingFloor : null);
             }
 
             for (int i = 0; i < _virtuals.Count && i < _virtualBindings.Count; i++)
@@ -325,38 +325,38 @@ namespace Styly.NetSync
                 var virtualSample = _virtuals[i].Tick(renderServerTime, deltaTime);
                 _lastVirtualSamples[i] = virtualSample;
                 _hasVirtualSamples[i] = true;
-                ApplyBinding(_virtualBindings[i], virtualSample, _isReferenceFrameLocal ? referenceFrame : null);
+                ApplyBinding(_virtualBindings[i], virtualSample, _isMovingFloorLocal ? movingFloor : null);
             }
             _lastTickApplied = true;
         }
 
-        public bool ReapplyLatestReferenceFrame(Transform referenceFrame)
+        public bool ReapplyLatestMovingFloor(Transform movingFloor)
         {
-            if (!_isReferenceFrameLocal || referenceFrame == null || !_lastTickApplied)
+            if (!_isMovingFloorLocal || movingFloor == null || !_lastTickApplied)
             {
                 return false;
             }
 
             // Keep the network interpolation time fixed, but project the cached
-            // frame-local pose through the latest reference-frame transform.
+            // floor-local pose through the latest moving-floor transform.
             if (_head != null && _hasHeadSample)
             {
-                ApplyBinding(_headBinding, _lastHeadSample, referenceFrame);
+                ApplyBinding(_headBinding, _lastHeadSample, movingFloor);
             }
             if (_rightHand != null && _hasRightSample)
             {
-                ApplyBinding(_rightBinding, _lastRightSample, referenceFrame);
+                ApplyBinding(_rightBinding, _lastRightSample, movingFloor);
             }
             if (_leftHand != null && _hasLeftSample)
             {
-                ApplyBinding(_leftBinding, _lastLeftSample, referenceFrame);
+                ApplyBinding(_leftBinding, _lastLeftSample, movingFloor);
             }
 
             for (int i = 0; i < _virtuals.Count && i < _virtualBindings.Count; i++)
             {
                 if (i < _hasVirtualSamples.Count && _hasVirtualSamples[i])
                 {
-                    ApplyBinding(_virtualBindings[i], _lastVirtualSamples[i], referenceFrame);
+                    ApplyBinding(_virtualBindings[i], _lastVirtualSamples[i], movingFloor);
                 }
             }
 
@@ -379,16 +379,16 @@ namespace Styly.NetSync
             ApplyBinding(binding, pose, null);
         }
 
-        private static void ApplyBinding(in TransformBinding binding, in PoseSampleData pose, Transform referenceFrame)
+        private static void ApplyBinding(in TransformBinding binding, in PoseSampleData pose, Transform movingFloor)
         {
             if (binding.Transform == null) return;
 
             if (binding.Space == SpaceMode.World)
             {
-                if (referenceFrame != null)
+                if (movingFloor != null)
                 {
-                    binding.Transform.position = referenceFrame.TransformPoint(pose.Position);
-                    binding.Transform.rotation = referenceFrame.rotation * pose.Rotation;
+                    binding.Transform.position = movingFloor.TransformPoint(pose.Position);
+                    binding.Transform.rotation = movingFloor.rotation * pose.Rotation;
                 }
                 else
                 {

@@ -179,8 +179,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _deviceId: 
   _clientNo: 0
-  _logReferenceFrameLag: 1
-  _bypassReferenceFrameSmoothing: 0
   PhysicalPosition: {x: 0, y: 0, z: 0}
   PhysicalRotation: {x: 0, y: 0, z: 0, w: 0}
   _head: {fileID: 2041796224729081718}

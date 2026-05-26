@@ -7,7 +7,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: ReferenceFrameSample_Floor
+  m_Name: MovingFloorSample_AxisZ
   m_Shader: {fileID: 4800000, guid: 933532a4fcc9baf4fa0491de14d08ed7, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
@@ -115,13 +115,13 @@ Material:
     - _WorkflowMode: 1
     - _ZWrite: 1
     m_Colors:
-    - _BaseColor: {r: 0.32, g: 0.34, b: 0.34, a: 1}
-    - _Color: {r: 0.31999996, g: 0.33999997, b: 0.33999997, a: 1}
+    - _BaseColor: {r: 0.12, g: 0.25, b: 0.9, a: 1}
+    - _Color: {r: 0.11999995, g: 0.24999997, b: 0.9, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []
   m_AllowLocking: 1
---- !u!114 &6288167908777689419
+--- !u!114 &5604607137427062177
 MonoBehaviour:
   m_ObjectHideFlags: 11
   m_CorrespondingSourceObject: {fileID: 0}

@@ -2,26 +2,26 @@ using Styly.NetSync;
 using UnityEngine;
 using UnityEngine.XR;
 
-public class ReferenceFrameSampleController : MonoBehaviour
+public class MovingFloorSampleController : MonoBehaviour
 {
-    [Header("Ride Frame")]
-    [SerializeField] private NetSyncRideFrame _rideFrame;
-    [SerializeField] private Transform _referenceFrame;
+    [Header("Moving Floor")]
+    [SerializeField] private NetSyncMovingFloor _movingFloor;
+    [SerializeField] private Transform _movingFloorTransform;
 
     [Header("Motion")]
-    [SerializeField] private bool _animateFrame = true;
+    [SerializeField] private bool _animateFloor = true;
     [SerializeField] private Vector3 _motionAmplitude = new Vector3(0f, 0.75f, 2.5f);
     [SerializeField, Min(0.1f)] private float _motionPeriodSeconds = 8f;
     [SerializeField] private float _yawAmplitudeDegrees = 18f;
 
     [Header("Status")]
     [SerializeField] private Renderer _statusRenderer;
-    [SerializeField] private KeyCode _toggleAttachKey = KeyCode.Space;
+    [SerializeField] private KeyCode _toggleBoardingKey = KeyCode.Space;
     [SerializeField] private KeyCode _toggleMotionKey = KeyCode.M;
     [SerializeField] private bool _enableRightControllerAButton = true;
 
-    private Vector3 _initialFrameLocalPosition;
-    private Quaternion _initialFrameLocalRotation;
+    private Vector3 _initialFloorLocalPosition;
+    private Quaternion _initialFloorLocalRotation;
     private bool _wasRightControllerAPressed;
     private GUIStyle _boxStyle;
     private GUIStyle _titleStyle;
@@ -30,33 +30,33 @@ public class ReferenceFrameSampleController : MonoBehaviour
 
     private void Awake()
     {
-        ResolveReferenceFrame();
-        if (_referenceFrame != null)
+        ResolveMovingFloor();
+        if (_movingFloorTransform != null)
         {
-            _initialFrameLocalPosition = _referenceFrame.localPosition;
-            _initialFrameLocalRotation = _referenceFrame.localRotation;
+            _initialFloorLocalPosition = _movingFloorTransform.localPosition;
+            _initialFloorLocalRotation = _movingFloorTransform.localRotation;
         }
     }
 
     private void Start()
     {
-        EnsureRideFrame();
+        EnsureMovingFloor();
         UpdateStatusColor();
     }
 
     private void OnDisable()
     {
-        if (_rideFrame != null && _rideFrame.IsLocalAvatarAttached)
+        if (_movingFloor != null && _movingFloor.IsLocalAvatarOnFloor)
         {
-            _rideFrame.DetachLocalAvatar();
+            _movingFloor.LeaveLocalAvatar();
         }
     }
 
     private void Update()
     {
-        if (Input.GetKeyDown(_toggleAttachKey) || GetRightControllerAButtonDown())
+        if (Input.GetKeyDown(_toggleBoardingKey) || GetRightControllerAButtonDown())
         {
-            ToggleAttachment();
+            ToggleBoarding();
         }
 
         if (Input.GetKeyDown(_toggleMotionKey))
@@ -67,7 +67,7 @@ public class ReferenceFrameSampleController : MonoBehaviour
 
     private void LateUpdate()
     {
-        UpdateReferenceFrameMotion();
+        UpdateMovingFloorMotion();
     }
 
     private void OnGUI()
@@ -77,22 +77,22 @@ public class ReferenceFrameSampleController : MonoBehaviour
         const int width = 620;
         const int height = 300;
         GUILayout.BeginArea(new Rect(24, 24, width, height), _boxStyle);
-        GUILayout.Label("Reference Frame Sample", _titleStyle);
+        GUILayout.Label("Moving Floor Sample", _titleStyle);
         GUILayout.Space(8f);
-        GUILayout.Label("Frame ID: " + GetFrameIdLabel(), _labelStyle);
-        GUILayout.Label("Attachment: " + (IsAttached() ? "Attached" : "Detached"), _labelStyle);
-        GUILayout.Label("Motion: " + (_animateFrame ? "Running" : "Paused"), _labelStyle);
+        GUILayout.Label("Floor ID: " + GetFloorIdLabel(), _labelStyle);
+        GUILayout.Label("Boarding: " + (IsOnFloor() ? "On Floor" : "Off Floor"), _labelStyle);
+        GUILayout.Label("Motion: " + (_animateFloor ? "Running" : "Paused"), _labelStyle);
         GUILayout.Space(12f);
 
-        string attachLabel = IsAttached()
-            ? "Detach Local Avatar (Space / Right A)"
-            : "Attach Local Avatar (Space / Right A)";
-        if (GUILayout.Button(attachLabel, _buttonStyle, GUILayout.Height(56f)))
+        string boardingLabel = IsOnFloor()
+            ? "Leave Moving Floor (Space / Right A)"
+            : "Board Moving Floor (Space / Right A)";
+        if (GUILayout.Button(boardingLabel, _buttonStyle, GUILayout.Height(56f)))
         {
-            ToggleAttachment();
+            ToggleBoarding();
         }
 
-        if (GUILayout.Button(_animateFrame ? "Pause Platform Motion (M)" : "Resume Platform Motion (M)", _buttonStyle, GUILayout.Height(56f)))
+        if (GUILayout.Button(_animateFloor ? "Pause Floor Motion (M)" : "Resume Floor Motion (M)", _buttonStyle, GUILayout.Height(56f)))
         {
             ToggleMotion();
         }
@@ -100,99 +100,99 @@ public class ReferenceFrameSampleController : MonoBehaviour
         GUILayout.EndArea();
     }
 
-    public void AttachLocalAvatar()
+    public void BoardLocalAvatar()
     {
-        if (!EnsureRideFrame())
+        if (!EnsureMovingFloor())
         {
             UpdateStatusColor();
             return;
         }
 
-        bool attached = _rideFrame.AttachLocalAvatar();
-        Debug.Log("[ReferenceFrameSample] AttachLocalAvatar(" + _rideFrame.FrameId + ") => " + attached);
+        bool boarded = _movingFloor.BoardLocalAvatar();
+        Debug.Log("[MovingFloorSample] BoardLocalAvatar(" + _movingFloor.FloorId + ") => " + boarded);
         UpdateStatusColor();
     }
 
-    public void DetachLocalAvatar()
+    public void LeaveLocalAvatar()
     {
-        if (_rideFrame != null)
+        if (_movingFloor != null)
         {
-            _rideFrame.DetachLocalAvatar();
+            _movingFloor.LeaveLocalAvatar();
         }
 
-        Debug.Log("[ReferenceFrameSample] Detached local avatar from ride frame.");
+        Debug.Log("[MovingFloorSample] Local avatar left moving floor.");
         UpdateStatusColor();
     }
 
-    public void ToggleAttachment()
+    public void ToggleBoarding()
     {
-        if (IsAttached())
+        if (IsOnFloor())
         {
-            DetachLocalAvatar();
+            LeaveLocalAvatar();
         }
         else
         {
-            AttachLocalAvatar();
+            BoardLocalAvatar();
         }
     }
 
     public void ToggleMotion()
     {
-        _animateFrame = !_animateFrame;
+        _animateFloor = !_animateFloor;
     }
 
-    private bool EnsureRideFrame()
+    private bool EnsureMovingFloor()
     {
-        ResolveReferenceFrame();
-        if (_rideFrame == null)
+        ResolveMovingFloor();
+        if (_movingFloor == null)
         {
-            if (_referenceFrame != null)
+            if (_movingFloorTransform != null)
             {
-                _rideFrame = _referenceFrame.GetComponent<NetSyncRideFrame>();
+                _movingFloor = _movingFloorTransform.GetComponent<NetSyncMovingFloor>();
             }
         }
 
-        if (_rideFrame == null)
+        if (_movingFloor == null)
         {
-            Debug.LogWarning("[ReferenceFrameSample] NetSyncRideFrame is required on the moving platform.", this);
+            Debug.LogWarning("[MovingFloorSample] NetSyncMovingFloor is required on the moving floor.", this);
             return false;
         }
 
-        ResolveReferenceFrame();
+        ResolveMovingFloor();
         return true;
     }
 
-    private void ResolveReferenceFrame()
+    private void ResolveMovingFloor()
     {
-        if (_referenceFrame == null && _rideFrame != null)
+        if (_movingFloorTransform == null && _movingFloor != null)
         {
-            _referenceFrame = _rideFrame.transform;
+            _movingFloorTransform = _movingFloor.transform;
         }
 
-        if (_rideFrame == null && _referenceFrame != null)
+        if (_movingFloor == null && _movingFloorTransform != null)
         {
-            _rideFrame = _referenceFrame.GetComponent<NetSyncRideFrame>();
+            _movingFloor = _movingFloorTransform.GetComponent<NetSyncMovingFloor>();
         }
     }
 
-    private bool IsAttached()
+    private bool IsOnFloor()
     {
-        return _rideFrame != null && _rideFrame.IsLocalAvatarAttached;
+        return _movingFloor != null && _movingFloor.IsLocalAvatarOnFloor;
     }
 
-    private string GetFrameIdLabel()
+    private string GetFloorIdLabel()
     {
-        if (_rideFrame != null && !string.IsNullOrEmpty(_rideFrame.FrameId))
+        if (_movingFloor != null && !string.IsNullOrEmpty(_movingFloor.FloorId))
         {
-            return _rideFrame.FrameId;
+            return _movingFloor.FloorId;
         }
 
         return "";
     }
 
-    private void UpdateReferenceFrameMotion()
+    private void UpdateMovingFloorMotion()
     {
-        if (!_animateFrame || _referenceFrame == null)
+        if (!_animateFloor || _movingFloorTransform == null)
         {
             return;
         }
@@ -204,8 +204,8 @@ public class ReferenceFrameSampleController : MonoBehaviour
             Mathf.Sin(phase * 0.75f) * _motionAmplitude.z);
         float yaw = Mathf.Sin(phase * 0.5f) * _yawAmplitudeDegrees;
 
-        _referenceFrame.localPosition = _initialFrameLocalPosition + offset;
-        _referenceFrame.localRotation = _initialFrameLocalRotation * Quaternion.Euler(0f, yaw, 0f);
+        _movingFloorTransform.localPosition = _initialFloorLocalPosition + offset;
+        _movingFloorTransform.localRotation = _initialFloorLocalRotation * Quaternion.Euler(0f, yaw, 0f);
     }
 
     private void UpdateStatusColor()
@@ -216,11 +216,11 @@ public class ReferenceFrameSampleController : MonoBehaviour
         }
 
         Color color = Color.red;
-        if (IsAttached())
+        if (IsOnFloor())
         {
             color = Color.green;
         }
-        else if (_rideFrame != null)
+        else if (_movingFloor != null)
         {
             color = Color.yellow;
         }

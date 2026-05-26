@@ -277,127 +277,127 @@ namespace Styly.NetSync
             }
         }
 
-        #region === Reference Frames ===
+        #region === Moving Floors ===
         /// <summary>
-        /// The reference frame id currently attached to the local avatar, or null when detached.
+        /// The moving floor id currently carrying the local avatar, or null when off floor.
         /// </summary>
-        public string LocalReferenceFrameId
+        public string LocalMovingFloorId
         {
             get
             {
-                if (_referenceFrameManager == null)
+                if (_movingFloorManager == null)
                 {
                     return null;
                 }
 
-                return _referenceFrameManager.LocalFrameId;
+                return _movingFloorManager.LocalFloorId;
             }
         }
 
         /// <summary>
-        /// True when the local avatar is currently sending poses in a reference frame's local coordinates.
+        /// True when the local avatar is currently sending poses in a moving floor's local coordinates.
         /// </summary>
-        public bool IsLocalAvatarAttachedToReferenceFrame
+        public bool IsLocalAvatarOnMovingFloor
         {
             get
             {
-                return _referenceFrameManager != null && _referenceFrameManager.HasLocalFrame;
+                return _movingFloorManager != null && _movingFloorManager.HasLocalFloor;
             }
         }
 
         /// <summary>
-        /// True when the local avatar is currently attached to the specified reference frame id.
+        /// True when the local avatar is currently on the specified moving floor id.
         /// </summary>
-        public bool IsLocalAvatarAttachedToReferenceFrameId(string frameId)
+        public bool IsLocalAvatarOnMovingFloorId(string floorId)
         {
-            if (_referenceFrameManager == null || string.IsNullOrEmpty(frameId))
+            if (_movingFloorManager == null || string.IsNullOrEmpty(floorId))
             {
                 return false;
             }
 
-            return _referenceFrameManager.HasLocalFrame && _referenceFrameManager.LocalFrameId == frameId;
+            return _movingFloorManager.HasLocalFloor && _movingFloorManager.LocalFloorId == floorId;
         }
 
         /// <summary>
-        /// Register a scene-stable reference frame used by protocol v5 reference-frame-local avatar poses.
-        /// The same frame id must resolve to the corresponding local Transform on every client.
+        /// Register a scene-stable moving floor used by protocol v5 moving-floor-local avatar poses.
+        /// The same floor id must resolve to the corresponding local Transform on every client.
         /// </summary>
-        public bool RegisterReferenceFrame(string frameId, Transform frame)
+        public bool RegisterMovingFloor(string floorId, Transform floor)
         {
-            if (_referenceFrameManager == null)
+            if (_movingFloorManager == null)
             {
                 return false;
             }
 
-            return _referenceFrameManager.RegisterFrame(frameId, frame);
+            return _movingFloorManager.RegisterFloor(floorId, floor);
         }
 
         /// <summary>
-        /// Remove a previously registered reference frame.
+        /// Remove a previously registered moving floor.
         /// </summary>
-        public void UnregisterReferenceFrame(string frameId)
+        public void UnregisterMovingFloor(string floorId)
         {
-            if (_referenceFrameManager == null)
+            if (_movingFloorManager == null)
             {
                 return;
             }
 
-            bool wasAttachedLocally = !string.IsNullOrEmpty(frameId) && _referenceFrameManager.LocalFrameId == frameId;
-            _referenceFrameManager.UnregisterFrame(frameId);
-            if (wasAttachedLocally)
+            bool wasOnFloorLocally = !string.IsNullOrEmpty(floorId) && _movingFloorManager.LocalFloorId == floorId;
+            _movingFloorManager.UnregisterFloor(floorId);
+            if (wasOnFloorLocally)
             {
-                _referenceFrameManager.DetachLocal();
-                SetClientVariable(ReferenceFrameManager.ClientVariableName, "");
+                _movingFloorManager.LeaveLocal();
+                SetClientVariable(MovingFloorManager.ClientVariableName, "");
             }
         }
 
         /// <summary>
-        /// Attach the local avatar to an already registered reference frame.
-        /// While attached, the avatar pose is sent in that frame's local coordinates.
+        /// Board the local avatar onto an already registered moving floor.
+        /// While on the floor, the avatar pose is sent in that floor's local coordinates.
         /// </summary>
-        public bool AttachLocalAvatarToReferenceFrame(string frameId)
+        public bool BoardLocalAvatarOnMovingFloor(string floorId)
         {
-            if (_referenceFrameManager == null)
+            if (_movingFloorManager == null)
             {
                 return false;
             }
 
-            if (!_referenceFrameManager.AttachLocal(frameId))
+            if (!_movingFloorManager.BoardLocal(floorId))
             {
-                Debug.LogWarning($"[NetSync] AttachLocalAvatarToReferenceFrame failed. Register reference frame '{frameId}' before attaching.");
+                Debug.LogWarning($"[NetSync] BoardLocalAvatarOnMovingFloor failed. Register moving floor '{floorId}' before boarding.");
                 return false;
             }
 
-            SetClientVariable(ReferenceFrameManager.ClientVariableName, frameId);
+            SetClientVariable(MovingFloorManager.ClientVariableName, floorId);
             return true;
         }
 
         /// <summary>
-        /// Register a reference frame Transform and attach the local avatar to it.
+        /// Register a moving floor Transform and board the local avatar onto it.
         /// </summary>
-        public bool AttachLocalAvatarToReferenceFrame(string frameId, Transform frame)
+        public bool BoardLocalAvatarOnMovingFloor(string floorId, Transform floor)
         {
-            if (!RegisterReferenceFrame(frameId, frame))
+            if (!RegisterMovingFloor(floorId, floor))
             {
-                Debug.LogWarning("[NetSync] AttachLocalAvatarToReferenceFrame failed. frameId and frame must be valid.");
+                Debug.LogWarning("[NetSync] BoardLocalAvatarOnMovingFloor failed. floorId and floor must be valid.");
                 return false;
             }
 
-            return AttachLocalAvatarToReferenceFrame(frameId);
+            return BoardLocalAvatarOnMovingFloor(floorId);
         }
 
         /// <summary>
-        /// Detach the local avatar from its current reference frame and resume normal world-space pose sync.
+        /// Leave the local avatar from its current moving floor and resume normal world-space pose sync.
         /// </summary>
-        public void DetachLocalAvatarFromReferenceFrame()
+        public void LeaveLocalAvatarFromMovingFloor()
         {
-            if (_referenceFrameManager == null)
+            if (_movingFloorManager == null)
             {
                 return;
             }
 
-            _referenceFrameManager.DetachLocal();
-            SetClientVariable(ReferenceFrameManager.ClientVariableName, "");
+            _movingFloorManager.LeaveLocal();
+            SetClientVariable(MovingFloorManager.ClientVariableName, "");
         }
         #endregion
 
@@ -441,7 +441,7 @@ namespace Styly.NetSync
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
-            if (_referenceFrameManager != null) { _referenceFrameManager.ClearClientStates(true); }
+            if (_movingFloorManager != null) { _movingFloorManager.ClearClientStates(true); }
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
@@ -465,7 +465,7 @@ namespace Styly.NetSync
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
         private ObjectSyncManager _objectSyncManager;
-        private ReferenceFrameManager _referenceFrameManager = new ReferenceFrameManager();
+        private MovingFloorManager _movingFloorManager = new MovingFloorManager();
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -985,9 +985,9 @@ namespace Styly.NetSync
 
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
-            if (_referenceFrameManager != null)
+            if (_movingFloorManager != null)
             {
-                _referenceFrameManager.RemoveClient(clientNo);
+                _movingFloorManager.RemoveClient(clientNo);
             }
 
             OnAvatarDisconnected?.Invoke(clientNo);
@@ -1031,9 +1031,9 @@ namespace Styly.NetSync
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
-            if (name == ReferenceFrameManager.ClientVariableName && _referenceFrameManager != null)
+            if (name == MovingFloorManager.ClientVariableName && _movingFloorManager != null)
             {
-                _referenceFrameManager.SetClientFrameId(clientNo, newValue);
+                _movingFloorManager.SetClientFloorId(clientNo, newValue);
             }
 
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
@@ -1440,26 +1440,26 @@ namespace Styly.NetSync
         }
         #endregion ------------------------------------------------------------------------
 
-        internal bool TryGetLocalReferenceFrame(out Transform frame)
+        internal bool TryGetLocalMovingFloor(out Transform floor)
         {
-            frame = null;
-            if (_referenceFrameManager == null)
+            floor = null;
+            if (_movingFloorManager == null)
             {
                 return false;
             }
 
-            return _referenceFrameManager.TryGetLocalFrame(out frame);
+            return _movingFloorManager.TryGetLocalFloor(out floor);
         }
 
-        internal bool TryGetReferenceFrameForClient(int clientNo, bool warnIfMissingId, out Transform frame)
+        internal bool TryGetMovingFloorForClient(int clientNo, bool warnIfMissingId, out Transform floor)
         {
-            frame = null;
-            if (_referenceFrameManager == null)
+            floor = null;
+            if (_movingFloorManager == null)
             {
                 return false;
             }
 
-            return _referenceFrameManager.TryGetFrameForClient(clientNo, warnIfMissingId, out frame);
+            return _movingFloorManager.TryGetFloorForClient(clientNo, warnIfMissingId, out floor);
         }
 
         /// <summary>
@@ -1503,7 +1503,7 @@ namespace Styly.NetSync
             if (_humanPresenceManager == null) { return; }
 
             var worldPos = position;
-            var worldYaw = Quaternion.Euler(0f, ReferenceFrameManager.ExtractYawDegrees(rotation), 0f);
+            var worldYaw = Quaternion.Euler(0f, MovingFloorManager.ExtractYawDegrees(rotation), 0f);
 
             _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYaw, poseTime, poseSeq);
         }
@@ -1515,11 +1515,11 @@ namespace Styly.NetSync
                 return;
             }
 
-            // Reference-frame-local poses carry direct physical HMD pose in the
-            // physical slot. Do not derive presence from the frame-local head,
-            // because that would make the physical marker ride the virtual frame.
+            // Moving-floor-local poses carry direct physical HMD pose in the
+            // physical slot. Do not derive presence from the floor-local head,
+            // because that would make the physical marker ride the moving floor.
             var worldPos = physical.Position;
-            var worldYaw = Quaternion.Euler(0f, ReferenceFrameManager.ExtractYawDegrees(physical.Rotation), 0f);
+            var worldYaw = Quaternion.Euler(0f, MovingFloorManager.ExtractYawDegrees(physical.Rotation), 0f);
             _humanPresenceManager.SetTransformImmediate(clientNo, worldPos, worldYaw);
         }
     }

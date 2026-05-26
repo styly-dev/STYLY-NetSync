@@ -69,13 +69,13 @@ POSE_FLAG_HEAD_VALID = 1 << 2
 POSE_FLAG_RIGHT_VALID = 1 << 3
 POSE_FLAG_LEFT_VALID = 1 << 4
 POSE_FLAG_VIRTUALS_VALID = 1 << 5
-POSE_FLAG_REFERENCE_FRAME_LOCAL = 1 << 6
+POSE_FLAG_MOVING_FLOOR_LOCAL = 1 << 6
 
 
 def _compute_encoding_flags(flags: int) -> int:
     """Return pose encoding flags for the sanitized pose flags."""
     encoding_flags = ENCODING_FLAGS_DEFAULT
-    if flags & POSE_FLAG_REFERENCE_FRAME_LOCAL:
+    if flags & POSE_FLAG_MOVING_FLOOR_LOCAL:
         encoding_flags &= ~ENCODING_PHYSICAL_IS_XRORIGIN_DELTA
     return encoding_flags & 0xFF
 
@@ -430,7 +430,7 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     right_valid = head_valid and bool(flags & POSE_FLAG_RIGHT_VALID)
     left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
     virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
-    reference_frame_local = bool(flags & POSE_FLAG_REFERENCE_FRAME_LOCAL)
+    moving_floor_local = bool(flags & POSE_FLAG_MOVING_FLOOR_LOCAL)
 
     xr_origin_delta_x = float(client.get("xrOriginDeltaX", 0.0))
     xr_origin_delta_y = float(client.get("xrOriginDeltaY", 0.0))
@@ -442,7 +442,7 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     head_rot_n = _normalize_quaternion(*head_rot)
 
     if physical_valid:
-        if reference_frame_local:
+        if moving_floor_local:
             physical_pos = _transform_get_position(physical)
             physical_rot = _transform_get_quaternion(physical)
             physical_yaw = _quaternion_to_yaw_degrees(*physical_rot)
@@ -894,17 +894,17 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     right_valid = head_valid and bool(flags & POSE_FLAG_RIGHT_VALID)
     left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
     virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
-    reference_frame_local = bool(flags & POSE_FLAG_REFERENCE_FRAME_LOCAL)
+    moving_floor_local = bool(flags & POSE_FLAG_MOVING_FLOOR_LOCAL)
 
     physical = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, True)
     head = _create_transform_dict(
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, reference_frame_local
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local
     )
     right = _create_transform_dict(
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, reference_frame_local
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local
     )
     left = _create_transform_dict(
-        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, reference_frame_local
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local
     )
 
     head_pos = (0.0, 0.0, 0.0)
@@ -916,14 +916,14 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
 
     if physical_valid:
         if (
-            not reference_frame_local
+            not moving_floor_local
             and (encoding_flags & ENCODING_PHYSICAL_IS_XRORIGIN_DELTA) == 0
         ):
             raise ValueError(
                 "PhysicalValid set but XROrigin delta encoding flag is missing"
             )
         dx_q, dy_q, dz_q, dyaw_q = struct.unpack("<hhhh", data[offset : offset + 8])
-        if not reference_frame_local:
+        if not moving_floor_local:
             xr_origin_delta_x = _dequantize_signed(dx_q, LOCO_POS_SCALE)
             xr_origin_delta_y = _dequantize_signed(dy_q, LOCO_POS_SCALE)
             xr_origin_delta_z = _dequantize_signed(dz_q, LOCO_POS_SCALE)
@@ -950,10 +950,10 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             head_rot[1],
             head_rot[2],
             head_rot[3],
-            reference_frame_local,
+            moving_floor_local,
         )
 
-    if physical_valid and reference_frame_local:
+    if physical_valid and moving_floor_local:
         physical_pos = (
             _dequantize_signed(dx_q, LOCO_POS_SCALE),
             _dequantize_signed(dy_q, LOCO_POS_SCALE),
@@ -1026,7 +1026,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             abs_rot[1],
             abs_rot[2],
             abs_rot[3],
-            reference_frame_local,
+            moving_floor_local,
         )
 
     if left_valid:
@@ -1055,7 +1055,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
             abs_rot[1],
             abs_rot[2],
             abs_rot[3],
-            reference_frame_local,
+            moving_floor_local,
         )
 
     virtual_count = data[offset]
@@ -1097,7 +1097,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
                     abs_rot[1],
                     abs_rot[2],
                     abs_rot[3],
-                    reference_frame_local,
+                    moving_floor_local,
                 )
             )
 

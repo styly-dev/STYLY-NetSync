@@ -640,8 +640,8 @@ class TestTransformSerializationV5:
         )
         assert len(raw) == 46
 
-    def test_reference_frame_local_body_size_matches_unbound(self) -> None:
-        """Reference-frame-local pose should not add bytes to the pose body."""
+    def test_moving_floor_local_body_size_matches_unbound(self) -> None:
+        """Moving-floor-local pose should not add bytes to the pose body."""
         rng = random.Random(4242)
         unbound = _build_random_client_pose(rng, virtual_count=0)
         unbound["flags"] = (
@@ -652,7 +652,7 @@ class TestTransformSerializationV5:
         )
         bound = dict(unbound)
         bound["flags"] = (
-            unbound["flags"] | binary_serializer.POSE_FLAG_REFERENCE_FRAME_LOCAL
+            unbound["flags"] | binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
         )
         bound["physical"] = _build_transform(
             (0.15, 1.62, -0.08),
@@ -674,7 +674,7 @@ class TestTransformSerializationV5:
         assert len(unbound_raw) == 46
         assert len(bound_raw) == len(unbound_raw)
 
-    def test_reference_frame_local_roundtrip_uses_direct_physical(self) -> None:
+    def test_moving_floor_local_roundtrip_uses_direct_physical(self) -> None:
         """Bound poses use direct physical pose and keep head-relative channels intact."""
         physical_yaw = 42.0
         physical_rot = (
@@ -684,7 +684,7 @@ class TestTransformSerializationV5:
             math.cos(math.radians(physical_yaw) * 0.5),
         )
         payload = {
-            "deviceId": "frame-local",
+            "deviceId": "floor-local",
             "poseSeq": 313,
             "flags": (
                 binary_serializer.POSE_FLAG_PHYSICAL_VALID
@@ -692,7 +692,7 @@ class TestTransformSerializationV5:
                 | binary_serializer.POSE_FLAG_RIGHT_VALID
                 | binary_serializer.POSE_FLAG_LEFT_VALID
                 | binary_serializer.POSE_FLAG_VIRTUALS_VALID
-                | binary_serializer.POSE_FLAG_REFERENCE_FRAME_LOCAL
+                | binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
             ),
             "xrOriginDeltaX": 99.0,
             "xrOriginDeltaY": 99.0,
@@ -719,7 +719,7 @@ class TestTransformSerializationV5:
             binary_serializer.serialize_client_transform(payload)
         )
         assert decoded is not None
-        assert decoded["flags"] & binary_serializer.POSE_FLAG_REFERENCE_FRAME_LOCAL
+        assert decoded["flags"] & binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
         assert (
             decoded["encodingFlags"]
             & binary_serializer.ENCODING_PHYSICAL_IS_XRORIGIN_DELTA
@@ -836,14 +836,14 @@ class TestTransformSerializationV5:
             assert abs(src_head["posY"] - dst_head["posY"]) <= 0.01
             assert abs(src_head["posZ"] - dst_head["posZ"]) <= 0.01
 
-    def test_room_relay_preserves_reference_frame_local_flag(self) -> None:
-        """Room serialization should preserve reference-frame-local pose bodies."""
+    def test_room_relay_preserves_moving_floor_local_flag(self) -> None:
+        """Room serialization should preserve moving-floor-local pose bodies."""
         rng = random.Random(2027)
         bound = _build_random_client_pose(rng, virtual_count=1)
         bound["clientNo"] = 303
         bound["poseTime"] = 333.456
         bound["flags"] = (
-            int(bound["flags"]) | binary_serializer.POSE_FLAG_REFERENCE_FRAME_LOCAL
+            int(bound["flags"]) | binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
         )
         bound["physical"] = _build_transform(
             (0.2, 1.65, 0.05),
@@ -857,7 +857,7 @@ class TestTransformSerializationV5:
 
         encoded = binary_serializer.serialize_room_transform(
             {
-                "roomId": "room-frame-local",
+                "roomId": "room-floor-local",
                 "broadcastTime": 1000.0,
                 "clients": [bound],
             }
@@ -868,7 +868,7 @@ class TestTransformSerializationV5:
         assert decoded is not None
         assert len(decoded["clients"]) == 1
         client = decoded["clients"][0]
-        assert client["flags"] & binary_serializer.POSE_FLAG_REFERENCE_FRAME_LOCAL
+        assert client["flags"] & binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
         assert (
             client["encodingFlags"]
             & binary_serializer.ENCODING_PHYSICAL_IS_XRORIGIN_DELTA

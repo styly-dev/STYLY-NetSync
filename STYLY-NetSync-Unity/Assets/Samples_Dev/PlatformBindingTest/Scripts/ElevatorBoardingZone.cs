@@ -8,8 +8,8 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
     /// Detects when the local player enters or leaves the trigger volume above
     /// an elevator. Detection keys off colliders tagged <c>Player</c> on the
     /// local avatar prefab. Each zone optionally calls
-    /// <see cref="NetSyncRideFrame.AttachLocalAvatar"/> so receivers reconstruct
-    /// that avatar in the elevator's ride frame (v5).
+    /// <see cref="NetSyncMovingFloor.BoardLocalAvatar"/> so receivers reconstruct
+    /// that avatar in the elevator's moving floor (v5).
     ///
     /// While boarded the rig is moved by the elevator's per-frame delta in
     /// <see cref="LateUpdate"/> rather than parented under the elevator. The
@@ -25,21 +25,21 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
     public class ElevatorBoardingZone : MonoBehaviour
     {
         [Header("Platform")]
-        [SerializeField, Tooltip("If true, NetSyncRideFrame.AttachLocalAvatar is called on board so receivers apply the issue #425 fix. Leave false on the 'raw' elevator to keep the legacy laggy reconstruction visible.")]
+        [SerializeField, Tooltip("If true, NetSyncMovingFloor.BoardLocalAvatar is called on board so receivers apply the issue #425 fix. Leave false on the 'raw' elevator to keep the legacy laggy reconstruction visible.")]
         private bool _applyPlatformBinding;
 
         [Header("References")]
         [SerializeField, Tooltip("The elevator GameObject the rig should be parented under while inside the volume. Usually this zone's parent.")]
         private GameObject _elevatorRoot;
-        [SerializeField, Tooltip("Ride frame registered on the elevator root. Fixed elevators attach to this frame; raw elevators keep it register-only.")]
-        private NetSyncRideFrame _rideFrame;
+        [SerializeField, Tooltip("Moving floor registered on the elevator root. Fixed elevators board this floor; raw elevators keep it register-only.")]
+        private NetSyncMovingFloor _movingFloor;
         [SerializeField, Tooltip("Trigger volume that determines whether the rig is on the elevator. World AABB is polled each frame against the rig position.")]
         private BoxCollider _triggerVolume;
 
         [Header("Boarding Visual")]
         [SerializeField, Tooltip("Renderer whose base color flips to BoundColor while the local rig is bound to this platform. Defaults to a MeshRenderer on the elevator root.")]
         private Renderer _glowRenderer;
-        [SerializeField, Tooltip("Color swapped onto the elevator's material while AttachLocalAvatarToPlatform is in effect.")]
+        [SerializeField, Tooltip("Color swapped onto the elevator's material while moving floor binding is in effect.")]
         private Color _boundColor = new Color(0.2f, 0.5f, 1f, 1f);
 
         private const string PlayerTag = "Player";
@@ -62,7 +62,7 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
         private static readonly int _baseColorIdLegacy = Shader.PropertyToID("_Color");
 
         public bool IsBoarded => _boarded;
-        public string PlatformId => _rideFrame != null ? _rideFrame.FrameId : "";
+        public string PlatformId => _movingFloor != null ? _movingFloor.FloorId : "";
         public bool AppliesPlatformBinding => _applyPlatformBinding;
         public GameObject ElevatorRoot => _elevatorRoot;
 
@@ -80,7 +80,7 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
             }
             _localRig = xrOrigin.transform;
 
-            EnsureRideFrame();
+            EnsureMovingFloor();
 
             if (_glowRenderer == null && _elevatorRoot != null)
             {
@@ -126,9 +126,9 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
             _boarded = true;
             _hasPrevElevatorPose = false; // snapshot on next LateUpdate
 
-            if (_applyPlatformBinding && EnsureRideFrame())
+            if (_applyPlatformBinding && EnsureMovingFloor())
             {
-                _rideFrame.AttachLocalAvatar();
+                _movingFloor.BoardLocalAvatar();
             }
             SetGlow(true);
             UnityEngine.Debug.Log($"[PlatformBindingTest] Boarded {_elevatorRoot.name} (binding={_applyPlatformBinding}).");
@@ -139,9 +139,9 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
             _boarded = false;
             _hasPrevElevatorPose = false;
 
-            if (_applyPlatformBinding && _rideFrame != null)
+            if (_applyPlatformBinding && _movingFloor != null)
             {
-                _rideFrame.DetachLocalAvatar();
+                _movingFloor.LeaveLocalAvatar();
             }
             SetGlow(false);
             UnityEngine.Debug.Log($"[PlatformBindingTest] Unboarded {_elevatorRoot.name}.");
@@ -171,7 +171,7 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
         {
             if (_matInstance == null) { return; }
             // Only swap while the platform binding is actually active. Riding the
-            // Raw elevator boards the rig but does not call AttachLocalAvatarToPlatform,
+            // Raw elevator boards the rig but does not call BoardLocalAvatar,
             // so there is no binding to indicate.
             var swap = on && _applyPlatformBinding;
             var color = swap ? _boundColor : _originalColor;
@@ -183,24 +183,24 @@ namespace Styly.NetSync.Samples.PlatformBindingTest
             if (_matInstance.HasProperty(_baseColorIdLegacy)) { _matInstance.SetColor(_baseColorIdLegacy, color); }
         }
 
-        private bool EnsureRideFrame()
+        private bool EnsureMovingFloor()
         {
-            if (_rideFrame != null)
+            if (_movingFloor != null)
             {
                 return true;
             }
 
             if (_elevatorRoot != null)
             {
-                _rideFrame = _elevatorRoot.GetComponent<NetSyncRideFrame>();
+                _movingFloor = _elevatorRoot.GetComponent<NetSyncMovingFloor>();
             }
 
-            if (_rideFrame != null)
+            if (_movingFloor != null)
             {
                 return true;
             }
 
-            UnityEngine.Debug.LogWarning("[PlatformBindingTest] ElevatorBoardingZone requires a NetSyncRideFrame on the elevator root.", this);
+            UnityEngine.Debug.LogWarning("[PlatformBindingTest] ElevatorBoardingZone requires a NetSyncMovingFloor on the elevator root.", this);
             return false;
         }
     }

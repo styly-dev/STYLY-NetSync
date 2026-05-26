@@ -386,8 +386,8 @@ namespace Styly.NetSync
                     // We pass local coordinates here; NetSyncManager converts them to world space using the
                     // remote avatar's hierarchy and applies yaw-only for the visual indicator.
                     var physical = c.physical;
-                    bool referenceFrameLocal = (c.flags & PoseFlags.ReferenceFrameLocal) != 0;
-                    if (!referenceFrameLocal && physical != null && netSyncManager != null)
+                    bool movingFloorLocal = (c.flags & PoseFlags.MovingFloorLocal) != 0;
+                    if (!movingFloorLocal && physical != null && netSyncManager != null)
                     {
                         var localPos = physical.GetPosition();
                         var localRot = physical.GetRotation();
