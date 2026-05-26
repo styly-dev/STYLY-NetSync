@@ -277,6 +277,133 @@ namespace Styly.NetSync
             }
         }
 
+        #region === Moving Floors ===
+        /// <summary>
+        /// The moving floor id currently carrying the local avatar, or 0 when off floor.
+        /// </summary>
+        public uint LocalMovingFloorId
+        {
+            get
+            {
+                if (_movingFloorManager == null)
+                {
+                    return MovingFloorManager.UnassignedFloorId;
+                }
+
+                return _movingFloorManager.LocalFloorId;
+            }
+        }
+
+        /// <summary>
+        /// True when the local avatar is currently sending poses in a moving floor's local coordinates.
+        /// </summary>
+        public bool IsLocalAvatarOnMovingFloor
+        {
+            get
+            {
+                return _movingFloorManager != null && _movingFloorManager.HasLocalFloor;
+            }
+        }
+
+        /// <summary>
+        /// True when the local avatar is currently on the specified moving floor id.
+        /// </summary>
+        public bool IsLocalAvatarOnMovingFloorId(uint floorId)
+        {
+            if (_movingFloorManager == null || floorId == MovingFloorManager.UnassignedFloorId)
+            {
+                return false;
+            }
+
+            return _movingFloorManager.HasLocalFloor && _movingFloorManager.LocalFloorId == floorId;
+        }
+
+        /// <summary>
+        /// Register a scene-stable moving floor used by protocol v5 moving-floor-local avatar poses.
+        /// The same floor id must resolve to the corresponding local Transform on every client.
+        /// </summary>
+        public bool RegisterMovingFloor(uint floorId, Transform floor)
+        {
+            if (_movingFloorManager == null)
+            {
+                return false;
+            }
+
+            return _movingFloorManager.RegisterFloor(floorId, floor);
+        }
+
+        /// <summary>
+        /// Remove a previously registered moving floor.
+        /// </summary>
+        public void UnregisterMovingFloor(uint floorId)
+        {
+            if (_movingFloorManager == null)
+            {
+                return;
+            }
+
+            bool wasOnFloorLocally =
+                floorId != MovingFloorManager.UnassignedFloorId &&
+                _movingFloorManager.LocalFloorId == floorId;
+            _movingFloorManager.UnregisterFloor(floorId);
+            if (wasOnFloorLocally)
+            {
+                _movingFloorManager.LeaveLocal();
+                SetClientVariable(MovingFloorManager.ClientVariableName, "");
+            }
+        }
+
+        /// <summary>
+        /// Board the local avatar onto an already registered moving floor.
+        /// While on the floor, the avatar pose is sent in that floor's local coordinates.
+        /// </summary>
+        public bool BoardLocalAvatarOnMovingFloor(uint floorId)
+        {
+            if (_movingFloorManager == null)
+            {
+                return false;
+            }
+
+            if (!_movingFloorManager.BoardLocal(floorId))
+            {
+                Debug.LogWarning(
+                    $"[NetSync] BoardLocalAvatarOnMovingFloor failed. Register moving floor '{MovingFloorManager.FormatFloorId(floorId)}' before boarding.");
+                return false;
+            }
+
+            SetClientVariable(MovingFloorManager.ClientVariableName, MovingFloorManager.EncodeFloorId(floorId));
+            return true;
+        }
+
+        /// <summary>
+        /// Register a moving floor Transform and board the local avatar onto it.
+        /// </summary>
+        public bool BoardLocalAvatarOnMovingFloor(uint floorId, Transform floor)
+        {
+            if (!RegisterMovingFloor(floorId, floor))
+            {
+                Debug.LogWarning("[NetSync] BoardLocalAvatarOnMovingFloor failed. floorId and floor must be valid.");
+                return false;
+            }
+
+            return BoardLocalAvatarOnMovingFloor(floorId);
+        }
+
+        /// <summary>
+        /// Leave the local avatar from its current moving floor and resume normal world-space pose sync.
+        /// </summary>
+        public void LeaveLocalAvatarFromMovingFloor()
+        {
+            if (_movingFloorManager == null)
+            {
+                return;
+            }
+
+            _movingFloorManager.LeaveLocal();
+            SetClientVariable(MovingFloorManager.ClientVariableName, "");
+        }
+        #endregion
+
         /// <summary>
         /// Set the room ID at runtime and reconnect to the new room.
         /// This performs a hard reconnection, clearing all room-scoped state and
@@ -317,6 +444,7 @@ namespace Styly.NetSync
             _networkVariableManager?.ResetInitialSyncFlag();
             _avatarManager?.CleanupRemoteAvatars();
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
+            if (_movingFloorManager != null) { _movingFloorManager.ClearClientStates(true); }
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
@@ -340,6 +468,7 @@ namespace Styly.NetSync
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
         private ObjectSyncManager _objectSyncManager;
+        private MovingFloorManager _movingFloorManager = new MovingFloorManager();
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -733,7 +862,6 @@ namespace Styly.NetSync
             _networkVariableManager = new NetworkVariableManager(_connectionManager, _deviceId, this);
             _humanPresenceManager = new HumanPresenceManager(this, _enableDebugLogs);
             _objectSyncManager = new ObjectSyncManager(_connectionManager, _messageProcessor, _timeEstimator, _enableDebugLogs);
-
             // Setup events
             _connectionManager.OnConnectionError += HandleConnectionError;
             _connectionManager.OnConnectionEstablished += OnConnectionEstablished;
@@ -860,6 +988,11 @@ namespace Styly.NetSync
 
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
+            if (_movingFloorManager != null)
+            {
+                _movingFloorManager.RemoveClient(clientNo);
+            }
+
             OnAvatarDisconnected?.Invoke(clientNo);
         }
 
@@ -901,6 +1034,11 @@ namespace Styly.NetSync
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
+            if (name == MovingFloorManager.ClientVariableName && _movingFloorManager != null)
+            {
+                _movingFloorManager.SetClientFloorId(clientNo, newValue);
+            }
+
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
         }
 
@@ -1305,6 +1443,28 @@ namespace Styly.NetSync
         }
         #endregion ------------------------------------------------------------------------
 
+        internal bool TryGetLocalMovingFloor(out Transform floor)
+        {
+            floor = null;
+            if (_movingFloorManager == null)
+            {
+                return false;
+            }
+
+            return _movingFloorManager.TryGetLocalFloor(out floor);
+        }
+
+        internal bool TryGetMovingFloorForClient(int clientNo, bool warnIfMissingId, out Transform floor)
+        {
+            floor = null;
+            if (_movingFloorManager == null)
+            {
+                return false;
+            }
+
+            return _movingFloorManager.TryGetFloorForClient(clientNo, warnIfMissingId, out floor);
+        }
+
         /// <summary>
         /// Compute XROrigin locomotion delta relative to startup origin.
         /// t = p1 - R(dyaw) * p0, where p0/p1 are full 3D positions and R(dyaw) is yaw-only
@@ -1330,13 +1490,12 @@ namespace Styly.NetSync
 
         /// <summary>
         /// Update a remote client's Human Presence transform from the client's "physical" pose.
-        /// The incoming position/rotation are LOCAL to the remote head's parent.
-        /// We convert them to WORLD space using the remote avatar hierarchy and apply yaw-only.
+        /// The incoming position/rotation are already the sender's physical HMD pose.
         /// This method runs on the main Unity thread (invoked from MessageProcessor).
         /// </summary>
         /// <param name="clientNo">Remote client number</param>
-        /// <param name="position">Local position (physical, relative to remote head's parent)</param>
-        /// <param name="rotation">Local rotation (physical); only yaw is used</param>
+        /// <param name="position">Physical HMD position</param>
+        /// <param name="rotation">Physical HMD rotation; only yaw is used</param>
         internal void UpdateHumanPresenceTransform(
             int clientNo,
             Vector3 position,
@@ -1346,43 +1505,25 @@ namespace Styly.NetSync
         {
             if (_humanPresenceManager == null) { return; }
 
-            // Find the remote avatar and its head parent to resolve local->world.
-            Transform parent = null;
-            if (_avatarManager != null &&
-                _avatarManager.TryGetNetSyncAvatar(clientNo, out var net))
-            {
-                // If head exists, use its parent as the local space; otherwise fallback to avatar root.
-                parent = (net._head != null) ? net._head.parent : net.transform;
-            }
-
-            // Convert local physical to world using parent transform when available.
-            Vector3 worldPos = position;
-            Quaternion worldYaw;
-            if (parent != null)
-            {
-                // Full local->world for position
-                worldPos = parent.TransformPoint(position);
-
-                // Yaw-only in local space, then compose with parent's rotation to get world yaw
-                var localYaw = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
-                worldYaw = parent.rotation * localYaw;
-
-                // Apply local locomotion delta. Human Presence intentionally consumes only
-                // XZ + yaw of the locomotion delta (the original SE(2) definition); vertical
-                // rig motion is left to the parent transform hierarchy.
-                ComputeXrOriginDelta(out var localDeltaPos, out var localDeltaYaw);
-                var localDeltaRot = Quaternion.Euler(0f, localDeltaYaw, 0f);
-                var localDeltaPosXZ = new Vector3(localDeltaPos.x, 0f, localDeltaPos.z);
-                worldPos = localDeltaRot * worldPos + localDeltaPosXZ;
-                worldYaw = localDeltaRot * worldYaw;
-            }
-            else
-            {
-                // As a safety fallback (e.g., avatar not spawned yet), treat given values as world
-                worldYaw = Quaternion.Euler(0f, rotation.eulerAngles.y, 0f);
-            }
+            var worldPos = position;
+            var worldYaw = Quaternion.Euler(0f, MovingFloorManager.ExtractYawDegrees(rotation), 0f);
 
             _humanPresenceManager.UpdateTransform(clientNo, worldPos, worldYaw, poseTime, poseSeq);
+        }
+
+        internal void UpdateBoundHumanPresenceFromPhysical(int clientNo, in PoseSampleData physical)
+        {
+            if (_humanPresenceManager == null)
+            {
+                return;
+            }
+
+            // Moving-floor-local poses carry direct physical HMD pose in the
+            // physical slot. Do not derive presence from the floor-local head,
+            // because that would make the physical marker ride the moving floor.
+            var worldPos = physical.Position;
+            var worldYaw = Quaternion.Euler(0f, MovingFloorManager.ExtractYawDegrees(physical.Rotation), 0f);
+            _humanPresenceManager.SetTransformImmediate(clientNo, worldPos, worldYaw);
         }
     }
 }

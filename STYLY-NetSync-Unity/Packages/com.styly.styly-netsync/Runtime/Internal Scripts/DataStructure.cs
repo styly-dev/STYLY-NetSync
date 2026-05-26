@@ -14,7 +14,8 @@ namespace Styly.NetSync
         HeadValid = 1 << 2,
         RightValid = 1 << 3,
         LeftValid = 1 << 4,
-        VirtualsValid = 1 << 5
+        VirtualsValid = 1 << 5,
+        MovingFloorLocal = 1 << 6
     }
 
     // Pose data structure (position + rotation quaternion)

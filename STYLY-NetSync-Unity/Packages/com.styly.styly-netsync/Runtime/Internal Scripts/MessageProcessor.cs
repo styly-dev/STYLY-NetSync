@@ -382,15 +382,16 @@ namespace Styly.NetSync
                         // Client added to pending queue
                     }
 
-                    // Update Human Presence from the "physical" (local) pose relative to the Head's parent.
-                    // We pass local coordinates here; NetSyncManager converts them to world space using the
-                    // remote avatar's hierarchy and applies yaw-only for the visual indicator.
+                    // Update Human Presence from the physical HMD pose reconstructed
+                    // by BinarySerializer from the world-space head pose and XROrigin delta.
+                    // Moving-floor-local poses update presence from the smoothed remote avatar path instead.
                     var physical = c.physical;
-                    if (physical != null && netSyncManager != null)
+                    bool movingFloorLocal = (c.flags & PoseFlags.MovingFloorLocal) != 0;
+                    if (!movingFloorLocal && physical != null && netSyncManager != null)
                     {
-                        var localPos = physical.GetPosition();
-                        var localRot = physical.GetRotation();
-                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, localPos, localRot, c.poseTime, c.poseSeq);
+                        var physicalPos = physical.GetPosition();
+                        var physicalRot = physical.GetRotation();
+                        netSyncManager.UpdateHumanPresenceTransform(c.clientNo, physicalPos, physicalRot, c.poseTime, c.poseSeq);
                     }
                 }
 

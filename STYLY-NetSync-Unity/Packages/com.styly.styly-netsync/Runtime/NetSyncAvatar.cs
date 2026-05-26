@@ -199,6 +199,7 @@ namespace Styly.NetSync
 
             // Prepare reusable send buffers (after transforms are known).
             EnsureTxBuffersAllocated();
+            EnsureMovingFloorLateApplier();
             CacheInitialHandActiveStates();
         }
 
@@ -213,7 +214,12 @@ namespace Styly.NetSync
             if (!IsLocalAvatar)
             {
                 // Use high-resolution clock for consistent time estimation
-                _transformApplier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
+                Transform movingFloor = null;
+                if (_netSyncManager != null && _transformApplier.IsMovingFloorLocal)
+                {
+                    _netSyncManager.TryGetMovingFloorForClient(_clientNo, true, out movingFloor);
+                }
+                _transformApplier.Tick(Time.deltaTime, NetSyncClock.NowSeconds(), movingFloor);
             }
 
             if (IsLocalAvatar && _head != null)
@@ -226,12 +232,14 @@ namespace Styly.NetSync
             else if (!IsLocalAvatar && _transformApplier.HasPhysicalSample)
             {
                 // Remote avatar: read the smoothed physical sample produced by Tick so
-                // PhysicalPosition is time-aligned with the head channel. Reading the raw
-                // value set in SetTransformData would lag head's smoothing and cause the
-                // `head.y - PhysicalPosition.y` ground-center derivation to wobble.
+                // PhysicalPosition stays time-aligned with the rendered pose.
                 var sample = _transformApplier.LastPhysicalSample;
                 PhysicalPosition = sample.Position;
                 PhysicalRotation = sample.Rotation;
+                if (_transformApplier.IsMovingFloorLocal && _transformApplier.LastTickApplied && _netSyncManager != null)
+                {
+                    _netSyncManager.UpdateBoundHumanPresenceFromPhysical(_clientNo, sample);
+                }
             }
         }
 
@@ -315,7 +323,24 @@ namespace Styly.NetSync
 
             _tx.deviceId = _deviceId;
             _tx.clientNo = _clientNo;
-            _tx.flags = BuildPoseFlags();
+            Transform movingFloor = null;
+            bool movingFloorLocal = _netSyncManager != null && _netSyncManager.TryGetLocalMovingFloor(out movingFloor);
+            _tx.flags = BuildPoseFlags(movingFloorLocal);
+
+            // AvatarManager wires a ParentConstraint from this avatar root to XROrigin
+            // so the avatar follows the rig. Unity evaluates ParentConstraint between
+            // Update and LateUpdate, so when user code moves XROrigin in LateUpdate
+            // (moving platforms / moving floors), the avatar root is one frame
+            // stale at next frame's NetSyncManager.Update(-1000) read time. The
+            // resulting head_local would be sent against the current moving floor
+            // but computed from the previous frame's avatar pose, causing remote
+            // avatars to visibly lag the moving floor during motion.
+            // Re-project every body transform through avatar root's matrix back into
+            // XROrigin's live matrix to recover the world pose the constraint would
+            // produce if it re-evaluated this instant.
+            Transform xrOrigin = _netSyncManager != null ? _netSyncManager._XrOriginTransform : null;
+            Transform avatarRoot = transform;
+            bool useLiveProjection = IsLocalAvatar && xrOrigin != null && avatarRoot != null;
             if (_netSyncManager != null)
             {
                 _netSyncManager.ComputeXrOriginDelta(out var deltaPos, out var deltaYaw);
@@ -340,25 +365,41 @@ namespace Styly.NetSync
             // head pose reflects CameraYOffset. When an XR device is active (Meta Link, XR
             // Device Simulator, on-device builds), _head is used directly.
             Transform headForSync = _head;
+            bool liveProjectHead = useLiveProjection;
 #if UNITY_EDITOR
             var overrideTransform = TryGetEditorHeadOverride();
-            if (overrideTransform != null) { headForSync = overrideTransform; }
+            if (overrideTransform != null)
+            {
+                headForSync = overrideTransform;
+                // Editor override is Camera.main (typically outside avatar root); a
+                // re-projection through avatar root would be a different transform
+                // chain and corrupt the value.
+                liveProjectHead = false;
+            }
 #endif
-            Fill(_txHead,
-                headForSync != null ? headForSync.position : Vector3.zero,
-                headForSync != null ? headForSync.rotation : Quaternion.identity);
+            FillFromTransform(_txHead, headForSync, movingFloor, movingFloorLocal, avatarRoot, xrOrigin, liveProjectHead);
             _tx.head = _txHead;
 
-            var rightHandValid = IsHandPoseValid(_rightHand, Hand.Right);
-            Fill(_txRight,
-                rightHandValid ? _rightHand.position : Vector3.zero,
-                rightHandValid ? _rightHand.rotation : Quaternion.identity);
+            bool rightHandValid = IsHandPoseValid(_rightHand, Hand.Right);
+            FillFromTransform(
+                _txRight,
+                rightHandValid ? _rightHand : null,
+                movingFloor,
+                movingFloorLocal,
+                avatarRoot,
+                xrOrigin,
+                useLiveProjection);
             _tx.rightHand = _txRight;
 
-            var leftHandValid = IsHandPoseValid(_leftHand, Hand.Left);
-            Fill(_txLeft,
-                leftHandValid ? _leftHand.position : Vector3.zero,
-                leftHandValid ? _leftHand.rotation : Quaternion.identity);
+            bool leftHandValid = IsHandPoseValid(_leftHand, Hand.Left);
+            FillFromTransform(
+                _txLeft,
+                leftHandValid ? _leftHand : null,
+                movingFloor,
+                movingFloorLocal,
+                avatarRoot,
+                xrOrigin,
+                useLiveProjection);
             _tx.leftHand = _txLeft;
 
             // Virtuals: reuse pre-allocated TransformData instances.
@@ -368,10 +409,11 @@ namespace Styly.NetSync
                 {
                     var t = _virtualTransforms[i];
                     var td = _txVirtuals[i];
-                    Fill(
-                        td,
-                        t != null ? t.position : Vector3.zero,
-                        t != null ? t.rotation : Quaternion.identity);
+                    // Virtual transforms are public world-space slots and may point
+                    // outside the avatar hierarchy. Only descendants of avatarRoot
+                    // share the ParentConstraint stale-root issue.
+                    bool liveProjectVirtual = useLiveProjection && t != null && t.IsChildOf(avatarRoot);
+                    FillFromTransform(td, t, movingFloor, movingFloorLocal, avatarRoot, xrOrigin, liveProjectVirtual);
                 }
             }
             // If _virtualTransforms is null, make sure list is empty to avoid serializing stale entries.
@@ -406,6 +448,25 @@ namespace Styly.NetSync
             _clientNo = data.clientNo;
         }
 
+        internal void ReapplyLatestMovingFloorPose()
+        {
+            if (IsLocalAvatar || _netSyncManager == null)
+            {
+                return;
+            }
+
+            if (!_transformApplier.IsMovingFloorLocal || !_transformApplier.LastTickApplied)
+            {
+                return;
+            }
+
+            Transform movingFloor = null;
+            if (_netSyncManager.TryGetMovingFloorForClient(_clientNo, false, out movingFloor))
+            {
+                _transformApplier.ReapplyLatestMovingFloor(movingFloor);
+            }
+        }
+
         // Get world transform data (world space, full 6DOF)
         internal TransformData GetWorldTransform(Transform transform)
         {
@@ -435,7 +496,57 @@ namespace Styly.NetSync
             return result;
         }
 
-        private PoseFlags BuildPoseFlags()
+        private void EnsureMovingFloorLateApplier()
+        {
+            var lateApplier = GetComponent<MovingFloorLateApplier>();
+            if (lateApplier == null)
+            {
+                lateApplier = gameObject.AddComponent<MovingFloorLateApplier>();
+            }
+
+            lateApplier.Initialize(this);
+        }
+
+        private static void FillFromTransform(TransformData td, Transform t, Transform movingFloor, bool movingFloorLocal,
+            Transform avatarRoot, Transform xrOrigin, bool useLiveProjection)
+        {
+            if (t == null)
+            {
+                Fill(td, Vector3.zero, Quaternion.identity);
+                return;
+            }
+
+            Vector3 worldPos;
+            Quaternion worldRot;
+            if (useLiveProjection)
+            {
+                // Express t in avatar root's local frame (= constraint-synced snapshot),
+                // then back into world via XROrigin's live frame.
+                var localPos = avatarRoot.InverseTransformPoint(t.position);
+                worldPos = xrOrigin.TransformPoint(localPos);
+                var localRot = Quaternion.Inverse(avatarRoot.rotation) * t.rotation;
+                worldRot = xrOrigin.rotation * localRot;
+            }
+            else
+            {
+                worldPos = t.position;
+                worldRot = t.rotation;
+            }
+
+            if (movingFloorLocal && movingFloor != null)
+            {
+                var floorRotation = movingFloor.rotation;
+                Fill(
+                    td,
+                    movingFloor.InverseTransformPoint(worldPos),
+                    Quaternion.Inverse(floorRotation) * worldRot);
+                return;
+            }
+
+            Fill(td, worldPos, worldRot);
+        }
+
+        private PoseFlags BuildPoseFlags(bool movingFloorLocal)
         {
             var flags = PoseFlags.None;
             if (_netSyncManager != null && _netSyncManager.IsStealthMode)
@@ -448,10 +559,14 @@ namespace Styly.NetSync
             if (hasHead) { flags |= PoseFlags.HeadValid; }
             if (hasHead && IsHandPoseValid(_rightHand, Hand.Right)) { flags |= PoseFlags.RightValid; }
             if (hasHead && IsHandPoseValid(_leftHand, Hand.Left)) { flags |= PoseFlags.LeftValid; }
-            if (true) { flags |= PoseFlags.PhysicalValid; }
+            flags |= PoseFlags.PhysicalValid;
             if (hasHead && _virtualTransforms != null && _virtualTransforms.Length > 0)
             {
                 flags |= PoseFlags.VirtualsValid;
+            }
+            if (movingFloorLocal)
+            {
+                flags |= PoseFlags.MovingFloorLocal;
             }
             return flags;
         }
@@ -647,5 +762,34 @@ namespace Styly.NetSync
             return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(name, clientNo, defaultValue) : defaultValue;
         }
         #endregion
+    }
+
+    // Runs after user LateUpdate motion so moving-floor-local remote avatars
+    // are projected through the floor pose that will be rendered this frame.
+    [DefaultExecutionOrder(10000)]
+    internal sealed class MovingFloorLateApplier : MonoBehaviour
+    {
+        private NetSyncAvatar _avatar;
+
+        internal void Initialize(NetSyncAvatar avatar)
+        {
+            _avatar = avatar;
+        }
+
+        private void Awake()
+        {
+            if (_avatar == null)
+            {
+                _avatar = GetComponent<NetSyncAvatar>();
+            }
+        }
+
+        private void LateUpdate()
+        {
+            if (_avatar != null)
+            {
+                _avatar.ReapplyLatestMovingFloorPose();
+            }
+        }
     }
 }

@@ -32,7 +32,7 @@ styly-netsync-simulator --clients 100 --server localhost --room default_room
 ## Architecture
 
 - **NetSyncServer** (`server.py`): Multi-threaded (receive, periodic, discovery threads)
-- **BinarySerializer** (`binary_serializer.py`): Protocol v4 transform serializer
+- **BinarySerializer** (`binary_serializer.py`): Protocol v5 transform serializer
 - **Python Client API** (`client.py`): `net_sync_manager` class for Python clients
 - **REST Bridge** (`rest_bridge.py`): FastAPI REST API for external integrations
 

@@ -36,15 +36,17 @@ black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 
 - **Server**: Multi-threaded Python (receive, periodic, discovery threads) with ZeroMQ DEALER-ROUTER + PUB-SUB and group-based room management
 - **Unity Client**: Manager pattern with internal components (connection, transform sync, RPC, network variables, avatars)
-- **Protocol**: Binary v4 with quantized positions and smallest-three quaternion compression
+- **Protocol**: Binary v5 with quantized positions and smallest-three quaternion compression
 - **Technology**: Python 3.11+ / pyzmq / FastAPI / msgpack (server), Unity 6 / NetMQ / Newtonsoft.Json (client)
 
 ## Protocol Rules
 
-- Transform protocol is `protocolVersion=4` only (earlier versions removed)
+- Transform protocol is `protocolVersion=5` only (earlier versions removed)
 - Message IDs: `MSG_CLIENT_POSE=11`, `MSG_ROOM_POSE=12`
-- `Head` is absolute; `Right/Left/Virtual` are head-relative
-- `xrOriginDelta` is `(dx, dy, dz, dyaw)` quantized as 4×`int16` (`LOCO_POS_SCALE = 0.01m` for translation, `PHYSICAL_YAW_SCALE = 0.1°` for yaw); receivers reconstruct physical pose as `physical = invDeltaRot * (headPos − deltaPos)`
+- Unbound `Head` is absolute; `Right/Left/Virtual` are head-relative
+- Moving-floor-local poses set `PoseFlags.MovingFloorLocal`; `Head` is moving-floor local while `Right/Left/Virtual` remain head-relative within that floor
+- Unbound `xrOriginDelta` is `(dx, dy, dz, dyaw)` quantized as 4×`int16` (`LOCO_POS_SCALE = 0.01m` for translation, `PHYSICAL_YAW_SCALE = 0.1°` for yaw); receivers reconstruct physical pose as `physical = invDeltaRot * (headPos − deltaPos)`
+- Moving-floor-local poses reuse the same 8-byte physical slot as direct physical position/yaw instead of `xrOriginDelta`
 - Position quantization: absolute `int24 @ 0.01m`, head-relative `int16 @ 0.005m`; out-of-range values clamped
 - Quaternion: 32-bit smallest-three compression
 - Server relays raw client pose body bytes (opaque relay, no decode)

@@ -5,10 +5,13 @@ namespace Styly.NetSync
     /// <summary>
     /// Drives helper Transforms from a NetSyncAvatar reference.
     /// - Estimated Body: head world position with a vertical offset (yaw-only rotation).
-    /// - Calculated Ground Center: world point directly below the head at the avatar's
-    ///   physical rig floor (head.y - PhysicalPosition.y); works for both local and
-    ///   remote avatars and tracks vertical rig motion (elevators, lifts) under v4.
+    /// - Calculated Ground Center: physical floor point derived from the avatar's
+    ///   physical pose, so the marker does not ride with virtual locomotion or
+    ///   moving-floor motion.
     /// </summary>
+    // Runs after MovingFloorLateApplier so visible body meshes read the
+    // final head pose for the rendered frame.
+    [DefaultExecutionOrder(10010)]
     public class BodyTransformSolver : MonoBehaviour
     {
         public NetSyncAvatar netSyncAvatar;
@@ -36,13 +39,8 @@ namespace Styly.NetSync
             Transform head = netSyncAvatar._head;
             if (head == null) return;
 
-            // Yaw-only rotation, shared by both targets.
-            Vector3 headForward = head.forward;
-            headForward.y = 0f;
-            bool hasYaw = headForward.sqrMagnitude > 0.001f;
-            Quaternion yawRotation = hasYaw
-                ? Quaternion.LookRotation(headForward, Vector3.up)
-                : Quaternion.identity;
+            // Yaw-only rotation, shared by virtual body targets.
+            bool hasYaw = TryGetYawRotation(head.rotation, out var yawRotation);
 
             if (body != null)
             {
@@ -54,11 +52,31 @@ namespace Styly.NetSync
 
             if (groundCenter != null)
             {
+                // Drop the marker straight below the head at the rig's floor
+                // height: head world Y minus the head's height in physical
+                // (rig-local) space. Tracks vertical rig motion such as
+                // elevators, lifts, and moving-floor carry without snapping to
+                // world Y = 0.
                 Vector3 groundPosition = head.position;
                 groundPosition.y -= netSyncAvatar.PhysicalPosition.y;
                 groundCenter.position = groundPosition;
-                if (hasYaw) groundCenter.rotation = yawRotation;
+                bool hasGroundYaw = TryGetYawRotation(netSyncAvatar.PhysicalRotation, out var groundRotation);
+                if (hasGroundYaw) groundCenter.rotation = groundRotation;
             }
+        }
+
+        private static bool TryGetYawRotation(Quaternion rotation, out Quaternion yawRotation)
+        {
+            Vector3 forward = rotation * Vector3.forward;
+            forward.y = 0f;
+            if (forward.sqrMagnitude <= 0.001f)
+            {
+                yawRotation = Quaternion.identity;
+                return false;
+            }
+
+            yawRotation = Quaternion.LookRotation(forward, Vector3.up);
+            return true;
         }
     }
 }

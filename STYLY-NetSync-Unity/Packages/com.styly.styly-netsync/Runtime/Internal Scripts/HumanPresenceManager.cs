@@ -108,6 +108,28 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Apply a world-space presence transform immediately from an already-smoothed avatar pose.
+        /// </summary>
+        public void SetTransformImmediate(int clientNo, Vector3 position, Quaternion rotation)
+        {
+            if (_applierByClient.TryGetValue(clientNo, out var applier))
+            {
+                if (applier != null)
+                {
+                    applier.Clear();
+                }
+            }
+
+            if (_presenceByClient.TryGetValue(clientNo, out var go))
+            {
+                if (go != null)
+                {
+                    go.transform.SetPositionAndRotation(position, rotation);
+                }
+            }
+        }
+
+        /// <summary>
         /// Destroy all presence instances (used on room switch/disconnect).
         /// </summary>
         public void CleanupAll()
@@ -135,8 +157,11 @@ namespace Styly.NetSync
             foreach (var kv in _applierByClient)
             {
                 var applier = kv.Value;
-                if (applier != null)
+                if (applier != null && applier.HasAnySnapshot)
                 {
+                    // Skip when there are no snapshots (e.g. after SetTransformImmediate cleared
+                    // the channel for bound mode) so we don't sample an empty buffer and snap the
+                    // presence transform back to the origin.
                     // Use high-resolution clock for consistent time estimation
                     applier.Tick(Time.deltaTime, NetSyncClock.NowSeconds());
                 }

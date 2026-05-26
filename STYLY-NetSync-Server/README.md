@@ -42,14 +42,16 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 
 ## Wire protocol compatibility
 
-- Current transform wire protocol is `protocolVersion = 4`.
-- Transform messages use `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with the compact V4 pose body.
-- v4 vs. v3: `xrOriginDelta` carries a Y component as a 4th `int16` (`dx, dy, dz, dyaw` = 8 bytes vs. v3's 6), so receivers can reconstruct the sender's rig-Y motion (e.g. elevators).
+- Current transform wire protocol is `protocolVersion = 5`.
+- Transform messages use `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with the compact V5 pose body.
+- v5 adds an optional `MovingFloorLocal` pose flag. Bound avatars send head, hands, and virtual transforms in the registered moving floor's local coordinates, and reuse the existing 8-byte physical slot as direct physical position/yaw.
+- Unbound v5 poses keep the v4 `xrOriginDelta` semantics: `xrOriginDelta` carries a Y component as a 4th `int16` (`dx, dy, dz, dyaw` = 8 bytes vs. v3's 6), so receivers can reconstruct the sender's rig-Y motion.
 - Legacy transform protocols (v2/v3) and JSON transform fallback are not supported.
 - Deploy Unity and Python updates together when changing transform protocol behavior.
-- Protocol v4 position quantization ranges:
+- Protocol v5 position quantization ranges:
   - Absolute (`headPosAbs` only): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
-  - XROrigin locomotion delta (`xrOriginDelta`, 4×`int16`: `dx, dy, dz, dyaw`): `0.01 m` per unit for translation, `0.1°` for yaw. Receivers reconstruct `physicalPos = invDeltaRot * (headPos − deltaPos)`; it is not on the wire as a separate absolute field.
+  - XROrigin locomotion delta for unbound poses (`xrOriginDelta`, 4×`int16`: `dx, dy, dz, dyaw`): `0.01 m` per unit for translation, `0.1°` for yaw. Receivers reconstruct `physicalPos = invDeltaRot * (headPos − deltaPos)`; it is not on the wire as a separate absolute field.
+  - Direct physical payload for moving-floor-local poses (`physical`, 4×`int16`: `x, y, z, yaw`): `0.01 m` per unit for translation, `0.1°` for yaw.
   - Head-relative (`right/left/virtual`): signed `int16` at `0.005 m` per unit, per-axis range `[-163.84 m, 163.835 m]`.
 - These are encoding limits, not a hard world-size cap. Worlds can be larger, but encoded axis values are clamped if they exceed the representable range.
 
@@ -57,7 +59,7 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 
 The following options summarize trade-offs when expanding absolute-position range.
 
-Assumed baseline (`protocolVersion=4`):
+Assumed unbound baseline (`protocolVersion=5`, `MovingFloorLocal` off):
 - Client pose body with `Physical+Head+Right+Left` valid and `virtualCount=0`: `46 bytes` (matches `test_client_body_size_with_full_pose_no_virtuals`).
 - Room per-client entry (`clientNo + poseTime + clientBody`): `56 bytes`.
 
