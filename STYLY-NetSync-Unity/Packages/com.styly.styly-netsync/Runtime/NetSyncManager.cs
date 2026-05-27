@@ -194,7 +194,7 @@ namespace Styly.NetSync
                 return false;
             }
 
-            var sent = _networkVariableManager.ClearMyClientVariables(_roomId);
+            var sent = _networkVariableManager.ClearMyClientVariables();
             if (sent)
             {
                 _pendingSelfClientNV.Clear();
@@ -1112,7 +1112,7 @@ namespace Styly.NetSync
                 return;
             }
 
-            if (_networkVariableManager.ClearMyClientVariables(_roomId))
+            if (_networkVariableManager.ClearMyClientVariables())
             {
                 _pendingSelfClientNV.Clear();
                 _pendingClearMyClientVariables = false;

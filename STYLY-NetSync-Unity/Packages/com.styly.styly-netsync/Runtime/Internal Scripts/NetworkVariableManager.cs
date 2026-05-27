@@ -312,10 +312,21 @@ namespace Styly.NetSync
             }
         }
 
-        public bool ClearMyClientVariables(string roomId)
+        public bool ClearMyClientVariables()
         {
-            var clientNo = _netSyncManager != null ? _netSyncManager.ClientNo : 0;
+            if (_netSyncManager == null)
+            {
+                return false;
+            }
+
+            var clientNo = _netSyncManager.ClientNo;
             if (clientNo <= 0)
+            {
+                return false;
+            }
+
+            var roomId = _netSyncManager.RoomId;
+            if (string.IsNullOrEmpty(roomId))
             {
                 return false;
             }
