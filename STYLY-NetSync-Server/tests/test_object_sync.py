@@ -262,6 +262,7 @@ class TestServerObjectOwnership:
         srv.device_id_last_seen = {}
         srv.global_variables = {}
         srv.client_variables = {}
+        srv.nv_write_seq = {}
         srv.pending_global_nv = {}
         srv.pending_client_nv = {}
         srv.room_last_nv_flush = {}

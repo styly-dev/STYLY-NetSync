@@ -314,13 +314,20 @@ class NetSyncServer:
             {}
         )  # room_id -> {device_id -> {var_name: {value, timestamp, lastWriterClientNo}}}
 
+        # Per-room monotonic write sequence. The server assigns the ordering for
+        # Network Variable last-writer-wins instead of trusting client-supplied
+        # timestamps, whose device clocks can drift on offline LAN deployments.
+        # The assigned sequence is stored in each variable's "timestamp" field
+        # (wire format unchanged for now).
+        self.nv_write_seq: dict[str, int] = {}  # room_id -> last assigned write seq
+
         # NV Pending buffers for coalescing (latest-wins per key)
         self.pending_global_nv: dict[str, dict[str, tuple]] = (
             {}
-        )  # room_id -> {var_name: (sender_client_no, value, timestamp)}
+        )  # room_id -> {var_name: (sender_client_no, value)}
         self.pending_client_nv: dict[str, dict[tuple, tuple]] = (
             {}
-        )  # room_id -> {(target_client_no, var_name): (sender_client_no, value, timestamp)}
+        )  # room_id -> {(target_client_no, var_name): (sender_client_no, value)}
 
         # NV flush cadence configuration (from config)
         self.nv_flush_interval = config.nv_flush_interval
@@ -758,6 +765,7 @@ class NetSyncServer:
             # Initialize Network Variables for the room
             self.global_variables[room_id] = {}
             self.client_variables[room_id] = {}
+            self.nv_write_seq[room_id] = 0
 
             # Initialize NV pending buffers
             self.pending_global_nv[room_id] = {}
@@ -1486,12 +1494,22 @@ class NetSyncServer:
                     f"High NV request rate in room {room_id}: {len(self.nv_monitor_window[room_id])} req/s"
                 )
 
+    def _next_nv_seq(self, room_id: str) -> int:
+        """Return the next per-room monotonic NV write sequence.
+
+        Caller must hold ``_rooms_lock``. This sequence is the server-assigned
+        ordering authority for last-writer-wins, replacing client timestamps so
+        that skewed device clocks cannot freeze or steal Network Variables.
+        """
+        seq = self.nv_write_seq.get(room_id, 0) + 1
+        self.nv_write_seq[room_id] = seq
+        return seq
+
     def _buffer_global_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Buffer global variable set request for later processing"""
         sender_client_no = data.get("senderClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
         var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get("timestamp", time.monotonic())
 
         if not var_name:
             return
@@ -1503,7 +1521,6 @@ class NetSyncServer:
             self.pending_global_nv[room_id][var_name] = (
                 sender_client_no,
                 var_value,
-                timestamp,
             )
 
     def _apply_global_var_set(
@@ -1512,7 +1529,6 @@ class NetSyncServer:
         sender_client_no: int,
         var_name: str,
         var_value: str,
-        timestamp: float,
     ) -> bool:
         """Apply global variable update (used by flush, returns True if applied)"""
         with self._rooms_lock:
@@ -1522,25 +1538,19 @@ class NetSyncServer:
                 logger.warning(f"Global variable limit reached in room {room_id}")
                 return False
 
-            # Conflict resolution: last-writer-wins with timestamp comparison
+            # Skip if value unchanged (no-op)
             if var_name in global_vars:
-                existing = global_vars[var_name]
-                # Skip if value unchanged (no-op)
-                if existing.get("value") == var_value:
+                if global_vars[var_name].get("value") == var_value:
                     return False
-                if timestamp < existing["timestamp"] or (
-                    timestamp == existing["timestamp"]
-                    and sender_client_no < existing["lastWriterClientNo"]
-                ):
-                    return False  # Ignore older or lower priority update
 
             # Store old value for logging
             old_value = global_vars.get(var_name, {}).get("value", None)
 
-            # Update variable
+            # Last-writer-wins ordered by the server-assigned write sequence,
+            # not client timestamps (device clocks can drift offline).
             global_vars[var_name] = {
                 "value": var_value,
-                "timestamp": timestamp,
+                "timestamp": self._next_nv_seq(room_id),
                 "lastWriterClientNo": sender_client_no,
             }
 
@@ -1554,14 +1564,11 @@ class NetSyncServer:
         sender_client_no = data.get("senderClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
         var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get("timestamp", time.monotonic())
 
         if not var_name:
             return
 
-        if self._apply_global_var_set(
-            room_id, sender_client_no, var_name, var_value, timestamp
-        ):
+        if self._apply_global_var_set(room_id, sender_client_no, var_name, var_value):
             # Broadcast sync to all clients
             self._broadcast_global_var_sync(room_id)
 
@@ -1571,7 +1578,6 @@ class NetSyncServer:
         target_client_no = data.get("targetClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
         var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get("timestamp", time.monotonic())
 
         if not var_name:
             return
@@ -1584,7 +1590,6 @@ class NetSyncServer:
             self.pending_client_nv[room_id][key] = (
                 sender_client_no,
                 var_value,
-                timestamp,
             )
 
     def _apply_client_var_set(
@@ -1594,7 +1599,6 @@ class NetSyncServer:
         target_client_no: int,
         var_name: str,
         var_value: str,
-        timestamp: float,
     ) -> bool:
         """Apply a client variable update addressed by volatile client number."""
         with self._rooms_lock:
@@ -1613,7 +1617,6 @@ class NetSyncServer:
                 target_device_id,
                 var_name,
                 var_value,
-                timestamp,
             )
 
     def _apply_client_var_set_for_device(
@@ -1623,7 +1626,6 @@ class NetSyncServer:
         target_device_id: str,
         var_name: str,
         var_value: str,
-        timestamp: float,
     ) -> bool:
         """Apply a client variable update to the authoritative device-keyed store."""
         with self._rooms_lock:
@@ -1641,25 +1643,19 @@ class NetSyncServer:
                 )
                 return False
 
-            # Conflict resolution: last-writer-wins with timestamp comparison
+            # Skip if value unchanged (no-op)
             if var_name in client_vars:
-                existing = client_vars[var_name]
-                # Skip if value unchanged (no-op)
-                if existing.get("value") == var_value:
+                if client_vars[var_name].get("value") == var_value:
                     return False
-                if timestamp < existing["timestamp"] or (
-                    timestamp == existing["timestamp"]
-                    and sender_client_no < existing["lastWriterClientNo"]
-                ):
-                    return False  # Ignore older or lower priority update
 
             # Store old value for logging
             old_value = client_vars.get(var_name, {}).get("value", None)
 
-            # Update variable
+            # Last-writer-wins ordered by the server-assigned write sequence,
+            # not client timestamps (device clocks can drift offline).
             client_vars[var_name] = {
                 "value": var_value,
-                "timestamp": timestamp,
+                "timestamp": self._next_nv_seq(room_id),
                 "lastWriterClientNo": sender_client_no,
             }
 
@@ -1672,7 +1668,6 @@ class NetSyncServer:
         self, room_id: str, device_id: str, variables: dict[str, str]
     ) -> tuple[int | None, dict[str, str]]:
         """Upsert REST-provided client variables into the device-keyed store."""
-        timestamp = time.time()
         statuses: dict[str, str] = {}
         changed = False
 
@@ -1703,7 +1698,6 @@ class NetSyncServer:
                     device_id,
                     var_name,
                     var_value,
-                    timestamp,
                 )
                 after = self.client_variables[room_id].get(device_id, {}).get(var_name)
                 changed = changed or applied or before != after
@@ -1823,13 +1817,12 @@ class NetSyncServer:
         target_client_no = data.get("targetClientNo", 0)
         var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
         var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
-        timestamp = data.get("timestamp", time.monotonic())
 
         if not var_name:
             return
 
         if self._apply_client_var_set(
-            room_id, sender_client_no, target_client_no, var_name, var_value, timestamp
+            room_id, sender_client_no, target_client_no, var_name, var_value
         ):
             # Broadcast sync to all clients
             self._broadcast_client_var_sync(room_id)
@@ -1979,14 +1972,14 @@ class NetSyncServer:
             self.pending_client_nv[room_id] = {}
 
         applied_globals: list[str] = []
-        for var_name, (sender, value, ts) in globals_to_apply:
-            if self._apply_global_var_set(room_id, sender, var_name, value, ts):
+        for var_name, (sender, value) in globals_to_apply:
+            if self._apply_global_var_set(room_id, sender, var_name, value):
                 applied_globals.append(var_name)
 
         applied_client_nos: set[int] = set()
-        for (target_client_no, var_name), (sender, value, ts) in clients_to_apply:
+        for (target_client_no, var_name), (sender, value) in clients_to_apply:
             if self._apply_client_var_set(
-                room_id, sender, target_client_no, var_name, value, ts
+                room_id, sender, target_client_no, var_name, value
             ):
                 applied_client_nos.add(target_client_no)
 
