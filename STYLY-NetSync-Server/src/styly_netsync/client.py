@@ -1361,7 +1361,7 @@ class net_sync_manager:
                     try:
                         self._nv_queue.get_nowait()
                         self._nv_queue.put_nowait(event)
-                    except Full:
+                    except Empty:
                         pass
 
     def is_client_stealth_mode(self, client_no: int) -> bool:

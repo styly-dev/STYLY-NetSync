@@ -77,6 +77,21 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Clear send-side debounce and dedupe state that must not cross a connection session.
+        /// </summary>
+        public void ClearPendingSends()
+        {
+            _lastSentGlobal.Clear();
+            _lastSentClient.Clear();
+            _nextAllowedGlobal.Clear();
+            _nextAllowedClient.Clear();
+            _pendingGlobal.Clear();
+            _dueGlobal.Clear();
+            _pendingClient.Clear();
+            _dueClient.Clear();
+        }
+
+        /// <summary>
         /// Called when connection is established to start tracking sync timeout
         /// </summary>
         public void OnConnectionEstablished()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
+from queue import Empty, Full
 from unittest.mock import MagicMock
 
 import pytest
@@ -447,3 +448,21 @@ class TestPythonClientClientVariableSnapshots:
 
         assert manager.get_all_client_variables(7) == {}
         assert events == [(7, "a", "1", None)]
+
+    def test_clear_local_client_variables_ignores_empty_queue_after_full(
+        self,
+    ) -> None:
+        class RaceQueue:
+            def put_nowait(self, _event: object) -> None:
+                raise Full
+
+            def get_nowait(self) -> object:
+                raise Empty
+
+        manager = net_sync_manager(auto_dispatch=False)
+        manager._client_variables[7] = {"a": "1"}
+        manager._nv_queue = RaceQueue()  # type: ignore[assignment]
+
+        manager._clear_local_client_variables(7)
+
+        assert manager.get_all_client_variables(7) == {}

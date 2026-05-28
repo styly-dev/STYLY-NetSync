@@ -459,6 +459,7 @@ namespace Styly.NetSync
 
             // Start room switching
             _roomSwitching = true;
+            ClearPendingClientVariableOperations();
             _clientNo = 0;
             _hasInvokedReady = false;
             _shouldCheckReady = false;
@@ -729,6 +730,7 @@ namespace Styly.NetSync
                 // IsReady.  Without this, stale state from the previous session
                 // lets IsReady remain true while the new connection is still
                 // being established.
+                ClearPendingClientVariableOperations();
                 _clientNo = 0;
                 _hasInvokedReady = false;
                 _shouldCheckReady = false;
@@ -1123,6 +1125,17 @@ namespace Styly.NetSync
             }
         }
 
+        private void ClearPendingClientVariableOperations()
+        {
+            _pendingSelfClientNV.Clear();
+            _pendingClearMyClientVariables = false;
+
+            if (_networkVariableManager != null)
+            {
+                _networkVariableManager.ClearPendingSends();
+            }
+        }
+
         private void CheckAndFireReady()
         {
             if (IsReady && !_hasInvokedReady)
@@ -1370,6 +1383,7 @@ namespace Styly.NetSync
                          $"exType={exType} exMsg={exMsg}");
 
                 // Reset client state
+                ClearPendingClientVariableOperations();
                 _clientNo = 0;
                 _hasInvokedReady = false;
                 _shouldCheckReady = false;
