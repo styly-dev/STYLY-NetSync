@@ -1085,7 +1085,7 @@ class TestClientVariableClearSerialization:
 
     def test_roundtrip_client_variable_clear(self) -> None:
         """Client variable clear message round-trips correctly."""
-        data = {"senderClientNo": 7, "timestamp": 1234.5}
+        data = {"senderClientNo": 7}
 
         serialized = binary_serializer.serialize_client_var_clear(data)
         msg_type, result, _ = binary_serializer.deserialize(serialized)

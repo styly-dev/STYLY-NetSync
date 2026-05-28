@@ -309,16 +309,15 @@ class NetSyncServer:
         # Network Variables storage
         self.global_variables: dict[str, dict[str, Any]] = (
             {}
-        )  # room_id -> {var_name: {value, timestamp, lastWriterClientNo}}
+        )  # room_id -> {var_name: {value, version, lastWriterClientNo}}
         self.client_variables: dict[str, dict[str, dict[str, Any]]] = (
             {}
-        )  # room_id -> {device_id -> {var_name: {value, timestamp, lastWriterClientNo}}}
+        )  # room_id -> {device_id -> {var_name: {value, version, lastWriterClientNo}}}
 
         # Per-room monotonic write sequence. The server assigns the ordering for
         # Network Variable last-writer-wins instead of trusting client-supplied
         # timestamps, whose device clocks can drift on offline LAN deployments.
-        # The assigned sequence is stored in each variable's "timestamp" field
-        # (wire format unchanged for now).
+        # The assigned sequence is stored in each variable's "version" field.
         self.nv_write_seq: dict[str, int] = {}  # room_id -> last assigned write seq
 
         # NV Pending buffers for coalescing (latest-wins per key)
@@ -1550,7 +1549,7 @@ class NetSyncServer:
             # not client timestamps (device clocks can drift offline).
             global_vars[var_name] = {
                 "value": var_value,
-                "timestamp": self._next_nv_seq(room_id),
+                "version": self._next_nv_seq(room_id),
                 "lastWriterClientNo": sender_client_no,
             }
 
@@ -1655,7 +1654,7 @@ class NetSyncServer:
             # not client timestamps (device clocks can drift offline).
             client_vars[var_name] = {
                 "value": var_value,
-                "timestamp": self._next_nv_seq(room_id),
+                "version": self._next_nv_seq(room_id),
                 "lastWriterClientNo": sender_client_no,
             }
 
@@ -1843,7 +1842,6 @@ class NetSyncServer:
                 {
                     "name": var_name,
                     "value": var_data["value"],
-                    "timestamp": var_data["timestamp"],
                     "lastWriterClientNo": var_data["lastWriterClientNo"],
                 }
             )
@@ -1892,7 +1890,6 @@ class NetSyncServer:
                     {
                         "name": var_name,
                         "value": var_data["value"],
-                        "timestamp": var_data["timestamp"],
                         "lastWriterClientNo": var_data["lastWriterClientNo"],
                     }
                 )
@@ -1993,7 +1990,6 @@ class NetSyncServer:
                         {
                             "name": name,
                             "value": d["value"],
-                            "timestamp": d["timestamp"],
                             "lastWriterClientNo": d["lastWriterClientNo"],
                         }
                     )

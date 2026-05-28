@@ -53,8 +53,8 @@ class TestGlobalVariableServerOrdering:
         server._apply_global_var_set("room1", 1, "a", "1")
         server._apply_global_var_set("room1", 1, "b", "2")
 
-        assert server.global_variables["room1"]["a"]["timestamp"] == 1
-        assert server.global_variables["room1"]["b"]["timestamp"] == 2
+        assert server.global_variables["room1"]["a"]["version"] == 1
+        assert server.global_variables["room1"]["b"]["version"] == 2
         assert server.nv_write_seq["room1"] == 2
 
     def test_no_op_value_does_not_consume_sequence(self, server: NetSyncServer) -> None:
@@ -84,10 +84,10 @@ class TestClientVariableServerOrdering:
         _map_device(server, "room1", "device-a", 7)
 
         server._apply_client_var_set("room1", 2, 7, "hp", "10")
-        live_seq = server.client_variables["room1"]["device-a"]["hp"]["timestamp"]
+        live_seq = server.client_variables["room1"]["device-a"]["hp"]["version"]
 
         server.upsert_client_variables_for_device("room1", "device-a", {"hp": "30"})
-        rest_seq = server.client_variables["room1"]["device-a"]["hp"]["timestamp"]
+        rest_seq = server.client_variables["room1"]["device-a"]["hp"]["version"]
 
         assert rest_seq > live_seq
         assert server.client_variables["room1"]["device-a"]["hp"]["value"] == "30"
