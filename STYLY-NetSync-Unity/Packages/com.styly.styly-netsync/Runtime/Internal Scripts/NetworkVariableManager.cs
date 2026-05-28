@@ -77,6 +77,21 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Clear send-side debounce and dedupe state that must not cross a connection session.
+        /// </summary>
+        public void ClearPendingSends()
+        {
+            _lastSentGlobal.Clear();
+            _lastSentClient.Clear();
+            _nextAllowedGlobal.Clear();
+            _nextAllowedClient.Clear();
+            _pendingGlobal.Clear();
+            _dueGlobal.Clear();
+            _pendingClient.Clear();
+            _dueClient.Clear();
+        }
+
+        /// <summary>
         /// Called when connection is established to start tracking sync timeout
         /// </summary>
         public void OnConnectionEstablished()
@@ -312,6 +327,50 @@ namespace Styly.NetSync
             }
         }
 
+        public bool ClearMyClientVariables()
+        {
+            if (_netSyncManager == null)
+            {
+                return false;
+            }
+
+            var clientNo = _netSyncManager.ClientNo;
+            if (clientNo <= 0)
+            {
+                return false;
+            }
+
+            var roomId = _netSyncManager.RoomId;
+            if (string.IsNullOrEmpty(roomId))
+            {
+                return false;
+            }
+
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+            var data = new Dictionary<string, object>
+            {
+                ["senderClientNo"] = clientNo,
+                ["timestamp"] = timestamp
+            };
+
+            try
+            {
+                var payload = BinarySerializer.SerializeClientVarClear(data);
+                var sent = _connectionManager.TryEnqueueControl(roomId, payload);
+                if (sent)
+                {
+                    ClearLocalClientVariables(clientNo);
+                    ClearPendingClientVariables(clientNo);
+                }
+                return sent;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to clear client variables: {ex.Message}");
+                return false;
+            }
+        }
+
         public string GetClientVariable(string name, int clientNo, string defaultValue = null)
         {
             if (!_hasReceivedInitialSync)
@@ -391,6 +450,8 @@ namespace Styly.NetSync
 
         public void HandleClientVariableSync(Dictionary<string, object> data)
         {
+            // Each included client number is a full authoritative snapshot.
+            // Missing keys are removed from the local cache for that client.
             // Mark that we've received initial sync
             // Note: If sync messages arrive exactly at timeout, this takes precedence over timeout mechanism
             if (!_hasReceivedInitialSync)
@@ -415,10 +476,10 @@ namespace Styly.NetSync
 
                         if (variables == null) continue;
 
-                        if (!_clientVariables.ContainsKey(clientNo))
-                            _clientVariables[clientNo] = new Dictionary<string, string>();
-
-                        var clientVars = _clientVariables[clientNo];
+                        var oldClientVars = _clientVariables.TryGetValue(clientNo, out var existingVars)
+                            ? existingVars
+                            : new Dictionary<string, string>();
+                        var nextClientVars = new Dictionary<string, string>();
 
                         foreach (var varObj in variables)
                         {
@@ -431,18 +492,36 @@ namespace Styly.NetSync
 
                                 if (!string.IsNullOrEmpty(name) && value != null)
                                 {
-                                    var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
-                                    // Skip if value is unchanged
-                                    if (string.Equals(oldValue, value, StringComparison.Ordinal))
-                                    {
-                                        continue;
-                                    }
-
-                                    clientVars[name] = value;
-
-                                    // Trigger event only when changed
-                                    OnClientVariableChanged?.Invoke(clientNo, name, oldValue, value);
+                                    nextClientVars[name] = value;
                                 }
+                            }
+                        }
+
+                        _clientVariables[clientNo] = nextClientVars;
+
+                        foreach (var oldEntry in oldClientVars)
+                        {
+                            if (!nextClientVars.ContainsKey(oldEntry.Key))
+                            {
+                                var removedKey = (clientNo, oldEntry.Key);
+                                if (_lastSentClient.TryGetValue(removedKey, out var lastSent))
+                                {
+                                    ClearPendingClientIfMatches(removedKey, lastSent);
+                                }
+                                _lastSentClient.Remove(removedKey);
+                                OnClientVariableChanged?.Invoke(clientNo, oldEntry.Key, oldEntry.Value, null);
+                            }
+                        }
+
+                        foreach (var newEntry in nextClientVars)
+                        {
+                            var key = (clientNo, newEntry.Key);
+                            _lastSentClient[key] = newEntry.Value;
+                            ClearPendingClientIfMatches(key, newEntry.Value);
+                            var oldValue = oldClientVars.TryGetValue(newEntry.Key, out var existing) ? existing : null;
+                            if (!string.Equals(oldValue, newEntry.Value, StringComparison.Ordinal))
+                            {
+                                OnClientVariableChanged?.Invoke(clientNo, newEntry.Key, oldValue, newEntry.Value);
                             }
                         }
                     }
@@ -614,6 +693,74 @@ namespace Styly.NetSync
             }
 
             return allFlushed;
+        }
+
+        private void ClearPendingClientIfMatches((int targetClientNo, string name) key, string value)
+        {
+            if (_pendingClient.TryGetValue(key, out var pendingValue) &&
+                string.Equals(pendingValue, value, StringComparison.Ordinal))
+            {
+                _pendingClient.Remove(key);
+                _dueClient.Remove(key);
+            }
+        }
+
+        private void ClearLocalClientVariables(int clientNo)
+        {
+            if (!_clientVariables.TryGetValue(clientNo, out var clientVars))
+            {
+                _clientVariables[clientNo] = new Dictionary<string, string>();
+                return;
+            }
+
+            var oldVars = new Dictionary<string, string>(clientVars);
+            _clientVariables[clientNo] = new Dictionary<string, string>();
+            foreach (var entry in oldVars)
+            {
+                OnClientVariableChanged?.Invoke(clientNo, entry.Key, entry.Value, null);
+            }
+        }
+
+        private void ClearPendingClientVariables(int clientNo)
+        {
+            var keysToRemove = new HashSet<(int, string)>();
+
+            foreach (var key in _pendingClient.Keys)
+            {
+                if (key.Item1 == clientNo)
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+            foreach (var key in _dueClient.Keys)
+            {
+                if (key.Item1 == clientNo)
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+            foreach (var key in _lastSentClient.Keys)
+            {
+                if (key.Item1 == clientNo)
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+            foreach (var key in _nextAllowedClient.Keys)
+            {
+                if (key.Item1 == clientNo)
+                {
+                    keysToRemove.Add(key);
+                }
+            }
+
+            foreach (var key in keysToRemove)
+            {
+                _pendingClient.Remove(key);
+                _dueClient.Remove(key);
+                _lastSentClient.Remove(key);
+                _nextAllowedClient.Remove(key);
+            }
         }
 
         /// <summary>

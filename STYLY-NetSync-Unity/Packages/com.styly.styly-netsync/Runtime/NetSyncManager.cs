@@ -63,6 +63,8 @@ namespace Styly.NetSync
         [SerializeField, Min(1)] private int _serverDiscoveryPort = 9999;
         [Tooltip("Enable synchronization of battery levels across devices.")]
         [SerializeField] private bool _syncBatteryLevel = true;
+        [SerializeField, Tooltip("Clear this client's network variables once after the first connection.")]
+        private bool _clearClientNetworkVariablesOnStart = false;
         private bool _enableDiscovery = true;
         private float _discoveryTimeout = 10f;
 
@@ -171,6 +173,34 @@ namespace Styly.NetSync
         public bool SetClientVariable(string name, string value, int targetClientNo)
         {
             return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(name, value, targetClientNo, _roomId) : false;
+        }
+
+        /// <summary>
+        /// Clear all Client Network Variables owned by this client on the server.
+        /// If called before the local client number is assigned, the clear is sent
+        /// once the handshake completes.
+        /// Returns true when the request was sent or queued for the handshake.
+        /// </summary>
+        public bool ClearMyClientVariables()
+        {
+            if (_clientNo <= 0)
+            {
+                _pendingClearMyClientVariables = true;
+                return true;
+            }
+
+            if (_networkVariableManager == null)
+            {
+                return false;
+            }
+
+            var sent = _networkVariableManager.ClearMyClientVariables();
+            if (sent)
+            {
+                _pendingSelfClientNV.Clear();
+                _pendingClearMyClientVariables = false;
+            }
+            return sent;
         }
 
         public string GetClientVariable(string name, string defaultValue = null)
@@ -429,6 +459,7 @@ namespace Styly.NetSync
 
             // Start room switching
             _roomSwitching = true;
+            ClearPendingClientVariableOperations();
             _clientNo = 0;
             _hasInvokedReady = false;
             _shouldCheckReady = false;
@@ -484,6 +515,8 @@ namespace Styly.NetSync
         private float _nextDiscoveryAttemptAt = 0f;
         private float _reconnectAt;
         private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
+        private bool _pendingClearMyClientVariables;
+        private bool _hasClearedClientNetworkVariablesOnStart;
         private bool _hasInvokedReady = false;
         private bool _shouldCheckReady = false;
         private bool _shouldSendHandshake = false;
@@ -697,6 +730,7 @@ namespace Styly.NetSync
                 // IsReady.  Without this, stale state from the previous session
                 // lets IsReady remain true while the new connection is still
                 // being established.
+                ClearPendingClientVariableOperations();
                 _clientNo = 0;
                 _hasInvokedReady = false;
                 _shouldCheckReady = false;
@@ -783,6 +817,8 @@ namespace Styly.NetSync
                 // P1-04: Control messages (NV/RPC) are sent before transform
                 // This prioritizes important control messages over high-frequency transform updates
                 // which helps maintain responsiveness under low bandwidth conditions
+
+                TryFlushPendingClientVariableClear();
 
                 // Process Network Variables debounced updates (control - high priority)
                 _networkVariableManager?.Tick(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0, _roomId);
@@ -1047,15 +1083,57 @@ namespace Styly.NetSync
             _clientNo = clientNo;
             DebugLog($"Local client number assigned: {clientNo}");
 
-            // Flush pending self client NV
-            foreach (var (name, value) in _pendingSelfClientNV)
+            if (_clearClientNetworkVariablesOnStart && !_hasClearedClientNetworkVariablesOnStart)
             {
-                _networkVariableManager?.SetClientVariable(name, value, _clientNo, _roomId);
+                _pendingClearMyClientVariables = true;
             }
-            _pendingSelfClientNV.Clear();
+
+            if (_pendingClearMyClientVariables)
+            {
+                TryFlushPendingClientVariableClear();
+            }
+
+            // Flush pending self client NV
+            if (!_pendingClearMyClientVariables)
+            {
+                foreach (var (name, value) in _pendingSelfClientNV)
+                {
+                    _networkVariableManager?.SetClientVariable(name, value, _clientNo, _roomId);
+                }
+                _pendingSelfClientNV.Clear();
+            }
 
             // Set flag to check ready state on main thread
             _shouldCheckReady = true;
+        }
+
+        private void TryFlushPendingClientVariableClear()
+        {
+            if (!_pendingClearMyClientVariables || _clientNo <= 0 || _networkVariableManager == null)
+            {
+                return;
+            }
+
+            if (_networkVariableManager.ClearMyClientVariables())
+            {
+                _pendingSelfClientNV.Clear();
+                _pendingClearMyClientVariables = false;
+                if (_clearClientNetworkVariablesOnStart)
+                {
+                    _hasClearedClientNetworkVariablesOnStart = true;
+                }
+            }
+        }
+
+        private void ClearPendingClientVariableOperations()
+        {
+            _pendingSelfClientNV.Clear();
+            _pendingClearMyClientVariables = false;
+
+            if (_networkVariableManager != null)
+            {
+                _networkVariableManager.ClearPendingSends();
+            }
         }
 
         private void CheckAndFireReady()
@@ -1305,6 +1383,7 @@ namespace Styly.NetSync
                          $"exType={exType} exMsg={exMsg}");
 
                 // Reset client state
+                ClearPendingClientVariableOperations();
                 _clientNo = 0;
                 _hasInvokedReady = false;
                 _shouldCheckReady = false;

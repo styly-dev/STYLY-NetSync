@@ -15,7 +15,8 @@ namespace Styly.NetSync.Editor
             "_offlineMode",
             "_transformSendRate",
             "_serverDiscoveryPort",
-            "_syncBatteryLevel"
+            "_syncBatteryLevel",
+            "_clearClientNetworkVariablesOnStart"
         };
         private static readonly HashSet<string> AdvancedProperties = new HashSet<string>(AdvancedPropertyOrder);
 
@@ -161,6 +162,10 @@ namespace Styly.NetSync.Editor
                                 if (propertyName == "_transformSendRate")
                                 {
                                     EditorGUILayout.PropertyField(property, new GUIContent("Transform Send Rate (Hz)", property.tooltip), true);
+                                }
+                                else if (propertyName == "_clearClientNetworkVariablesOnStart")
+                                {
+                                    EditorGUILayout.PropertyField(property, new GUIContent("Clear Client Network Variables on Start", property.tooltip), true);
                                 }
                                 else
                                 {

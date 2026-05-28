@@ -310,9 +310,9 @@ class NetSyncServer:
         self.global_variables: dict[str, dict[str, Any]] = (
             {}
         )  # room_id -> {var_name: {value, timestamp, lastWriterClientNo}}
-        self.client_variables: dict[str, dict[int, dict[str, Any]]] = (
+        self.client_variables: dict[str, dict[str, dict[str, Any]]] = (
             {}
-        )  # room_id -> {client_no -> {var_name: {value, timestamp, lastWriterClientNo}}}
+        )  # room_id -> {device_id -> {var_name: {value, timestamp, lastWriterClientNo}}}
 
         # NV Pending buffers for coalescing (latest-wins per key)
         self.pending_global_nv: dict[str, dict[str, tuple]] = (
@@ -803,6 +803,7 @@ class NetSyncServer:
                 # Device ID has no last seen time, can reuse
                 del self.room_client_no_to_device_id[room_id][client_no]
                 del self.room_device_id_to_client_no[room_id][device_id]
+                self.client_variables.get(room_id, {}).pop(device_id, None)
                 # Clear stale cache entry to prevent broadcasting old transform
                 if client_no in self.client_transform_body_cache:
                     del self.client_transform_body_cache[client_no]
@@ -816,6 +817,7 @@ class NetSyncServer:
                 del self.room_client_no_to_device_id[room_id][client_no]
                 del self.room_device_id_to_client_no[room_id][device_id]
                 del self.device_id_last_seen[device_id]
+                self.client_variables.get(room_id, {}).pop(device_id, None)
                 # Clear stale cache entry to prevent broadcasting old transform
                 if client_no in self.client_transform_body_cache:
                     del self.client_transform_body_cache[client_no]
@@ -844,6 +846,7 @@ class NetSyncServer:
                         del self.room_device_id_to_client_no[room_id][device_id]
                         if client_no in self.room_client_no_to_device_id[room_id]:
                             del self.room_client_no_to_device_id[room_id][client_no]
+                        self.client_variables.get(room_id, {}).pop(device_id, None)
                         logger.info(
                             f"Cleaned up expired device ID {device_id[:8]}... (client number: {client_no}) from room {room_id}"
                         )
@@ -919,6 +922,7 @@ class NetSyncServer:
                     server_addr="tcp://127.0.0.1",
                     dealer_port=self.dealer_port,
                     sub_port=self.pub_port,
+                    server=self,
                 )
                 rest_api_port = self._config.rest_api_port
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
@@ -1091,6 +1095,10 @@ class NetSyncServer:
                                 # Buffer client variable set request (no rate limit drops)
                                 self._buffer_client_var_set(room_id, data)
                                 self._monitor_nv_sliding_window(room_id)
+                            elif msg_type == binary_serializer.MSG_CLIENT_VAR_CLEAR:
+                                self._handle_client_var_clear(
+                                    client_identity, room_id, data
+                                )
                             elif msg_type == binary_serializer.MSG_OBJECT_POSE:
                                 sender_device_id = self._get_device_id_from_identity(
                                     client_identity, room_id
@@ -1588,18 +1596,48 @@ class NetSyncServer:
         var_value: str,
         timestamp: float,
     ) -> bool:
-        """Apply client variable update (used by flush, returns True if applied)"""
+        """Apply a client variable update addressed by volatile client number."""
         with self._rooms_lock:
-            # Initialize client variables for target if needed
-            if target_client_no not in self.client_variables[room_id]:
-                self.client_variables[room_id][target_client_no] = {}
+            target_device_id = self.room_client_no_to_device_id.get(room_id, {}).get(
+                target_client_no
+            )
+            if target_device_id is None:
+                logger.warning(
+                    f"Client variable target {target_client_no} is not mapped in room {room_id}"
+                )
+                return False
 
-            client_vars = self.client_variables[room_id][target_client_no]
+            return self._apply_client_var_set_for_device(
+                room_id,
+                sender_client_no,
+                target_device_id,
+                var_name,
+                var_value,
+                timestamp,
+            )
+
+    def _apply_client_var_set_for_device(
+        self,
+        room_id: str,
+        sender_client_no: int,
+        target_device_id: str,
+        var_name: str,
+        var_value: str,
+        timestamp: float,
+    ) -> bool:
+        """Apply a client variable update to the authoritative device-keyed store."""
+        with self._rooms_lock:
+            self._initialize_room(room_id)
+
+            if target_device_id not in self.client_variables[room_id]:
+                self.client_variables[room_id][target_device_id] = {}
+
+            client_vars = self.client_variables[room_id][target_device_id]
 
             # Check limits
             if var_name not in client_vars and len(client_vars) >= self.MAX_CLIENT_VARS:
                 logger.warning(
-                    f"Client variable limit reached for client {target_client_no} in room {room_id}"
+                    f"Client variable limit reached for device {target_device_id} in room {room_id}"
                 )
                 return False
 
@@ -1626,9 +1664,158 @@ class NetSyncServer:
             }
 
             logger.info(
-                f"Client Variable Changed: room={room_id}, target={target_client_no}, sender={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'"
+                f"Client Variable Changed: room={room_id}, targetDevice={target_device_id}, sender={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'"
             )
             return True
+
+    def upsert_client_variables_for_device(
+        self, room_id: str, device_id: str, variables: dict[str, str]
+    ) -> tuple[int | None, dict[str, str]]:
+        """Upsert REST-provided client variables into the device-keyed store."""
+        timestamp = time.time()
+        statuses: dict[str, str] = {}
+        changed = False
+
+        with self._rooms_lock:
+            self._initialize_room(room_id)
+            client_no = self.room_device_id_to_client_no[room_id].get(device_id)
+            current_vars = self.client_variables[room_id].get(device_id, {})
+            new_names = {
+                name[: self.MAX_VAR_NAME_LENGTH]
+                for name in variables
+                if name[: self.MAX_VAR_NAME_LENGTH]
+                and name[: self.MAX_VAR_NAME_LENGTH] not in current_vars
+            }
+            if len(current_vars) + len(new_names) > self.MAX_CLIENT_VARS:
+                raise ValueError(
+                    f"Too many client variables (> {self.MAX_CLIENT_VARS}) for device {device_id}"
+                )
+
+            for name, value in variables.items():
+                var_name = name[: self.MAX_VAR_NAME_LENGTH]
+                var_value = value[: self.MAX_VAR_VALUE_LENGTH]
+                if not var_name:
+                    continue
+                before = self.client_variables[room_id].get(device_id, {}).get(var_name)
+                applied = self._apply_client_var_set_for_device(
+                    room_id,
+                    0,
+                    device_id,
+                    var_name,
+                    var_value,
+                    timestamp,
+                )
+                after = self.client_variables[room_id].get(device_id, {}).get(var_name)
+                changed = changed or applied or before != after
+                statuses[name] = "applied" if client_no is not None else "queued"
+
+        if client_no is not None and changed:
+            self._broadcast_client_var_sync(room_id, {client_no})
+
+        return client_no, statuses
+
+    def get_client_variables_for_device(
+        self, room_id: str, device_id: str
+    ) -> tuple[int | None, dict[str, str]]:
+        """Return the mapped client number and variables for a device."""
+        with self._rooms_lock:
+            client_no = self.room_device_id_to_client_no.get(room_id, {}).get(device_id)
+            variables = self.client_variables.get(room_id, {}).get(device_id, {})
+            values = {
+                name: str(data.get("value", "")) for name, data in variables.items()
+            }
+            return client_no, values
+
+    def delete_client_variables_for_device(
+        self, room_id: str, device_id: str, name: str | None = None
+    ) -> tuple[int | None, int]:
+        """Delete REST-addressed client variables from the device-keyed store."""
+        with self._rooms_lock:
+            client_no = self.room_device_id_to_client_no.get(room_id, {}).get(device_id)
+            room_vars = self.client_variables.get(room_id)
+            if room_vars is None or device_id not in room_vars:
+                deleted_count = 0
+            elif name is None:
+                deleted_count = len(room_vars[device_id])
+                del room_vars[device_id]
+            elif name in room_vars[device_id]:
+                del room_vars[device_id][name]
+                deleted_count = 1
+                if not room_vars[device_id]:
+                    del room_vars[device_id]
+            else:
+                deleted_count = 0
+
+            pending_removed = self._remove_pending_client_vars_locked(
+                room_id, client_no, name
+            )
+
+        if client_no is not None and (deleted_count > 0 or pending_removed > 0):
+            self._broadcast_client_var_sync(room_id, {client_no})
+
+        return client_no, deleted_count
+
+    def _remove_pending_client_vars_locked(
+        self, room_id: str, client_no: int | None, name: str | None = None
+    ) -> int:
+        """Remove buffered client-variable writes for a client.
+
+        Caller must hold ``_rooms_lock``.
+        """
+        if client_no is None:
+            return 0
+
+        pending = self.pending_client_nv.get(room_id)
+        if not pending:
+            return 0
+
+        keys_to_remove = [
+            key
+            for key in pending
+            if key[0] == client_no and (name is None or key[1] == name)
+        ]
+        for key in keys_to_remove:
+            del pending[key]
+        return len(keys_to_remove)
+
+    def _handle_client_var_clear(
+        self, client_identity: bytes, room_id: str, data: dict[str, Any]
+    ) -> None:
+        """Clear all client variables for the sending client."""
+        with self._rooms_lock:
+            device_id = self._get_device_id_from_identity(client_identity, room_id)
+            if device_id is None:
+                logger.warning(
+                    "Client variable clear ignored: sender is not mapped in room %s",
+                    room_id,
+                )
+                return
+
+            client_no = self.room_device_id_to_client_no.get(room_id, {}).get(device_id)
+            if client_no is None:
+                logger.warning(
+                    "Client variable clear ignored: device %s is not mapped in room %s",
+                    device_id,
+                    room_id,
+                )
+                return
+
+            room_vars = self.client_variables.get(room_id, {})
+            deleted_count = len(room_vars.get(device_id, {}))
+            room_vars.pop(device_id, None)
+            pending_removed = self._remove_pending_client_vars_locked(
+                room_id, client_no
+            )
+
+        logger.info(
+            "Cleared client variables: room=%s, client=%s, device=%s, deleted=%s, pending=%s",
+            room_id,
+            client_no,
+            device_id,
+            deleted_count,
+            pending_removed,
+        )
+        self._broadcast_client_var_sync(room_id, {client_no})
 
     def _handle_client_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Handle client variable set request (for backward compat - immediate apply+broadcast)"""
@@ -1673,17 +1860,39 @@ class NetSyncServer:
 
         return binary_serializer.serialize_global_var_sync({"variables": variables})
 
-    def _build_client_var_sync_payload(self, room_id: str) -> bytes | None:
+    def _build_client_var_sync_payload(
+        self, room_id: str, target_client_nos: set[int] | None = None
+    ) -> bytes | None:
         """Build a serialized client-variable sync payload for the given room.
 
-        Returns None when there are no client variables to sync.
+        Returns None when there are no mapped clients to sync.
+        Each included client number is a full authoritative snapshot. An empty
+        variable list means receivers must clear local variables for that client.
         Caller must hold ``_rooms_lock``.
         """
         if room_id not in self.client_variables:
             return None
 
         client_variables: dict[str, list[dict[str, object]]] = {}
-        for client_no, variables in self.client_variables[room_id].items():
+
+        if target_client_nos is None:
+            targets = [
+                (client_no, device_id)
+                for device_id, client_no in self.room_device_id_to_client_no.get(
+                    room_id, {}
+                ).items()
+            ]
+        else:
+            targets = []
+            for client_no in target_client_nos:
+                device_id = self.room_client_no_to_device_id.get(room_id, {}).get(
+                    client_no
+                )
+                if device_id is not None:
+                    targets.append((client_no, device_id))
+
+        for client_no, device_id in targets:
+            variables = self.client_variables[room_id].get(device_id, {})
             client_vars: list[dict[str, object]] = []
             for var_name, var_data in variables.items():
                 client_vars.append(
@@ -1694,8 +1903,7 @@ class NetSyncServer:
                         "lastWriterClientNo": var_data["lastWriterClientNo"],
                     }
                 )
-            if client_vars:
-                client_variables[str(client_no)] = client_vars
+            client_variables[str(client_no)] = client_vars
 
         if not client_variables:
             return None
@@ -1717,14 +1925,18 @@ class NetSyncServer:
             self._send_ctrl_to_room_via_router(room_id, message_bytes)
             logger.debug(f"Broadcasted global variables to room {room_id}")
 
-    def _broadcast_client_var_sync(self, room_id: str) -> None:
+    def _broadcast_client_var_sync(
+        self, room_id: str, target_client_nos: set[int] | None = None
+    ) -> None:
         """Broadcast client variables sync to all clients in room via ROUTER unicast.
 
         Network Variable syncs are sent via ROUTER for reliable delivery to each client,
         rather than via PUB which can drop messages under load.
         """
         with self._rooms_lock:
-            message_bytes = self._build_client_var_sync_payload(room_id)
+            message_bytes = self._build_client_var_sync_payload(
+                room_id, target_client_nos
+            )
 
         if message_bytes is not None:
             self._send_ctrl_to_room_via_router(room_id, message_bytes)
@@ -1771,19 +1983,12 @@ class NetSyncServer:
             if self._apply_global_var_set(room_id, sender, var_name, value, ts):
                 applied_globals.append(var_name)
 
-        applied_clients: dict[int, list[dict[str, Any]]] = {}
+        applied_client_nos: set[int] = set()
         for (target_client_no, var_name), (sender, value, ts) in clients_to_apply:
             if self._apply_client_var_set(
                 room_id, sender, target_client_no, var_name, value, ts
             ):
-                applied_clients.setdefault(target_client_no, []).append(
-                    {
-                        "name": var_name,
-                        "value": value,
-                        "timestamp": ts,
-                        "lastWriterClientNo": sender,
-                    }
-                )
+                applied_client_nos.add(target_client_no)
 
         # Send NV syncs via ROUTER unicast for reliable delivery
         if applied_globals:
@@ -1804,12 +2009,13 @@ class NetSyncServer:
             )
             self._send_ctrl_to_room_via_router(room_id, msg)
 
-        if applied_clients:
-            client_vars = {str(cno): lst for cno, lst in applied_clients.items()}
-            msg = binary_serializer.serialize_client_var_sync(
-                {"clientVariables": client_vars}
-            )
-            self._send_ctrl_to_room_via_router(room_id, msg)
+        if applied_client_nos:
+            with self._rooms_lock:
+                client_msg = self._build_client_var_sync_payload(
+                    room_id, applied_client_nos
+                )
+            if client_msg is not None:
+                self._send_ctrl_to_room_via_router(room_id, client_msg)
 
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         if elapsed_ms > 10.0:

@@ -42,7 +42,7 @@ black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 ## Protocol Rules
 
 - Transform protocol is `protocolVersion=5` only (earlier versions removed)
-- Message IDs: `MSG_CLIENT_POSE=11`, `MSG_ROOM_POSE=12`
+- Message IDs: `MSG_CLIENT_POSE=11`, `MSG_ROOM_POSE=12`, `MSG_CLIENT_VAR_CLEAR=18`
 - Unbound `Head` is absolute; `Right/Left/Virtual` are head-relative
 - Moving-floor-local poses set `PoseFlags.MovingFloorLocal`; `Head` is moving-floor local while `Right/Left/Virtual` remain head-relative within that floor
 - Unbound `xrOriginDelta` is `(dx, dy, dz, dyaw)` quantized as 4×`int16` (`LOCO_POS_SCALE = 0.01m` for translation, `PHYSICAL_YAW_SCALE = 0.1°` for yaw); receivers reconstruct physical pose as `physical = invDeltaRot * (headPos − deltaPos)`
