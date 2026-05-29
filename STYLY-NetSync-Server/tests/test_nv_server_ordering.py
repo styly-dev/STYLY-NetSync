@@ -91,3 +91,57 @@ class TestClientVariableServerOrdering:
 
         assert rest_seq > live_seq
         assert server.client_variables["room1"]["device-a"]["hp"]["value"] == "30"
+
+
+class TestLiveVsRestOrderingRegression:
+    """Regression: a newer REST write must not be clobbered by an older live
+    write that was still buffered when the REST write arrived.
+
+    Live socket writes are coalesced into a pending buffer and applied later by
+    ``_flush_nv_drain``; REST writes apply immediately. Once client timestamps
+    were removed, an out-of-order application no longer self-rejects, so the
+    REST path must prune any superseded buffered write for the same key.
+    """
+
+    def test_buffered_live_write_does_not_overwrite_newer_rest_write(
+        self, server: NetSyncServer
+    ) -> None:
+        _map_device(server, "room1", "device-a", 7)
+
+        # An older live client write is buffered, awaiting the next flush.
+        server._buffer_client_var_set(
+            "room1",
+            {
+                "senderClientNo": 7,
+                "targetClientNo": 7,
+                "variableName": "hp",
+                "variableValue": "10",
+            },
+        )
+
+        # A REST upsert applies a newer value immediately.
+        server.upsert_client_variables_for_device("room1", "device-a", {"hp": "20"})
+
+        # Draining must not resurrect the stale buffered "10" over the REST "20".
+        server._flush_nv_drain("room1")
+
+        assert server.client_variables["room1"]["device-a"]["hp"]["value"] == "20"
+
+
+class TestRoomCleanupReleasesNvWriteSeq:
+    """Regression: room cleanup must drop nv_write_seq so per-room sequence
+    entries do not accumulate under room churn."""
+
+    def test_nv_write_seq_entry_is_removed_on_room_cleanup(
+        self, server: NetSyncServer
+    ) -> None:
+        server._initialize_room("room1")
+        server._apply_global_var_set("room1", 1, "a", "1")
+        assert "room1" in server.nv_write_seq
+
+        # Room has been empty long enough to be reclaimed by the real cleanup.
+        server.room_empty_since["room1"] = 0.0
+        server._cleanup_clients(server.EMPTY_ROOM_EXPIRY_TIME + 100.0)
+
+        assert "room1" not in server.rooms
+        assert "room1" not in server.nv_write_seq

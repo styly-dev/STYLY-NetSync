@@ -1702,6 +1702,15 @@ class NetSyncServer:
                 changed = changed or applied or before != after
                 statuses[name] = "applied" if client_no is not None else "queued"
 
+                # This REST write is now the authoritative latest value for the
+                # key. Drop any older live write still buffered for the same
+                # (client_no, var_name) so the next flush cannot resurrect a
+                # stale value over it (mirrors delete/clear pruning).
+                if client_no is not None:
+                    self._remove_pending_client_vars_locked(
+                        room_id, client_no, var_name
+                    )
+
         if client_no is not None and changed:
             self._broadcast_client_var_sync(room_id, {client_no})
 
@@ -1960,25 +1969,30 @@ class NetSyncServer:
         """Drain all pending NV updates for a room in one go."""
         start = time.perf_counter()
 
+        applied_globals: list[str] = []
+        applied_client_nos: set[int] = set()
+
+        # Drain and apply under a single lock hold. _rooms_lock is an RLock, so
+        # the nested acquisitions inside _apply_* are reentrant. Holding the lock
+        # across both steps prevents an immediate write (e.g. a REST upsert) from
+        # interleaving in the drain/apply gap, where a stale buffered write would
+        # otherwise overwrite the newer immediate one (last-writer-wins is now
+        # ordered by application order, not by client timestamps).
         with self._rooms_lock:
-            pending_globals = self.pending_global_nv.get(room_id, {})
-            pending_clients = self.pending_client_nv.get(room_id, {})
-            globals_to_apply = list(pending_globals.items())
-            clients_to_apply = list(pending_clients.items())
+            globals_to_apply = list(self.pending_global_nv.get(room_id, {}).items())
+            clients_to_apply = list(self.pending_client_nv.get(room_id, {}).items())
             self.pending_global_nv[room_id] = {}
             self.pending_client_nv[room_id] = {}
 
-        applied_globals: list[str] = []
-        for var_name, (sender, value) in globals_to_apply:
-            if self._apply_global_var_set(room_id, sender, var_name, value):
-                applied_globals.append(var_name)
+            for var_name, (sender, value) in globals_to_apply:
+                if self._apply_global_var_set(room_id, sender, var_name, value):
+                    applied_globals.append(var_name)
 
-        applied_client_nos: set[int] = set()
-        for (target_client_no, var_name), (sender, value) in clients_to_apply:
-            if self._apply_client_var_set(
-                room_id, sender, target_client_no, var_name, value
-            ):
-                applied_client_nos.add(target_client_no)
+            for (target_client_no, var_name), (sender, value) in clients_to_apply:
+                if self._apply_client_var_set(
+                    room_id, sender, target_client_no, var_name, value
+                ):
+                    applied_client_nos.add(target_client_no)
 
         # Send NV syncs via ROUTER unicast for reliable delivery
         if applied_globals:
@@ -2423,6 +2437,8 @@ class NetSyncServer:
                         del self.pending_global_nv[room_id]
                     if room_id in self.pending_client_nv:
                         del self.pending_client_nv[room_id]
+                    if room_id in self.nv_write_seq:
+                        del self.nv_write_seq[room_id]
                     if room_id in self.room_last_nv_flush:
                         del self.room_last_nv_flush[room_id]
                     if room_id in self.nv_monitor_window:
