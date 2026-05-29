@@ -6,7 +6,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Message type identifiers
-PROTOCOL_VERSION = 5
+# v6: Network Variable wire messages dropped the per-write timestamp field.
+# Bumped so mixed old/new builds fail the handshake instead of silently
+# misparsing NV traffic (the version byte rides on transform/object messages).
+PROTOCOL_VERSION = 6
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call

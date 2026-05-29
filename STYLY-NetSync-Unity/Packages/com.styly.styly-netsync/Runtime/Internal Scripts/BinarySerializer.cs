@@ -7,7 +7,10 @@ namespace Styly.NetSync
 {
     internal static class BinarySerializer
     {
-        public const byte PROTOCOL_VERSION = 5;
+        // v6: Network Variable wire messages dropped the per-write timestamp field.
+        // Bumped so mixed old/new builds fail the handshake instead of silently
+        // misparsing NV traffic (the version byte rides on transform/object messages).
+        public const byte PROTOCOL_VERSION = 6;
 
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;

@@ -289,11 +289,11 @@ def _reconstruct_physical_from_head_and_delta(
 
 
 class TestTransformSerializationV5:
-    """Tests for protocol v5 transform compact serialization."""
+    """Tests for protocol v6 transform compact serialization."""
 
-    def test_protocol_version_is_v5(self) -> None:
-        """Protocol version constant should be at v5."""
-        assert binary_serializer.PROTOCOL_VERSION == 5
+    def test_protocol_version_is_v6(self) -> None:
+        """Protocol version constant should be at v6."""
+        assert binary_serializer.PROTOCOL_VERSION == 6
 
     def test_client_roundtrip_without_flags_infers_valid_bits(self) -> None:
         """Serializer should infer valid bits when flags are omitted."""
@@ -418,7 +418,7 @@ class TestTransformSerializationV5:
 
             assert msg_type == binary_serializer.MSG_CLIENT_POSE
             assert decoded is not None
-            assert decoded["protocolVersion"] == 5
+            assert decoded["protocolVersion"] == 6
             assert len(raw) > 0
 
             o_head = original["head"]
@@ -822,7 +822,7 @@ class TestTransformSerializationV5:
 
         assert msg_type == binary_serializer.MSG_ROOM_POSE
         assert decoded is not None
-        assert decoded["protocolVersion"] == 5
+        assert decoded["protocolVersion"] == 6
         assert decoded["roomId"] == "room-v5"
         assert len(decoded["clients"]) == 2
 

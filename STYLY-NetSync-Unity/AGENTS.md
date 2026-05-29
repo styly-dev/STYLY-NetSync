@@ -36,7 +36,7 @@
 - **TransformSyncManager**: Transform sync with SendRate cap, only-on-change filtering, 1Hz idle heartbeat
 - **RPCManager**: Remote procedure calls with priority-based sending and targeted delivery
 - **NetworkVariableManager**: Synchronized key-value storage
-- **BinarySerializer**: Protocol v5 pose serialization/deserialization
+- **BinarySerializer**: Protocol v6 pose serialization/deserialization
 - **MessageProcessor**: Binary protocol message handling
 - **AvatarManager**: Player spawn/despawn management
 
