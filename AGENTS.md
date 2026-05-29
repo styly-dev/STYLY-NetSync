@@ -36,12 +36,12 @@ black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 
 - **Server**: Multi-threaded Python (receive, periodic, discovery threads) with ZeroMQ DEALER-ROUTER + PUB-SUB and group-based room management
 - **Unity Client**: Manager pattern with internal components (connection, transform sync, RPC, network variables, avatars)
-- **Protocol**: Binary v5 with quantized positions and smallest-three quaternion compression
+- **Protocol**: Binary v6 with quantized positions and smallest-three quaternion compression
 - **Technology**: Python 3.11+ / pyzmq / FastAPI / msgpack (server), Unity 6 / NetMQ / Newtonsoft.Json (client)
 
 ## Protocol Rules
 
-- Transform protocol is `protocolVersion=5` only (earlier versions removed)
+- Binary protocol is `protocolVersion=6` only (earlier versions removed); the version byte rides on transform/object messages and bumps on any breaking wire change, including Network Variable message changes
 - Message IDs: `MSG_CLIENT_POSE=11`, `MSG_ROOM_POSE=12`, `MSG_CLIENT_VAR_CLEAR=18`
 - Unbound `Head` is absolute; `Right/Left/Virtual` are head-relative
 - Moving-floor-local poses set `PoseFlags.MovingFloorLocal`; `Head` is moving-floor local while `Right/Left/Virtual` remain head-relative within that floor

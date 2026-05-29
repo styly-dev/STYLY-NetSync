@@ -648,7 +648,6 @@ class NetworkTransport:
                 "targetClientNo": sender_client_no,  # Set variable for ourselves
                 "variableName": var_name,
                 "variableValue": value,
-                "timestamp": time.time(),
             }
             binary_data = serialize_client_var_set(var_data)
             self.socket.send_multipart(

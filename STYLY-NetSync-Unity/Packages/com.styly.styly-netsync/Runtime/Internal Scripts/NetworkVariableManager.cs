@@ -182,13 +182,11 @@ namespace Styly.NetSync
         // Internal method to send now (used by flush)
         private bool TrySendGlobalNow(string name, string value, string roomId)
         {
-            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             var data = new Dictionary<string, object>
             {
                 ["senderClientNo"] = _netSyncManager.ClientNo,
                 ["variableName"] = name,
-                ["variableValue"] = value,
-                ["timestamp"] = timestamp
+                ["variableValue"] = value
             };
 
             try
@@ -290,14 +288,12 @@ namespace Styly.NetSync
         // Internal method to send now (used by flush)
         private bool TrySendClientNow(int targetClientNo, string name, string value, string roomId)
         {
-            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             var data = new Dictionary<string, object>
             {
                 ["senderClientNo"] = _netSyncManager.ClientNo,
                 ["targetClientNo"] = targetClientNo,
                 ["variableName"] = name,
-                ["variableValue"] = value,
-                ["timestamp"] = timestamp
+                ["variableValue"] = value
             };
 
             try
@@ -346,11 +342,9 @@ namespace Styly.NetSync
                 return false;
             }
 
-            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
             var data = new Dictionary<string, object>
             {
-                ["senderClientNo"] = clientNo,
-                ["timestamp"] = timestamp
+                ["senderClientNo"] = clientNo
             };
 
             try
@@ -583,18 +577,18 @@ namespace Styly.NetSync
 
         private static int EstimateGlobalVarSetSize(string name, string value)
         {
-            // 1 (type) + 2 (sender) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
+            // 1 (type) + 2 (sender) + 1 + nameLen + 2 + valueLen
             int nameLen = ClampedUtf8Length(name, 64);
             int valueLen = ClampedUtf8Length(value, 1024);
-            return 1 + 2 + 1 + nameLen + 2 + valueLen + 8;
+            return 1 + 2 + 1 + nameLen + 2 + valueLen;
         }
 
         private static int EstimateClientVarSetSize(string name, string value)
         {
-            // 1 (type) + 2 (sender) + 2 (target) + 1 + nameLen + 2 + valueLen + 8 (timestamp)
+            // 1 (type) + 2 (sender) + 2 (target) + 1 + nameLen + 2 + valueLen
             int nameLen = ClampedUtf8Length(name, 64);
             int valueLen = ClampedUtf8Length(value, 1024);
-            return 1 + 2 + 2 + 1 + nameLen + 2 + valueLen + 8;
+            return 1 + 2 + 2 + 1 + nameLen + 2 + valueLen;
         }
 
         private static int ClampedUtf8Length(string s, int max)

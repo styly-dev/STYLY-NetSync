@@ -61,9 +61,7 @@ class TestServerClientVariableDeviceStore:
     def test_client_no_write_stores_by_device_id(self, server: NetSyncServer) -> None:
         _map_device(server, "room1", "device-a", 7)
 
-        applied = server._apply_client_var_set(
-            "room1", 2, 7, "score", "100", time.time()
-        )
+        applied = server._apply_client_var_set("room1", 2, 7, "score", "100")
 
         assert applied is True
         assert server.client_variables["room1"]["device-a"]["score"]["value"] == "100"
@@ -75,8 +73,8 @@ class TestServerClientVariableDeviceStore:
         _map_device(server, "room1", "device-a", 7)
         _map_device(server, "room1", "device-b", 8)
 
-        server._apply_client_var_set("room1", 2, 7, "score", "100", time.time())
-        server._apply_client_var_set("room1", 2, 8, "score", "200", time.time())
+        server._apply_client_var_set("room1", 2, 7, "score", "100")
+        server._apply_client_var_set("room1", 2, 8, "score", "200")
 
         assert server.client_variables["room1"]["device-a"]["score"]["value"] == "100"
         assert server.client_variables["room1"]["device-b"]["score"]["value"] == "200"
@@ -101,7 +99,7 @@ class TestServerClientVariableDeviceStore:
         self, server: NetSyncServer
     ) -> None:
         _map_device(server, "room1", "device-a", 7)
-        server._apply_client_var_set("room1", 2, 7, "score", "100", time.time())
+        server._apply_client_var_set("room1", 2, 7, "score", "100")
 
         payload = server._build_client_var_sync_payload("room1")
         assert payload is not None
@@ -158,7 +156,7 @@ class TestServerClientVariableDeviceStore:
         self, server: NetSyncServer
     ) -> None:
         _map_device(server, "room1", "device-a", 7)
-        server._apply_client_var_set("room1", 2, 7, "score", "100", time.time())
+        server._apply_client_var_set("room1", 2, 7, "score", "100")
         server.device_id_last_seen["device-a"] = (
             time.monotonic() - server.DEVICE_ID_EXPIRY_TIME - 1.0
         )
@@ -174,7 +172,7 @@ class TestServerClientVariableDeviceStore:
     ) -> None:
         _map_device(server, "room1", "device-a", 7)
         server.client_transform_body_cache[7] = b"old"
-        server._apply_client_var_set("room1", 2, 7, "score", "100", time.time())
+        server._apply_client_var_set("room1", 2, 7, "score", "100")
         server.device_id_last_seen["device-a"] = (
             time.monotonic() - server.DEVICE_ID_EXPIRY_TIME - 1.0
         )
@@ -193,8 +191,8 @@ class TestServerClientVariableDeviceStore:
         server.upsert_client_variables_for_device(
             "room1", "device-a", {"a": "1", "b": "2"}
         )
-        server.pending_client_nv["room1"][(7, "a")] = (7, "stale", time.time())
-        server.pending_client_nv["room1"][(8, "a")] = (8, "other", time.time())
+        server.pending_client_nv["room1"][(7, "a")] = (7, "stale")
+        server.pending_client_nv["room1"][(8, "a")] = (8, "other")
         server._send_ctrl_to_room_via_router.reset_mock()
 
         server._handle_client_var_clear(
@@ -363,7 +361,7 @@ class TestRestClientVariableDeviceStore:
     ) -> None:
         _map_device(server, "room1", "device-a", 7)
         server.upsert_client_variables_for_device("room1", "device-a", {"a": "1"})
-        server.pending_client_nv["room1"][(7, "a")] = (7, "stale", time.time())
+        server.pending_client_nv["room1"][(7, "a")] = (7, "stale")
         server._send_ctrl_to_room_via_router.reset_mock()
         tc = self._client(server)
 

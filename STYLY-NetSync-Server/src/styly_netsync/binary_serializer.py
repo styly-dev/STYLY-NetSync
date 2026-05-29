@@ -6,7 +6,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Message type identifiers
-PROTOCOL_VERSION = 5
+# v6: Network Variable wire messages dropped the per-write timestamp field.
+# Bumped so mixed old/new builds fail the handshake instead of silently
+# misparsing NV traffic (the version byte rides on transform/object messages).
+PROTOCOL_VERSION = 6
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call
@@ -686,7 +689,7 @@ def serialize_global_var_set(data: dict[str, Any]) -> bytes:
     """Serialize global variable set message
 
     Args:
-        data: Dictionary with senderClientNo, variableName, variableValue, timestamp
+        data: Dictionary with senderClientNo, variableName, variableValue
     """
     buffer = bytearray()
 
@@ -703,9 +706,6 @@ def serialize_global_var_set(data: dict[str, Any]) -> bytes:
     # Variable value (max 1024 bytes)
     value = data.get("variableValue", "")[:1024]
     _pack_string(buffer, value, use_ushort=True)
-
-    # Timestamp (8 bytes double)
-    buffer.extend(struct.pack("<d", data.get("timestamp", 0.0)))
 
     return bytes(buffer)
 
@@ -729,7 +729,6 @@ def serialize_global_var_sync(data: dict[str, Any]) -> bytes:
     for var in variables:
         _pack_string(buffer, var.get("name", "")[:64])
         _pack_string(buffer, var.get("value", "")[:1024], use_ushort=True)
-        buffer.extend(struct.pack("<d", var.get("timestamp", 0.0)))
         buffer.extend(struct.pack("<H", var.get("lastWriterClientNo", 0)))
 
     return bytes(buffer)
@@ -739,7 +738,8 @@ def serialize_client_var_set(data: dict[str, Any]) -> bytes:
     """Serialize client variable set message
 
     Args:
-        data: Dictionary with senderClientNo, targetClientNo, variableName, variableValue, timestamp
+        data: Dictionary with senderClientNo, targetClientNo, variableName,
+            variableValue
     """
     buffer = bytearray()
 
@@ -760,9 +760,6 @@ def serialize_client_var_set(data: dict[str, Any]) -> bytes:
     value = data.get("variableValue", "")[:1024]
     _pack_string(buffer, value, use_ushort=True)
 
-    # Timestamp (8 bytes double)
-    buffer.extend(struct.pack("<d", data.get("timestamp", 0.0)))
-
     return bytes(buffer)
 
 
@@ -770,7 +767,7 @@ def serialize_client_var_clear(data: dict[str, Any]) -> bytes:
     """Serialize client variable clear message.
 
     Args:
-        data: Dictionary with senderClientNo and timestamp.
+        data: Dictionary with senderClientNo.
     """
     buffer = bytearray()
 
@@ -779,9 +776,6 @@ def serialize_client_var_clear(data: dict[str, Any]) -> bytes:
 
     # Sender client number (2 bytes)
     buffer.extend(struct.pack("<H", data.get("senderClientNo", 0)))
-
-    # Timestamp (8 bytes double)
-    buffer.extend(struct.pack("<d", data.get("timestamp", 0.0)))
 
     return bytes(buffer)
 
@@ -811,7 +805,6 @@ def serialize_client_var_sync(data: dict[str, Any]) -> bytes:
         for var in variables:
             _pack_string(buffer, var.get("name", "")[:64])
             _pack_string(buffer, var.get("value", "")[:1024], use_ushort=True)
-            buffer.extend(struct.pack("<d", var.get("timestamp", 0.0)))
             buffer.extend(struct.pack("<H", var.get("lastWriterClientNo", 0)))
 
     return bytes(buffer)
@@ -1247,10 +1240,6 @@ def _deserialize_global_var_set(data: bytes, offset: int) -> dict[str, Any]:
     # Variable value
     result["variableValue"], offset = _unpack_string(data, offset, use_ushort=True)
 
-    # Timestamp (8 bytes double)
-    result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
-    offset += 8
-
     return result
 
 
@@ -1267,8 +1256,6 @@ def _deserialize_global_var_sync(data: bytes, offset: int) -> dict[str, Any]:
         var = {}
         var["name"], offset = _unpack_string(data, offset)
         var["value"], offset = _unpack_string(data, offset, use_ushort=True)
-        var["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
-        offset += 8
         var["lastWriterClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
         offset += 2
         result["variables"].append(var)
@@ -1294,10 +1281,6 @@ def _deserialize_client_var_set(data: bytes, offset: int) -> dict[str, Any]:
     # Variable value
     result["variableValue"], offset = _unpack_string(data, offset, use_ushort=True)
 
-    # Timestamp (8 bytes double)
-    result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
-    offset += 8
-
     return result
 
 
@@ -1307,10 +1290,6 @@ def _deserialize_client_var_clear(data: bytes, offset: int) -> dict[str, Any]:
 
     # Sender client number (2 bytes)
     result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
-    offset += 2
-
-    # Timestamp (8 bytes double)
-    result["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
 
     return result
 
@@ -1336,8 +1315,6 @@ def _deserialize_client_var_sync(data: bytes, offset: int) -> dict[str, Any]:
             var = {}
             var["name"], offset = _unpack_string(data, offset)
             var["value"], offset = _unpack_string(data, offset, use_ushort=True)
-            var["timestamp"] = struct.unpack("<d", data[offset : offset + 8])[0]
-            offset += 8
             var["lastWriterClientNo"] = struct.unpack("<H", data[offset : offset + 2])[
                 0
             ]

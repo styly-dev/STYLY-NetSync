@@ -7,7 +7,10 @@ namespace Styly.NetSync
 {
     internal static class BinarySerializer
     {
-        public const byte PROTOCOL_VERSION = 5;
+        // v6: Network Variable wire messages dropped the per-write timestamp field.
+        // Bumped so mixed old/new builds fail the handshake instead of silently
+        // misparsing NV traffic (the version byte rides on transform/object messages).
+        public const byte PROTOCOL_VERSION = 6;
 
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
@@ -1017,10 +1020,6 @@ namespace Styly.NetSync
             var valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
             writer.Write((ushort)valueBytes.Length);
             writer.Write(valueBytes);
-
-            // Timestamp (8 bytes double)
-            var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
-            writer.Write(timestamp);
         }
 
         /// <summary>
@@ -1063,10 +1062,6 @@ namespace Styly.NetSync
             var valueBytes = System.Text.Encoding.UTF8.GetBytes(varValue);
             writer.Write((ushort)valueBytes.Length);
             writer.Write(valueBytes);
-
-            // Timestamp (8 bytes double)
-            var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
-            writer.Write(timestamp);
         }
 
         /// <summary>
@@ -1081,9 +1076,6 @@ namespace Styly.NetSync
 
             var senderClientNo = data.TryGetValue("senderClientNo", out var senderObj) ? Convert.ToUInt16(senderObj) : (ushort)0;
             writer.Write(senderClientNo);
-
-            var timestamp = data.TryGetValue("timestamp", out var timestampObj) ? Convert.ToDouble(timestampObj) : 0.0;
-            writer.Write(timestamp);
 
             return ms.ToArray();
         }
@@ -1176,9 +1168,6 @@ namespace Styly.NetSync
                 var valueLength = reader.ReadUInt16();
                 variable["value"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(valueLength));
 
-                // Timestamp
-                variable["timestamp"] = reader.ReadDouble();
-
                 // Last writer client number
                 variable["lastWriterClientNo"] = reader.ReadUInt16();
 
@@ -1218,9 +1207,6 @@ namespace Styly.NetSync
                     // Variable value
                     var valueLength = reader.ReadUInt16();
                     variable["value"] = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(valueLength));
-
-                    // Timestamp
-                    variable["timestamp"] = reader.ReadDouble();
 
                     // Last writer client number
                     variable["lastWriterClientNo"] = reader.ReadUInt16();

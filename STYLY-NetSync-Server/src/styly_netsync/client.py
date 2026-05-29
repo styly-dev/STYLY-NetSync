@@ -1222,7 +1222,6 @@ class net_sync_manager:
                 "senderClientNo": self._client_no,
                 "variableName": name,
                 "variableValue": value,
-                "timestamp": time.time(),
             }
             message = binary_serializer.serialize_global_var_set(var_data)
             return self._enqueue_control(
@@ -1244,7 +1243,6 @@ class net_sync_manager:
                 "targetClientNo": target_client_no,
                 "variableName": name,
                 "variableValue": value,
-                "timestamp": time.time(),
             }
             message = binary_serializer.serialize_client_var_set(var_data)
             return self._enqueue_control(
@@ -1263,7 +1261,6 @@ class net_sync_manager:
         try:
             clear_data = {
                 "senderClientNo": self._client_no,
-                "timestamp": time.time(),
             }
             message = binary_serializer.serialize_client_var_clear(clear_data)
             sent = self._enqueue_control(
