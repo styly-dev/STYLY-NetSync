@@ -651,8 +651,6 @@ namespace Styly.NetSync
 
                 switch (messageType)
                 {
-                    // case MSG_CLIENT_TRANSFORM:
-                    //     return (messageType, DeserializeClientTransform(reader));
                     case MSG_ROOM_POSE:
                         return (messageType, DeserializeRoomTransform(reader));
                     case MSG_RPC:

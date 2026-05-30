@@ -75,7 +75,6 @@ namespace Styly.NetSync
         internal Transform _XrOriginTransform;
         internal Vector3 _physicalOffsetPosition;
         internal Vector3 _physicalOffsetRotation;
-        private Styly.XRRig.StylyXrRig stylyXrRig;
 
         #region === Singleton & Public API ===
         private static NetSyncManager _instance;
@@ -539,12 +538,6 @@ namespace Styly.NetSync
         private volatile Exception _pendingConnectionException;
 
         /// <summary>
-        /// Unix timestamp (milliseconds) when the last connection error occurred.
-        /// Written on receive thread, read on main thread. Stored via Interlocked for visibility.
-        /// </summary>
-        private long _pendingConnectionErrorAtUnixMs;
-
-        /// <summary>
         /// Re-entrancy guard for ProcessPendingConnectionErrorOnMainThread.
         /// Main-thread only, prevents concurrent error handling.
         /// </summary>
@@ -661,8 +654,6 @@ namespace Styly.NetSync
                 _physicalOffsetPosition = rigTransform.position;
                 _physicalOffsetRotation = rigTransform.eulerAngles;
             }
-
-            stylyXrRig = FindFirstObjectByType<Styly.XRRig.StylyXrRig>();
         }
 
         private void OnEnable()
@@ -1328,16 +1319,6 @@ namespace Styly.NetSync
         {
             // Statistics logging is currently disabled
             // Uncomment to enable periodic statistics logging
-            /*
-            if (_enableDebugLogs && Time.time - _lastLogTime >= 5f)
-            {
-                var sent = _transformSyncManager.MessagesSent;
-                var recv = _messageProcessor.MessagesReceived;
-                var peers = _playerManager.ConnectedPeers.Count;
-                DebugLog($"Stats — Sent:{sent} Recv:{recv} Peers:{peers}");
-                _lastLogTime = Time.time;
-            }
-            */
         }
         #endregion ------------------------------------------------------------------------
 
@@ -1444,10 +1425,8 @@ namespace Styly.NetSync
             if (_connectionManager != null)
             {
                 // Read volatile fields - they are written in order (timestamp first, then exception)
-                var timestamp = _connectionManager.LastExceptionAtUnixMs;
                 var exception = _connectionManager.LastException;
 
-                System.Threading.Interlocked.Exchange(ref _pendingConnectionErrorAtUnixMs, timestamp);
                 _pendingConnectionException = exception;
             }
 

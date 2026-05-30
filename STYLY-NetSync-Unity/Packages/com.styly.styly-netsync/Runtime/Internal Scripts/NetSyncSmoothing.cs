@@ -221,7 +221,6 @@ namespace Styly.NetSync
     {
         public SampleState State;
         public PoseSampleData Target;
-        public double SnapshotDt;
         public float LinearSpeed;
         public float AngularSpeedDeg;
     }
@@ -238,7 +237,6 @@ namespace Styly.NetSync
         }
 
         public int Count => _count;
-        public PoseSnapshot Oldest => _items[0];
         public PoseSnapshot Newest => _items[_count - 1];
 
         public void Clear()
@@ -545,7 +543,6 @@ namespace Styly.NetSync
                 {
                     State = SampleState.Interpolating,
                     Target = target,
-                    SnapshotDt = dt,
                     LinearSpeed = linearSpeed,
                     AngularSpeedDeg = angularSpeed
                 };
@@ -563,7 +560,6 @@ namespace Styly.NetSync
                 {
                     State = SampleState.Extrapolating,
                     Target = target,
-                    SnapshotDt = dt,
                     LinearSpeed = linearSpeed,
                     AngularSpeedDeg = angularSpeed
                 };
@@ -573,7 +569,6 @@ namespace Styly.NetSync
             {
                 State = SampleState.HoldSingle,
                 Target = b.Pose,
-                SnapshotDt = dt,
                 LinearSpeed = linearSpeed,
                 AngularSpeedDeg = angularSpeed
             };
