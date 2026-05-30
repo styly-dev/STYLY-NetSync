@@ -284,7 +284,6 @@ def create_app(
     """Create the FastAPI application hosting the REST bridge."""
     app = FastAPI(title="NetSync REST Bridge", version="1.0.0")
 
-    # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

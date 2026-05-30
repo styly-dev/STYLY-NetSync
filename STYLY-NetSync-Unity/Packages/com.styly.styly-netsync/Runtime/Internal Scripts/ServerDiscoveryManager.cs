@@ -13,7 +13,6 @@ namespace Styly.NetSync
 {
     internal class ServerDiscoveryManager
     {
-        private UdpClient _discoveryClient; // Legacy: points to first client for backward compat
         private List<UdpClient> _discoveryClients = new List<UdpClient>();
         private Thread _discoveryThread;
         private bool _isDiscovering;
@@ -107,9 +106,6 @@ namespace Styly.NetSync
                     _discoveryClients.Add(fallback);
                     DebugLog("Using fallback unbound discovery socket");
                 }
-
-                // Keep legacy field pointing to first client
-                _discoveryClient = _discoveryClients[0];
 
                 // Start discovery thread that sends requests and waits for responses
                 _discoveryThread = new Thread(() =>
@@ -543,7 +539,6 @@ namespace Styly.NetSync
                     catch (Exception) { /* best-effort cleanup */ }
                 }
                 _discoveryClients.Clear();
-                _discoveryClient = null;
 
                 // Wait for discovery thread to exit
                 if (_discoveryThread != null)

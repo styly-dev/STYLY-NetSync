@@ -128,11 +128,6 @@ namespace Styly.NetSync
             }
         }
 
-        public void IncrementMessagesSent()
-        {
-            _messagesSent++;
-        }
-
         public bool ShouldSendTransform(float currentTime)
         {
             return currentTime - _lastSendTime >= 1f / SendRate;

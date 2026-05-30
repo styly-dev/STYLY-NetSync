@@ -166,7 +166,6 @@ class net_sync_manager:
         self._sub_port = sub_port
         self._room = room
         self._auto_dispatch = auto_dispatch
-        self._queue_max = queue_max
         self._reconnect_delay = reconnect_delay
         self._receive_timeout = receive_timeout
 

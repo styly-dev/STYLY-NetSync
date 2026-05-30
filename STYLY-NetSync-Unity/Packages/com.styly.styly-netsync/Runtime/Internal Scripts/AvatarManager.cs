@@ -19,11 +19,6 @@ namespace Styly.NetSync
         private NetSyncAvatar _localAvatar;
         private bool _enableDebugLogs;
 
-        // Hand pose normalizer references for tracking state events
-        private HandPoseNormalizer _leftHandNormalizer;
-        private HandPoseNormalizer _rightHandNormalizer;
-
-        public UnityEvent<int> OnAvatarConnected { get; } = new();
         public UnityEvent<int> OnAvatarDisconnected { get; } = new();
 
         public NetSyncAvatar LocalAvatar => _localAvatar;
@@ -285,7 +280,6 @@ namespace Styly.NetSync
 
                 // Subscribe to hand tracking state changes
                 rightNormalizer.OnTrackingStateChanged += HandleHandTrackingStateChanged;
-                _rightHandNormalizer = rightNormalizer;
             }
 
             if (leftHand != null)
@@ -320,7 +314,6 @@ namespace Styly.NetSync
 
                 // Subscribe to hand tracking state changes
                 leftNormalizer.OnTrackingStateChanged += HandleHandTrackingStateChanged;
-                _leftHandNormalizer = leftNormalizer;
             }
         }
 
