@@ -288,12 +288,12 @@ def _reconstruct_physical_from_head_and_delta(
     return (px, ty, pz), physical_rot
 
 
-class TestTransformSerializationV5:
-    """Tests for protocol v6 transform compact serialization."""
+class TestTransformSerializationV7:
+    """Tests for protocol v7 transform compact serialization."""
 
-    def test_protocol_version_is_v6(self) -> None:
-        """Protocol version constant should be at v6."""
-        assert binary_serializer.PROTOCOL_VERSION == 6
+    def test_protocol_version_is_v7(self) -> None:
+        """Protocol version constant should be at v7."""
+        assert binary_serializer.PROTOCOL_VERSION == 7
 
     def test_client_roundtrip_without_flags_infers_valid_bits(self) -> None:
         """Serializer should infer valid bits when flags are omitted."""
@@ -418,7 +418,7 @@ class TestTransformSerializationV5:
 
             assert msg_type == binary_serializer.MSG_CLIENT_POSE
             assert decoded is not None
-            assert decoded["protocolVersion"] == 6
+            assert decoded["protocolVersion"] == 7
             assert len(raw) > 0
 
             o_head = original["head"]
@@ -640,8 +640,8 @@ class TestTransformSerializationV5:
         )
         assert len(raw) == 46
 
-    def test_moving_floor_local_body_size_matches_unbound(self) -> None:
-        """Moving-floor-local pose should not add bytes to the pose body."""
+    def test_moving_floor_local_body_size_adds_floor_id(self) -> None:
+        """Moving-floor-local pose should add one uint32 floor id to the pose body."""
         rng = random.Random(4242)
         unbound = _build_random_client_pose(rng, virtual_count=0)
         unbound["flags"] = (
@@ -654,6 +654,7 @@ class TestTransformSerializationV5:
         bound["flags"] = (
             unbound["flags"] | binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
         )
+        bound["movingFloorId"] = 0xAABBCCDD
         bound["physical"] = _build_transform(
             (0.15, 1.62, -0.08),
             (
@@ -672,7 +673,7 @@ class TestTransformSerializationV5:
         )
 
         assert len(unbound_raw) == 46
-        assert len(bound_raw) == len(unbound_raw)
+        assert len(bound_raw) == len(unbound_raw) + 4
 
     def test_moving_floor_local_roundtrip_uses_direct_physical(self) -> None:
         """Bound poses use direct physical pose and keep head-relative channels intact."""
@@ -694,6 +695,7 @@ class TestTransformSerializationV5:
                 | binary_serializer.POSE_FLAG_VIRTUALS_VALID
                 | binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
             ),
+            "movingFloorId": 0x11223344,
             "xrOriginDeltaX": 99.0,
             "xrOriginDeltaY": 99.0,
             "xrOriginDeltaZ": 99.0,
@@ -720,6 +722,7 @@ class TestTransformSerializationV5:
         )
         assert decoded is not None
         assert decoded["flags"] & binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
+        assert decoded["movingFloorId"] == 0x11223344
         assert (
             decoded["encodingFlags"]
             & binary_serializer.ENCODING_PHYSICAL_IS_XRORIGIN_DELTA
@@ -813,7 +816,7 @@ class TestTransformSerializationV5:
         c2["poseTime"] = 223.456
 
         room_payload = {
-            "roomId": "room-v5",
+            "roomId": "room-v7",
             "broadcastTime": 999.123,
             "clients": [c1, c2],
         }
@@ -822,8 +825,8 @@ class TestTransformSerializationV5:
 
         assert msg_type == binary_serializer.MSG_ROOM_POSE
         assert decoded is not None
-        assert decoded["protocolVersion"] == 6
-        assert decoded["roomId"] == "room-v5"
+        assert decoded["protocolVersion"] == 7
+        assert decoded["roomId"] == "room-v7"
         assert len(decoded["clients"]) == 2
 
         for src, dst in zip(room_payload["clients"], decoded["clients"], strict=True):
@@ -845,6 +848,7 @@ class TestTransformSerializationV5:
         bound["flags"] = (
             int(bound["flags"]) | binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
         )
+        bound["movingFloorId"] = 0x55667788
         bound["physical"] = _build_transform(
             (0.2, 1.65, 0.05),
             (
@@ -869,6 +873,7 @@ class TestTransformSerializationV5:
         assert len(decoded["clients"]) == 1
         client = decoded["clients"][0]
         assert client["flags"] & binary_serializer.POSE_FLAG_MOVING_FLOOR_LOCAL
+        assert client["movingFloorId"] == 0x55667788
         assert (
             client["encodingFlags"]
             & binary_serializer.ENCODING_PHYSICAL_IS_XRORIGIN_DELTA

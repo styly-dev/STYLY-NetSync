@@ -7,7 +7,7 @@ using UnityEngine;
 namespace Styly.NetSync
 {
     /// <summary>
-    /// Tracks moving floors for protocol v5 moving-floor-local avatar poses.
+    /// Tracks moving floors for moving-floor-local avatar poses.
     /// A moving floor is any scene-stable Transform known by the same 32-bit id on each client.
     /// </summary>
     internal class MovingFloorManager
@@ -17,6 +17,7 @@ namespace Styly.NetSync
         public const uint UnassignedFloorId = 0u;
 
         private readonly Dictionary<uint, Transform> _floors = new Dictionary<uint, Transform>();
+        private readonly Dictionary<int, uint> _clientPoseFloorIds = new Dictionary<int, uint>();
         private readonly Dictionary<int, uint> _clientFloorIds = new Dictionary<int, uint>();
         private readonly HashSet<(int clientNo, uint floorId)> _missingWarnings = new HashSet<(int clientNo, uint floorId)>();
 
@@ -114,8 +115,36 @@ namespace Styly.NetSync
             _clientFloorIds[clientNo] = floorId;
         }
 
+        public void SetClientPoseFloorId(int clientNo, uint floorId, bool movingFloorLocal)
+        {
+            if (clientNo <= 0)
+            {
+                return;
+            }
+
+            bool hadPoseFloorId = _clientPoseFloorIds.TryGetValue(clientNo, out var previousFloorId);
+            if (!movingFloorLocal || floorId == UnassignedFloorId)
+            {
+                if (hadPoseFloorId)
+                {
+                    _clientPoseFloorIds.Remove(clientNo);
+                    RemoveWarningKeysForClient(clientNo);
+                }
+                return;
+            }
+
+            if (hadPoseFloorId && previousFloorId == floorId)
+            {
+                return;
+            }
+
+            _clientPoseFloorIds[clientNo] = floorId;
+            RemoveWarningKeysForClient(clientNo);
+        }
+
         public void RemoveClient(int clientNo)
         {
+            _clientPoseFloorIds.Remove(clientNo);
             _clientFloorIds.Remove(clientNo);
             RemoveWarningKeysForClient(clientNo);
         }
@@ -123,14 +152,20 @@ namespace Styly.NetSync
         public bool TryGetFloorForClient(int clientNo, bool warnIfMissingId, out Transform floor)
         {
             floor = null;
-            if (!_clientFloorIds.TryGetValue(clientNo, out var floorId) || floorId == UnassignedFloorId)
+            if (!_clientPoseFloorIds.TryGetValue(clientNo, out var floorId) &&
+                !_clientFloorIds.TryGetValue(clientNo, out floorId))
+            {
+                floorId = UnassignedFloorId;
+            }
+
+            if (floorId == UnassignedFloorId)
             {
                 if (warnIfMissingId)
                 {
                     WarnOnce(
                         clientNo,
                         UnassignedFloorId,
-                        $"[NetSync] Moving-floor-local pose received for client#{clientNo}, but {ClientVariableName} is missing. Holding the last applied avatar pose until the floor id is received.");
+                        $"[NetSync] Moving-floor-local pose received for client#{clientNo}, but its floor id is missing. Holding the last applied avatar pose until the floor id is received.");
                 }
                 return false;
             }
@@ -150,6 +185,7 @@ namespace Styly.NetSync
 
         public void ClearClientStates(bool clearLocal)
         {
+            _clientPoseFloorIds.Clear();
             _clientFloorIds.Clear();
             _missingWarnings.Clear();
             if (clearLocal)

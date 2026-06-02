@@ -369,6 +369,12 @@ namespace Styly.NetSync
 
                     alive.Add(c.clientNo);
 
+                    bool movingFloorLocal = (c.flags & PoseFlags.MovingFloorLocal) != 0;
+                    if (netSyncManager != null)
+                    {
+                        netSyncManager.UpdateMovingFloorPoseStateForClient(c.clientNo, c.movingFloorId, movingFloorLocal);
+                    }
+
                     // Check if avatar already exists and just needs update
                     if (avatarManager.ConnectedPeers.ContainsKey(c.clientNo))
                     {
@@ -386,7 +392,6 @@ namespace Styly.NetSync
                     // by BinarySerializer from the world-space head pose and XROrigin delta.
                     // Moving-floor-local poses update presence from the smoothed remote avatar path instead.
                     var physical = c.physical;
-                    bool movingFloorLocal = (c.flags & PoseFlags.MovingFloorLocal) != 0;
                     if (!movingFloorLocal && physical != null && netSyncManager != null)
                     {
                         var physicalPos = physical.GetPosition();

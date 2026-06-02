@@ -66,10 +66,12 @@ namespace Styly.NetSync
         private PoseSampleData _lastPhysicalSample;
         private bool _hasPhysicalSample;
         private bool _isMovingFloorLocal;
+        private uint _movingFloorId;
         private bool _lastTickApplied;
         public PoseSampleData LastPhysicalSample => _lastPhysicalSample;
         public bool HasPhysicalSample => _hasPhysicalSample;
         public bool IsMovingFloorLocal => _isMovingFloorLocal;
+        public uint MovingFloorId => _movingFloorId;
         public bool LastTickApplied => _lastTickApplied;
 
         public void InitializeForAvatar(
@@ -114,6 +116,7 @@ namespace Styly.NetSync
             _singleChannel = null;
             _hasAnySnapshot = false;
             _isMovingFloorLocal = false;
+            _movingFloorId = MovingFloorManager.UnassignedFloorId;
             _lastTickApplied = false;
             ClearLastAvatarSamples();
             _intervalEstimator.Reset();
@@ -144,6 +147,7 @@ namespace Styly.NetSync
 
             _hasAnySnapshot = false;
             _isMovingFloorLocal = false;
+            _movingFloorId = MovingFloorManager.UnassignedFloorId;
             _lastTickApplied = false;
             ClearLastAvatarSamples();
             _intervalEstimator.Reset();
@@ -163,11 +167,15 @@ namespace Styly.NetSync
             }
 
             var movingFloorLocal = (data.flags & PoseFlags.MovingFloorLocal) != 0;
-            if (_hasAnySnapshot && movingFloorLocal != _isMovingFloorLocal)
+            var movingFloorId = movingFloorLocal ? data.movingFloorId : MovingFloorManager.UnassignedFloorId;
+            if (_hasAnySnapshot &&
+                (movingFloorLocal != _isMovingFloorLocal ||
+                 (movingFloorLocal && movingFloorId != _movingFloorId)))
             {
                 Clear();
             }
             _isMovingFloorLocal = movingFloorLocal;
+            _movingFloorId = movingFloorId;
             _hasAnySnapshot = true;
             _intervalEstimator.OnPoseTime(data.poseTime);
 
@@ -253,6 +261,7 @@ namespace Styly.NetSync
             _hasAnySnapshot = false;
             _hasPhysicalSample = false;
             _isMovingFloorLocal = false;
+            _movingFloorId = MovingFloorManager.UnassignedFloorId;
             _lastTickApplied = false;
             ClearLastAvatarSamples();
         }

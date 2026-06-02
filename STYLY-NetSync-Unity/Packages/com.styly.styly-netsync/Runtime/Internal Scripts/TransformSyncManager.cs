@@ -158,6 +158,12 @@ namespace Styly.NetSync
             bool rightValid = headValid && ((flags & PoseFlags.RightValid) != 0);
             bool leftValid = headValid && ((flags & PoseFlags.LeftValid) != 0);
             bool virtualValid = headValid && ((flags & PoseFlags.VirtualsValid) != 0);
+            bool movingFloorLocal = (flags & PoseFlags.MovingFloorLocal) != 0;
+
+            if (movingFloorLocal)
+            {
+                bodySize += sizeof(uint);
+            }
 
             if (physicalValid)
             {

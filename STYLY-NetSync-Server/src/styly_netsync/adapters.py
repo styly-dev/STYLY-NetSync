@@ -52,6 +52,8 @@ def client_transform_to_wire(ct: client_transform_data) -> dict[str, Any]:
         result["poseSeq"] = ct.pose_seq
     if ct.flags is not None:
         result["flags"] = ct.flags
+    if ct.moving_floor_id is not None:
+        result["movingFloorId"] = ct.moving_floor_id
     if ct.physical is not None:
         result["physical"] = transform_to_wire(ct.physical)
     if ct.head is not None:
@@ -75,6 +77,7 @@ def client_transform_from_wire(data: dict[str, Any]) -> client_transform_data:
     result.pose_time = data.get("poseTime")
     result.pose_seq = data.get("poseSeq")
     result.flags = data.get("flags")
+    result.moving_floor_id = data.get("movingFloorId")
 
     if "physical" in data and data["physical"]:
         result.physical = transform_from_wire(data["physical"])

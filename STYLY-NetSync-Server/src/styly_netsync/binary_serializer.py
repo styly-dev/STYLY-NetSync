@@ -6,10 +6,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Message type identifiers
-# v6: Network Variable wire messages dropped the per-write timestamp field.
+# v7: MovingFloorLocal pose bodies carry the sender's moving floor id.
 # Bumped so mixed old/new builds fail the handshake instead of silently
-# misparsing NV traffic (the version byte rides on transform/object messages).
-PROTOCOL_VERSION = 6
+# projecting floor-local poses through the wrong registered floor.
+PROTOCOL_VERSION = 7
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call
@@ -36,7 +36,7 @@ MSG_CLIENT_VAR_CLEAR = 18  # Clear all client variables for the sender
 _max_virtual_transforms = 50
 MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward compat
 
-# Protocol v5 transform encoding constants
+# Protocol v7 transform encoding constants
 ABS_POS_SCALE = 0.01
 LOCO_POS_SCALE = 0.01
 REL_POS_SCALE = 0.005
@@ -385,7 +385,7 @@ def _create_transform_dict(
 
 
 def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
-    """Serialize a client body in protocol v5 compact format."""
+    """Serialize a client body in protocol v7 compact format."""
     pose_seq = int(client.get("poseSeq", 0)) & 0xFFFF
     head = client.get("head", {}) or {}
     right = client.get("rightHand", {}) or {}
@@ -435,6 +435,10 @@ def _serialize_client_body(buffer: bytearray, client: dict[str, Any]) -> None:
     left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
     virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
     moving_floor_local = bool(flags & POSE_FLAG_MOVING_FLOOR_LOCAL)
+
+    if moving_floor_local:
+        moving_floor_id = int(client.get("movingFloorId", 0)) & 0xFFFFFFFF
+        buffer.extend(struct.pack("<I", moving_floor_id))
 
     xr_origin_delta_x = float(client.get("xrOriginDeltaX", 0.0))
     xr_origin_delta_y = float(client.get("xrOriginDeltaY", 0.0))
@@ -891,7 +895,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
 
 
 def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], int]:
-    """Deserialize protocol v5 compact pose body."""
+    """Deserialize protocol v7 compact pose body."""
     result: dict[str, Any] = {}
     result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
@@ -908,6 +912,10 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     left_valid = head_valid and bool(flags & POSE_FLAG_LEFT_VALID)
     virtual_valid = head_valid and bool(flags & POSE_FLAG_VIRTUALS_VALID)
     moving_floor_local = bool(flags & POSE_FLAG_MOVING_FLOOR_LOCAL)
+    moving_floor_id = 0
+    if moving_floor_local:
+        moving_floor_id = struct.unpack("<I", data[offset : offset + 4])[0]
+        offset += 4
 
     physical = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, True)
     head = _create_transform_dict(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, moving_floor_local)
@@ -1114,6 +1122,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
     result["xrOriginDeltaY"] = xr_origin_delta_y
     result["xrOriginDeltaZ"] = xr_origin_delta_z
     result["xrOriginDeltaYaw"] = xr_origin_delta_yaw
+    result["movingFloorId"] = moving_floor_id
     result["physical"] = physical
     result["head"] = head
     result["rightHand"] = right
@@ -1123,7 +1132,7 @@ def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], 
 
 
 def _deserialize_client_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize client pose (v5) from binary data."""
+    """Deserialize client pose (v7) from binary data."""
     result: dict[str, Any] = {}
 
     protocol_version = data[offset]
@@ -1161,7 +1170,7 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
 
 
 def _deserialize_room_transform(data: bytes, offset: int) -> dict[str, Any]:
-    """Deserialize room pose (v5) with client numbers only."""
+    """Deserialize room pose (v7) with client numbers only."""
     result: dict[str, Any] = {}
 
     protocol_version = data[offset]

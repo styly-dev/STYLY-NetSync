@@ -325,6 +325,9 @@ namespace Styly.NetSync
             Transform movingFloor = null;
             bool movingFloorLocal = _netSyncManager != null && _netSyncManager.TryGetLocalMovingFloor(out movingFloor);
             _tx.flags = BuildPoseFlags(movingFloorLocal);
+            _tx.movingFloorId = movingFloorLocal && _netSyncManager != null
+                ? _netSyncManager.LocalMovingFloorId
+                : MovingFloorManager.UnassignedFloorId;
 
             // AvatarManager wires a ParentConstraint from this avatar root to XROrigin
             // so the avatar follows the rig. Unity evaluates ParentConstraint between

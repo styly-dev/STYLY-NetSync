@@ -7,10 +7,10 @@ namespace Styly.NetSync
 {
     internal static class BinarySerializer
     {
-        // v6: Network Variable wire messages dropped the per-write timestamp field.
+        // v7: MovingFloorLocal pose bodies carry the sender's moving floor id.
         // Bumped so mixed old/new builds fail the handshake instead of silently
-        // misparsing NV traffic (the version byte rides on transform/object messages).
-        public const byte PROTOCOL_VERSION = 6;
+        // projecting floor-local poses through the wrong registered floor.
+        public const byte PROTOCOL_VERSION = 7;
 
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
@@ -32,7 +32,7 @@ namespace Styly.NetSync
         public const byte MSG_OBJECT_OWNERSHIP_REJECTED = 17; // Server → Client: request rejected
         public const byte MSG_CLIENT_VAR_CLEAR = 18; // Clear all client variables for the sender
 
-        // Protocol v5 pose encoding constants
+        // Protocol v7 pose encoding constants
         private const float ABS_POS_SCALE = 0.01f;
         private const float LOCO_POS_SCALE = 0.01f;
         private const float REL_POS_SCALE = 0.005f;
@@ -357,6 +357,7 @@ namespace Styly.NetSync
 
             var xrOriginDelta = data != null ? data.xrOriginDeltaPosition : Vector3.zero;
             var xrOriginDeltaYaw = data != null ? data.xrOriginDeltaYaw : 0f;
+            var movingFloorId = data != null ? data.movingFloorId : MovingFloorManager.UnassignedFloorId;
             var physical = EnsureTransform(data != null ? data.physical : null);
             var head = EnsureTransform(data != null ? data.head : null);
             var right = EnsureTransform(data != null ? data.rightHand : null);
@@ -371,6 +372,11 @@ namespace Styly.NetSync
                 hash *= 1099511628211UL;
                 hash ^= encodingFlags;
                 hash *= 1099511628211UL;
+            }
+
+            if (movingFloorLocal)
+            {
+                HashUInt(ref hash, movingFloorId);
             }
 
             if (physicalValid)
@@ -491,11 +497,17 @@ namespace Styly.NetSync
 
             var xrOriginDelta = data != null ? data.xrOriginDeltaPosition : Vector3.zero;
             var xrOriginDeltaYaw = data != null ? data.xrOriginDeltaYaw : 0f;
+            var movingFloorId = data != null ? data.movingFloorId : MovingFloorManager.UnassignedFloorId;
             var physical = EnsureTransform(data != null ? data.physical : null);
             var head = EnsureTransform(data != null ? data.head : null);
             var right = EnsureTransform(data != null ? data.rightHand : null);
             var left = EnsureTransform(data != null ? data.leftHand : null);
             var headRot = NormalizeQuaternionSafe(head.rotation);
+
+            if (movingFloorLocal)
+            {
+                writer.Write(movingFloorId);
+            }
 
             if (physicalValid)
             {
@@ -732,6 +744,11 @@ namespace Styly.NetSync
                 bool leftValid = headValid && ((client.flags & PoseFlags.LeftValid) != 0);
                 bool virtualValid = headValid && ((client.flags & PoseFlags.VirtualsValid) != 0);
                 bool movingFloorLocal = (client.flags & PoseFlags.MovingFloorLocal) != 0;
+                client.movingFloorId = MovingFloorManager.UnassignedFloorId;
+                if (movingFloorLocal)
+                {
+                    client.movingFloorId = reader.ReadUInt32();
+                }
 
                 short dxQ = 0;
                 short dyQ = 0;

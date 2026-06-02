@@ -30,6 +30,7 @@ class client_transform_data:
     pose_time: float | None = None
     pose_seq: int | None = None
     flags: int | None = None
+    moving_floor_id: int | None = None
     physical: transform_data | None = None
     head: transform_data | None = None
     right_hand: transform_data | None = None

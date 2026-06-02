@@ -348,7 +348,7 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Register a scene-stable moving floor used by protocol v5 moving-floor-local avatar poses.
+        /// Register a scene-stable moving floor used by moving-floor-local avatar poses.
         /// The same floor id must resolve to the corresponding local Transform on every client.
         /// </summary>
         public bool RegisterMovingFloor(uint floorId, Transform floor)
@@ -1521,6 +1521,16 @@ namespace Styly.NetSync
             }
 
             return _movingFloorManager.TryGetFloorForClient(clientNo, warnIfMissingId, out floor);
+        }
+
+        internal void UpdateMovingFloorPoseStateForClient(int clientNo, uint floorId, bool movingFloorLocal)
+        {
+            if (_movingFloorManager == null)
+            {
+                return;
+            }
+
+            _movingFloorManager.SetClientPoseFloorId(clientNo, floorId, movingFloorLocal);
         }
 
         /// <summary>

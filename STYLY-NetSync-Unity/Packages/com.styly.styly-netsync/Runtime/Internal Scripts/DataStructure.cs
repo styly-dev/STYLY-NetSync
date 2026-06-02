@@ -61,6 +61,8 @@ namespace Styly.NetSync
         public double poseTime;
         public ushort poseSeq;
         public PoseFlags flags;
+        // Moving floor id embedded in protocol v7 pose bodies when MovingFloorLocal is set.
+        public uint movingFloorId;
         // XROrigin locomotion delta (SE(2)): x/z translation in meters and yaw delta in degrees.
         public Vector3 xrOriginDeltaPosition;
         public float xrOriginDeltaYaw;
