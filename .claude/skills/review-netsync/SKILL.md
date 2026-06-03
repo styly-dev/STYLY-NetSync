@@ -60,10 +60,12 @@ Review git diff output against all project-specific coding rules and conventions
 - `ZMQ_CONFLATE` must never be used — it corrupts 2-frame multipart messages (topic + payload)
 - Severity: **CRITICAL**
 
-### Protocol — Version 3 Only
-- Protocol version must be 3 (`PROTOCOL_VERSION = 3`)
-- No v2 fallback or compatibility code
-- Message IDs: `MSG_CLIENT_POSE=11`, `MSG_ROOM_POSE=12`
+### Protocol — Single Version, Parity Enforced
+Do **not** hardcode the protocol version number in this review — it bumps on every breaking wire change. Read the current value from the code and check invariants instead:
+- `PROTOCOL_VERSION` is defined in `binary_serializer.py` and `BinarySerializer.cs`. The two **must declare the same value**; a mismatch is a CRITICAL bug.
+- Only one protocol version is supported at a time — there must be **no multi-version fallback or compatibility code** (server and clients deploy together).
+- Any breaking wire change (field layout, message format, quantization, new/changed message type) **must bump `PROTOCOL_VERSION` on both sides in the same change**. A wire change without a matching bump is CRITICAL.
+- Message-type IDs and constants are the source of truth in `binary_serializer.py` (constants block near the top) mirrored by `BinarySerializer.cs`. When checking specific IDs/values, read them from those files rather than trusting any number quoted in this skill.
 - Severity: **CRITICAL**
 
 ### Unity–Python Feature Parity
@@ -91,7 +93,13 @@ If the diff touches **any** of these trigger files or keywords, a protocol chang
 - `binary_serializer.py` or `BinarySerializer.cs`
 - `types.py` or `DataStructure.cs`
 
-**Trigger keywords in diff:** `PROTOCOL_VERSION`, `MSG_CLIENT_POSE`, `MSG_ROOM_POSE`, `MSG_RPC`, `MSG_DEVICE_ID_MAPPING`, `MSG_GLOBAL_VAR_SET`, `MSG_GLOBAL_VAR_SYNC`, `MSG_CLIENT_VAR_SET`, `MSG_CLIENT_VAR_SYNC`, `ABS_POS_SCALE`, `LOCO_POS_SCALE`, `REL_POS_SCALE`, `PHYSICAL_YAW_SCALE`, `MAX_VIRTUAL_TRANSFORMS`, `PoseFlags`, quaternion compression changes.
+**Trigger keywords in diff (match by pattern, not an exhaustive list — new constants appear over time):**
+- `PROTOCOL_VERSION`
+- Any `MSG_*` message-type constant (e.g. `MSG_CLIENT_POSE`, `MSG_ROOM_POSE`, `MSG_RPC*`, `MSG_*_VAR_*`, `MSG_OBJECT_*`, `MSG_*_OWNERSHIP_*`)
+- Any `*_SCALE` quantization constant (e.g. `ABS_POS_SCALE`, `LOCO_POS_SCALE`, `REL_POS_SCALE`, `PHYSICAL_YAW_SCALE`)
+- `MAX_VIRTUAL_TRANSFORMS` / `_max_virtual_transforms` or other virtual-transform limits
+- `PoseFlags` (or any new pose/flag enum), reference-frame / moving-floor-local pose handling
+- Quaternion compression / smallest-three encoding logic
 
 **When triggered:** Read [references/protocol-change-checklist.md](references/protocol-change-checklist.md) and apply its full checklist. For each item, check whether the corresponding file was updated in the diff. Flag any **missing updates** as CRITICAL violations.
 

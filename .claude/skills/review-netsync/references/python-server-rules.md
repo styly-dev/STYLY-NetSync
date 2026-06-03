@@ -144,7 +144,7 @@ import logging              # Never use stdlib logging
 |------|-----------|---------|
 | Functions/variables | `snake_case` | `transform_data`, `get_version()` |
 | Classes | `PascalCase` | `ServerConfig`, `SendStatus` |
-| Constants | `UPPER_SNAKE_CASE` | `PROTOCOL_VERSION = 3`, `MSG_CLIENT_POSE = 11` |
+| Constants | `UPPER_SNAKE_CASE` | `PROTOCOL_VERSION`, `MSG_CLIENT_POSE` |
 | Private | `_prefix` | `_is_stealth_client()` |
 | Modules | `snake_case` | `binary_serializer.py` |
 
@@ -163,13 +163,12 @@ class transform_data:
 
 ## Constants & Enums
 
-Define protocol constants at module level:
+Define protocol constants at module level (values are illustrative — read the live values from `binary_serializer.py`):
 
 ```python
-PROTOCOL_VERSION = 3
-MSG_CLIENT_POSE = 11
-MSG_ROOM_POSE = 12
-MAX_VIRTUAL_TRANSFORMS = 50
+PROTOCOL_VERSION = ...   # single supported version; bumped on breaking wire changes
+MSG_CLIENT_POSE = ...    # message-type IDs
+MSG_ROOM_POSE = ...
 ```
 
 Use `Enum` for enumerated types:

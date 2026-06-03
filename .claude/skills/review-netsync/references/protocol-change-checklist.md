@@ -24,7 +24,7 @@ When serialization/deserialization code changes on one side, verify the other si
 | `binary_serializer.py` — serialize functions | `BinarySerializer.cs` — Serialize methods | Field order, byte sizes, endianness, quantization scales |
 | `binary_serializer.py` — deserialize functions | `BinarySerializer.cs` — Deserialize methods | Same as above in reverse |
 | `binary_serializer.py` — quaternion compress/decompress | `BinarySerializer.cs` — quaternion compress/decompress | Identical algorithm, rounding behavior |
-| `binary_serializer.py` — constants (lines 9-60) | `BinarySerializer.cs` — constants (lines 10-49) | All values must match exactly |
+| `binary_serializer.py` — constants block (top of file) | `BinarySerializer.cs` — constants block (top of class) | All values must match exactly |
 | `types.py` — dataclass fields | `DataStructure.cs` — class fields | Same fields, same semantics |
 
 **How to check:** Read both files and compare constants, field order, byte layout, and encoding logic line by line.
@@ -49,7 +49,7 @@ When serialization/deserialization code changes on one side, verify the other si
 
 | File | What to Check |
 |---|---|
-| `src/styly_netsync/client_simulator.py` | Uses message type constants (lines 47-59), MESSAGE_TYPE_NAMES mapping (lines 84-93), and `serialize_client_transform()`. If new message types added, `MESSAGE_TYPE_NAMES` must be updated. If transform format changed, simulator's movement pattern generation must match new format. |
+| `src/styly_netsync/client_simulator.py` | Uses the message-type constants, the `MESSAGE_TYPE_NAMES` mapping, and the client-transform serialize call. If new message types added, `MESSAGE_TYPE_NAMES` must be updated. If transform format changed, the simulator's movement-pattern generation must match the new format. |
 
 **Required action:** Verify simulator can still generate valid protocol-compliant messages. Flag as CRITICAL if simulator code is not updated alongside protocol changes.
 
@@ -81,14 +81,16 @@ When serialization/deserialization code changes on one side, verify the other si
 
 ## CRITICAL: Documentation
 
+Project docs live in `AGENTS.md` files; each `CLAUDE.md` just `@`-imports the sibling `AGENTS.md`, so review and update the `AGENTS.md` content.
+
 | File | What to Update |
 |---|---|
-| `/CLAUDE.md` (root) | Protocol Details section: version, message IDs, quantization ranges, encoding description, transform layout. Architecture Overview section if new components added. |
-| `/STYLY-NetSync-Server/CLAUDE.md` | Server-side protocol documentation. Binary serializer behavior. Message type routing. |
-| `/STYLY-NetSync-Unity/CLAUDE.md` | Unity client protocol documentation. Transform Protocol Notes section. Internal Scripts descriptions. |
+| `/AGENTS.md` (root) | Protocol Rules section: version, message IDs, quantization ranges/scales, encoding description, pose/transform layout. Architecture Overview if new components added. |
+| `/STYLY-NetSync-Server/AGENTS.md` | Server-side protocol documentation: binary serializer behavior, message-type routing. |
+| `/STYLY-NetSync-Unity/AGENTS.md` | Unity client protocol documentation: transform/pose protocol notes, Internal Scripts descriptions. |
 | `/README.md` | If major protocol features changed. |
 
-**Required action:** All three CLAUDE.md files MUST be reviewed and updated when protocol changes. Flag as CRITICAL if documentation updates are missing from the diff.
+**Required action:** The relevant `AGENTS.md` files MUST be reviewed and updated when the protocol changes. Flag as CRITICAL if documentation updates are missing from the diff.
 
 ---
 
@@ -128,9 +130,9 @@ When protocol changes are detected, add this section to the review output:
 - [ ] Related managers updated (Transform/RPC/NV as applicable)
 
 #### Documentation
-- [ ] /CLAUDE.md updated
-- [ ] /STYLY-NetSync-Server/CLAUDE.md updated
-- [ ] /STYLY-NetSync-Unity/CLAUDE.md updated
+- [ ] /AGENTS.md updated
+- [ ] /STYLY-NetSync-Server/AGENTS.md updated
+- [ ] /STYLY-NetSync-Unity/AGENTS.md updated
 
 #### Missing Updates (CRITICAL)
 - [List any files from above that should have been updated but were NOT in the diff]
@@ -138,29 +140,18 @@ When protocol changes are detected, add this section to the review output:
 
 ---
 
-## Quick Reference: Protocol Constants
+## Protocol Constants — Verify Against Source, Do Not Trust Quoted Values
 
-These values must be identical in both `binary_serializer.py` and `BinarySerializer.cs`:
+**Do not hardcode protocol values in this checklist** — version, message IDs, scales, and limits change on every wire bump and any list here goes stale. Instead, read the live values from the source and check the invariants below.
 
-```
-PROTOCOL_VERSION = 3
-MSG_CLIENT_TRANSFORM = 1
-MSG_ROOM_TRANSFORM = 2
-MSG_RPC = 3
-MSG_RPC_REQ = 4
-MSG_RPC_RES = 5
-MSG_DEVICE_ID_MAPPING = 6
-MSG_GLOBAL_VAR_SET = 7
-MSG_GLOBAL_VAR_SYNC = 8
-MSG_CLIENT_VAR_SET = 9
-MSG_CLIENT_VAR_SYNC = 10
-MSG_CLIENT_POSE = 11
-MSG_ROOM_POSE = 12
+**Source of truth:** the constants block near the top of `binary_serializer.py` (Python) and its mirror in `BinarySerializer.cs` (C#).
 
-ABS_POS_SCALE = 100      (0.01m per unit)
-LOCO_POS_SCALE = 100     (0.01m per unit)
-REL_POS_SCALE = 200      (0.005m per unit)
-PHYSICAL_YAW_SCALE = 10  (0.1 deg per unit)
+**Invariants to verify in a review:**
 
-MAX_VIRTUAL_TRANSFORMS = 50
-```
+1. **Parity** — every protocol constant present on both sides has an identical value. Read both constants blocks and diff them.
+2. **Version bump** — `PROTOCOL_VERSION` is identical on both sides, and was bumped in this same change if the wire format changed in any breaking way.
+3. **Message IDs** — every `MSG_*` constant has the same numeric ID on both sides; any newly added message type uses a previously-unused ID (no collisions, no reuse of a retired ID without a version bump).
+4. **Quantization** — every `*_SCALE` constant matches between Python and C#, and quantize/dequantize use the same rounding and clamping behavior.
+5. **Limits** — virtual-transform and other size limits match between sides. Note that the virtual-transform max is runtime-configurable on the server (`set_max_virtual_transforms` / `_max_virtual_transforms`); `MAX_VIRTUAL_TRANSFORMS` is a legacy alias for the default — check the configured value, not just the constant.
+
+To list the current constants quickly: grep `^MSG_`, `_SCALE`, `PROTOCOL_VERSION`, and the virtual-transform limit in `binary_serializer.py`, then confirm each appears with the same value in `BinarySerializer.cs`.
