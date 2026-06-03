@@ -380,14 +380,17 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
     """
     updates: dict[str, Any] = {}
 
-    # Network settings from CLI
+    # Network settings from CLI.
+    # control_port is the canonical flag; --dealer-port is a deprecated alias
+    # kept for one release. When both are provided, the explicit --control-port
+    # wins so the deprecated alias can never silently override it.
     if hasattr(args, "control_port") and args.control_port is not None:
         updates["control_port"] = args.control_port
-        updates["dealer_port"] = args.control_port
-    if hasattr(args, "dealer_port") and args.dealer_port is not None:
-        # Deprecated alias for one release.
+    elif hasattr(args, "dealer_port") and args.dealer_port is not None:
         updates["control_port"] = args.dealer_port
-        updates["dealer_port"] = args.dealer_port
+    if "control_port" in updates:
+        # Keep the deprecated alias mirrored to the resolved control_port.
+        updates["dealer_port"] = updates["control_port"]
     if hasattr(args, "transform_port") and args.transform_port is not None:
         updates["transform_port"] = args.transform_port
     if hasattr(args, "pub_port") and args.pub_port is not None:

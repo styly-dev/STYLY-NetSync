@@ -1107,7 +1107,18 @@ class NetSyncServer:
                 break
 
             self._increment_stat("message_count")
-            self._handle_incoming_router_message(lane, parts)
+            # Isolate per-message failures: a single malformed message or a
+            # throwing handler must not abort draining the rest of this socket's
+            # backlog (which would stall every other client until the next poll).
+            try:
+                self._handle_incoming_router_message(lane, parts)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to handle %s-lane message (%d parts): %s",
+                    lane,
+                    len(parts),
+                    exc,
+                )
 
     def _handle_incoming_router_message(self, lane: str, parts: list[bytes]) -> None:
         """Dispatch one incoming ROUTER multipart message for a specific lane."""

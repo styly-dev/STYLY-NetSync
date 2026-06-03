@@ -561,6 +561,27 @@ class TestMergeCliArgs:
         # Original config unchanged
         assert default_config.dealer_port == 5555
 
+    def test_cli_control_port_wins_over_deprecated_dealer_port(
+        self, default_config: ServerConfig
+    ) -> None:
+        """When both flags are given, the canonical --control-port must win.
+
+        The deprecated --dealer-port alias must never silently override an
+        explicit --control-port.
+        """
+        args = argparse.Namespace(
+            control_port=6000,
+            dealer_port=7000,
+            pub_port=None,
+            server_discovery_port=None,
+            no_server_discovery=False,
+        )
+
+        merged = merge_cli_args(default_config, args)
+        assert merged.control_port == 6000
+        # dealer_port stays mirrored to the resolved control_port.
+        assert merged.dealer_port == 6000
+
     def test_cli_overrides_pub_port(self, default_config: ServerConfig) -> None:
         """Test that CLI pub_port overrides config."""
         args = argparse.Namespace(
