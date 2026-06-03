@@ -25,29 +25,25 @@
 
 ## Protocol Details
 
-Protocol version: **3 only** (v2 removed).
+A **single** protocol version is supported at a time (no multi-version fallback). The current `PROTOCOL_VERSION` is defined once in `binary_serializer.py` and mirrored in `BinarySerializer.cs` — read it from there rather than relying on a number written here, which goes stale on every wire bump.
 
 ### Message Type IDs
 
-| ID | Name | Direction |
-|----|------|-----------|
-| 11 | `MSG_CLIENT_POSE` | Client -> Server |
-| 12 | `MSG_ROOM_POSE` | Server -> Clients |
-| 3 | `MSG_RPC` | Bidirectional |
-| 6 | `MSG_DEVICE_ID_MAPPING` | Server -> Client |
-| 7 | `MSG_GLOBAL_VAR_SET` | Client -> Server |
-| 8 | `MSG_GLOBAL_VAR_SYNC` | Server -> Client |
-| 9 | `MSG_CLIENT_VAR_SET` | Client -> Server |
-| 10 | `MSG_CLIENT_VAR_SYNC` | Server -> Client |
+Message-type IDs (`MSG_*`) and their values are the source of truth in `binary_serializer.py`'s constants block, mirrored in `BinarySerializer.cs`. When reviewing, read the current set from those files. Verify the invariants rather than memorizing values:
 
-### Transform Encoding
+- Every `MSG_*` constant has the same numeric ID on both the Python and C# sides.
+- A newly added message type uses a previously-unused ID (no collision, no silent reuse of a retired ID).
+- Both directions of a message (serialize on sender, deserialize on receiver) are handled.
 
-- **Head**: Absolute position + 32-bit smallest-three quaternion
-- **Physical**: Yaw-only rotation at `0.1 deg` units
-- **Right/Left/Virtual**: Head-relative position + rotation
-- **Position quantization (absolute)**: `int24 @ 0.01m` per axis
-- **Position quantization (relative)**: `int16 @ 0.005m` per axis
-- Out-of-range values are **clamped**, not wrapped
+### Transform / Pose Encoding
+
+These are encoding *principles*; exact scales/sizes live in the `*_SCALE` constants and serializer code — verify against source:
+
+- **Head**: absolute position + 32-bit smallest-three quaternion.
+- **Right/Left/Virtual**: head-relative position + rotation.
+- Physical pose and reference-frame / moving-floor-local handling are flagged via pose flags (e.g. `PoseFlags`).
+- Position quantization: absolute axes use a wider int (e.g. int24) at a coarser scale; head-relative axes use int16 at a finer scale.
+- Out-of-range values are **clamped**, not wrapped.
 
 ### Verify in Reviews
 
@@ -132,7 +128,8 @@ The Python client (`net_sync_manager` in `client.py`) and the Unity client (`Net
 
 - Descriptive commit messages with conventional format: `type: description`
 - Types: `feat`, `fix`, `chore`, `refactor`, `test`, `docs`
-- Never commit: `.meta` (Unity auto-generates), `__pycache__`, `.env`, credentials
+- **Unity `.meta` files ARE committed** in this repo — commit each `.meta` together with its new/renamed/moved asset or script. Do not author or edit `.meta` files by hand or with an LLM; let Unity generate them. A new asset/script added without its `.meta` (or a `.meta` without its asset) is a defect — flag it.
+- Never commit: `__pycache__`, `.env`, credentials, secrets
 - Reference issues/PRs: `(#123)` or `(closes #123)`
 
 ## CI/CD
