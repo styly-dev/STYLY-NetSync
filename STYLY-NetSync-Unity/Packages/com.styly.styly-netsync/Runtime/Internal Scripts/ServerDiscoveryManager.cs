@@ -372,12 +372,12 @@ namespace Styly.NetSync
 
                 if (bytesRead > 0)
                 {
-                    // Process response
+                    // Only report success when the reply is a compatible server;
+                    // otherwise return false so discovery keeps probing.
                     var remoteEP = new IPEndPoint(IPAddress.Parse(ipAddress), ServerDiscoveryPort);
                     byte[] responseData = new byte[bytesRead];
                     Array.Copy(buffer, responseData, bytesRead);
-                    ProcessDiscoveryResponse(responseData, remoteEP);
-                    return true;
+                    return ProcessDiscoveryResponse(responseData, remoteEP);
                 }
             }
             catch (Exception)
@@ -555,46 +555,53 @@ namespace Styly.NetSync
             DebugLog("Stopped discovery");
         }
 
-        private void ProcessDiscoveryResponse(byte[] data, IPEndPoint sender)
+        // Returns true only when a compatible server was discovered, so callers
+        // (e.g. TCP probes) can keep scanning on a non-matching response.
+        private bool ProcessDiscoveryResponse(byte[] data, IPEndPoint sender)
         {
             try
             {
                 var message = Encoding.UTF8.GetString(data);
                 var parts = message.Split('|');
 
-                if (parts.Length >= 5 && parts[0] == "STYLY-NETSYNC2")
+                // Clients and servers always run the same version, so any reply
+                // that is not a current STYLY-NETSYNC2 response is not a
+                // compatible server. Treat it as "not found" and keep scanning.
+                if (parts.Length < 5 || parts[0] != "STYLY-NETSYNC2")
                 {
-                    var controlPort = int.Parse(parts[1]);
-                    var transformPort = int.Parse(parts[2]);
-                    var subPort = int.Parse(parts[3]);
-                    var serverName = parts[4];
-
-                    var serverAddress = $"tcp://{sender.Address}";
-
-                    // Cache the discovered server IP for future connections
-                    QueueCacheServerIp(sender.Address.ToString());
-
-                    DebugLog($"Discovered server '{serverName}' at {serverAddress} (control:{controlPort}, transform:{transformPort}, sub:{subPort})");
-
-                    if (OnServerDiscovered != null)
-                    {
-                        OnServerDiscovered.Invoke(serverAddress, controlPort, transformPort, subPort);
-                    }
-
-                    // Stop sending more discovery requests once we found a server
-                    lock (_lockObject)
-                    {
-                        _isDiscovering = false;
-                    }
+                    DebugLog($"Ignoring non-matching discovery response from {sender.Address}");
+                    return false;
                 }
-                else if (parts.Length >= 1 && parts[0] == "STYLY-NETSYNC")
+
+                var controlPort = int.Parse(parts[1]);
+                var transformPort = int.Parse(parts[2]);
+                var subPort = int.Parse(parts[3]);
+                var serverName = parts[4];
+
+                var serverAddress = $"tcp://{sender.Address}";
+
+                // Cache the discovered server IP for future connections
+                QueueCacheServerIp(sender.Address.ToString());
+
+                DebugLog($"Discovered server '{serverName}' at {serverAddress} (control:{controlPort}, transform:{transformPort}, sub:{subPort})");
+
+                if (OnServerDiscovered != null)
                 {
-                    Debug.LogWarning("[ServerDiscovery] Ignoring incompatible legacy STYLY-NETSYNC discovery response.");
+                    OnServerDiscovered.Invoke(serverAddress, controlPort, transformPort, subPort);
                 }
+
+                // Stop sending more discovery requests once we found a server
+                lock (_lockObject)
+                {
+                    _isDiscovering = false;
+                }
+
+                return true;
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"Failed to process discovery response: {ex.Message}");
+                return false;
             }
         }
 

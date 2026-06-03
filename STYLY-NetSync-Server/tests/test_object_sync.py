@@ -33,6 +33,7 @@ class TestObjectPoseSerialization:
 
     def test_basic_round_trip(self) -> None:
         data = {
+            "deviceId": "device-xyz",
             "objectId": _OBJ_ID_1,
             "poseSeq": 42,
             "posX": 1.5,
@@ -49,6 +50,7 @@ class TestObjectPoseSerialization:
         msg_type, result, _ = deserialize(raw)
         assert msg_type == MSG_OBJECT_POSE
         assert result is not None
+        assert result["deviceId"] == "device-xyz"
         assert result["objectId"] == _OBJ_ID_1
         assert result["poseSeq"] == 42
         assert abs(result["posX"] - 1.5) < 0.02

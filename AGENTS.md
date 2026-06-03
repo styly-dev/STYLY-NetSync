@@ -14,6 +14,27 @@ STYLY-NetSync is designed exclusively for XR (VR/MR/AR) applications:
 - **Motion-Adaptive Sending**: Transform sending uses `SendRate` as an upper bound with `Only-on-change` filtering plus a `1Hz` heartbeat while idle.
 - **Bandwidth Planning**: Assume motion-dependent traffic with an idle heartbeat floor, not continuous full-payload flow.
 
+## Deployment Assumptions & Threat Model
+
+STYLY-NetSync targets on-site LBE installations. These assumptions are intentional
+and bound what counts as a real issue during review:
+
+- **Trusted LAN, no malicious devices**: The server and all clients run on a
+  closed, operator-controlled local network. There is no untrusted participant on
+  the wire. Therefore client-identity spoofing, control-lane takeover, message
+  forgery, and similar adversarial scenarios are **out of scope** — do not treat
+  them as findings. (Functional correctness for *legitimate* clients — e.g.
+  socket-ordering races between the control and transform lanes — is still in
+  scope.)
+- **Server and clients always upgrade together**: A given deployment runs a single
+  matching version everywhere. There is **no backward/forward compatibility
+  requirement** on the network protocol or discovery format. Prefer the simplest
+  implementation; do not add legacy-version fallbacks or compatibility shims for
+  the wire protocol. See [Backward Compatibility Policy](#backward-compatibility-policy).
+- **No transport-level authentication/encryption**: Security is provided by the
+  trusted-network boundary, not by the protocol. Do not propose adding authn/crypto
+  to the ZeroMQ transport unless the deployment model itself changes.
+
 ## Quick Start
 
 ### Python Server
@@ -56,6 +77,7 @@ black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 ### Backward Compatibility Policy
 
 - Network protocol changes do NOT require backward compatibility — deploy server and clients together
+- This also covers the discovery handshake (`STYLY-NETSYNC2`): a reply that is not the current format is simply "not a compatible server"; do not add legacy-version detection branches or fallbacks
 - Avoid unnecessary breaking changes to non-networking code
 - Always notify the user of breaking changes
 

@@ -797,14 +797,6 @@ class NetSyncServer:
             client_identity, room_id, "control_identity"
         )
 
-    def _get_device_id_from_transform_identity(
-        self, client_identity: bytes, room_id: str
-    ) -> str | None:
-        """Get device ID from a transform-lane identity."""
-        return self._get_device_id_from_lane_identity(
-            client_identity, room_id, "transform_identity"
-        )
-
     def _get_device_id_from_lane_identity(
         self, client_identity: bytes, room_id: str, identity_key: str
     ) -> str | None:
@@ -1195,14 +1187,18 @@ class NetSyncServer:
         if msg_type == binary_serializer.MSG_CLIENT_POSE:
             self._handle_client_transform(client_identity, room_id, data, raw_payload)
         elif msg_type == binary_serializer.MSG_OBJECT_POSE:
-            sender_device_id = self._get_device_id_from_transform_identity(
-                client_identity, room_id
-            )
+            # Attribute the pose using the deviceId carried in the payload, not the
+            # transform-lane socket identity. A stealth owner registers only on the
+            # control lane and never sends MSG_CLIENT_POSE, so it never binds a
+            # transform_identity; relying on that identity would silently drop its
+            # object poses.
+            sender_device_id = data.get("deviceId")
             if sender_device_id:
                 sender_client_no = self._get_client_no_for_device_id(
                     room_id, sender_device_id
                 )
-                self._handle_object_pose(room_id, sender_client_no, data)
+                if sender_client_no:
+                    self._handle_object_pose(room_id, sender_client_no, data)
         else:
             self._drop_wrong_lane("transform", room_id, msg_type)
 
@@ -1296,6 +1292,11 @@ class NetSyncServer:
             is_new_client = device_id not in self.rooms[room_id]
             is_reconnect = False
             stealth_changed = False
+            # True when the control lane binds for the first time on an entry
+            # that a transform message already created (transform-before-hello
+            # socket-ordering race). Such a client still needs the full
+            # new-client object-ownership sync.
+            control_was_unbound = False
 
             if is_new_client:
                 self.rooms[room_id][device_id] = {
@@ -1321,6 +1322,7 @@ class NetSyncServer:
                 old_identity = client_data.get("control_identity")
                 old_stealth = bool(client_data.get("is_stealth", False))
                 is_reconnect = old_identity != client_identity
+                control_was_unbound = old_identity is None
                 stealth_changed = old_stealth != is_stealth
                 client_data["control_identity"] = client_identity
                 client_data["last_update"] = now
@@ -1337,6 +1339,12 @@ class NetSyncServer:
             self._sync_objects_to_new_client(client_identity, room_id)
         elif is_reconnect:
             self._sync_network_variables_to_client(room_id, client_identity)
+            # If a transform message created this entry before the hello arrived,
+            # the control lane is binding for the first time here. Send the
+            # new-client object-ownership sync that the transform handler had to
+            # skip because no control identity existed yet.
+            if control_was_unbound:
+                self._sync_objects_to_new_client(client_identity, room_id)
 
     def _handle_client_transform(
         self,

@@ -627,10 +627,17 @@ namespace Styly.NetSync
             writer.Write((byte)0);
         }
 
-        public static void SerializeObjectPoseInto(BinaryWriter writer, uint objectId, ushort poseSeq, Vector3 position, Quaternion rotation)
+        public static void SerializeObjectPoseInto(BinaryWriter writer, string deviceId, uint objectId, ushort poseSeq, Vector3 position, Quaternion rotation)
         {
             writer.Write(MSG_OBJECT_POSE);
             writer.Write(PROTOCOL_VERSION);
+            // Sender device ID (length-prefixed UTF8): lets the server attribute the
+            // pose by payload identity rather than the transform-lane socket identity,
+            // which a stealth owner never binds (it sends no MSG_CLIENT_POSE).
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+            var deviceIdLength = Mathf.Min(deviceIdBytes.Length, byte.MaxValue);
+            writer.Write((byte)deviceIdLength);
+            writer.Write(deviceIdBytes, 0, deviceIdLength);
             writer.Write(objectId);
             writer.Write(poseSeq);
             WriteInt24(writer, QuantizeSignedInt24(position.x, ABS_POS_SCALE));

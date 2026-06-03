@@ -1369,6 +1369,10 @@ def serialize_object_pose(data: dict[str, Any]) -> bytes:
     buffer = bytearray()
     buffer.append(MSG_OBJECT_POSE)
     buffer.append(PROTOCOL_VERSION)
+    # Sender device ID: lets the server attribute the pose by identity carried in
+    # the payload rather than the transform-lane socket identity (which a stealth
+    # owner never binds because it sends no MSG_CLIENT_POSE).
+    _pack_string(buffer, str(data.get("deviceId", "")))
     object_id = int(data.get("objectId", 0)) & 0xFFFFFFFF
     buffer.extend(struct.pack("<I", object_id))
     buffer.extend(struct.pack("<H", int(data.get("poseSeq", 0)) & 0xFFFF))
@@ -1466,6 +1470,8 @@ def _deserialize_object_pose(data: bytes, offset: int) -> dict[str, Any]:
     offset += 1
     if protocol_version != PROTOCOL_VERSION:
         raise ValueError(f"Unsupported protocol version: {protocol_version}")
+    device_id, offset = _unpack_string(data, offset)
+    result["deviceId"] = device_id
     result["objectId"] = struct.unpack("<I", data[offset : offset + 4])[0]
     offset += 4
     result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]
