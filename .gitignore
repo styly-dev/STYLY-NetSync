@@ -36,4 +36,5 @@ gha-creds-*.json
 *_clone_*/
 
 # Misc
+/cache/
 nanobanana-output/*
