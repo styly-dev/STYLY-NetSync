@@ -45,6 +45,7 @@ import zmq
 
 # Import public APIs from styly_netsync module
 from styly_netsync.binary_serializer import (
+    MSG_CLIENT_HELLO,
     MSG_CLIENT_POSE,
     MSG_CLIENT_VAR_CLEAR,
     MSG_CLIENT_VAR_SET,
@@ -60,6 +61,7 @@ from styly_netsync.binary_serializer import (
     MSG_ROOM_POSE,
     MSG_RPC,
     deserialize,
+    serialize_client_hello,
     serialize_client_transform,
     serialize_client_var_set,
 )
@@ -97,6 +99,7 @@ MESSAGE_TYPE_NAMES: dict[int, str] = {
     MSG_CLIENT_VAR_SET: "CLIENT_VAR_SET",
     MSG_CLIENT_VAR_SYNC: "CLIENT_VAR_SYNC",
     MSG_CLIENT_VAR_CLEAR: "CLIENT_VAR_CLEAR",
+    MSG_CLIENT_HELLO: "CLIENT_HELLO",
     MSG_OBJECT_POSE: "OBJECT_POSE",
     MSG_ROOM_OBJECTS: "ROOM_OBJECTS",
     MSG_OBJECT_OWNERSHIP_REQUEST: "OBJECT_OWNERSHIP_REQUEST",
@@ -515,13 +518,14 @@ class TransformBuilder:
 
 
 class NetworkTransport:
-    """Handles ZeroMQ network communication (DEALER for send, optional SUB for recv)."""
+    """Handles ZeroMQ transport sockets for simulated clients."""
 
     def __init__(
         self,
         context: zmq.Context,
         server_addr: str,
         dealer_port: int,
+        transform_port: int | None,
         sub_port: int,
         room_id: str,
         enable_sub: bool = True,
@@ -530,11 +534,16 @@ class NetworkTransport:
     ):
         self.context = context
         self.server_addr = server_addr
-        self.dealer_port = dealer_port
+        self.control_port = dealer_port
+        self.dealer_port = dealer_port  # Deprecated compatibility alias
+        self.transform_port = (
+            transform_port if transform_port is not None else self.control_port + 2
+        )
         self.sub_port = sub_port
         self.room_id = room_id
         self.enable_sub = enable_sub
         self.socket: zmq.Socket | None = None
+        self.transform_socket: zmq.Socket[Any] | None = None
         self.sub_socket: zmq.Socket[Any] | None = None
         self.logger = logging.getLogger(self.__class__.__name__)
         self._socket_register = socket_register
@@ -555,21 +564,33 @@ class NetworkTransport:
                 pass
 
     def connect(self) -> bool:
-        """Establish connection to server (both DEALER and SUB)."""
+        """Establish connection to server sockets."""
         try:
-            # DEALER for sending and control message receive
-            # Low HWM (10) for backpressure detection matching Unity client
+            # Control DEALER carries RPC, Network Variables, ownership, and hello.
             self.socket = self.context.socket(zmq.DEALER)
             self._register_socket(self.socket)
             self.socket.setsockopt(zmq.LINGER, 0)
             self.socket.setsockopt(zmq.IMMEDIATE, 1)
             self.socket.setsockopt(zmq.RCVTIMEO, 0)  # Non-blocking receive
             self.socket.setsockopt(zmq.SNDTIMEO, 1000)
-            self.socket.setsockopt(zmq.SNDHWM, 10)  # Low HWM for backpressure
+            self.socket.setsockopt(zmq.SNDHWM, 1024)
+            self.socket.setsockopt(zmq.RCVHWM, 1024)
 
-            dealer_endpoint = f"{self.server_addr}:{self.dealer_port}"
-            self.socket.connect(dealer_endpoint)
-            self.logger.debug(f"Connected DEALER to {dealer_endpoint}")
+            control_endpoint = f"{self.server_addr}:{self.control_port}"
+            self.socket.connect(control_endpoint)
+            self.logger.debug(f"Connected control DEALER to {control_endpoint}")
+
+            # Transform DEALER carries only client/object pose uplink and may drop.
+            self.transform_socket = self.context.socket(zmq.DEALER)
+            self._register_socket(self.transform_socket)
+            self.transform_socket.setsockopt(zmq.LINGER, 0)
+            self.transform_socket.setsockopt(zmq.IMMEDIATE, 1)
+            self.transform_socket.setsockopt(zmq.SNDTIMEO, 0)
+            self.transform_socket.setsockopt(zmq.SNDHWM, 2)
+
+            transform_endpoint = f"{self.server_addr}:{self.transform_port}"
+            self.transform_socket.connect(transform_endpoint)
+            self.logger.debug(f"Connected transform DEALER to {transform_endpoint}")
 
             # Optional SUB for receiving broadcasts (ID mappings, NV syncs, etc.)
             # Low RCVHWM (2) to prefer recent updates and drop stale messages
@@ -615,12 +636,12 @@ class NetworkTransport:
 
     def send_transform(self, room_id: str, transform_data: dict[str, Any]) -> bool:
         """Send transform data to server."""
-        if not self.socket:
+        if not self.transform_socket:
             return False
 
         try:
             binary_data = serialize_client_transform(transform_data)
-            self.socket.send_multipart(
+            self.transform_socket.send_multipart(
                 [
                     room_id.encode("utf-8"),
                     binary_data,
@@ -633,6 +654,27 @@ class NetworkTransport:
             return False
         except Exception as e:
             self.logger.error(f"Failed to send transform: {e}")
+            return False
+
+    def send_client_hello(self, room_id: str, device_id: str) -> bool:
+        """Register the control identity for this simulated client."""
+        if not self.socket:
+            return False
+
+        try:
+            binary_data = serialize_client_hello(device_id, is_stealth=False)
+            self.socket.send_multipart(
+                [
+                    room_id.encode("utf-8"),
+                    binary_data,
+                ],
+                flags=zmq.NOBLOCK,
+            )
+            return True
+        except zmq.Again:
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to send client hello: {e}")
             return False
 
     def send_client_variable(
@@ -792,6 +834,12 @@ class NetworkTransport:
             finally:
                 self._unregister_socket(self.socket)
             self.socket = None
+        if self.transform_socket:
+            try:
+                self.transform_socket.close()
+            finally:
+                self._unregister_socket(self.transform_socket)
+            self.transform_socket = None
         if self.sub_socket:
             try:
                 self.sub_socket.close()
@@ -1031,6 +1079,15 @@ class SimulatedClient:
         if not self.transport.connect():
             self.logger.error("Failed to connect to server")
             return
+
+        hello_sent = False
+        for _ in range(20):
+            if self.transport.send_client_hello(self.room_id, self.config.device_id):
+                hello_sent = True
+                break
+            time.sleep(0.05)
+        if not hello_sent:
+            self.logger.warning("Failed to send client hello before simulation start")
 
         self.running = True
         update_interval = 1.0 / self.transform_send_rate  # Calculate interval from rate
@@ -1538,6 +1595,7 @@ class ClientSimulator:
         self,
         server_addr: str,
         dealer_port: int,
+        transform_port: int | None,
         sub_port: int,  # Kept for future use
         room_id: str,
         num_clients: int,
@@ -1548,7 +1606,11 @@ class ClientSimulator:
         transform_send_rate: float = 10.0,
     ):
         self.server_addr = server_addr
-        self.dealer_port = dealer_port
+        self.control_port = dealer_port
+        self.dealer_port = dealer_port  # Deprecated compatibility alias
+        self.transform_port = (
+            transform_port if transform_port is not None else self.control_port + 2
+        )
         self.sub_port = sub_port  # Future use
         self.room_id = room_id
         self.num_clients = num_clients
@@ -1587,8 +1649,12 @@ class ClientSimulator:
         )
         ResourceManager.cleanup_ipc_socket(self.server_addr, self.logger)
         ResourceManager.log_port_occupancy(
-            self.server_addr, self.dealer_port, self.logger
+            self.server_addr, self.control_port, self.logger
         )
+        if self.transform_port != self.control_port:
+            ResourceManager.log_port_occupancy(
+                self.server_addr, self.transform_port, self.logger
+            )
 
     def _register_socket(self, socket: zmq.Socket[Any]) -> None:
         with self._sockets_lock:
@@ -1685,7 +1751,10 @@ class ClientSimulator:
             )
 
         self.logger.info(f"Starting simulation with {self.num_clients} clients")
-        self.logger.info(f"Server: {self.server_addr}:{self.dealer_port}")
+        self.logger.info(
+            f"Server control/transform: "
+            f"{self.server_addr}:{self.control_port}/{self.transform_port}"
+        )
         self.logger.info(f"Room: {self.room_id}")
         self.logger.info(
             f"Battery simulation: {'enabled' if self.simulate_battery else 'disabled'}"
@@ -1743,7 +1812,8 @@ class ClientSimulator:
             transport = NetworkTransport(
                 self.context,
                 self.server_addr,
-                self.dealer_port,
+                self.control_port,
+                self.transform_port,
                 self.sub_port,
                 self.room_id,
                 enable_sub=(
@@ -1877,10 +1947,22 @@ Examples:
         help="Server address (default: localhost)",
     )
     parser.add_argument(
+        "--control-port",
+        type=int,
+        default=None,
+        help="Server control port (default: 5555)",
+    )
+    parser.add_argument(
         "--dealer-port",
         type=int,
         default=5555,
-        help="Server DEALER port (default: 5555)",
+        help="Deprecated alias for --control-port (default: 5555)",
+    )
+    parser.add_argument(
+        "--transform-port",
+        type=int,
+        default=None,
+        help="Server transform port (default: control port + 2)",
     )
     parser.add_argument(
         "--sub-port",
@@ -1926,6 +2008,8 @@ Examples:
     )
 
     args = parser.parse_args()
+    if args.control_port is not None:
+        args.dealer_port = args.control_port
 
     # Normalize server address format: accept both "localhost" and "tcp://localhost"
     if not args.server.startswith("tcp://") and not args.server.startswith("ipc://"):
@@ -1948,6 +2032,7 @@ Examples:
     simulator = ClientSimulator(
         server_addr=args.server,
         dealer_port=args.dealer_port,
+        transform_port=args.transform_port,
         sub_port=args.sub_port,
         room_id=args.room,
         num_clients=args.clients,

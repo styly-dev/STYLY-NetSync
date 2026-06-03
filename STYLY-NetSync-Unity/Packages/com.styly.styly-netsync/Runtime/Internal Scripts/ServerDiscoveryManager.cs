@@ -40,7 +40,7 @@ namespace Styly.NetSync
         public int MaxParallelConnections { get; set; } = 20; // Scan up to 20 IPs concurrently
         public int TcpConnectionTimeoutMs { get; set; } = 300; // Reduced timeout for faster scanning
 
-        public event Action<string, int, int> OnServerDiscovered;
+        public event Action<string, int, int, int> OnServerDiscovered;
 
         public ServerDiscoveryManager(bool enableDebugLogs)
         {
@@ -562,22 +562,23 @@ namespace Styly.NetSync
                 var message = Encoding.UTF8.GetString(data);
                 var parts = message.Split('|');
 
-                if (parts.Length >= 3 && parts[0] == "STYLY-NETSYNC")
+                if (parts.Length >= 5 && parts[0] == "STYLY-NETSYNC2")
                 {
-                    var dealerPort = int.Parse(parts[1]);
-                    var subPort = int.Parse(parts[2]);
-                    var serverName = parts.Length >= 4 ? parts[3] : "Unknown Server";
+                    var controlPort = int.Parse(parts[1]);
+                    var transformPort = int.Parse(parts[2]);
+                    var subPort = int.Parse(parts[3]);
+                    var serverName = parts[4];
 
                     var serverAddress = $"tcp://{sender.Address}";
 
                     // Cache the discovered server IP for future connections
                     QueueCacheServerIp(sender.Address.ToString());
 
-                    DebugLog($"Discovered server '{serverName}' at {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+                    DebugLog($"Discovered server '{serverName}' at {serverAddress} (control:{controlPort}, transform:{transformPort}, sub:{subPort})");
 
                     if (OnServerDiscovered != null)
                     {
-                        OnServerDiscovered.Invoke(serverAddress, dealerPort, subPort);
+                        OnServerDiscovered.Invoke(serverAddress, controlPort, transformPort, subPort);
                     }
 
                     // Stop sending more discovery requests once we found a server
@@ -585,6 +586,10 @@ namespace Styly.NetSync
                     {
                         _isDiscovering = false;
                     }
+                }
+                else if (parts.Length >= 1 && parts[0] == "STYLY-NETSYNC")
+                {
+                    Debug.LogWarning("[ServerDiscovery] Ignoring incompatible legacy STYLY-NETSYNC discovery response.");
                 }
             }
             catch (Exception ex)

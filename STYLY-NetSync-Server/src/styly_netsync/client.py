@@ -9,7 +9,8 @@ Key features (mirroring Unity ConnectionManager PR #311 and #316):
 - Latest-wins transform sending: Only the most recent transform is sent
 - Control message queue with TTL expiration
 - SUB receive draining: Only process the last payload to reduce CPU
-- DEALER receive for control messages from server (ROUTER unicast)
+    - Separate control and transform DEALER sockets
+    - DEALER receive for control messages from server (ROUTER unicast)
 """
 
 import json
@@ -36,7 +37,6 @@ from . import binary_serializer
 from .adapters import (
     client_transform_from_wire,
     client_transform_to_wire,
-    create_stealth_transform,
     is_stealth_transform,
 )
 from .events import EventHandler
@@ -140,6 +140,7 @@ class net_sync_manager:
         self,
         server: str = "tcp://localhost",
         dealer_port: int = 5555,
+        transform_port: int | None = None,
         sub_port: int = 5556,
         room: str = "default_room",
         auto_dispatch: bool = True,
@@ -152,7 +153,8 @@ class net_sync_manager:
 
         Args:
             server: ZeroMQ base address (e.g., "tcp://localhost")
-            dealer_port: Server ROUTER port for uplink
+            dealer_port: Deprecated alias for the server control ROUTER port
+            transform_port: Server ROUTER port for transform uplink
             sub_port: Server PUB port for downlink
             room: Room topic to subscribe to
             auto_dispatch: If True, callbacks fire on receive thread
@@ -162,7 +164,11 @@ class net_sync_manager:
                 (default: 30.0; pass None to disable silence detection)
         """
         self._server = server
-        self._dealer_port = dealer_port
+        self._control_port = dealer_port
+        self._dealer_port = self._control_port  # Deprecated compatibility alias
+        self._transform_port = (
+            transform_port if transform_port is not None else self._control_port + 2
+        )
         self._sub_port = sub_port
         self._room = room
         self._auto_dispatch = auto_dispatch
@@ -172,6 +178,7 @@ class net_sync_manager:
         # ZeroMQ context and sockets
         self._context: zmq.Context | None = None
         self._dealer_socket: zmq.Socket | None = None
+        self._transform_socket: zmq.Socket | None = None
         self._sub_socket: zmq.Socket | None = None
 
         # Threading
@@ -224,6 +231,7 @@ class net_sync_manager:
         # Priority-based sending (mirroring Unity ConnectionManager)
         # Control messages (RPC, NV) have priority over transforms
         self._ctrl_outbox: Queue[OutboundPacket] = Queue(maxsize=256)
+        self._pending_control: OutboundPacket | None = None
         self._latest_transform: OutboundPacket | None = None
         self._transform_lock = threading.Lock()
 
@@ -320,8 +328,18 @@ class net_sync_manager:
 
     @property
     def dealer_port(self) -> int:
-        """Dealer port."""
+        """Deprecated alias for the control port."""
         return self._dealer_port
+
+    @property
+    def control_port(self) -> int:
+        """Control socket port."""
+        return self._control_port
+
+    @property
+    def transform_port(self) -> int:
+        """Transform uplink socket port."""
+        return self._transform_port
 
     @property
     def sub_port(self) -> int:
@@ -338,18 +356,22 @@ class net_sync_manager:
                 # Initialize ZeroMQ
                 self._context = zmq.Context()
 
-                # DEALER socket for uplink and control message receive
+                # DEALER socket for control uplink and control message receive
                 self._dealer_socket = self._context.socket(zmq.DEALER)
                 self._dealer_socket.setsockopt(zmq.LINGER, 0)
-                self._dealer_socket.setsockopt(
-                    zmq.SNDHWM, 10
-                )  # Low HWM for backpressure
-                self._dealer_socket.setsockopt(
-                    zmq.RCVHWM, 10
-                )  # Bound receive queue for control messages
+                self._dealer_socket.setsockopt(zmq.SNDHWM, 1024)
+                self._dealer_socket.setsockopt(zmq.RCVHWM, 1024)
                 self._dealer_socket.setsockopt(zmq.RCVTIMEO, 0)  # Non-blocking receive
-                dealer_addr = self._build_connect_addr(self._dealer_port)
-                self._dealer_socket.connect(dealer_addr)
+                control_addr = self._build_connect_addr(self._control_port)
+                self._dealer_socket.connect(control_addr)
+
+                # DEALER socket for transform uplink only. Low HWM preserves
+                # latest-wins freshness under slow receivers.
+                self._transform_socket = self._context.socket(zmq.DEALER)
+                self._transform_socket.setsockopt(zmq.LINGER, 0)
+                self._transform_socket.setsockopt(zmq.SNDHWM, 2)
+                transform_addr = self._build_connect_addr(self._transform_port)
+                self._transform_socket.connect(transform_addr)
 
                 # SUB socket for downlink (transform broadcasts)
                 # Low RCVHWM (2) to prefer recent updates and drop stale messages
@@ -359,6 +381,8 @@ class net_sync_manager:
                 sub_addr = self._build_connect_addr(self._sub_port)
                 self._sub_socket.connect(sub_addr)
                 self._sub_socket.setsockopt(zmq.SUBSCRIBE, self._room.encode("utf-8"))
+
+                self._enqueue_client_hello(is_stealth=False)
 
                 # Start receive thread
                 self._running = True
@@ -370,7 +394,8 @@ class net_sync_manager:
                 self._receive_thread.start()
 
                 logger.info(
-                    f"NetSync client started: {dealer_addr}, {sub_addr}, room={self._room}"
+                    "NetSync client started: "
+                    f"{control_addr}, {transform_addr}, {sub_addr}, room={self._room}"
                 )
 
             except Exception as e:
@@ -415,6 +440,9 @@ class net_sync_manager:
         if self._dealer_socket:
             self._dealer_socket.close()
             self._dealer_socket = None
+        if self._transform_socket:
+            self._transform_socket.close()
+            self._transform_socket = None
         if self._sub_socket:
             self._sub_socket.close()
             self._sub_socket = None
@@ -469,7 +497,7 @@ class net_sync_manager:
         logger.info("Attempting socket reconnect...")
 
         # Close old sockets
-        for sock_attr in ("_dealer_socket", "_sub_socket"):
+        for sock_attr in ("_dealer_socket", "_transform_socket", "_sub_socket"):
             sock = getattr(self, sock_attr, None)
             if sock is not None:
                 try:
@@ -487,14 +515,21 @@ class net_sync_manager:
                 return False
 
         try:
-            # DEALER socket (same options as start())
+            # Control DEALER socket (same options as start())
             self._dealer_socket = self._context.socket(zmq.DEALER)
             self._dealer_socket.setsockopt(zmq.LINGER, 0)
-            self._dealer_socket.setsockopt(zmq.SNDHWM, 10)
-            self._dealer_socket.setsockopt(zmq.RCVHWM, 10)
+            self._dealer_socket.setsockopt(zmq.SNDHWM, 1024)
+            self._dealer_socket.setsockopt(zmq.RCVHWM, 1024)
             self._dealer_socket.setsockopt(zmq.RCVTIMEO, 0)
-            dealer_addr = self._build_connect_addr(self._dealer_port)
-            self._dealer_socket.connect(dealer_addr)
+            control_addr = self._build_connect_addr(self._control_port)
+            self._dealer_socket.connect(control_addr)
+
+            # Transform DEALER socket (same options as start())
+            self._transform_socket = self._context.socket(zmq.DEALER)
+            self._transform_socket.setsockopt(zmq.LINGER, 0)
+            self._transform_socket.setsockopt(zmq.SNDHWM, 2)
+            transform_addr = self._build_connect_addr(self._transform_port)
+            self._transform_socket.connect(transform_addr)
 
             # SUB socket (same options as start())
             self._sub_socket = self._context.socket(zmq.SUB)
@@ -509,8 +544,10 @@ class net_sync_manager:
 
             logger.info(
                 f"Reconnected (#{self._stats['reconnect_count']}): "
-                f"{dealer_addr}, {sub_addr}, room={self._room}"
+                f"{control_addr}, {transform_addr}, {sub_addr}, room={self._room}"
             )
+
+            self._enqueue_client_hello(is_stealth=self._is_stealth_mode)
 
             # Restart discovery if it was active before the connection error
             if self._discovery_port is not None:
@@ -521,7 +558,7 @@ class net_sync_manager:
         except Exception as e:
             logger.error(f"Socket reconnect failed: {e}")
             # Cleanup partial setup
-            for sock_attr in ("_dealer_socket", "_sub_socket"):
+            for sock_attr in ("_dealer_socket", "_transform_socket", "_sub_socket"):
                 sock = getattr(self, sock_attr, None)
                 if sock is not None:
                     try:
@@ -539,6 +576,7 @@ class net_sync_manager:
                 self._ctrl_outbox.get_nowait()
             except Empty:
                 break
+        self._pending_control = None
 
         # Clear latest transform
         with self._transform_lock:
@@ -758,7 +796,7 @@ class net_sync_manager:
 
         # Priority-based send drain:
         # 1. Drain control messages first (higher priority)
-        # 2. Then try to send latest transform (lower priority)
+        # 2. Then try to send latest transform through transform socket
         did_work |= self._drain_control_sends()
         did_work |= self._try_send_latest_transform()
 
@@ -777,41 +815,34 @@ class net_sync_manager:
         now = time.monotonic()
 
         while sent < self._ctrl_drain_batch:
-            try:
-                packet = self._ctrl_outbox.get_nowait()
-            except Empty:
-                break
+            if self._pending_control is not None:
+                packet = self._pending_control
+            else:
+                try:
+                    packet = self._ctrl_outbox.get_nowait()
+                except Empty:
+                    break
 
             # TTL check - skip expired packets
             if now - packet.enqueued_at > self._ctrl_ttl_seconds:
                 logger.warning(
                     f"Control packet expired (TTL {self._ctrl_ttl_seconds}s exceeded)"
                 )
+                self._pending_control = None
                 continue
 
             # Try to send
-            outcome = self._try_send_dealer(packet.room_id, packet.payload)
+            outcome = self._try_send_socket(
+                self._dealer_socket, packet.room_id, packet.payload
+            )
             if outcome.is_sent:
+                self._pending_control = None
                 did_work = True
                 sent += 1
             elif outcome.is_backpressure:
-                # Backpressure - increment counter and attempt to re-queue the packet
                 with self._lock:
                     self._stats["would_block_count"] += 1
-                try:
-                    # Re-queue the control packet so it can be retried later
-                    self._ctrl_outbox.put_nowait(packet)
-                except Full:
-                    # Queue is full: this control packet is dropped; log prominently
-                    with self._lock:
-                        self._stats["ctrl_queue_drops"] += 1
-                    logger.warning(
-                        "Control packet dropped due to backpressure and full queue; "
-                        "would_block=%s, queue_drops=%s",
-                        self._stats.get("would_block_count"),
-                        self._stats.get("ctrl_queue_drops"),
-                    )
-                # Stop draining on backpressure to respect socket backpressure signal
+                self._pending_control = packet
                 break
             else:
                 # Fatal error
@@ -825,7 +856,7 @@ class net_sync_manager:
 
         Returns True if a transform was sent.
         """
-        if not self._dealer_socket:
+        if not self._transform_socket:
             return False
 
         with self._transform_lock:
@@ -834,7 +865,9 @@ class net_sync_manager:
                 return False
 
             # Try to send
-            outcome = self._try_send_dealer(packet.room_id, packet.payload)
+            outcome = self._try_send_socket(
+                self._transform_socket, packet.room_id, packet.payload
+            )
             if outcome.is_sent:
                 # Success - clear the packet
                 self._latest_transform = None
@@ -849,17 +882,19 @@ class net_sync_manager:
                 logger.error(f"Fatal send error: {outcome.error}")
                 return False
 
-    def _try_send_dealer(self, room_id: str, payload: bytes) -> SendOutcome:
-        """Try to send a message via DEALER socket.
+    def _try_send_socket(
+        self, socket_obj: zmq.Socket | None, room_id: str, payload: bytes
+    ) -> SendOutcome:
+        """Try to send a message via a DEALER socket.
 
         Returns SendOutcome indicating success, backpressure, or fatal error.
         """
-        if not self._dealer_socket:
+        if not socket_obj:
             return SendOutcome.fatal("Socket not available")
 
         try:
             # Use NOBLOCK to detect backpressure
-            self._dealer_socket.send_multipart(
+            socket_obj.send_multipart(
                 [room_id.encode("utf-8"), payload], flags=zmq.NOBLOCK
             )
             return SendOutcome.sent()
@@ -1108,7 +1143,7 @@ class net_sync_manager:
         Only the most recent transform is retained. Calling this multiple times
         before the network thread sends will only send the last one.
         """
-        if not self._running or not self._dealer_socket:
+        if not self._running or not self._transform_socket:
             return False
 
         try:
@@ -1145,20 +1180,14 @@ class net_sync_manager:
         return result
 
     def _send_stealth_heartbeat(self) -> bool:
-        """Serialize and enqueue one stealth heartbeat packet.
+        """Serialize and enqueue one stealth control hello packet.
 
-        Uses the control queue (matching Unity's TryEnqueueControl for stealth handshakes).
+        Uses the control queue so stealth clients maintain membership without
+        sending pose-shaped transform payloads.
         Updates _last_stealth_heartbeat_time on success to drive the 1 Hz interval.
         """
-        stealth_tx = create_stealth_transform()
-        stealth_tx.device_id = self._device_id
-
         try:
-            wire_data = client_transform_to_wire(stealth_tx)
-            message = binary_serializer.serialize_client_transform(wire_data)
-            result = self._enqueue_control(
-                self._room, message, msg_type="stealth_heartbeat"
-            )
+            result = self._enqueue_client_hello(is_stealth=True)
             if result:
                 self._last_stealth_heartbeat_time = time.monotonic()
             return result
@@ -1302,6 +1331,13 @@ class net_sync_manager:
                 self._stats.get("ctrl_queue_drops"),
             )
             return False
+
+    def _enqueue_client_hello(self, is_stealth: bool) -> bool:
+        """Enqueue a client hello control message."""
+        message = binary_serializer.serialize_client_hello(
+            self._device_id, is_stealth=is_stealth
+        )
+        return self._enqueue_control(self._room, message, msg_type="client_hello")
 
     def get_global_variable(self, name: str, default: str | None = None) -> str | None:
         """Get global variable from local cache."""
@@ -1576,26 +1612,32 @@ class net_sync_manager:
                         data, addr = sock.recvfrom(1024)
                         response = data.decode("utf-8")
 
-                        if response.startswith("STYLY-NETSYNC|"):
+                        if response.startswith("STYLY-NETSYNC2|"):
                             parts = response.split("|")
-                            if len(parts) >= 4:
-                                dealer_port = int(parts[1])
-                                sub_port = int(parts[2])
-                                server_name = parts[3]
+                            if len(parts) >= 5:
+                                control_port = int(parts[1])
+                                transform_port = int(parts[2])
+                                sub_port = int(parts[3])
+                                server_name = parts[4]
 
                                 logger.info(
                                     f"Discovered server: {server_name} at "
-                                    f"{addr[0]}:{dealer_port}/{sub_port}"
+                                    f"{addr[0]}:{control_port}/{transform_port}/{sub_port}"
                                 )
                                 server_address = f"tcp://{addr[0]}"
                                 self.on_server_discovered.invoke(
-                                    server_address, dealer_port, sub_port
+                                    server_address,
+                                    control_port,
+                                    transform_port,
+                                    sub_port,
                                 )
 
                                 # Auto-connect after discovery
                                 if not self._running:
                                     self._server = server_address
-                                    self._dealer_port = dealer_port
+                                    self._control_port = control_port
+                                    self._dealer_port = control_port
+                                    self._transform_port = transform_port
                                     self._sub_port = sub_port
                                     try:
                                         self.start()
@@ -1607,6 +1649,11 @@ class net_sync_manager:
                                         break
                                 self._stop_discovery_internal()
                                 return
+                        elif response.startswith("STYLY-NETSYNC|"):
+                            logger.warning(
+                                "Ignoring incompatible legacy discovery response from %s",
+                                addr[0],
+                            )
                     except TimeoutError:
                         pass
                     except Exception:

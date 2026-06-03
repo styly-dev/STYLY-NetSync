@@ -91,11 +91,30 @@ class RoomBridge:
     """Internal client per room responsible for flushing queued variables."""
 
     def __init__(
-        self, server_addr: str, dealer_port: int, sub_port: int, room_id: str
+        self,
+        server_addr: str,
+        dealer_port: int,
+        transform_port: int,
+        sub_port: int | str | None = None,
+        room_id: str | None = None,
     ) -> None:
+        if room_id is None:
+            if isinstance(sub_port, str):
+                room_id = sub_port
+                sub_port = transform_port
+                transform_port = dealer_port + 2
+            else:
+                raise TypeError("room_id is required")
+        if sub_port is None or isinstance(sub_port, str):
+            raise TypeError("sub_port is required")
+
         self.room_id = room_id
         self._manager = net_sync_manager(
-            server=server_addr, dealer_port=dealer_port, sub_port=sub_port, room=room_id
+            server=server_addr,
+            dealer_port=dealer_port,
+            transform_port=transform_port,
+            sub_port=sub_port,
+            room=room_id,
         )
         self._running = False
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -255,9 +274,12 @@ class RoomBridge:
 class BridgeManager:
     """Factory and cache for per-room bridges."""
 
-    def __init__(self, server_addr: str, dealer_port: int, sub_port: int) -> None:
+    def __init__(
+        self, server_addr: str, dealer_port: int, transform_port: int, sub_port: int
+    ) -> None:
         self._server_addr = server_addr
         self._dealer_port = dealer_port
+        self._transform_port = transform_port
         self._sub_port = sub_port
         self._bridges: dict[str, RoomBridge] = {}
         self._lock = threading.RLock()
@@ -268,7 +290,11 @@ class BridgeManager:
             bridge = self._bridges.get(room_id)
             if bridge is None:
                 bridge = RoomBridge(
-                    self._server_addr, self._dealer_port, self._sub_port, room_id
+                    self._server_addr,
+                    self._dealer_port,
+                    self._transform_port,
+                    self._sub_port,
+                    room_id,
                 )
                 bridge.start()
                 self._bridges[room_id] = bridge
@@ -279,6 +305,7 @@ def create_app(
     server_addr: str,
     dealer_port: int,
     sub_port: int,
+    transform_port: int = 5557,
     server: ClientVariableServer | None = None,
 ) -> FastAPI:
     """Create the FastAPI application hosting the REST bridge."""
@@ -293,7 +320,7 @@ def create_app(
         max_age=3600,  # Cache preflight requests for 1 hour
     )
 
-    manager = BridgeManager(server_addr, dealer_port, sub_port)
+    manager = BridgeManager(server_addr, dealer_port, transform_port, sub_port)
 
     @app.get("/")
     def health_check() -> dict[str, str]:

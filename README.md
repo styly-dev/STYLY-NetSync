@@ -85,10 +85,11 @@ The uvx command automatically downloads the package, creates an isolated virtual
 ### Version compatibility note
 
 - Keep Unity package and server versions aligned.
-- Transform synchronization uses protocol version `4` and does not provide backward compatibility with older transform protocols.
-- v4 vs. v3: `xrOriginDelta` adds a Y component (4×`int16`: `dx, dy, dz, dyaw`) so receivers can reconstruct vertical rig motion (e.g. elevators).
-- Protocol v4 position quantization uses:
-  - Absolute scale (`Head`/`Physical`): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
+- The current wire protocol is `protocolVersion = 7`; it is not backward compatible with older clients or servers.
+- Transport uses separate ports for control (`5555`), transform uplink (`5557`), and PUB/SUB downlink (`5556`). Legacy discovery responses are treated as incompatible.
+- `xrOriginDelta` carries a Y component (4×`int16`: `dx, dy, dz, dyaw`) so receivers can reconstruct vertical rig motion (e.g. elevators).
+- Protocol v7 position quantization uses:
+  - Absolute scale (`Head`): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
   - Head-relative scale (`Right`/`Left`/`Virtual`): `0.005 m` per unit, per-axis range `[-163.84 m, 163.835 m]`.
 - This is an encoding range, not a hard world-size limit. Large virtual worlds are supported as long as each encoded value stays in range (out-of-range values are clamped).
 - Coordinate range expansion options (range + bandwidth delta comparison) are documented in `STYLY-NetSync-Server/README.md`.

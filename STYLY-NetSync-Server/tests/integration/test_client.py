@@ -32,7 +32,8 @@ Usage:
   python test_client.py [options]
 
 Options:
-  --dealer-port PORT  Server DEALER port (default: 5555)
+  --control-port PORT  Server control port (default: 5555)
+  --transform-port PORT  Server transform port (default: 5557)
   --sub-port PORT     Server PUB port (default: 5556)
   --server ADDRESS    Server address (default: localhost)
   --room ROOM_ID    Room ID to join (default: test_room)
@@ -85,6 +86,7 @@ class TestClient:
     def __init__(
         self,
         dealer_port=5555,
+        transform_port=5557,
         sub_port=5556,
         server_address="localhost",
         room_id="test_room",
@@ -97,6 +99,7 @@ class TestClient:
         self.room_id = room_id
         self.server_address = server_address
         self.dealer_port = dealer_port
+        self.transform_port = transform_port
         self.sub_port = sub_port
         self.running = False
         self.stop_event = Event()
@@ -364,7 +367,16 @@ def main():
 
     parser = argparse.ArgumentParser(description="STYLY-NetSync Test Client")
     parser.add_argument(
-        "--dealer-port", type=int, default=5555, help="Server DEALER port"
+        "--control-port", type=int, default=None, help="Server control port"
+    )
+    parser.add_argument(
+        "--dealer-port",
+        type=int,
+        default=5555,
+        help="Deprecated alias for --control-port",
+    )
+    parser.add_argument(
+        "--transform-port", type=int, default=5557, help="Server transform port"
     )
     parser.add_argument("--sub-port", type=int, default=5556, help="Server PUB port")
     parser.add_argument(
@@ -373,9 +385,12 @@ def main():
     parser.add_argument("--room", type=str, default="test_room", help="Room ID")
 
     args = parser.parse_args()
+    if args.control_port is not None:
+        args.dealer_port = args.control_port
 
     client = TestClient(
         dealer_port=args.dealer_port,
+        transform_port=args.transform_port,
         sub_port=args.sub_port,
         server_address=args.server,
         room_id=args.room,

@@ -34,7 +34,8 @@ def _connect_device(
 ) -> None:
     _map_device(server, room_id, device_id, client_no)
     server.rooms[room_id][device_id] = {
-        "identity": identity,
+        "control_identity": identity,
+        "transform_identity": None,
         "last_update": time.monotonic(),
         "transform_data": {"clientNo": client_no, "deviceId": device_id},
         "client_no": client_no,
@@ -143,7 +144,11 @@ class TestServerClientVariableDeviceStore:
         )
         server._send_ctrl_to_room_via_router.reset_mock()
 
-        server._handle_client_transform(b"ident-a", "room1", {"deviceId": "device-a"})
+        server._handle_client_hello(
+            b"ident-a",
+            "room1",
+            {"deviceId": "device-a", "isStealthMode": False},
+        )
 
         server._send_ctrl_to_room_via_router.assert_called_once()
         room_id, payload = server._send_ctrl_to_room_via_router.call_args.args

@@ -16,7 +16,7 @@ Examples:
 
     # Use server programmatically
     from styly_netsync import NetSyncServer
-    server = NetSyncServer(dealer_port=5555, pub_port=5556)
+    server = NetSyncServer(control_port=5555, transform_port=5557, pub_port=5556)
     server.start()
 
     # Use client programmatically

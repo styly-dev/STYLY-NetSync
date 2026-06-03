@@ -62,7 +62,9 @@ class ServerConfig:
     """
 
     # Network settings
+    control_port: int
     dealer_port: int
+    transform_port: int
     pub_port: int
     server_discovery_port: int
     rest_api_port: int
@@ -105,7 +107,9 @@ class ServerConfig:
 # Valid config keys (for unknown key detection)
 _VALID_KEYS: set[str] = {
     # Network settings
+    "control_port",
     "dealer_port",
+    "transform_port",
     "pub_port",
     "server_discovery_port",
     "rest_api_port",
@@ -202,6 +206,12 @@ def process_toml_config(toml_data: dict[str, Any]) -> dict[str, Any]:
                     value = None
             result[key] = value
 
+    # dealer_port is a one-release compatibility alias for control_port.
+    if "control_port" not in result and "dealer_port" in result:
+        result["control_port"] = result["dealer_port"]
+    if "dealer_port" not in result and "control_port" in result:
+        result["dealer_port"] = result["control_port"]
+
     return result
 
 
@@ -235,11 +245,23 @@ def validate_config(config: ServerConfig) -> list[str]:
     errors: list[str] = []
 
     # Port validation (1-65535)
-    port_fields = ["dealer_port", "pub_port", "server_discovery_port", "rest_api_port"]
+    port_fields = [
+        "control_port",
+        "dealer_port",
+        "transform_port",
+        "pub_port",
+        "server_discovery_port",
+        "rest_api_port",
+    ]
     for field_name in port_fields:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
             errors.append(f"{field_name} must be between 1 and 65535, got {port}")
+    if config.dealer_port != config.control_port:
+        errors.append(
+            "dealer_port is a deprecated alias and must match control_port "
+            f"({config.dealer_port} != {config.control_port})"
+        )
 
     # Timing validation (must be positive)
     timing_fields = [
@@ -359,8 +381,15 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
     updates: dict[str, Any] = {}
 
     # Network settings from CLI
+    if hasattr(args, "control_port") and args.control_port is not None:
+        updates["control_port"] = args.control_port
+        updates["dealer_port"] = args.control_port
     if hasattr(args, "dealer_port") and args.dealer_port is not None:
+        # Deprecated alias for one release.
+        updates["control_port"] = args.dealer_port
         updates["dealer_port"] = args.dealer_port
+    if hasattr(args, "transform_port") and args.transform_port is not None:
+        updates["transform_port"] = args.transform_port
     if hasattr(args, "pub_port") and args.pub_port is not None:
         updates["pub_port"] = args.pub_port
     if (

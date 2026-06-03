@@ -19,7 +19,7 @@ pip install -e ".[dev]"
 
 # Run server
 styly-netsync-server
-styly-netsync-server --dealer-port 5555 --pub-port 5556 --server-discovery-port 9999
+styly-netsync-server --control-port 5555 --transform-port 5557 --pub-port 5556 --server-discovery-port 9999
 styly-netsync-server --config my-config.toml
 
 # Quality pipeline (run before committing)
@@ -32,7 +32,7 @@ styly-netsync-simulator --clients 100 --server localhost --room default_room
 ## Architecture
 
 - **NetSyncServer** (`server.py`): Multi-threaded (receive, periodic, discovery threads)
-- **BinarySerializer** (`binary_serializer.py`): Protocol v5 transform serializer
+- **BinarySerializer** (`binary_serializer.py`): Protocol v7 binary serializer
 - **Python Client API** (`client.py`): `net_sync_manager` class for Python clients
 - **REST Bridge** (`rest_bridge.py`): FastAPI REST API for external integrations
 

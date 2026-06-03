@@ -170,6 +170,8 @@ class NetSyncServer:
     def __init__(
         self,
         dealer_port: int | None = None,
+        control_port: int | None = None,
+        transform_port: int | None = None,
         pub_port: int | None = None,
         enable_server_discovery: bool | None = None,
         server_discovery_port: int | None = None,
@@ -184,9 +186,19 @@ class NetSyncServer:
         self._config = config
 
         # Apply overrides from individual arguments (for backward compatibility)
-        self.dealer_port = (
-            dealer_port if dealer_port is not None else config.dealer_port
-        )
+        resolved_control_port = control_port
+        if resolved_control_port is None:
+            resolved_control_port = (
+                dealer_port if dealer_port is not None else config.control_port
+            )
+        self.control_port = resolved_control_port
+        self.dealer_port = self.control_port  # Deprecated compatibility alias
+        if transform_port is not None:
+            self.transform_port = transform_port
+        elif control_port is not None or dealer_port is not None:
+            self.transform_port = self.control_port + 2
+        else:
+            self.transform_port = config.transform_port
         self.pub_port = pub_port if pub_port is not None else config.pub_port
         self.context = zmq.Context()
 
@@ -228,6 +240,8 @@ class NetSyncServer:
         self.tcp_server_discovery_running = False
 
         # Sockets
+        self.control_router: zmq.sugar.socket.Socket[bytes] | None = None
+        self.transform_router: zmq.sugar.socket.Socket[bytes] | None = None
         self.router: zmq.sugar.socket.Socket[bytes] | None = None
         self.pub: zmq.sugar.socket.Socket[bytes] | None = (
             None  # Will be created/owned by Publisher thread only
@@ -250,11 +264,14 @@ class NetSyncServer:
         self._router_queue_ctrl: Queue[tuple[bytes, bytes, bytes]] = Queue(
             maxsize=self.ROUTER_CTRL_QUEUE_MAXSIZE
         )
+        self._blocked_router_packet: tuple[bytes, bytes, bytes] | None = None
 
         # Statistics for router control messages
         self.ctrl_unicast_sent = 0
         self.ctrl_unicast_wouldblock = 0
         self.ctrl_unicast_dropped = 0
+        self.ctrl_unicast_unreachable = 0
+        self.wrong_lane_dropped = 0
 
         # PUB socket monitor for tracking SUB connections
         self._pub_monitor: zmq.sugar.socket.Socket[bytes] | None = None
@@ -649,8 +666,8 @@ class NetSyncServer:
         """Thread-safe enqueue of a control message for unicast via ROUTER.
 
         Used for control-like messages (RPC, NV sync, ID mapping) that are
-        more reliable than PUB/SUB, but still drop under backpressure and
-        send failures (ring-buffer drop-on-full and non-blocking router drain).
+        retried FIFO under socket backpressure. Messages are dropped only when
+        this application queue is already full.
 
         Args:
             identity: Client's ZeroMQ identity (from ROUTER socket)
@@ -661,26 +678,8 @@ class NetSyncServer:
         try:
             self._router_queue_ctrl.put_nowait((identity, room_bytes, message_bytes))
         except Full:
-            # Ring-buffer behavior: drop oldest to make room for newest
-            try:
-                _ = self._router_queue_ctrl.get_nowait()
-            except Empty:
-                # Queue became empty between Full and get_nowait (rare race condition)
-                pass
-            else:
-                # Count and log the drop of the oldest message
-                self._increment_stat("ctrl_unicast_dropped")
-                logger.debug(
-                    "Router control queue full: dropping oldest control message"
-                )
-            try:
-                self._router_queue_ctrl.put_nowait(
-                    (identity, room_bytes, message_bytes)
-                )
-            except Full:
-                # If still full after removing one, count as dropped (another drop)
-                self._increment_stat("ctrl_unicast_dropped")
-                logger.debug("Router control queue full: dropping new message")
+            self._increment_stat("ctrl_unicast_dropped")
+            logger.warning("Router control queue full: dropping new control message")
 
     def _send_ctrl_to_room_via_router(
         self,
@@ -706,7 +705,7 @@ class NetSyncServer:
 
             # Collect all client identities in the room while holding the lock
             for _device_id, client_data in self.rooms[room_id].items():
-                identity = client_data.get("identity")
+                identity = client_data.get("control_identity")
                 if identity is None:
                     continue
                 if exclude_identity is not None and identity == exclude_identity:
@@ -783,11 +782,37 @@ class NetSyncServer:
     def _get_device_id_from_identity(
         self, client_identity: bytes, room_id: str
     ) -> str | None:
-        """Get device ID from client identity"""
+        """Get device ID from any known client identity."""
+        return self._get_device_id_from_lane_identity(
+            client_identity, room_id, "control_identity"
+        ) or self._get_device_id_from_lane_identity(
+            client_identity, room_id, "transform_identity"
+        )
+
+    def _get_device_id_from_control_identity(
+        self, client_identity: bytes, room_id: str
+    ) -> str | None:
+        """Get device ID from a control-lane identity."""
+        return self._get_device_id_from_lane_identity(
+            client_identity, room_id, "control_identity"
+        )
+
+    def _get_device_id_from_transform_identity(
+        self, client_identity: bytes, room_id: str
+    ) -> str | None:
+        """Get device ID from a transform-lane identity."""
+        return self._get_device_id_from_lane_identity(
+            client_identity, room_id, "transform_identity"
+        )
+
+    def _get_device_id_from_lane_identity(
+        self, client_identity: bytes, room_id: str, identity_key: str
+    ) -> str | None:
+        """Get device ID from a lane-specific ZeroMQ identity."""
         with self._rooms_lock:
             if room_id in self.rooms:
                 for device_id, client_data in self.rooms[room_id].items():
-                    if client_data.get("identity") == client_identity:
+                    if client_data.get(identity_key) == client_identity:
                         return device_id
         return None
 
@@ -869,22 +894,16 @@ class NetSyncServer:
             # Raise FD soft limit early to avoid connection drops when many clients connect
             self._bump_fd_soft_limit(self.DEFAULT_FD_LIMIT)
 
-            # Setup ROUTER socket
-            self.router = self.context.socket(zmq.ROUTER)
-            # Set LINGER=0 to prevent FD accumulation during rapid connect/disconnect
-            self.router.setsockopt(zmq.LINGER, 0)
-            # Increase accept backlog to survive connection stampedes from simulators
-            try:
-                self.router.setsockopt(zmq.BACKLOG, self.ROUTER_BACKLOG)
-            except Exception:
-                # Best effort; fall back to default backlog if unsupported
-                pass
-            try:
-                self.router.setsockopt(zmq.RCVHWM, 10000)
-            except Exception:
-                # Best effort; ignore if high-water mark option is unsupported
-                pass
-            self.router.bind(f"tcp://*:{self.dealer_port}")
+            # Setup ROUTER sockets. Control and transform traffic use separate
+            # pipes because they have different backpressure/drop semantics.
+            self.control_router = self.context.socket(zmq.ROUTER)
+            self._configure_router_socket(self.control_router, mandatory=True)
+            self.control_router.bind(f"tcp://*:{self.control_port}")
+            self.router = self.control_router  # Deprecated compatibility alias
+
+            self.transform_router = self.context.socket(zmq.ROUTER)
+            self._configure_router_socket(self.transform_router, mandatory=False)
+            self.transform_router.bind(f"tcp://*:{self.transform_port}")
 
             # Start Publisher thread (it creates/binds PUB)
             self._publisher_running = True
@@ -900,8 +919,7 @@ class NetSyncServer:
                 )
             if self._publisher_exception:
                 # Clean up and re-raise the failure so callers get a proper error
-                if self.router:
-                    self.router.close()
+                self._close_router_sockets()
                 self.context.term()
                 raise self._publisher_exception
 
@@ -927,7 +945,8 @@ class NetSyncServer:
 
                 app = create_app(
                     server_addr="tcp://127.0.0.1",
-                    dealer_port=self.dealer_port,
+                    dealer_port=self.control_port,
+                    transform_port=self.transform_port,
                     sub_port=self.pub_port,
                     server=self,
                 )
@@ -949,7 +968,9 @@ class NetSyncServer:
         except zmq.error.ZMQError as e:
             if "Address already in use" in str(e) or "Address in use" in str(e):
                 logger.error(
-                    f"Error: Another server instance is already running on port {self.dealer_port}"
+                    "Error: Another server instance is already running on one "
+                    f"of the NetSync ports ({self.control_port}, "
+                    f"{self.transform_port}, {self.pub_port})"
                 )
                 logger.error(
                     "Please stop the existing server before starting a new one."
@@ -958,18 +979,18 @@ class NetSyncServer:
                 # Provide platform-specific instructions
                 if platform.system() == "Windows":
                     logger.error(
-                        f"You can find the process using: netstat -ano | findstr :{self.dealer_port}"
+                        "You can find the process using: "
+                        f"netstat -ano | findstr :{self.control_port}"
                     )
                     logger.error("And stop it using: taskkill /PID <PID> /F")
                 else:
                     logger.error(
-                        f"You can find the process using: lsof -i :{self.dealer_port}"
+                        f"You can find the process using: lsof -i :{self.control_port}"
                     )
                     logger.error("And stop it using: kill <PID>")
 
                 # Clean up sockets if partially created
-                if self.router:
-                    self.router.close()
+                self._close_router_sockets()
                 self.context.term()
                 raise SystemExit(1) from e
             else:
@@ -1033,8 +1054,7 @@ class NetSyncServer:
             else:
                 logger.info("Publisher thread stopped")
 
-        if self.router:
-            self.router.close()
+        self._close_router_sockets()
         if self.context:
             self.context.term()
 
@@ -1043,116 +1063,39 @@ class NetSyncServer:
             f"Broadcasts sent: {self.broadcast_count}, Skipped broadcasts: {self.skipped_broadcasts}, "
             f"Control unicasts sent: {self.ctrl_unicast_sent}, "
             f"Control unicast wouldblock: {self.ctrl_unicast_wouldblock}, "
-            f"Control unicast dropped: {self.ctrl_unicast_dropped}"
+            f"Control unicast dropped: {self.ctrl_unicast_dropped}, "
+            f"Control unicast unreachable: {self.ctrl_unicast_unreachable}, "
+            f"Wrong-lane dropped: {self.wrong_lane_dropped}"
         )
+
+    def _close_router_sockets(self) -> None:
+        """Close ROUTER sockets and clear aliases."""
+        if self.control_router is not None:
+            self.control_router.close()
+            self.control_router = None
+        if self.transform_router is not None:
+            self.transform_router.close()
+            self.transform_router = None
+        self.router = None
 
     def _receive_loop(self) -> None:
         """Receive messages from clients"""
+        poller = zmq.Poller()
+        control_router = self.control_router
+        transform_router = self.transform_router
+        if control_router is not None:
+            poller.register(control_router, zmq.POLLIN)
+        if transform_router is not None:
+            poller.register(transform_router, zmq.POLLIN)
+
         while self.running:
             try:
-                # Check for incoming messages
-                if self.router is not None and self.router.poll(
-                    self.POLL_TIMEOUT, zmq.POLLIN
-                ):
-                    # Receive multipart message [identity, room_id, message]
-                    parts = self.router.recv_multipart()
-                    self._increment_stat("message_count")
+                events = dict(poller.poll(self.POLL_TIMEOUT))
+                if control_router is not None and control_router in events:
+                    self._drain_incoming_router(control_router, "control")
+                if transform_router is not None and transform_router in events:
+                    self._drain_incoming_router(transform_router, "transform")
 
-                    if len(parts) >= 3:
-                        client_identity = parts[0]
-                        room_id_bytes = parts[1]
-                        message_bytes = parts[2]
-                        try:
-                            room_id = room_id_bytes.decode("utf-8")
-                        except UnicodeDecodeError as e:
-                            logger.error(f"Failed to decode room ID: {e}")
-                            continue
-                        # Protocol v5 binary-only handling (no JSON fallback)
-                        try:
-                            msg_type, data, raw_payload = binary_serializer.deserialize(
-                                message_bytes
-                            )
-                            if data is None:
-                                logger.warning("Received message with None data")
-                                continue
-                            if msg_type == binary_serializer.MSG_CLIENT_POSE:
-                                self._handle_client_transform(
-                                    client_identity, room_id, data, raw_payload
-                                )
-                            elif msg_type == binary_serializer.MSG_RPC:
-                                # Get sender's client number from client identity
-                                sender_device_id = self._get_device_id_from_identity(
-                                    client_identity, room_id
-                                )
-                                if sender_device_id:
-                                    sender_client_no = (
-                                        self._get_client_no_for_device_id(
-                                            room_id, sender_device_id
-                                        )
-                                    )
-                                    data["senderClientNo"] = sender_client_no
-                                # Send RPC to room excluding sender
-                                self._send_rpc_to_room(room_id, data)
-                            # MSG_RPC_SERVER and MSG_RPC_CLIENT are reserved for future use
-                            elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
-                                # Buffer global variable set request (no rate limit drops)
-                                self._buffer_global_var_set(room_id, data)
-                                self._monitor_nv_sliding_window(room_id)
-                            elif msg_type == binary_serializer.MSG_CLIENT_VAR_SET:
-                                # Buffer client variable set request (no rate limit drops)
-                                self._buffer_client_var_set(room_id, data)
-                                self._monitor_nv_sliding_window(room_id)
-                            elif msg_type == binary_serializer.MSG_CLIENT_VAR_CLEAR:
-                                self._handle_client_var_clear(
-                                    client_identity, room_id, data
-                                )
-                            elif msg_type == binary_serializer.MSG_OBJECT_POSE:
-                                sender_device_id = self._get_device_id_from_identity(
-                                    client_identity, room_id
-                                )
-                                if sender_device_id:
-                                    sender_client_no = (
-                                        self._get_client_no_for_device_id(
-                                            room_id, sender_device_id
-                                        )
-                                    )
-                                    self._handle_object_pose(
-                                        room_id, sender_client_no, data
-                                    )
-                            elif (
-                                msg_type
-                                == binary_serializer.MSG_OBJECT_OWNERSHIP_REQUEST
-                            ):
-                                sender_device_id = self._get_device_id_from_identity(
-                                    client_identity, room_id
-                                )
-                                if sender_device_id:
-                                    sender_client_no = (
-                                        self._get_client_no_for_device_id(
-                                            room_id, sender_device_id
-                                        )
-                                    )
-                                    self._handle_object_ownership_request(
-                                        client_identity,
-                                        room_id,
-                                        sender_client_no,
-                                        data,
-                                    )
-                            else:
-                                logger.warning(f"Unknown binary msg_type: {msg_type}")
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to decode protocol v5 message from room %s: %s",
-                                room_id,
-                                e,
-                            )
-
-                    else:
-                        logger.warning(
-                            f"Received incomplete message with only {len(parts)} parts"
-                        )
-
-                # Drain control messages via ROUTER after processing incoming
                 self._drain_router_ctrl_queue()
 
             except Exception as e:
@@ -1161,6 +1104,137 @@ class NetSyncServer:
 
         logger.info("Receive loop ended")
 
+    def _drain_incoming_router(
+        self, router: zmq.sugar.socket.Socket[bytes], lane: str
+    ) -> None:
+        """Drain all currently available messages from one ROUTER socket."""
+        while True:
+            try:
+                parts = router.recv_multipart(flags=zmq.DONTWAIT)
+            except zmq.Again:
+                break
+
+            self._increment_stat("message_count")
+            self._handle_incoming_router_message(lane, parts)
+
+    def _handle_incoming_router_message(self, lane: str, parts: list[bytes]) -> None:
+        """Dispatch one incoming ROUTER multipart message for a specific lane."""
+        if len(parts) < 3:
+            logger.warning(
+                "Received incomplete %s message with %s parts", lane, len(parts)
+            )
+            return
+
+        client_identity = parts[0]
+        room_id_bytes = parts[1]
+        message_bytes = parts[2]
+        try:
+            room_id = room_id_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            logger.error("Failed to decode room ID on %s lane: %s", lane, exc)
+            return
+
+        msg_type, data, raw_payload = binary_serializer.deserialize(message_bytes)
+        if data is None:
+            logger.warning("Received invalid %s-lane message type %s", lane, msg_type)
+            return
+
+        if lane == "control":
+            self._handle_control_message(client_identity, room_id, msg_type, data)
+        else:
+            self._handle_transform_message(
+                client_identity, room_id, msg_type, data, raw_payload
+            )
+
+    def _handle_control_message(
+        self, client_identity: bytes, room_id: str, msg_type: int, data: dict[str, Any]
+    ) -> None:
+        """Handle one message received on the control lane."""
+        if msg_type == binary_serializer.MSG_CLIENT_HELLO:
+            self._handle_client_hello(client_identity, room_id, data)
+        elif msg_type == binary_serializer.MSG_RPC:
+            sender_device_id = self._get_device_id_from_control_identity(
+                client_identity, room_id
+            )
+            if sender_device_id:
+                data["senderClientNo"] = self._get_client_no_for_device_id(
+                    room_id, sender_device_id
+                )
+            self._send_rpc_to_room(room_id, data)
+        elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
+            self._buffer_global_var_set(room_id, data)
+            self._monitor_nv_sliding_window(room_id)
+        elif msg_type == binary_serializer.MSG_CLIENT_VAR_SET:
+            self._buffer_client_var_set(room_id, data)
+            self._monitor_nv_sliding_window(room_id)
+        elif msg_type == binary_serializer.MSG_CLIENT_VAR_CLEAR:
+            self._handle_client_var_clear(client_identity, room_id, data)
+        elif msg_type == binary_serializer.MSG_OBJECT_OWNERSHIP_REQUEST:
+            sender_device_id = self._get_device_id_from_control_identity(
+                client_identity, room_id
+            )
+            if sender_device_id:
+                sender_client_no = self._get_client_no_for_device_id(
+                    room_id, sender_device_id
+                )
+                self._handle_object_ownership_request(
+                    client_identity, room_id, sender_client_no, data
+                )
+        else:
+            self._drop_wrong_lane("control", room_id, msg_type)
+
+    def _handle_transform_message(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        msg_type: int,
+        data: dict[str, Any],
+        raw_payload: bytes,
+    ) -> None:
+        """Handle one message received on the transform lane."""
+        if msg_type == binary_serializer.MSG_CLIENT_POSE:
+            self._handle_client_transform(client_identity, room_id, data, raw_payload)
+        elif msg_type == binary_serializer.MSG_OBJECT_POSE:
+            sender_device_id = self._get_device_id_from_transform_identity(
+                client_identity, room_id
+            )
+            if sender_device_id:
+                sender_client_no = self._get_client_no_for_device_id(
+                    room_id, sender_device_id
+                )
+                self._handle_object_pose(room_id, sender_client_no, data)
+        else:
+            self._drop_wrong_lane("transform", room_id, msg_type)
+
+    def _drop_wrong_lane(self, lane: str, room_id: str, msg_type: int) -> None:
+        """Record and log a message received on the wrong transport lane."""
+        self._increment_stat("wrong_lane_dropped")
+        logger.warning(
+            "Dropped wrong-lane message: lane=%s room=%s msg_type=%s",
+            lane,
+            room_id,
+            msg_type,
+        )
+
+    def _configure_router_socket(
+        self, router: zmq.sugar.socket.Socket[bytes], mandatory: bool
+    ) -> None:
+        """Apply common ROUTER socket options."""
+        router.setsockopt(zmq.LINGER, 0)
+        try:
+            router.setsockopt(zmq.BACKLOG, self.ROUTER_BACKLOG)
+        except Exception:
+            pass
+        try:
+            router.setsockopt(zmq.RCVHWM, 10000)
+        except Exception:
+            pass
+        if mandatory:
+            try:
+                router.setsockopt(zmq.ROUTER_MANDATORY, 1)
+            except Exception:
+                logger.warning("ROUTER_MANDATORY is not supported by this platform")
+
     def _drain_router_ctrl_queue(self) -> None:
         """Drain pending control messages from the router queue.
 
@@ -1168,27 +1242,101 @@ class NetSyncServer:
         via the ROUTER socket to specific clients. It is called from the
         receive loop to ensure timely delivery of control messages.
         """
-        router = self.router
+        router = self.control_router if self.control_router is not None else self.router
         if router is None:
             return
 
         for _ in range(self.ROUTER_CTRL_DRAIN_BATCH):
-            try:
-                ident, room_bytes, msg_bytes = self._router_queue_ctrl.get_nowait()
-            except Empty:
-                break
+            if self._blocked_router_packet is not None:
+                ident, room_bytes, msg_bytes = self._blocked_router_packet
+            else:
+                try:
+                    ident, room_bytes, msg_bytes = self._router_queue_ctrl.get_nowait()
+                except Empty:
+                    break
 
             try:
                 # Send via ROUTER: [identity, room_id, payload]
                 router.send_multipart(
                     [ident, room_bytes, msg_bytes], flags=zmq.DONTWAIT
                 )
+                self._blocked_router_packet = None
                 self._increment_stat("ctrl_unicast_sent")
             except zmq.Again:
-                # Socket would block - drop the message (don't re-enqueue)
+                self._blocked_router_packet = (ident, room_bytes, msg_bytes)
                 self._increment_stat("ctrl_unicast_wouldblock")
+                break
             except Exception as exc:
-                logger.error(f"Router send error: {exc}")
+                self._blocked_router_packet = None
+                if isinstance(exc, zmq.ZMQError) and getattr(
+                    exc, "errno", None
+                ) == getattr(zmq, "EHOSTUNREACH", None):
+                    self._increment_stat("ctrl_unicast_unreachable")
+                    logger.warning("Router control identity unreachable: %s", exc)
+                else:
+                    self._increment_stat("ctrl_unicast_dropped")
+                    logger.error(f"Router send error: {exc}")
+
+    def _handle_client_hello(
+        self, client_identity: bytes, room_id: str, data: dict[str, Any]
+    ) -> None:
+        """Register or refresh a client's control-lane identity."""
+        device_id_raw = data.get("deviceId")
+        if device_id_raw is None or not isinstance(device_id_raw, str):
+            logger.warning("Received client hello with missing or invalid deviceId")
+            return
+
+        device_id = device_id_raw
+        is_stealth = bool(data.get("isStealthMode", False))
+        client_no = self._get_or_assign_client_no(room_id, device_id)
+        now = time.monotonic()
+
+        with self._rooms_lock:
+            self._initialize_room(room_id)
+            is_new_client = device_id not in self.rooms[room_id]
+            is_reconnect = False
+            stealth_changed = False
+
+            if is_new_client:
+                self.rooms[room_id][device_id] = {
+                    "control_identity": client_identity,
+                    "transform_identity": None,
+                    "last_update": now,
+                    "transform_data": None,
+                    "client_no": client_no,
+                    "is_stealth": is_stealth,
+                }
+                self.room_id_mapping_dirty[room_id] = True
+                stealth_text = " (stealth mode)" if is_stealth else ""
+                logger.info(
+                    "New client %s... (client number: %s)%s registered control lane "
+                    "in room %s",
+                    device_id[:8],
+                    client_no,
+                    stealth_text,
+                    room_id,
+                )
+            else:
+                client_data = self.rooms[room_id][device_id]
+                old_identity = client_data.get("control_identity")
+                old_stealth = bool(client_data.get("is_stealth", False))
+                is_reconnect = old_identity != client_identity
+                stealth_changed = old_stealth != is_stealth
+                client_data["control_identity"] = client_identity
+                client_data["last_update"] = now
+                client_data["client_no"] = client_no
+                client_data["is_stealth"] = is_stealth
+                if is_reconnect or stealth_changed:
+                    self.room_id_mapping_dirty[room_id] = True
+
+            if is_stealth:
+                self.room_dirty_flags[room_id] = True
+
+        if is_new_client:
+            self._sync_network_variables_to_new_client(room_id)
+            self._sync_objects_to_new_client(client_identity, room_id)
+        elif is_reconnect:
+            self._sync_network_variables_to_client(room_id, client_identity)
 
     def _handle_client_transform(
         self,
@@ -1225,7 +1373,8 @@ class NetSyncServer:
             is_reconnect = False
             if is_new_client:
                 self.rooms[room_id][device_id] = {
-                    "identity": client_identity,
+                    "control_identity": None,
+                    "transform_identity": client_identity,
                     "last_update": time.monotonic(),
                     "transform_data": data_with_client_no,
                     "client_no": client_no,
@@ -1240,15 +1389,11 @@ class NetSyncServer:
                 )
             else:
                 # Update existing client and mark room as dirty.
-                # Detect reconnection: when a client reconnects (e.g. after
-                # sleep/wake) before the timeout removes it from rooms, the
-                # DEALER socket is recreated with a new ZMQ identity.  Without
-                # updating the identity the server would send ROUTER control
-                # messages (RPC, NV sync) to the stale identity, silently
-                # losing them.
-                old_identity = self.rooms[room_id][device_id].get("identity")
+                # Detect transform-lane reconnection without overwriting the
+                # control identity used for reliable unicasts.
+                old_identity = self.rooms[room_id][device_id].get("transform_identity")
                 is_reconnect = old_identity != client_identity
-                self.rooms[room_id][device_id]["identity"] = client_identity
+                self.rooms[room_id][device_id]["transform_identity"] = client_identity
                 self.rooms[room_id][device_id]["transform_data"] = data_with_client_no
                 self.rooms[room_id][device_id]["last_update"] = time.monotonic()
                 self.rooms[room_id][device_id]["client_no"] = client_no
@@ -1261,8 +1406,8 @@ class NetSyncServer:
                 self.room_dirty_flags[room_id] = True
 
                 if is_reconnect:
-                    # Re-broadcast ID mapping so the reconnected client gets
-                    # the current device-to-clientNo table.
+                    # Re-broadcast ID mapping so peers keep a fresh view of
+                    # this device/client registration.
                     self.room_id_mapping_dirty[room_id] = True
                     logger.info(
                         f"Client {device_id[:8]}... reconnected with new identity in room {room_id}"
@@ -1272,15 +1417,18 @@ class NetSyncServer:
             if is_new_client:
                 self.room_id_mapping_dirty[room_id] = True
 
-        # Sync network variables outside lock to avoid deadlocks.
-        if is_new_client:
-            self._sync_network_variables_to_new_client(room_id)
-            # Sync object ownership state to new client
-            self._sync_objects_to_new_client(client_identity, room_id)
-        elif is_reconnect:
-            # Unicast NV state only to the reconnecting client — no need to
-            # broadcast to the entire room.
-            self._sync_network_variables_to_client(room_id, client_identity)
+        control_identity = None
+        with self._rooms_lock:
+            control_identity = self.rooms[room_id][device_id].get("control_identity")
+
+        # Sync control state only through the control lane. If transform arrived
+        # before hello, the hello handler will sync after control identity exists.
+        if control_identity is not None:
+            if is_new_client:
+                self._sync_network_variables_to_new_client(room_id)
+                self._sync_objects_to_new_client(control_identity, room_id)
+            elif is_reconnect:
+                self._sync_network_variables_to_client(room_id, control_identity)
 
     def _extract_transform_body(self, raw_payload: bytes) -> bytes:
         """Extract the transform body without device ID from raw payload."""
@@ -1463,7 +1611,7 @@ class NetSyncServer:
                 client_no = client_data.get("client_no")
                 if client_no not in target_set:
                     continue
-                identity = client_data.get("identity")
+                identity = client_data.get("control_identity")
                 if identity is None:
                     continue
                 identities_to_send.append(identity)
@@ -1785,7 +1933,9 @@ class NetSyncServer:
     ) -> None:
         """Clear all client variables for the sending client."""
         with self._rooms_lock:
-            device_id = self._get_device_id_from_identity(client_identity, room_id)
+            device_id = self._get_device_id_from_control_identity(
+                client_identity, room_id
+            )
             if device_id is None:
                 logger.warning(
                     "Client variable clear ignored: sender is not mapped in room %s",
@@ -2196,10 +2346,14 @@ class NetSyncServer:
                             continue
                         client_no = client_data.get("client_no", 0)
                         transform_data = client_data.get("transform_data")
+                        if transform_data is None:
+                            continue
                         pose_time = client_data.get("last_update", 0.0)
                         body_bytes = self.client_transform_body_cache.get(
                             client_no, b""
                         )
+                        if not body_bytes:
+                            continue
                         client_snapshot.append(
                             (client_no, pose_time, transform_data, body_bytes)
                         )
@@ -2482,10 +2636,27 @@ class NetSyncServer:
             try:
                 data, addr = probe_sock.recvfrom(1024)
                 response = data.decode("utf-8", errors="replace")
-                # Match the client-side validation (see client.py):
-                # payload must be "STYLY-NETSYNC|<dealerPort>|<pubPort>|<name>"
-                # with at least 4 pipe-separated fields and int-parseable ports.
-                if response.startswith("STYLY-NETSYNC|"):
+                # Accept both current v2 and legacy v1 discovery responses for
+                # conflict detection.
+                if response.startswith("STYLY-NETSYNC2|"):
+                    parts = response.rstrip().split("|")
+                    if len(parts) >= 5:
+                        try:
+                            int(parts[1])
+                            int(parts[2])
+                            int(parts[3])
+                        except ValueError:
+                            return
+                        server_name = parts[4]
+                        logger.opt(colors=True).warning(
+                            f"<red>⚠ DISCOVERY PORT CONFLICT:</red> "
+                            f"Another STYLY-NetSync server "
+                            f"('{server_name}') is already responding "
+                            f"on discovery port {self.server_discovery_port} "
+                            f"(from {addr[0]}:{addr[1]}). Clients on this "
+                            f"LAN may connect to the wrong server."
+                        )
+                elif response.startswith("STYLY-NETSYNC|"):
                     parts = response.rstrip().split("|")
                     if len(parts) >= 4:
                         try:
@@ -2568,9 +2739,12 @@ class NetSyncServer:
 
     def _server_discovery_loop(self) -> None:
         """UDP discovery service loop - responds to client discovery requests"""
-        # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName
+        # Response message format:
+        # STYLY-NETSYNC2|controlPort|transformPort|pubPort|serverName
         response = (
-            f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}"
+            "STYLY-NETSYNC2|"
+            f"{self.control_port}|{self.transform_port}|{self.pub_port}|"
+            f"{self.server_name}"
         )
         response_bytes = response.encode("utf-8")
         udp_socket = self.server_discovery_socket
@@ -2643,9 +2817,12 @@ class NetSyncServer:
 
     def _tcp_server_discovery_loop(self) -> None:
         """TCP discovery service loop - responds to client discovery requests"""
-        # Response message format: STYLY-NETSYNC|dealerPort|pubPort|serverName\n
+        # Response message format:
+        # STYLY-NETSYNC2|controlPort|transformPort|pubPort|serverName\n
         response = (
-            f"STYLY-NETSYNC|{self.dealer_port}|{self.pub_port}|{self.server_name}\n"
+            "STYLY-NETSYNC2|"
+            f"{self.control_port}|{self.transform_port}|{self.pub_port}|"
+            f"{self.server_name}\n"
         )
         response_bytes = response.encode("utf-8")
         tcp_socket = self.tcp_server_discovery_socket
@@ -2723,10 +2900,27 @@ def main() -> None:
     # Port settings group
     port_group = parser.add_argument_group("port settings")
     port_group.add_argument(
+        "--control-port",
+        type=valid_port,
+        metavar="PORT",
+        help=f"TCP port for control DEALER-ROUTER socket (default: {defaults.control_port})",
+    )
+    port_group.add_argument(
         "--dealer-port",
         type=valid_port,
         metavar="PORT",
-        help=f"TCP port for DEALER-ROUTER socket (default: {defaults.dealer_port})",
+        help=(
+            "Deprecated alias for --control-port " f"(default: {defaults.control_port})"
+        ),
+    )
+    port_group.add_argument(
+        "--transform-port",
+        type=valid_port,
+        metavar="PORT",
+        help=(
+            "TCP port for transform uplink DEALER-ROUTER socket "
+            f"(default: {defaults.transform_port})"
+        ),
     )
     port_group.add_argument(
         "--pub-port",
@@ -2842,7 +3036,8 @@ def main() -> None:
     else:
         logger.info("  Server IP addresses: Unable to detect")
 
-    logger.info(f"  DEALER port: {config.dealer_port}")
+    logger.info(f"  Control port: {config.control_port}")
+    logger.info(f"  Transform port: {config.transform_port}")
     logger.info(f"  PUB port: {config.pub_port}")
     if config.enable_server_discovery:
         logger.info(f"  Server discovery port: {config.server_discovery_port}")
@@ -2852,7 +3047,8 @@ def main() -> None:
     logger.info("=" * 80)
 
     server = NetSyncServer(
-        dealer_port=config.dealer_port,
+        control_port=config.control_port,
+        transform_port=config.transform_port,
         pub_port=config.pub_port,
         enable_server_discovery=config.enable_server_discovery,
         server_discovery_port=config.server_discovery_port,

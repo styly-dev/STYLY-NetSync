@@ -7,10 +7,11 @@ namespace Styly.NetSync
 {
     internal static class BinarySerializer
     {
-        // v6: Network Variable wire messages dropped the per-write timestamp field.
+        // v7: Control and transform traffic use separate sockets, and clients register
+        // their control identity with MSG_CLIENT_HELLO.
         // Bumped so mixed old/new builds fail the handshake instead of silently
         // misparsing NV traffic (the version byte rides on transform/object messages).
-        public const byte PROTOCOL_VERSION = 6;
+        public const byte PROTOCOL_VERSION = 7;
 
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
@@ -31,8 +32,11 @@ namespace Styly.NetSync
         public const byte MSG_OBJECT_OWNERSHIP_CHANGED = 16; // Server → Clients: ownership changed
         public const byte MSG_OBJECT_OWNERSHIP_REJECTED = 17; // Server → Client: request rejected
         public const byte MSG_CLIENT_VAR_CLEAR = 18; // Clear all client variables for the sender
+        public const byte MSG_CLIENT_HELLO = 19; // Client → Server: bind control identity to device ID
 
-        // Protocol v5 pose encoding constants
+        public const byte CLIENT_HELLO_FLAG_STEALTH = 0x01;
+
+        // Protocol v7 pose encoding constants
         private const float ABS_POS_SCALE = 0.01f;
         private const float LOCO_POS_SCALE = 0.01f;
         private const float REL_POS_SCALE = 0.005f;
@@ -568,6 +572,21 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Serialize a client hello control message into an existing BinaryWriter.
+        /// </summary>
+        public static void SerializeClientHelloInto(BinaryWriter writer, string deviceId, bool isStealth)
+        {
+            writer.Write(MSG_CLIENT_HELLO);
+            writer.Write(PROTOCOL_VERSION);
+            writer.Write(isStealth ? CLIENT_HELLO_FLAG_STEALTH : (byte)0);
+
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+            var deviceIdLength = Mathf.Min(deviceIdBytes.Length, byte.MaxValue);
+            writer.Write((byte)deviceIdLength);
+            writer.Write(deviceIdBytes, 0, deviceIdLength);
+        }
+
+        /// <summary>
         /// Serialize a stealth handshake into a new byte array (legacy API).
         /// Prefer SerializeStealthHandshakeInto to reuse an existing stream/writer.
         /// </summary>
@@ -642,7 +661,7 @@ namespace Styly.NetSync
                 var messageType = reader.ReadByte();
 
                 // Validate message type is within valid range
-                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_CLIENT_VAR_CLEAR)
+                if (messageType < MSG_CLIENT_TRANSFORM || messageType > MSG_CLIENT_HELLO)
                 {
                     // Don't throw exception, just return invalid type with null data
                     // This allows the caller to handle it gracefully
