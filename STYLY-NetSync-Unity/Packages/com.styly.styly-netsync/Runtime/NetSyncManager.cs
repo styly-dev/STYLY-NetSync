@@ -775,6 +775,8 @@ namespace Styly.NetSync
 
         private void Update()
         {
+            if (_isDuplicateInstance) { return; }
+
             // Process deferred permission callbacks on main thread (safe for Unity APIs)
             if (_deviceIdResolver != null)
             {

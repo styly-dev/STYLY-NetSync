@@ -831,7 +831,7 @@ class NetSyncServer:
                 client_data["last_update"] = time.monotonic()
                 self.room_id_mapping_dirty[room_id] = True
                 logger.info(
-                    "Refreshed control identity from client number: room=%s, client=%s, device=%s",
+                    "Refreshed control identity from client number: room={}, client={}, device={}",
                     room_id,
                     sender_client_no,
                     device_id[:8],
