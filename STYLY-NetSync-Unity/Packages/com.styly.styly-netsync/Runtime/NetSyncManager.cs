@@ -80,6 +80,7 @@ namespace Styly.NetSync
         #region === Singleton & Public API ===
         private static NetSyncManager _instance;
         public static NetSyncManager Instance => _instance;
+        private bool _isDuplicateInstance;
 
 
 
@@ -617,6 +618,17 @@ namespace Styly.NetSync
         #region === Unity Callbacks ===
         private void Awake()
         {
+            if (_instance != null && _instance != this)
+            {
+                _isDuplicateInstance = true;
+                Debug.LogWarning(
+                    $"[NetSyncManager] Duplicate NetSyncManager on '{name}' was ignored. " +
+                    $"The active instance is '{_instance.name}'. Keep only one NetSyncManager loaded at a time.",
+                    this);
+                Destroy(this);
+                return;
+            }
+
             // Log package version
             DebugLog($"STYLY-NetSync Version: {GetVersion()}");
 
@@ -643,6 +655,8 @@ namespace Styly.NetSync
 
         void Start()
         {
+            if (_isDuplicateInstance) { return; }
+
             // Resolve the rig transform used as the locomotion-delta reference.
             // The follow source is latched here at startup; runtime rig
             // switching (e.g. disabling XROrigin and enabling OVRCameraRig
@@ -660,6 +674,8 @@ namespace Styly.NetSync
 
         private void OnEnable()
         {
+            if (_isDuplicateInstance) { return; }
+
             if (_deviceIdResolver != null && _deviceIdResolver.IsResolved)
             {
                 _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
@@ -675,6 +691,8 @@ namespace Styly.NetSync
 
         private void OnDisable()
         {
+            if (_isDuplicateInstance) { return; }
+
             _networkingPending = false;
 
             if (_connectionManager != null)
@@ -688,11 +706,16 @@ namespace Styly.NetSync
             // Dispose pooled serialization resources to return buffers to ArrayPool
             DisposeManagers();
 
-            _instance = null;
+            if (_instance == this)
+            {
+                _instance = null;
+            }
         }
 
         private void OnApplicationQuit()
         {
+            if (_isDuplicateInstance) { return; }
+
             if (_connectionManager != null)
             {
                 StopNetworking();
@@ -752,6 +775,8 @@ namespace Styly.NetSync
 
         private void Update()
         {
+            if (_isDuplicateInstance) { return; }
+
             // Process deferred permission callbacks on main thread (safe for Unity APIs)
             if (_deviceIdResolver != null)
             {
