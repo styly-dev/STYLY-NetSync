@@ -105,6 +105,56 @@ def test_transform_identity_does_not_overwrite_control_identity() -> None:
         assert client_data["transform_identity"] == b"transform-2"
 
 
+def test_global_variable_set_rebinds_stale_control_identity() -> None:
+    """An NV write from a known client should refresh its stale control identity."""
+    srv = NetSyncServer(enable_server_discovery=False)
+    room_id = "stale-control-room"
+    device_id = "device-a"
+    client_no = 1
+    srv._initialize_room(room_id)
+    with srv._rooms_lock:
+        srv.rooms[room_id][device_id] = {
+            "control_identity": b"stale-control",
+            "transform_identity": b"transform-1",
+            "last_update": 0.0,
+            "transform_data": None,
+            "client_no": client_no,
+            "is_stealth": False,
+        }
+        srv.room_device_id_to_client_no[room_id][device_id] = client_no
+        srv.room_client_no_to_device_id[room_id][client_no] = device_id
+
+    srv._handle_control_message(
+        b"active-control",
+        room_id,
+        binary_serializer.MSG_GLOBAL_VAR_SET,
+        {
+            "senderClientNo": client_no,
+            "variableName": "score",
+            "variableValue": "10",
+        },
+    )
+    srv._flush_nv_drain(room_id)
+
+    with srv._rooms_lock:
+        assert srv.rooms[room_id][device_id]["control_identity"] == b"active-control"
+
+    queued = srv._router_queue_ctrl.get_nowait()
+    assert queued[0] == b"active-control"
+    assert queued[1] == room_id.encode("utf-8")
+    msg_type, data, _ = binary_serializer.deserialize(queued[2])
+    assert msg_type == binary_serializer.MSG_GLOBAL_VAR_SYNC
+    assert data == {
+        "variables": [
+            {
+                "name": "score",
+                "value": "10",
+                "lastWriterClientNo": client_no,
+            }
+        ]
+    }
+
+
 def test_hello_after_transform_first_syncs_objects() -> None:
     """A transform-before-hello join must still receive the object-ownership sync.
 

@@ -796,6 +796,48 @@ class NetSyncServer:
             client_identity, room_id, "control_identity"
         )
 
+    def _refresh_control_identity_from_sender_client_no(
+        self, client_identity: bytes, room_id: str, sender_client_no_raw: object
+    ) -> str | None:
+        """Rebind a known client number to the control identity that sent a message."""
+        if isinstance(sender_client_no_raw, int):
+            sender_client_no = sender_client_no_raw
+        elif isinstance(sender_client_no_raw, str):
+            try:
+                sender_client_no = int(sender_client_no_raw)
+            except ValueError:
+                return None
+        else:
+            return None
+
+        if sender_client_no <= 0:
+            return None
+
+        with self._rooms_lock:
+            device_id = self.room_client_no_to_device_id.get(room_id, {}).get(
+                sender_client_no
+            )
+            if device_id is None:
+                return None
+
+            room = self.rooms.get(room_id)
+            if room is None or device_id not in room:
+                return None
+
+            client_data = room[device_id]
+            old_identity = client_data.get("control_identity")
+            if old_identity != client_identity:
+                client_data["control_identity"] = client_identity
+                client_data["last_update"] = time.monotonic()
+                self.room_id_mapping_dirty[room_id] = True
+                logger.info(
+                    "Refreshed control identity from client number: room=%s, client=%s, device=%s",
+                    room_id,
+                    sender_client_no,
+                    device_id[:8],
+                )
+            return device_id
+
     def _get_device_id_from_lane_identity(
         self, client_identity: bytes, room_id: str, identity_key: str
     ) -> str | None:
@@ -1158,15 +1200,25 @@ class NetSyncServer:
             sender_device_id = self._get_device_id_from_control_identity(
                 client_identity, room_id
             )
+            if sender_device_id is None:
+                sender_device_id = self._refresh_control_identity_from_sender_client_no(
+                    client_identity, room_id, data.get("senderClientNo", 0)
+                )
             if sender_device_id:
                 data["senderClientNo"] = self._get_client_no_for_device_id(
                     room_id, sender_device_id
                 )
             self._send_rpc_to_room(room_id, data)
         elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
+            self._refresh_control_identity_from_sender_client_no(
+                client_identity, room_id, data.get("senderClientNo", 0)
+            )
             self._buffer_global_var_set(room_id, data)
             self._monitor_nv_sliding_window(room_id)
         elif msg_type == binary_serializer.MSG_CLIENT_VAR_SET:
+            self._refresh_control_identity_from_sender_client_no(
+                client_identity, room_id, data.get("senderClientNo", 0)
+            )
             self._buffer_client_var_set(room_id, data)
             self._monitor_nv_sliding_window(room_id)
         elif msg_type == binary_serializer.MSG_CLIENT_VAR_CLEAR:
@@ -1964,6 +2016,10 @@ class NetSyncServer:
             device_id = self._get_device_id_from_control_identity(
                 client_identity, room_id
             )
+            if device_id is None:
+                device_id = self._refresh_control_identity_from_sender_client_no(
+                    client_identity, room_id, data.get("senderClientNo", 0)
+                )
             if device_id is None:
                 logger.warning(
                     "Client variable clear ignored: sender is not mapped in room %s",
