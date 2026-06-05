@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text;
@@ -15,6 +16,7 @@ namespace Styly.NetSync
     internal class ConnectionManager : IConnectionManager
     {
         private DealerSocket _dealerSocket;
+        private DealerSocket _transformDealerSocket;
         private SubscriberSocket _subSocket;
         private Thread _receiveThread;
         private volatile bool _shouldStop;
@@ -36,7 +38,7 @@ namespace Styly.NetSync
         private enum LogLevel { Info, Warning, Error }
 
         public SubscriberSocket SubSocket => _subSocket;
-        public bool IsConnected => _dealerSocket != null && _subSocket != null && !_connectionError;
+        public bool IsConnected => _dealerSocket != null && _transformDealerSocket != null && _subSocket != null && !_connectionError;
         public bool IsConnectionError => _connectionError;
 
         // Thread-safe accessors for exception state
@@ -52,10 +54,13 @@ namespace Styly.NetSync
         public event Action<string> OnConnectionError;
         public event Action OnConnectionEstablished;
 
-        private readonly NetSyncManager _netSyncManager;
         private readonly MessageProcessor _messageProcessor;
+        private readonly string _deviceId;
 
         private const int TransformRcvHwm = 2;
+        private const int ControlSendHwm = 1024;
+        private const int ControlReceiveHwm = 1024;
+        private const int TransformSendHwm = 2;
         private const long QueueFullWarnIntervalMs = 5000; // Rate limit warning logs to once per 5 seconds
         private long _lastQueueFullWarnMs;
 
@@ -80,12 +85,13 @@ namespace Styly.NetSync
         /// </summary>
         private readonly ConcurrentQueue<OutboundPacket> _ctrlOutbox = new();
         private int _ctrlOutboxCount;
+        private OutboundPacket _pendingControl;
 
         /// <summary>
         /// Latest transform packet to send (latest-wins semantics).
         /// Only the most recent transform is sent; older ones are overwritten.
         /// </summary>
-        private volatile OutboundPacket _latestTransform;
+        private OutboundPacket _latestTransform;
 
         /// <summary>
         /// Per-objectId latest-wins slots for NetSyncObject transform sends.
@@ -112,13 +118,13 @@ namespace Styly.NetSync
 
         public ConnectionManager(NetSyncManager netSyncManager, MessageProcessor messageProcessor, bool enableDebugLogs, bool logNetworkTraffic)
         {
-            _netSyncManager = netSyncManager;
             _messageProcessor = messageProcessor;
+            _deviceId = netSyncManager != null ? netSyncManager.DeviceId : string.Empty;
             _enableDebugLogs = enableDebugLogs;
             _logNetworkTraffic = logNetworkTraffic;
         }
 
-        public void Connect(string serverAddress, int dealerPort, int subPort, string roomId)
+        public void Connect(string serverAddress, int controlPort, int transformPort, int subPort, string roomId)
         {
             if (_receiveThread != null)
             {
@@ -128,7 +134,7 @@ namespace Styly.NetSync
             _currentRoomId = roomId;
             _connectionError = false;
             _shouldStop = false;
-            _receiveThread = new Thread(() => NetworkLoop(serverAddress, dealerPort, subPort, roomId))
+            _receiveThread = new Thread(() => NetworkLoop(serverAddress, controlPort, transformPort, subPort, roomId))
             {
                 IsBackground = true,
                 Name = "STYLY_NetworkThread"
@@ -154,6 +160,7 @@ namespace Styly.NetSync
 
             _subSocket = null;
             _dealerSocket = null;
+            _transformDealerSocket = null;
             _receiveThread = null;
 
             // OS-specific cleanup
@@ -200,6 +207,15 @@ namespace Styly.NetSync
             return true;
         }
 
+        private bool EnqueueClientHello(string roomId, bool isStealth)
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            BinarySerializer.SerializeClientHelloInto(writer, _deviceId, isStealth);
+            writer.Flush();
+            return TryEnqueueControl(roomId, ms.ToArray());
+        }
+
         /// <summary>
         /// Set the latest transform packet to send (latest-wins semantics).
         /// Only the most recent transform is retained; calling this again overwrites the previous.
@@ -209,7 +225,7 @@ namespace Styly.NetSync
         public void SetLatestTransform(string roomId, byte[] payload)
         {
             if (_receiveThread == null || _shouldStop || _connectionError) { return; }
-            if (_dealerSocket == null) { return; }
+            if (_transformDealerSocket == null) { return; }
 
             var packet = new OutboundPacket
             {
@@ -232,7 +248,7 @@ namespace Styly.NetSync
         public void SetLatestObjectTransform(string roomId, uint objectId, byte[] payload)
         {
             if (_receiveThread == null || _shouldStop || _connectionError) { return; }
-            if (_dealerSocket == null) { return; }
+            if (_transformDealerSocket == null) { return; }
             if (objectId == 0u) { return; }
 
             var packet = new OutboundPacket
@@ -264,19 +280,30 @@ namespace Styly.NetSync
             return $"tcp://{host}:{port}";
         }
 
-        private void NetworkLoop(string serverAddress, int dealerPort, int subPort, string roomId)
+        private void NetworkLoop(string serverAddress, int controlPort, int transformPort, int subPort, string roomId)
         {
             try
             {
-                // Dealer (for sending)
-                using var dealer = new DealerSocket();
-                dealer.Options.Linger = TimeSpan.Zero;
-                dealer.Options.SendHighWatermark = 10;
-                var dealerAddr = BuildConnectAddress(serverAddress, dealerPort);
-                dealer.Connect(dealerAddr);
-                _dealerSocket = dealer;
+                // Control dealer (RPC, Network Variables, ownership, hello).
+                using var controlDealer = new DealerSocket();
+                controlDealer.Options.Linger = TimeSpan.Zero;
+                controlDealer.Options.SendHighWatermark = ControlSendHwm;
+                controlDealer.Options.ReceiveHighWatermark = ControlReceiveHwm;
+                var controlAddr = BuildConnectAddress(serverAddress, controlPort);
+                controlDealer.Connect(controlAddr);
+                _dealerSocket = controlDealer;
 
-                if (_enableDebugLogs) _pendingLogs.Enqueue((LogLevel.Info, $"[ConnectionManager] [Thread] DEALER connected → {dealerAddr}"));
+                if (_enableDebugLogs) _pendingLogs.Enqueue((LogLevel.Info, $"[ConnectionManager] [Thread] CONTROL DEALER connected → {controlAddr}"));
+
+                // Transform dealer (client and object poses only).
+                using var transformDealer = new DealerSocket();
+                transformDealer.Options.Linger = TimeSpan.Zero;
+                transformDealer.Options.SendHighWatermark = TransformSendHwm;
+                var transformAddr = BuildConnectAddress(serverAddress, transformPort);
+                transformDealer.Connect(transformAddr);
+                _transformDealerSocket = transformDealer;
+
+                if (_enableDebugLogs) _pendingLogs.Enqueue((LogLevel.Info, $"[ConnectionManager] [Thread] TRANSFORM DEALER connected → {transformAddr}"));
 
                 // Subscriber (for receiving)
                 using var sub = new SubscriberSocket();
@@ -293,12 +320,14 @@ namespace Styly.NetSync
 
                 var roomIdBytes = Encoding.UTF8.GetBytes(roomId);
 
-                // Queue connection callback for main thread instead of invoking directly
+                // Ensure hello is the first queued control message for this connection.
+                EnqueueClientHello(roomId, isStealth: false);
+                // Queue connection callback for main thread instead of invoking directly.
                 _pendingMainThreadActions.Enqueue(() => OnConnectionEstablished?.Invoke());
 
                 while (!_shouldStop)
                 {
-                    var sentAny = FlushOutgoing(dealer);
+                    var sentAny = FlushOutgoing(controlDealer, transformDealer);
                     bool receivedAny = false;
 
                     byte[] lastAvatarPayload = null;
@@ -360,9 +389,9 @@ namespace Styly.NetSync
                     // DEALER receive: control messages (RPC, NV, ID mapping) from ROUTER
                     // Server sends control messages via ROUTER->DEALER instead of PUB/SUB
                     // Message format: [roomId, payload] (2 frames)
-                    while (dealer.TryReceiveFrameString(TimeSpan.Zero, out var dealerRoomId))
+                    while (controlDealer.TryReceiveFrameString(TimeSpan.Zero, out var dealerRoomId))
                     {
-                        if (!dealer.TryReceiveFrameBytes(TimeSpan.Zero, out var dealerPayload))
+                        if (!controlDealer.TryReceiveFrameBytes(TimeSpan.Zero, out var dealerPayload))
                         {
                             // Incomplete message - should not happen with proper framing
                             break;
@@ -403,7 +432,7 @@ namespace Styly.NetSync
                     
                     // Queue log for main thread (Debug.Log* is not safe from background threads)
                     var threadId = Thread.CurrentThread.ManagedThreadId;
-                    var endpoint = $"{serverAddress}:{dealerPort}/{subPort}";
+                    var endpoint = $"{serverAddress}:{controlPort}/{transformPort}/{subPort}";
                     _pendingLogs.Enqueue((LogLevel.Error,
                         $"[ConnectionManager] Network thread error. " +
                         $"Type={ex_local.GetType().Name} Message={ex_local.Message} " +
@@ -423,7 +452,7 @@ namespace Styly.NetSync
             }
         }
 
-        private bool FlushOutgoing(DealerSocket dealer)
+        private bool FlushOutgoing(DealerSocket controlDealer, DealerSocket transformDealer)
         {
             bool didWork = false;
 
@@ -431,9 +460,9 @@ namespace Styly.NetSync
             // 1. Drain control messages first (higher priority)
             // 2. Then try to send latest transform (lower priority)
 
-            didWork |= DrainControlSends(dealer, maxBatch: 64);
-            didWork |= TrySendLatestTransform(dealer);
-            didWork |= TrySendLatestObjectTransforms(dealer);
+            didWork |= DrainControlSends(controlDealer, maxBatch: 64);
+            didWork |= TrySendLatestTransform(transformDealer);
+            didWork |= TrySendLatestObjectTransforms(transformDealer);
 
             return didWork;
         }
@@ -488,20 +517,31 @@ namespace Styly.NetSync
             int sent = 0;
             double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
 
-            while (sent < maxBatch && _ctrlOutbox.TryDequeue(out var packet))
+            while (sent < maxBatch)
             {
-                Interlocked.Decrement(ref _ctrlOutboxCount);
+                if (_pendingControl == null)
+                {
+                    if (!_ctrlOutbox.TryDequeue(out _pendingControl))
+                    {
+                        break;
+                    }
+                    Interlocked.Decrement(ref _ctrlOutboxCount);
+                }
+
+                var packet = _pendingControl;
 
                 // TTL check - skip expired packets
                 if (now - packet.EnqueuedAt > CTRL_TTL_SECONDS)
                 {
                     _pendingLogs.Enqueue((LogLevel.Warning, $"[ConnectionManager] Control packet expired (TTL {CTRL_TTL_SECONDS}s exceeded)"));
+                    _pendingControl = null;
                     continue;
                 }
 
                 // Try to send
                 if (TrySendDealer(dealer, packet.RoomId, packet.Payload))
                 {
+                    _pendingControl = null;
                     didWork = true;
                     sent++;
                 }
@@ -510,13 +550,6 @@ namespace Styly.NetSync
                     // Backpressure - increment counter and stop draining
                     Interlocked.Increment(ref _wouldBlockCount);
                     packet.Attempts++;
-
-                    // The packet is DROPPED on backpressure (not retried) for the following reasons:
-                    // 1. Re-enqueue at the front is not possible with ConcurrentQueue
-                    // 2. Re-enqueuing at the back would cause out-of-order delivery
-                    // 3. Retrying could cause infinite loops if backpressure persists
-                    // This is acceptable for control messages as they are idempotent or timestamped.
-                    // In practice, the HWM should rarely be hit with proper flow control.
                     break;
                 }
             }
@@ -616,6 +649,7 @@ namespace Styly.NetSync
             // Clear control outbox
             while (_ctrlOutbox.TryDequeue(out _)) { }
             Interlocked.Exchange(ref _ctrlOutboxCount, 0);
+            _pendingControl = null;
 
             // Clear latest transform
             Volatile.Write(ref _latestTransform, null);
@@ -675,13 +709,13 @@ namespace Styly.NetSync
             }
         }
 
-        public void ProcessDiscoveredServer(string serverAddress, int dealerPort, int subPort)
+        public void ProcessDiscoveredServer(string serverAddress, int controlPort, int transformPort, int subPort)
         {
             if (_discoveryManager != null)
             {
                 _discoveryManager.StopDiscovery();
             }
-            Connect(serverAddress, dealerPort, subPort, _currentRoomId);
+            Connect(serverAddress, controlPort, transformPort, subPort, _currentRoomId);
         }
 
         public void DebugLog(string msg)

@@ -17,7 +17,7 @@ namespace Styly.NetSync
         public event Action<string> OnConnectionError;
         public event Action OnConnectionEstablished;
 
-        public void Connect(string serverAddress, int dealerPort, int subPort, string roomId)
+        public void Connect(string serverAddress, int controlPort, int transformPort, int subPort, string roomId)
         {
             if (_isConnected) return;
             _isConnected = true;
@@ -35,6 +35,6 @@ namespace Styly.NetSync
         public void SetLatestTransform(string roomId, byte[] payload) { }
         public void SetLatestObjectTransform(string roomId, uint objectId, byte[] payload) { }
         public void StartDiscovery(ServerDiscoveryManager discoveryManager, string roomId) { }
-        public void ProcessDiscoveredServer(string serverAddress, int dealerPort, int subPort) { }
+        public void ProcessDiscoveredServer(string serverAddress, int controlPort, int transformPort, int subPort) { }
     }
 }

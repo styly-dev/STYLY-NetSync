@@ -13,6 +13,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
+from styly_netsync import binary_serializer
 from styly_netsync.client import (
     STEALTH_HEARTBEAT_INTERVAL,
     net_sync_manager,
@@ -122,6 +123,25 @@ class TestStealthHeartbeatUnit(unittest.TestCase):
         with patch.object(mgr, "_enqueue_control", return_value=False):
             mgr._send_stealth_heartbeat()
         self.assertAlmostEqual(mgr._last_stealth_heartbeat_time, old_time, places=3)
+
+    def test_stealth_heartbeat_uses_client_hello(self) -> None:
+        """Stealth heartbeat should register via MSG_CLIENT_HELLO."""
+        mgr = self._make_running_manager()
+        captured: dict[str, bytes] = {}
+
+        def capture(_room: str, payload: bytes, msg_type: str = "control") -> bool:
+            captured["payload"] = payload
+            captured["msg_type"] = msg_type.encode("utf-8")
+            return True
+
+        with patch.object(mgr, "_enqueue_control", side_effect=capture):
+            mgr._send_stealth_heartbeat()
+
+        msg_type, data, _ = binary_serializer.deserialize(captured["payload"])
+        self.assertEqual(msg_type, binary_serializer.MSG_CLIENT_HELLO)
+        self.assertIsNotNone(data)
+        assert data is not None
+        self.assertTrue(data["isStealthMode"])
 
     # ------------------------------------------------------------------
     # Constant value test

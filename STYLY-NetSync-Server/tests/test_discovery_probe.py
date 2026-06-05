@@ -57,7 +57,7 @@ class TestDiscoveryProbe:
                 try:
                     data, addr = sock.recvfrom(1024)
                     if data == b"STYLY-NETSYNC-DISCOVER":
-                        response = b"STYLY-NETSYNC|5555|5556|FakeServer"
+                        response = b"STYLY-NETSYNC2|5555|5557|5556|FakeServer"
                         sock.sendto(response, addr)
                 except TimeoutError:
                     continue

@@ -6,7 +6,7 @@ namespace Styly.NetSync
     internal interface IConnectionManager
     {
         // Connection lifecycle
-        void Connect(string serverAddress, int dealerPort, int subPort, string roomId);
+        void Connect(string serverAddress, int controlPort, int transformPort, int subPort, string roomId);
         void Disconnect();
 
         // Connection state
@@ -28,7 +28,7 @@ namespace Styly.NetSync
 
         // Discovery
         void StartDiscovery(ServerDiscoveryManager discoveryManager, string roomId);
-        void ProcessDiscoveredServer(string serverAddress, int dealerPort, int subPort);
+        void ProcessDiscoveredServer(string serverAddress, int controlPort, int transformPort, int subPort);
 
         // Events
         event Action<string> OnConnectionError;

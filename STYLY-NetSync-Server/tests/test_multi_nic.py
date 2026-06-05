@@ -125,7 +125,7 @@ class TestDiscoveryAutoConnect:
         mock_sock = MagicMock(spec=socket.socket)
         mock_sock.getsockname.return_value = ("192.168.1.10", 0)
         mock_sock.recvfrom.return_value = (
-            b"STYLY-NETSYNC|6666|7777|TestServer",
+            b"STYLY-NETSYNC2|6666|6668|7777|TestServer",
             ("10.0.0.1", 9999),
         )
         mgr._discovery_sockets = [mock_sock]
@@ -136,6 +136,7 @@ class TestDiscoveryAutoConnect:
 
         assert mgr._server == "tcp://10.0.0.1"
         assert mgr._dealer_port == 6666
+        assert mgr._transform_port == 6668
         assert mgr._sub_port == 7777
         mock_start.assert_called_once()
         assert mgr._discovery_running is False
@@ -145,6 +146,7 @@ class TestDiscoveryAutoConnect:
         mgr = _make_manager()
         original_server = mgr._server
         original_dealer = mgr._dealer_port
+        original_transform = mgr._transform_port
         original_sub = mgr._sub_port
         mgr._running = True
         mgr._discovery_running = True
@@ -152,7 +154,7 @@ class TestDiscoveryAutoConnect:
         mock_sock = MagicMock(spec=socket.socket)
         mock_sock.getsockname.return_value = ("192.168.1.10", 0)
         mock_sock.recvfrom.return_value = (
-            b"STYLY-NETSYNC|6666|7777|TestServer",
+            b"STYLY-NETSYNC2|6666|6668|7777|TestServer",
             ("10.0.0.1", 9999),
         )
         mgr._discovery_sockets = [mock_sock]
@@ -164,10 +166,36 @@ class TestDiscoveryAutoConnect:
         # Address/ports should NOT be updated
         assert mgr._server == original_server
         assert mgr._dealer_port == original_dealer
+        assert mgr._transform_port == original_transform
         assert mgr._sub_port == original_sub
         mock_start.assert_not_called()
         # Discovery should still be stopped
         assert mgr._discovery_running is False
+
+    def test_legacy_discovery_response_is_incompatible(self) -> None:
+        """Legacy v1 discovery responses must not auto-connect."""
+        mgr = _make_manager()
+        mgr._discovery_running = True
+        mgr._discovery_sockets = []
+
+        mock_sock = MagicMock(spec=socket.socket)
+        mock_sock.getsockname.return_value = ("192.168.1.10", 0)
+
+        def recvfrom_side_effect(_size: int) -> tuple[bytes, tuple[str, int]]:
+            if mock_sock.recvfrom.call_count == 1:
+                return (b"STYLY-NETSYNC|6666|7777|LegacyServer", ("10.0.0.1", 9999))
+            mgr._discovery_running = False
+            raise TimeoutError()
+
+        mock_sock.recvfrom.side_effect = recvfrom_side_effect
+        mgr._discovery_sockets = [mock_sock]
+        mgr._broadcast_cache = {"192.168.1.10": "192.168.1.255"}
+
+        with patch.object(mgr, "start") as mock_start, patch("time.sleep"):
+            mgr._discovery_loop(9999)
+
+        mock_start.assert_not_called()
+        assert mgr._server != "tcp://10.0.0.1"
 
     def test_no_self_join_error(self) -> None:
         """_stop_discovery_internal called from discovery thread should not raise."""
@@ -191,7 +219,7 @@ class TestDiscoveryAutoConnect:
         mock_sock.getsockname.return_value = ("192.168.1.10", 0)
         # First recvfrom: return discovery response, second: timeout to exit loop
         mock_sock.recvfrom.side_effect = [
-            (b"STYLY-NETSYNC|6666|7777|TestServer", ("10.0.0.1", 9999)),
+            (b"STYLY-NETSYNC2|6666|6668|7777|TestServer", ("10.0.0.1", 9999)),
             TimeoutError(),
         ]
         mgr._discovery_sockets = [mock_sock]
@@ -214,7 +242,10 @@ class TestDiscoveryAutoConnect:
             # Re-supply socket for second round (after break + retry)
             def reset_socket(*args: object, **kwargs: object) -> None:
                 mock_sock.recvfrom.side_effect = [
-                    (b"STYLY-NETSYNC|6666|7777|TestServer", ("10.0.0.1", 9999)),
+                    (
+                        b"STYLY-NETSYNC2|6666|6668|7777|TestServer",
+                        ("10.0.0.1", 9999),
+                    ),
                 ]
 
             mock_sock.sendto.side_effect = reset_socket

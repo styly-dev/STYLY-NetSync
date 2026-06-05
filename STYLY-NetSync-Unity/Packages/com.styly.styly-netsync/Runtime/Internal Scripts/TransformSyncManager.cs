@@ -100,12 +100,12 @@ namespace Styly.NetSync
         {
             try
             {
-                // Estimate size for handshake and ensure capacity
-                var required = EstimateStealthHandshakeSize(_deviceId);
+                // Estimate size for client hello and ensure capacity
+                var required = EstimateClientHelloSize(_deviceId);
                 _buf.EnsureCapacity(required);
 
                 _buf.Stream.Position = 0;
-                BinarySerializer.SerializeStealthHandshakeInto(_buf.Writer, _deviceId);
+                BinarySerializer.SerializeClientHelloInto(_buf.Writer, _deviceId, isStealth: true);
                 _buf.Writer.Flush();
 
                 var length = (int)_buf.Stream.Position;
@@ -190,14 +190,14 @@ namespace Styly.NetSync
         }
 
         /// <summary>
-        /// Estimate byte size for stealth handshake payload to pre-size buffers.
+        /// Estimate byte size for client hello payload to pre-size buffers.
         /// </summary>
-        private static int EstimateStealthHandshakeSize(string deviceId)
+        private static int EstimateClientHelloSize(string deviceId)
         {
             var deviceIdBytes = deviceId != null ? Encoding.UTF8.GetByteCount(deviceId) : 0;
             if (deviceIdBytes > 255) deviceIdBytes = 255; // Length prefix is 1 byte
-            // 1(type) + 1(protocol) + 1(deviceIdLen) + deviceId + 2(poseSeq) + 1(flags) + 1(encodingFlags) + 1(virtualCount)
-            return 1 + 1 + 1 + deviceIdBytes + 2 + 1 + 1 + 1;
+            // 1(type) + 1(protocol) + 1(flags) + 1(deviceIdLen) + deviceId
+            return 1 + 1 + 1 + 1 + deviceIdBytes;
         }
 
         /// <summary>

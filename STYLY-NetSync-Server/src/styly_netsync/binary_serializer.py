@@ -6,10 +6,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Message type identifiers
-# v6: Network Variable wire messages dropped the per-write timestamp field.
+# v7: Control and transform traffic use separate sockets, and clients register
+# their control identity with MSG_CLIENT_HELLO.
 # Bumped so mixed old/new builds fail the handshake instead of silently
 # misparsing NV traffic (the version byte rides on transform/object messages).
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call
@@ -28,6 +29,9 @@ MSG_OBJECT_OWNERSHIP_REQUEST = 15  # Client → Server: RequestOwnership/Release
 MSG_OBJECT_OWNERSHIP_CHANGED = 16  # Server → Clients (ROUTER): ownership changed
 MSG_OBJECT_OWNERSHIP_REJECTED = 17  # Server → Client (ROUTER): request rejected
 MSG_CLIENT_VAR_CLEAR = 18  # Clear all client variables for the sender
+MSG_CLIENT_HELLO = 19  # Client → Server: bind control identity to device ID
+
+CLIENT_HELLO_FLAG_STEALTH = 0x01
 
 # Transform data type identifiers (deprecated - kept for reference)
 
@@ -36,7 +40,7 @@ MSG_CLIENT_VAR_CLEAR = 18  # Clear all client variables for the sender
 _max_virtual_transforms = 50
 MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward compat
 
-# Protocol v5 transform encoding constants
+# Protocol v7 pose encoding constants
 ABS_POS_SCALE = 0.01
 LOCO_POS_SCALE = 0.01
 REL_POS_SCALE = 0.005
@@ -632,6 +636,17 @@ def serialize_rpc_message(data: dict[str, Any]) -> bytes:
     return bytes(buffer)
 
 
+def serialize_client_hello(device_id: str, is_stealth: bool = False) -> bytes:
+    """Serialize client hello for control-lane identity registration."""
+    buffer = bytearray()
+    buffer.append(MSG_CLIENT_HELLO)
+    buffer.append(PROTOCOL_VERSION)
+    flags = CLIENT_HELLO_FLAG_STEALTH if is_stealth else 0
+    buffer.append(flags)
+    _pack_string(buffer, device_id)
+    return bytes(buffer)
+
+
 def parse_version(version_str: str) -> tuple[int, int, int]:
     """Parse semantic version string into (major, minor, patch) tuple.
 
@@ -825,7 +840,7 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
     offset += 1
 
     # Validate message type is within valid range
-    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_CLIENT_VAR_CLEAR:
+    if message_type < MSG_CLIENT_TRANSFORM or message_type > MSG_CLIENT_HELLO:
         # Return invalid message type with None data instead of raising exception
         return message_type, None, b""
 
@@ -856,6 +871,8 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             return message_type, _deserialize_client_var_sync(data, offset), b""
         elif message_type == MSG_CLIENT_VAR_CLEAR:
             return message_type, _deserialize_client_var_clear(data, offset), b""
+        elif message_type == MSG_CLIENT_HELLO:
+            return message_type, _deserialize_client_hello(data, offset), b""
         elif message_type == MSG_OBJECT_POSE:
             return message_type, _deserialize_object_pose(data, offset), b""
         elif message_type == MSG_ROOM_OBJECTS:
@@ -888,6 +905,22 @@ def deserialize(data: bytes) -> tuple[int, dict[str, Any] | None, bytes]:
             str(e),
         )
         return message_type, None, b""
+
+
+def _deserialize_client_hello(data: bytes, offset: int) -> dict[str, Any]:
+    """Deserialize client hello control message."""
+    protocol_version = data[offset]
+    offset += 1
+    if protocol_version != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported protocol version: {protocol_version}")
+    flags = data[offset]
+    offset += 1
+    device_id, offset = _unpack_string(data, offset)
+    return {
+        "deviceId": device_id,
+        "flags": flags,
+        "isStealthMode": bool(flags & CLIENT_HELLO_FLAG_STEALTH),
+    }
 
 
 def _deserialize_client_body(data: bytes, offset: int) -> tuple[dict[str, Any], int]:
@@ -1336,6 +1369,10 @@ def serialize_object_pose(data: dict[str, Any]) -> bytes:
     buffer = bytearray()
     buffer.append(MSG_OBJECT_POSE)
     buffer.append(PROTOCOL_VERSION)
+    # Sender device ID: lets the server attribute the pose by identity carried in
+    # the payload rather than the transform-lane socket identity (which a stealth
+    # owner never binds because it sends no MSG_CLIENT_POSE).
+    _pack_string(buffer, str(data.get("deviceId", "")))
     object_id = int(data.get("objectId", 0)) & 0xFFFFFFFF
     buffer.extend(struct.pack("<I", object_id))
     buffer.extend(struct.pack("<H", int(data.get("poseSeq", 0)) & 0xFFFF))
@@ -1433,6 +1470,8 @@ def _deserialize_object_pose(data: bytes, offset: int) -> dict[str, Any]:
     offset += 1
     if protocol_version != PROTOCOL_VERSION:
         raise ValueError(f"Unsupported protocol version: {protocol_version}")
+    device_id, offset = _unpack_string(data, offset)
+    result["deviceId"] = device_id
     result["objectId"] = struct.unpack("<I", data[offset : offset + 4])[0]
     offset += 4
     result["poseSeq"] = struct.unpack("<H", data[offset : offset + 2])[0]

@@ -19,6 +19,7 @@ namespace Styly.NetSync
         [Header("Connection Settings")]
         [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "";
         private int _dealerPort = 5555;
+        private int _transformPort = 5557;
         private int _subPort = 5556;
         [SerializeField] private string _roomId = "default_room";
 
@@ -507,6 +508,7 @@ namespace Styly.NetSync
         private bool _roomSwitching; // Flag to prevent operations during room switching
         private string _discoveredServer;
         private int _discoveredDealerPort;
+        private int _discoveredTransformPort;
         private int _discoveredSubPort;
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
@@ -823,7 +825,7 @@ namespace Styly.NetSync
                 // Object sync: send owned object transforms and apply received transforms
                 if (_objectSyncManager != null)
                 {
-                    _objectSyncManager.Tick(_roomId, Time.time, _clientNo, _transformSendRate);
+                    _objectSyncManager.Tick(_roomId, Time.time, _clientNo, DeviceId, _transformSendRate);
                     _objectSyncManager.TickTransformAppliers(Time.deltaTime, NetSyncClock.NowSeconds());
                 }
             }
@@ -1148,19 +1150,21 @@ namespace Styly.NetSync
             _shouldCheckReady = true;
         }
 
-        private void OnServerDiscovered(string serverAddress, int dealerPort, int subPort)
+        private void OnServerDiscovered(string serverAddress, int controlPort, int transformPort, int subPort)
         {
             _discoveredServer = serverAddress;
-            _discoveredDealerPort = dealerPort;
+            _discoveredDealerPort = controlPort;
+            _discoveredTransformPort = transformPort;
             _discoveredSubPort = subPort;
 
             // Update the server address for future connections
             // Remove tcp:// prefix (discovery always returns with tcp://)
             _serverAddress = serverAddress.Substring(6);
-            _dealerPort = dealerPort;
+            _dealerPort = controlPort;
+            _transformPort = transformPort;
             _subPort = subPort;
 
-            DebugLog($"Server discovered: {serverAddress} (dealer:{dealerPort}, sub:{subPort})");
+            DebugLog($"Server discovered: {serverAddress} (control:{controlPort}, transform:{transformPort}, sub:{subPort})");
         }
         #endregion ------------------------------------------------------------------------
 
@@ -1169,7 +1173,7 @@ namespace Styly.NetSync
         {
             if (_offlineMode)
             {
-                _connectionManager.Connect("", 0, 0, _roomId);
+                _connectionManager.Connect("", 0, 0, 0, _roomId);
                 return;
             }
 
@@ -1182,7 +1186,7 @@ namespace Styly.NetSync
 
             // Add tcp:// prefix
             string fullAddress = $"tcp://{_serverAddress}";
-            _connectionManager.Connect(fullAddress, _dealerPort, _subPort, _roomId);
+            _connectionManager.Connect(fullAddress, _dealerPort, _transformPort, _subPort, _roomId);
         }
 
         private void StopNetworking()
@@ -1219,7 +1223,7 @@ namespace Styly.NetSync
             {
                 _isDiscovering = false;
                 StopDiscovery();
-                _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredSubPort);
+                _connectionManager.ProcessDiscoveredServer(_discoveredServer, _discoveredDealerPort, _discoveredTransformPort, _discoveredSubPort);
                 _discoveredServer = null;
                 return; // Exit early - no need to check timeout or retry
             }

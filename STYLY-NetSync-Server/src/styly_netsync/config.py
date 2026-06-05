@@ -62,7 +62,9 @@ class ServerConfig:
     """
 
     # Network settings
+    control_port: int
     dealer_port: int
+    transform_port: int
     pub_port: int
     server_discovery_port: int
     rest_api_port: int
@@ -105,7 +107,9 @@ class ServerConfig:
 # Valid config keys (for unknown key detection)
 _VALID_KEYS: set[str] = {
     # Network settings
+    "control_port",
     "dealer_port",
+    "transform_port",
     "pub_port",
     "server_discovery_port",
     "rest_api_port",
@@ -202,6 +206,12 @@ def process_toml_config(toml_data: dict[str, Any]) -> dict[str, Any]:
                     value = None
             result[key] = value
 
+    # dealer_port is a one-release compatibility alias for control_port.
+    if "control_port" not in result and "dealer_port" in result:
+        result["control_port"] = result["dealer_port"]
+    if "dealer_port" not in result and "control_port" in result:
+        result["dealer_port"] = result["control_port"]
+
     return result
 
 
@@ -235,11 +245,23 @@ def validate_config(config: ServerConfig) -> list[str]:
     errors: list[str] = []
 
     # Port validation (1-65535)
-    port_fields = ["dealer_port", "pub_port", "server_discovery_port", "rest_api_port"]
+    port_fields = [
+        "control_port",
+        "dealer_port",
+        "transform_port",
+        "pub_port",
+        "server_discovery_port",
+        "rest_api_port",
+    ]
     for field_name in port_fields:
         port = getattr(config, field_name)
         if not 1 <= port <= 65535:
             errors.append(f"{field_name} must be between 1 and 65535, got {port}")
+    if config.dealer_port != config.control_port:
+        errors.append(
+            "dealer_port is a deprecated alias and must match control_port "
+            f"({config.dealer_port} != {config.control_port})"
+        )
 
     # Timing validation (must be positive)
     timing_fields = [
@@ -358,9 +380,19 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
     """
     updates: dict[str, Any] = {}
 
-    # Network settings from CLI
-    if hasattr(args, "dealer_port") and args.dealer_port is not None:
-        updates["dealer_port"] = args.dealer_port
+    # Network settings from CLI.
+    # control_port is the canonical flag; --dealer-port is a deprecated alias
+    # kept for one release. When both are provided, the explicit --control-port
+    # wins so the deprecated alias can never silently override it.
+    if hasattr(args, "control_port") and args.control_port is not None:
+        updates["control_port"] = args.control_port
+    elif hasattr(args, "dealer_port") and args.dealer_port is not None:
+        updates["control_port"] = args.dealer_port
+    if "control_port" in updates:
+        # Keep the deprecated alias mirrored to the resolved control_port.
+        updates["dealer_port"] = updates["control_port"]
+    if hasattr(args, "transform_port") and args.transform_port is not None:
+        updates["transform_port"] = args.transform_port
     if hasattr(args, "pub_port") and args.pub_port is not None:
         updates["pub_port"] = args.pub_port
     if (
@@ -416,6 +448,7 @@ def create_config_from_args(
     # Step 1: Load default configuration (required)
     config = load_default_config()
     overrides: list[ConfigOverride] = []
+    user_config_keys: set[str] = set()
 
     # Step 2: Override with user config if specified
     if hasattr(args, "config") and args.config is not None:
@@ -434,6 +467,7 @@ def create_config_from_args(
 
         # Apply user config overrides
         if config_data:
+            user_config_keys = set(config_data.keys())
             # Track what values are being overridden (compare with existing config)
             for key, new_value in config_data.items():
                 default_value = getattr(config, key)
@@ -444,6 +478,20 @@ def create_config_from_args(
 
     # Step 3: Apply CLI overrides (highest priority)
     config = merge_cli_args(config, args)
+
+    # Step 3.5: Derive the transform port from the resolved control port unless
+    # the user set it explicitly. The transform lane defaults to
+    # control_port + 2 everywhere else (Python client/simulator and the
+    # NetSyncServer constructor), so a deployment that customizes only the
+    # control (or deprecated dealer) port must move the transform port with it;
+    # otherwise the server would bind the static default while clients send
+    # poses to control_port + 2. This is a no-op for the default ports
+    # (5555 + 2 == 5557).
+    transform_explicit = (
+        hasattr(args, "transform_port") and args.transform_port is not None
+    ) or "transform_port" in user_config_keys
+    if not transform_explicit:
+        config = dataclass_replace(config, transform_port=config.control_port + 2)
 
     # Step 4: Validate final configuration
     errors = validate_config(config)

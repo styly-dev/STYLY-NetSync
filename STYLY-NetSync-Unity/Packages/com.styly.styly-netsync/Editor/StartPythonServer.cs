@@ -16,7 +16,9 @@ namespace Styly.NetSync.Editor
     internal class ServerLaunchConfig
     {
         // Port settings
+        public int ControlPort = 5555;
         public int DealerPort = 5555;
+        public int TransformPort = 5557;
         public int PubPort = 5556;
         public int ServerDiscoveryPort = StartPythonServer.DefaultServerDiscoveryPort;
         public int RestApiPort = 8800;
@@ -49,8 +51,12 @@ namespace Styly.NetSync.Editor
             if (!string.IsNullOrEmpty(ConfigFile))
                 sb.Append($" --config {quoteValue(ConfigFile)}");
 
-            if (DealerPort != 5555)
-                sb.Append($" --dealer-port {DealerPort}");
+            int resolvedControlPort = ControlPort != 5555 ? ControlPort : DealerPort;
+            if (resolvedControlPort != 5555)
+                sb.Append($" --control-port {resolvedControlPort}");
+
+            if (TransformPort != 5557)
+                sb.Append($" --transform-port {TransformPort}");
 
             if (PubPort != 5556)
                 sb.Append($" --pub-port {PubPort}");

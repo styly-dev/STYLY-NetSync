@@ -37,7 +37,9 @@ class TestLoadDefaultConfig:
         """Test that default config has all expected fields."""
         config = load_default_config()
         # Network
+        assert config.control_port == 5555
         assert config.dealer_port == 5555
+        assert config.transform_port == 5557
         assert config.pub_port == 5556
         assert config.server_discovery_port == 9999
         assert config.rest_api_port == 8800
@@ -85,7 +87,9 @@ class TestServerConfig:
     def test_custom_values(self, default_config: ServerConfig) -> None:
         """Test that custom values can be set."""
         config = ServerConfig(
+            control_port=6666,
             dealer_port=6666,
+            transform_port=6668,
             pub_port=6667,
             server_discovery_port=8888,
             rest_api_port=9900,
@@ -116,7 +120,9 @@ class TestServerConfig:
             log_rotation=default_config.log_rotation,
             log_retention=default_config.log_retention,
         )
+        assert config.control_port == 6666
         assert config.dealer_port == 6666
+        assert config.transform_port == 6668
         assert config.pub_port == 6667
         assert config.server_discovery_port == 8888
         assert config.rest_api_port == 9900
@@ -130,8 +136,10 @@ class TestLoadConfigFromToml:
     def test_load_valid_toml(self, tmp_path: Path) -> None:
         """Test loading a valid TOML file."""
         toml_content = """
-dealer_port = 7777
-pub_port = 7778
+	control_port = 7777
+	dealer_port = 7777
+	transform_port = 7779
+	pub_port = 7778
 server_name = "Test Server"
 enable_server_discovery = false
 """
@@ -139,7 +147,9 @@ enable_server_discovery = false
         config_file.write_text(toml_content)
 
         data = load_config_from_toml(config_file)
+        assert data["control_port"] == 7777
         assert data["dealer_port"] == 7777
+        assert data["transform_port"] == 7779
         assert data["pub_port"] == 7778
         assert data["server_name"] == "Test Server"
         assert data["enable_server_discovery"] is False
@@ -175,6 +185,8 @@ class TestProcessTomlConfig:
         """Test processing network keys."""
         toml_data = {
             "dealer_port": 5555,
+            "control_port": 5555,
+            "transform_port": 5557,
             "pub_port": 5556,
             "server_discovery_port": 9999,
             "server_name": "Test",
@@ -182,7 +194,9 @@ class TestProcessTomlConfig:
         }
 
         result = process_toml_config(toml_data)
+        assert result["control_port"] == 5555
         assert result["dealer_port"] == 5555
+        assert result["transform_port"] == 5557
         assert result["pub_port"] == 5556
         assert result["server_discovery_port"] == 9999
         assert result["server_name"] == "Test"
@@ -192,7 +206,7 @@ class TestProcessTomlConfig:
         """Test processing partial configuration."""
         toml_data = {"dealer_port": 6666}
         result = process_toml_config(toml_data)
-        assert result == {"dealer_port": 6666}
+        assert result == {"control_port": 6666, "dealer_port": 6666}
 
     def test_process_empty_config(self) -> None:
         """Test processing empty configuration."""
@@ -207,7 +221,7 @@ class TestProcessTomlConfig:
         }
         result = process_toml_config(toml_data)
         assert "unknown_key" not in result
-        assert result == {"dealer_port": 5555}
+        assert result == {"control_port": 5555, "dealer_port": 5555}
 
     def test_process_timing_keys(self) -> None:
         """Test processing timing keys."""
@@ -338,6 +352,7 @@ class TestValidateConfig:
 
         config = replace(
             default_config,
+            control_port=1,
             dealer_port=1,
             pub_port=65535,
             server_discovery_port=1024,
@@ -541,9 +556,31 @@ class TestMergeCliArgs:
         )
 
         merged = merge_cli_args(default_config, args)
+        assert merged.control_port == 6000
         assert merged.dealer_port == 6000
         # Original config unchanged
         assert default_config.dealer_port == 5555
+
+    def test_cli_control_port_wins_over_deprecated_dealer_port(
+        self, default_config: ServerConfig
+    ) -> None:
+        """When both flags are given, the canonical --control-port must win.
+
+        The deprecated --dealer-port alias must never silently override an
+        explicit --control-port.
+        """
+        args = argparse.Namespace(
+            control_port=6000,
+            dealer_port=7000,
+            pub_port=None,
+            server_discovery_port=None,
+            no_server_discovery=False,
+        )
+
+        merged = merge_cli_args(default_config, args)
+        assert merged.control_port == 6000
+        # dealer_port stays mirrored to the resolved control_port.
+        assert merged.dealer_port == 6000
 
     def test_cli_overrides_pub_port(self, default_config: ServerConfig) -> None:
         """Test that CLI pub_port overrides config."""
@@ -770,7 +807,9 @@ class TestCreateConfigFromArgs:
 
         config, _ = create_config_from_args(args)
         # Should match default config
+        assert config.control_port == 5555
         assert config.dealer_port == 5555
+        assert config.transform_port == 5557
         assert config.pub_port == 5556
 
     def test_config_file_overrides_default(self, tmp_path: Path) -> None:
@@ -795,6 +834,7 @@ server_name = "User Server"
 
         config, _ = create_config_from_args(args)
         # User overrides
+        assert config.control_port == 7777
         assert config.dealer_port == 7777
         assert config.server_name == "User Server"
         # Defaults preserved
@@ -905,10 +945,12 @@ dealer_port = 7777
         )
 
         config, overrides = create_config_from_args(args)
-        assert len(overrides) == 1
-        assert overrides[0].key == "dealer_port"
-        assert overrides[0].default_value == 5555
-        assert overrides[0].new_value == 7777
+        assert len(overrides) == 2
+        override_map = {o.key: o for o in overrides}
+        assert override_map["control_port"].default_value == 5555
+        assert override_map["control_port"].new_value == 7777
+        assert override_map["dealer_port"].default_value == 5555
+        assert override_map["dealer_port"].new_value == 7777
 
     def test_multiple_overrides_tracked(self, tmp_path: Path) -> None:
         """Test that multiple overrides are tracked correctly."""
@@ -933,10 +975,11 @@ client_timeout = 10.0
         )
 
         config, overrides = create_config_from_args(args)
-        assert len(overrides) == 4
+        assert len(overrides) == 5
 
         # Check that all overrides are tracked
         override_keys = {o.key for o in overrides}
+        assert "control_port" in override_keys
         assert "dealer_port" in override_keys
         assert "pub_port" in override_keys
         assert "server_name" in override_keys

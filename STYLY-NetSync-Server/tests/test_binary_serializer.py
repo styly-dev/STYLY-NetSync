@@ -289,11 +289,11 @@ def _reconstruct_physical_from_head_and_delta(
 
 
 class TestTransformSerializationV5:
-    """Tests for protocol v6 transform compact serialization."""
+    """Tests for protocol v7 transform compact serialization."""
 
-    def test_protocol_version_is_v6(self) -> None:
-        """Protocol version constant should be at v6."""
-        assert binary_serializer.PROTOCOL_VERSION == 6
+    def test_protocol_version_is_v7(self) -> None:
+        """Protocol version constant should be at v7."""
+        assert binary_serializer.PROTOCOL_VERSION == 7
 
     def test_client_roundtrip_without_flags_infers_valid_bits(self) -> None:
         """Serializer should infer valid bits when flags are omitted."""
@@ -418,7 +418,7 @@ class TestTransformSerializationV5:
 
             assert msg_type == binary_serializer.MSG_CLIENT_POSE
             assert decoded is not None
-            assert decoded["protocolVersion"] == 6
+            assert decoded["protocolVersion"] == 7
             assert len(raw) > 0
 
             o_head = original["head"]
@@ -822,7 +822,7 @@ class TestTransformSerializationV5:
 
         assert msg_type == binary_serializer.MSG_ROOM_POSE
         assert decoded is not None
-        assert decoded["protocolVersion"] == 6
+        assert decoded["protocolVersion"] == 7
         assert decoded["roomId"] == "room-v5"
         assert len(decoded["clients"]) == 2
 
@@ -956,6 +956,32 @@ class TestTransformSerializationV5:
         )
         assert decoded is not None
         assert len(decoded["virtuals"]) == max_vt
+
+
+class TestClientHelloSerialization:
+    """Tests for client hello serialization/deserialization."""
+
+    def test_roundtrip_visible_client(self) -> None:
+        """Visible client hello round-trips correctly."""
+        payload = binary_serializer.serialize_client_hello("device-a", is_stealth=False)
+        msg_type, data, raw = binary_serializer.deserialize(payload)
+
+        assert msg_type == binary_serializer.MSG_CLIENT_HELLO
+        assert raw == b""
+        assert data is not None
+        assert data["deviceId"] == "device-a"
+        assert data["isStealthMode"] is False
+
+    def test_roundtrip_stealth_client(self) -> None:
+        """Stealth client hello carries the stealth flag."""
+        payload = binary_serializer.serialize_client_hello("device-b", is_stealth=True)
+        msg_type, data, _ = binary_serializer.deserialize(payload)
+
+        assert msg_type == binary_serializer.MSG_CLIENT_HELLO
+        assert data is not None
+        assert data["deviceId"] == "device-b"
+        assert data["isStealthMode"] is True
+        assert data["flags"] & binary_serializer.CLIENT_HELLO_FLAG_STEALTH
 
 
 class TestRPCMessageSerialization:

@@ -42,13 +42,16 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 
 ## Wire protocol compatibility
 
-- Current transform wire protocol is `protocolVersion = 5`.
-- Transform messages use `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with the compact V5 pose body.
-- v5 adds an optional `MovingFloorLocal` pose flag. Bound avatars send head, hands, and virtual transforms in the registered moving floor's local coordinates, and reuse the existing 8-byte physical slot as direct physical position/yaw.
-- Unbound v5 poses keep the v4 `xrOriginDelta` semantics: `xrOriginDelta` carries a Y component as a 4th `int16` (`dx, dy, dz, dyaw` = 8 bytes vs. v3's 6), so receivers can reconstruct the sender's rig-Y motion.
+- Current wire protocol is `protocolVersion = 7`.
+- Transport uses three sockets: control (`control_port`, default `5555`) for RPC, Network Variables, ownership, ID mapping, and client hello; transform uplink (`transform_port`, default `5557`) for client/object poses; PUB/SUB (`pub_port`, default `5556`) for room pose and room object downlink.
+- Discovery responses use `STYLY-NETSYNC2|controlPort|transformPort|pubPort|serverName`; legacy `STYLY-NETSYNC|...` responses are explicitly incompatible.
+- `dealer_port` / `--dealer-port` remain a one-release compatibility alias for `control_port` / `--control-port`.
+- Transform messages use `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with the compact pose body. Clients register control identity with `MSG_CLIENT_HELLO` (19).
+- Moving-floor-local poses set the `MovingFloorLocal` pose flag. Bound avatars send head, hands, and virtual transforms in the registered moving floor's local coordinates, and reuse the existing 8-byte physical slot as direct physical position/yaw.
+- Unbound poses keep the `xrOriginDelta` semantics: `xrOriginDelta` carries a Y component as a 4th `int16` (`dx, dy, dz, dyaw` = 8 bytes), so receivers can reconstruct the sender's rig-Y motion.
 - Legacy transform protocols (v2/v3) and JSON transform fallback are not supported.
 - Deploy Unity and Python updates together when changing transform protocol behavior.
-- Protocol v5 position quantization ranges:
+- Protocol v7 position quantization ranges:
   - Absolute (`headPosAbs` only): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
   - XROrigin locomotion delta for unbound poses (`xrOriginDelta`, 4×`int16`: `dx, dy, dz, dyaw`): `0.01 m` per unit for translation, `0.1°` for yaw. Receivers reconstruct `physicalPos = invDeltaRot * (headPos − deltaPos)`; it is not on the wire as a separate absolute field.
   - Direct physical payload for moving-floor-local poses (`physical`, 4×`int16`: `x, y, z, yaw`): `0.01 m` per unit for translation, `0.1°` for yaw.
@@ -59,7 +62,7 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 
 The following options summarize trade-offs when expanding absolute-position range.
 
-Assumed unbound baseline (`protocolVersion=5`, `MovingFloorLocal` off):
+Assumed unbound baseline (`protocolVersion=7`, `MovingFloorLocal` off):
 - Client pose body with `Physical+Head+Right+Left` valid and `virtualCount=0`: `46 bytes` (matches `test_client_body_size_with_full_pose_no_virtuals`).
 - Room per-client entry (`clientNo + poseTime + clientBody`): `56 bytes`.
 
@@ -228,4 +231,4 @@ The response includes the room ID and whether each key was `"applied"`, `"queued
 
 ### Read consistency
 
-GET endpoints return a snapshot of the REST bridge's in-process cache, which is populated by PUB-SUB broadcasts from the server. The first request to a room lazily creates a bridge and may return an empty snapshot until the initial broadcasts arrive — retry after a short delay if needed.
+GET endpoints return a snapshot of the REST bridge's in-process cache, which is populated by control-lane sync messages from the server. The first request to a room lazily creates a bridge and may return an empty snapshot until the initial sync arrives — retry after a short delay if needed.

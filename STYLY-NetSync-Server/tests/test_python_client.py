@@ -5,6 +5,7 @@ Test the Python NetSync client implementation meets requirements.
 Validates all acceptance criteria from the implementation brief.
 """
 
+import socket
 import threading
 import time
 
@@ -14,6 +15,21 @@ from styly_netsync import (
     net_sync_manager,
     transform_data,
 )
+
+
+def _find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("", 0))
+        return sock.getsockname()[1]
+
+
+def _wait_until(predicate, timeout=5.0, interval=0.02):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return False
 
 
 def test_packaging():
@@ -214,6 +230,88 @@ def test_rpc():
         client2.stop()
 
     finally:
+        server.stop()
+
+
+def test_rpc_burst_reaches_ten_targets_during_transform_flood():
+    """Control RPC burst should reach all targets while transforms are flooding."""
+    control_port = _find_free_port()
+    transform_port = _find_free_port()
+    pub_port = _find_free_port()
+    room_id = "rpc_burst_flood"
+
+    server = NetSyncServer(
+        control_port=control_port,
+        transform_port=transform_port,
+        pub_port=pub_port,
+        enable_server_discovery=False,
+    )
+    server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
+    server_thread.start()
+    time.sleep(0.3)
+
+    clients = []
+    try:
+        for _ in range(11):
+            client = net_sync_manager(
+                server="tcp://localhost",
+                dealer_port=control_port,
+                transform_port=transform_port,
+                sub_port=pub_port,
+                room=room_id,
+                auto_dispatch=False,
+            )
+            client.start()
+            clients.append(client)
+
+        assert _wait_until(
+            lambda: all(client.client_no is not None for client in clients),
+            timeout=8.0,
+        )
+
+        sender = clients[0]
+        targets = clients[1:]
+        target_client_nos = [client.client_no for client in targets]
+        assert all(client_no is not None for client_no in target_client_nos)
+        target_ids = [int(client_no) for client_no in target_client_nos]
+
+        received: dict[int, list[tuple[int, str, list[str]]]] = {
+            client_no: [] for client_no in target_ids
+        }
+
+        for target in targets:
+            assert target.client_no is not None
+            target_client_no = target.client_no
+
+            def on_rpc(sender_no, func_name, args, client_no=target_client_no):
+                received[client_no].append((sender_no, func_name, args))
+
+            target.on_rpc_received.add_listener(on_rpc)
+
+        tx = client_transform_data(
+            physical=transform_data(pos_x=1.0, pos_z=2.0, rot_y=45.0),
+            head=transform_data(pos_x=1.0, pos_y=1.6, pos_z=2.0),
+        )
+
+        for _ in range(50):
+            for client in clients:
+                client.send_transform(tx)
+
+        assert sender.rpc("BurstRpc", ["payload"], target_ids)
+
+        def all_targets_received():
+            for client in clients:
+                client.send_transform(tx)
+            for target in targets:
+                target.dispatch_pending_events()
+            return all(received[client_no] for client_no in target_ids)
+
+        assert _wait_until(all_targets_received, timeout=8.0, interval=0.01)
+        assert server.ctrl_unicast_dropped == 0
+
+    finally:
+        for client in clients:
+            client.stop()
         server.stop()
 
 

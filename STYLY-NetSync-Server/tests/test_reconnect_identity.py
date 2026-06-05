@@ -1,7 +1,7 @@
 """
 Tests for client reconnect identity update and NV resync.
 
-Verifies that when a client reconnects (same device_id, new DEALER socket /
+    Verifies that when a client reconnects (same device_id, new control DEALER socket /
 ZMQ identity) before the server timeout evicts it, the server:
   1. Updates the stored ROUTER identity.
   2. Marks the room ID mapping as dirty.
@@ -61,7 +61,7 @@ def test_reconnect_updates_identity_and_resyncs_nv() -> None:
 
         # Capture the original identity stored by the server
         with server._rooms_lock:
-            original_identity = server.rooms[ROOM][device_id]["identity"]
+            original_identity = server.rooms[ROOM][device_id]["control_identity"]
 
         assert original_identity is not None, "Server should store client identity"
 
@@ -91,7 +91,7 @@ def test_reconnect_updates_identity_and_resyncs_nv() -> None:
 
         # 1. Server should have updated the identity
         with server._rooms_lock:
-            new_identity = server.rooms[ROOM][device_id]["identity"]
+            new_identity = server.rooms[ROOM][device_id]["control_identity"]
         assert (
             new_identity != original_identity
         ), "Server should update identity on reconnect"

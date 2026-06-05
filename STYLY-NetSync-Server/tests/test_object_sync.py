@@ -33,6 +33,7 @@ class TestObjectPoseSerialization:
 
     def test_basic_round_trip(self) -> None:
         data = {
+            "deviceId": "device-xyz",
             "objectId": _OBJ_ID_1,
             "poseSeq": 42,
             "posX": 1.5,
@@ -49,6 +50,7 @@ class TestObjectPoseSerialization:
         msg_type, result, _ = deserialize(raw)
         assert msg_type == MSG_OBJECT_POSE
         assert result is not None
+        assert result["deviceId"] == "device-xyz"
         assert result["objectId"] == _OBJ_ID_1
         assert result["poseSeq"] == 42
         assert abs(result["posX"] - 1.5) < 0.02
@@ -283,12 +285,15 @@ class TestServerObjectOwnership:
         srv.ctrl_unicast_sent = 0
         srv.ctrl_unicast_wouldblock = 0
         srv.ctrl_unicast_dropped = 0
+        srv.ctrl_unicast_unreachable = 0
+        srv.wrong_lane_dropped = 0
 
         # Initialize a room
         srv._initialize_room("test_room")
         # Add a client
         srv.rooms["test_room"]["device_a"] = {
-            "identity": b"ident_a",
+            "control_identity": b"ident_a",
+            "transform_identity": b"transform_a",
             "last_update": time.monotonic(),
             "transform_data": {},
             "client_no": 1,
@@ -298,7 +303,8 @@ class TestServerObjectOwnership:
         srv.room_client_no_to_device_id["test_room"][1] = "device_a"
 
         srv.rooms["test_room"]["device_b"] = {
-            "identity": b"ident_b",
+            "control_identity": b"ident_b",
+            "transform_identity": b"transform_b",
             "last_update": time.monotonic(),
             "transform_data": {},
             "client_no": 2,

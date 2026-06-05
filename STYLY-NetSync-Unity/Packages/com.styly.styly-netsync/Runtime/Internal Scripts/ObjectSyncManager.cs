@@ -80,7 +80,7 @@ namespace Styly.NetSync
             _connectionManager.TryEnqueueControl(roomId, payload);
         }
 
-        public void Tick(string roomId, float currentTime, int localClientNo, float transformSendRate)
+        public void Tick(string roomId, float currentTime, int localClientNo, string localDeviceId, float transformSendRate)
         {
             float sendInterval = 1f / Mathf.Max(0.5f, transformSendRate);
 
@@ -123,7 +123,7 @@ namespace Styly.NetSync
                 // Serialize and send
                 _buf.EnsureCapacity(128);
                 _buf.Stream.Position = 0;
-                BinarySerializer.SerializeObjectPoseInto(_buf.Writer, objectId, state.PoseSeq, pos, rot);
+                BinarySerializer.SerializeObjectPoseInto(_buf.Writer, localDeviceId, objectId, state.PoseSeq, pos, rot);
                 _buf.Writer.Flush();
 
                 var length = (int)_buf.Stream.Position;

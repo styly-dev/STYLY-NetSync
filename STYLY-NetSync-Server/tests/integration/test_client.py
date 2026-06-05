@@ -32,7 +32,8 @@ Usage:
   python test_client.py [options]
 
 Options:
-  --dealer-port PORT  Server DEALER port (default: 5555)
+  --control-port PORT  Server control port (default: 5555)
+  --transform-port PORT  Server transform port (default: 5557)
   --sub-port PORT     Server PUB port (default: 5556)
   --server ADDRESS    Server address (default: localhost)
   --room ROOM_ID    Room ID to join (default: test_room)
@@ -64,8 +65,11 @@ from styly_netsync.binary_serializer import (
     MSG_CLIENT_VAR_SYNC,
     MSG_DEVICE_ID_MAPPING,
     MSG_GLOBAL_VAR_SYNC,
+    MSG_ROOM_POSE,
     MSG_ROOM_TRANSFORM,
+    MSG_RPC,
     deserialize,
+    serialize_client_hello,
     serialize_client_transform,
     serialize_client_var_set,
     serialize_global_var_set,
@@ -85,18 +89,21 @@ class TestClient:
     def __init__(
         self,
         dealer_port=5555,
+        transform_port=5557,
         sub_port=5556,
         server_address="localhost",
         room_id="test_room",
     ):
         self.context = zmq.Context()
-        self.dealer_socket = None
+        self.dealer_socket = None  # Control lane: hello, RPC, Network Variables
+        self.transform_socket = None  # Transform lane: client/object poses
         self.sub_socket = None
         self.device_id = str(uuid.uuid4())
         self.client_no = None
         self.room_id = room_id
         self.server_address = server_address
         self.dealer_port = dealer_port
+        self.transform_port = transform_port
         self.sub_port = sub_port
         self.running = False
         self.stop_event = Event()
@@ -116,13 +123,22 @@ class TestClient:
     def connect(self):
         """Connect to the server"""
         try:
-            # Connect DEALER socket
+            # Connect control DEALER socket (hello, RPC, Network Variables)
             self.dealer_socket = self.context.socket(zmq.DEALER)
             self.dealer_socket.connect(
                 f"tcp://{self.server_address}:{self.dealer_port}"
             )
             logger.info(
-                f"Connected DEALER socket to tcp://{self.server_address}:{self.dealer_port}"
+                f"Connected control DEALER socket to tcp://{self.server_address}:{self.dealer_port}"
+            )
+
+            # Connect transform DEALER socket (client/object poses)
+            self.transform_socket = self.context.socket(zmq.DEALER)
+            self.transform_socket.connect(
+                f"tcp://{self.server_address}:{self.transform_port}"
+            )
+            logger.info(
+                f"Connected transform DEALER socket to tcp://{self.server_address}:{self.transform_port}"
             )
 
             # Connect SUB socket
@@ -132,6 +148,13 @@ class TestClient:
             logger.info(
                 f"Connected SUB socket to tcp://{self.server_address}:{self.sub_port}"
             )
+
+            # Register the control identity by sending a hello before any poses.
+            # The server binds control_identity from this message and may drop
+            # transform-lane traffic that arrives without a registered client.
+            hello = serialize_client_hello(self.device_id, is_stealth=False)
+            self.dealer_socket.send_multipart([self.room_id.encode("utf-8"), hello])
+            logger.info("Sent client hello on control lane")
 
             return True
         except Exception as e:
@@ -145,6 +168,8 @@ class TestClient:
 
         if self.dealer_socket:
             self.dealer_socket.close()
+        if self.transform_socket:
+            self.transform_socket.close()
         if self.sub_socket:
             self.sub_socket.close()
         self.context.term()
@@ -197,9 +222,9 @@ class TestClient:
             "virtuals": [],  # No virtual objects for this test
         }
 
-        # Serialize and send
+        # Serialize and send on the transform lane
         message = serialize_client_transform(transform_data)
-        self.dealer_socket.send_multipart([self.room_id.encode("utf-8"), message])
+        self.transform_socket.send_multipart([self.room_id.encode("utf-8"), message])
         logger.debug(
             f"Sent transform: pos({self.position_x:.2f}, {self.position_z:.2f}), rot({self.rotation_y:.2f})"
         )
@@ -259,53 +284,62 @@ class TestClient:
         self.dealer_socket.send_multipart([self.room_id.encode("utf-8"), message])
         logger.info(f"Sent RPC: TestRPC({current_time_str})")
 
+    def process_payload(self, data, source):
+        """Process one decoded server payload from either PUB or control lane."""
+        msg_type, msg_data, _ = deserialize(data)
+
+        if msg_type == MSG_DEVICE_ID_MAPPING:
+            # Update our client number
+            for mapping in msg_data["mappings"]:
+                if mapping["deviceId"] == self.device_id:
+                    self.client_no = mapping["clientNo"]
+                    logger.info(f"Received client number: {self.client_no}")
+
+        elif msg_type in (MSG_ROOM_TRANSFORM, MSG_ROOM_POSE):
+            logger.debug(
+                f"Received room transform with {len(msg_data['clients'])} clients"
+            )
+
+        elif msg_type == MSG_GLOBAL_VAR_SYNC:
+            for var in msg_data["variables"]:
+                logger.info(
+                    f"Global variable update: {var['name']} = {var['value']} (by client {var['lastWriterClientNo']})"
+                )
+
+        elif msg_type == MSG_CLIENT_VAR_SYNC:
+            for client_no, variables in msg_data["clientVariables"].items():
+                for var in variables:
+                    logger.info(
+                        f"Client {client_no} variable update: {var['name']} = {var['value']}"
+                    )
+
+        elif msg_type == MSG_RPC:
+            logger.info(
+                f"Received RPC from {source}: {msg_data['functionName']}({msg_data['argumentsJson']}) "
+                f"by client {msg_data['senderClientNo']}"
+            )
+
     def receive_messages(self):
         """Receive and process messages from the server"""
         poller = zmq.Poller()
+        poller.register(self.dealer_socket, zmq.POLLIN)
         poller.register(self.sub_socket, zmq.POLLIN)
 
         while self.running:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
 
+                if self.dealer_socket in socks:
+                    message_parts = self.dealer_socket.recv_multipart()
+                    if len(message_parts) >= 2:
+                        self.process_payload(message_parts[-1], "control")
+
                 if self.sub_socket in socks:
                     message_parts = self.sub_socket.recv_multipart()
                     if len(message_parts) >= 2:
                         _room_id = message_parts[0].decode("utf-8")  # noqa: F841
                         data = message_parts[1]
-
-                        msg_type, msg_data, _ = deserialize(data)
-
-                        if msg_type == MSG_DEVICE_ID_MAPPING:
-                            # Update our client number
-                            for mapping in msg_data["mappings"]:
-                                if mapping["deviceId"] == self.device_id:
-                                    self.client_no = mapping["clientNo"]
-                                    logger.info(
-                                        f"Received client number: {self.client_no}"
-                                    )
-
-                        elif msg_type == MSG_ROOM_TRANSFORM:
-                            logger.debug(
-                                f"Received room transform with {len(msg_data['clients'])} clients"
-                            )
-
-                        elif msg_type == MSG_GLOBAL_VAR_SYNC:
-                            for var in msg_data["variables"]:
-                                logger.info(
-                                    f"Global variable update: {var['name']} = {var['value']} (by client {var['lastWriterClientNo']})"
-                                )
-
-                        elif msg_type == MSG_CLIENT_VAR_SYNC:
-                            for client_no, variables in msg_data[
-                                "clientVariables"
-                            ].items():
-                                for var in variables:
-                                    logger.info(
-                                        f"Client {client_no} variable update: {var['name']} = {var['value']}"
-                                    )
-
-                        # RPC messages would be received here
+                        self.process_payload(data, "pub")
 
             except zmq.Again:
                 pass
@@ -364,7 +398,16 @@ def main():
 
     parser = argparse.ArgumentParser(description="STYLY-NetSync Test Client")
     parser.add_argument(
-        "--dealer-port", type=int, default=5555, help="Server DEALER port"
+        "--control-port", type=int, default=None, help="Server control port"
+    )
+    parser.add_argument(
+        "--dealer-port",
+        type=int,
+        default=5555,
+        help="Deprecated alias for --control-port",
+    )
+    parser.add_argument(
+        "--transform-port", type=int, default=5557, help="Server transform port"
     )
     parser.add_argument("--sub-port", type=int, default=5556, help="Server PUB port")
     parser.add_argument(
@@ -373,9 +416,12 @@ def main():
     parser.add_argument("--room", type=str, default="test_room", help="Room ID")
 
     args = parser.parse_args()
+    if args.control_port is not None:
+        args.dealer_port = args.control_port
 
     client = TestClient(
         dealer_port=args.dealer_port,
+        transform_port=args.transform_port,
         sub_port=args.sub_port,
         server_address=args.server,
         room_id=args.room,

@@ -11,8 +11,14 @@
 # Configuration priority: CLI arguments > user config > default config
 
 # Network Settings
-# ZeroMQ DEALER port for client-server communication
+# ZeroMQ DEALER/ROUTER control port for RPC, NV, ownership, and hello traffic
+control_port = 5555
+
+# Deprecated alias for control_port. Keep this equal to control_port for one release.
 dealer_port = 5555
+
+# ZeroMQ DEALER/ROUTER transform uplink port for client and object poses
+transform_port = 5557
 
 # ZeroMQ PUB port for server-to-client broadcasts
 pub_port = 5556
