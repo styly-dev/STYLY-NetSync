@@ -10,33 +10,63 @@ from styly_netsync import binary_serializer
 from styly_netsync.server import NetSyncServer
 
 
-def test_router_control_drain_retries_blocked_packet_fifo() -> None:
-    """A would-block control unicast is retained and retried before later packets."""
+def test_router_control_drain_retries_deferred_packet_next_pass() -> None:
+    """A would-block control unicast is retained and retried on the next drain."""
     srv = NetSyncServer(enable_server_discovery=False)
     router = MagicMock()
     router.send_multipart.side_effect = [zmq.Again(), None]
     srv.control_router = router
-    srv.ROUTER_CTRL_DRAIN_BATCH = 1
 
     first = (b"ident-a", b"room", b"first")
-    second = (b"ident-b", b"room", b"second")
     srv._router_queue_ctrl.put_nowait(first)
-    srv._router_queue_ctrl.put_nowait(second)
 
     srv._drain_router_ctrl_queue()
     assert srv.ctrl_unicast_wouldblock == 1
     assert srv.ctrl_unicast_sent == 0
-    assert srv._blocked_router_packet == first
+    assert srv._router_queue_ctrl.get_nowait() == first
+    srv._router_queue_ctrl.put_nowait(first)
 
     srv._drain_router_ctrl_queue()
     assert srv.ctrl_unicast_sent == 1
-    assert srv._blocked_router_packet is None
     assert router.send_multipart.call_args_list[1].args[0] == [
         first[0],
         first[1],
         first[2],
     ]
-    assert srv._router_queue_ctrl.get_nowait() == second
+
+
+def test_router_control_drain_defers_blocked_identity_without_stalling_others() -> None:
+    """One slow client must not block control unicasts for other identities."""
+    srv = NetSyncServer(enable_server_discovery=False)
+    router = MagicMock()
+
+    def send_multipart(frames: list[bytes], **_kwargs: object) -> None:
+        if frames[0] == b"ident-a":
+            raise zmq.Again()
+
+    router.send_multipart.side_effect = send_multipart
+    srv.control_router = router
+
+    first = (b"ident-a", b"room", b"first")
+    second = (b"ident-b", b"room", b"second")
+    third = (b"ident-a", b"room", b"third")
+    srv._router_queue_ctrl.put_nowait(first)
+    srv._router_queue_ctrl.put_nowait(second)
+    srv._router_queue_ctrl.put_nowait(third)
+
+    srv._drain_router_ctrl_queue()
+
+    assert srv.ctrl_unicast_wouldblock == 1
+    assert srv.ctrl_unicast_sent == 1
+    assert [call.args[0][0] for call in router.send_multipart.call_args_list] == [
+        b"ident-a",
+        b"ident-b",
+    ]
+
+    remaining = []
+    while not srv._router_queue_ctrl.empty():
+        remaining.append(srv._router_queue_ctrl.get_nowait())
+    assert remaining == [first, third]
 
 
 def test_transform_identity_does_not_overwrite_control_identity() -> None:
@@ -197,6 +227,51 @@ def test_object_pose_attributed_by_payload_device_id() -> None:
         obj_state = srv.room_objects[room_id][object_id]
     assert obj_state["owner_client_no"] == client_no
     assert obj_state["pose_seq"] == 3
+
+
+def test_object_pose_before_hello_assigns_payload_device_id() -> None:
+    """A stealth owner's object pose before hello must not be dropped."""
+    srv = NetSyncServer(enable_server_discovery=False)
+    room_id = "obj-before-hello-room"
+    device_id = "stealth-owner-before-hello"
+    object_id = 0xABCDEF02
+
+    pose = binary_serializer.serialize_object_pose(
+        {
+            "deviceId": device_id,
+            "objectId": object_id,
+            "poseSeq": 7,
+            "posX": 1.0,
+            "posY": 2.0,
+            "posZ": 3.0,
+            "rotX": 0.0,
+            "rotY": 0.0,
+            "rotZ": 0.0,
+            "rotW": 1.0,
+        }
+    )
+    msg_type, pose_data, _ = binary_serializer.deserialize(pose)
+    assert msg_type == binary_serializer.MSG_OBJECT_POSE
+    assert pose_data is not None
+
+    srv._handle_transform_message(b"transform-x", room_id, msg_type, pose_data, pose)
+
+    client_no = srv._get_client_no_for_device_id(room_id, device_id)
+    assert client_no != 0
+    with srv._rooms_lock:
+        obj_state = srv.room_objects[room_id][object_id]
+    assert obj_state["owner_client_no"] == client_no
+    assert obj_state["pose_seq"] == 7
+
+    hello = binary_serializer.serialize_client_hello(device_id, is_stealth=True)
+    _, hello_data, _ = binary_serializer.deserialize(hello)
+    assert hello_data is not None
+    srv._handle_client_hello(b"control-1", room_id, hello_data)
+
+    with srv._rooms_lock:
+        client_data = srv.rooms[room_id][device_id]
+    assert client_data["client_no"] == client_no
+    assert client_data["control_identity"] == b"control-1"
 
 
 def test_wrong_lane_message_is_dropped() -> None:

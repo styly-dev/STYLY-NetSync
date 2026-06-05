@@ -320,9 +320,10 @@ namespace Styly.NetSync
 
                 var roomIdBytes = Encoding.UTF8.GetBytes(roomId);
 
-                // Queue connection callback for main thread instead of invoking directly
-                _pendingMainThreadActions.Enqueue(() => OnConnectionEstablished?.Invoke());
+                // Ensure hello is the first queued control message for this connection.
                 EnqueueClientHello(roomId, isStealth: false);
+                // Queue connection callback for main thread instead of invoking directly.
+                _pendingMainThreadActions.Enqueue(() => OnConnectionEstablished?.Invoke());
 
                 while (!_shouldStop)
                 {

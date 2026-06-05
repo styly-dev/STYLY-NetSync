@@ -476,7 +476,7 @@ namespace Styly.NetSync
 
             // Device ID (as UTF8 bytes with length prefix)
             var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(data != null ? data.deviceId ?? string.Empty : string.Empty);
-            var deviceIdLength = Mathf.Min(deviceIdBytes.Length, byte.MaxValue);
+            var deviceIdLength = System.Math.Min(deviceIdBytes.Length, byte.MaxValue);
             writer.Write((byte)deviceIdLength);
             writer.Write(deviceIdBytes, 0, deviceIdLength);
 
@@ -581,7 +581,7 @@ namespace Styly.NetSync
             writer.Write(isStealth ? CLIENT_HELLO_FLAG_STEALTH : (byte)0);
 
             var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
-            var deviceIdLength = Mathf.Min(deviceIdBytes.Length, byte.MaxValue);
+            var deviceIdLength = System.Math.Min(deviceIdBytes.Length, byte.MaxValue);
             writer.Write((byte)deviceIdLength);
             writer.Write(deviceIdBytes, 0, deviceIdLength);
         }
@@ -614,7 +614,7 @@ namespace Styly.NetSync
 
             // Device ID (as UTF8 bytes with length prefix)
             var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
-            var deviceIdLength = Mathf.Min(deviceIdBytes.Length, byte.MaxValue);
+            var deviceIdLength = System.Math.Min(deviceIdBytes.Length, byte.MaxValue);
             writer.Write((byte)deviceIdLength);
             writer.Write(deviceIdBytes, 0, deviceIdLength);
 
@@ -635,7 +635,7 @@ namespace Styly.NetSync
             // pose by payload identity rather than the transform-lane socket identity,
             // which a stealth owner never binds (it sends no MSG_CLIENT_POSE).
             var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
-            var deviceIdLength = Mathf.Min(deviceIdBytes.Length, byte.MaxValue);
+            var deviceIdLength = System.Math.Min(deviceIdBytes.Length, byte.MaxValue);
             writer.Write((byte)deviceIdLength);
             writer.Write(deviceIdBytes, 0, deviceIdLength);
             writer.Write(objectId);

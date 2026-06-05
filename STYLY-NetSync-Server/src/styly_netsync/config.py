@@ -448,6 +448,7 @@ def create_config_from_args(
     # Step 1: Load default configuration (required)
     config = load_default_config()
     overrides: list[ConfigOverride] = []
+    user_config_keys: set[str] = set()
 
     # Step 2: Override with user config if specified
     if hasattr(args, "config") and args.config is not None:
@@ -466,6 +467,7 @@ def create_config_from_args(
 
         # Apply user config overrides
         if config_data:
+            user_config_keys = set(config_data.keys())
             # Track what values are being overridden (compare with existing config)
             for key, new_value in config_data.items():
                 default_value = getattr(config, key)
@@ -476,6 +478,20 @@ def create_config_from_args(
 
     # Step 3: Apply CLI overrides (highest priority)
     config = merge_cli_args(config, args)
+
+    # Step 3.5: Derive the transform port from the resolved control port unless
+    # the user set it explicitly. The transform lane defaults to
+    # control_port + 2 everywhere else (Python client/simulator and the
+    # NetSyncServer constructor), so a deployment that customizes only the
+    # control (or deprecated dealer) port must move the transform port with it;
+    # otherwise the server would bind the static default while clients send
+    # poses to control_port + 2. This is a no-op for the default ports
+    # (5555 + 2 == 5557).
+    transform_explicit = (
+        hasattr(args, "transform_port") and args.transform_port is not None
+    ) or "transform_port" in user_config_keys
+    if not transform_explicit:
+        config = dataclass_replace(config, transform_port=config.control_port + 2)
 
     # Step 4: Validate final configuration
     errors = validate_config(config)

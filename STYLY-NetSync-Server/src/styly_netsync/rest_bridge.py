@@ -100,6 +100,11 @@ class RoomBridge:
     ) -> None:
         if room_id is None:
             if isinstance(sub_port, str):
+                logger.warning(
+                    "RoomBridge(server_addr, dealer_port, sub_port, room_id) is "
+                    "deprecated; pass transform_port, sub_port, and room_id "
+                    "explicitly to avoid deriving transform_port from dealer_port"
+                )
                 room_id = sub_port
                 sub_port = transform_port
                 transform_port = dealer_port + 2

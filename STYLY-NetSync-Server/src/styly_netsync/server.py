@@ -264,7 +264,6 @@ class NetSyncServer:
         self._router_queue_ctrl: Queue[tuple[bytes, bytes, bytes]] = Queue(
             maxsize=self.ROUTER_CTRL_QUEUE_MAXSIZE
         )
-        self._blocked_router_packet: tuple[bytes, bytes, bytes] | None = None
 
         # Statistics for router control messages
         self.ctrl_unicast_sent = 0
@@ -666,8 +665,8 @@ class NetSyncServer:
         """Thread-safe enqueue of a control message for unicast via ROUTER.
 
         Used for control-like messages (RPC, NV sync, ID mapping) that are
-        retried FIFO under socket backpressure. Messages are dropped only when
-        this application queue is already full.
+        retried after socket backpressure. Messages are dropped only when this
+        application queue is already full.
 
         Args:
             identity: Client's ZeroMQ identity (from ROUTER socket)
@@ -1204,12 +1203,11 @@ class NetSyncServer:
             # transform_identity; relying on that identity would silently drop its
             # object poses.
             sender_device_id = data.get("deviceId")
-            if sender_device_id:
-                sender_client_no = self._get_client_no_for_device_id(
+            if isinstance(sender_device_id, str) and sender_device_id:
+                sender_client_no = self._get_or_assign_client_no(
                     room_id, sender_device_id
                 )
-                if sender_client_no:
-                    self._handle_object_pose(room_id, sender_client_no, data)
+                self._handle_object_pose(room_id, sender_client_no, data)
         else:
             self._drop_wrong_lane("transform", room_id, msg_type)
 
@@ -1253,28 +1251,32 @@ class NetSyncServer:
         if router is None:
             return
 
+        deferred_packets: list[tuple[bytes, bytes, bytes]] = []
+        deferred_identities: set[bytes] = set()
+
         for _ in range(self.ROUTER_CTRL_DRAIN_BATCH):
-            if self._blocked_router_packet is not None:
-                ident, room_bytes, msg_bytes = self._blocked_router_packet
-            else:
-                try:
-                    ident, room_bytes, msg_bytes = self._router_queue_ctrl.get_nowait()
-                except Empty:
-                    break
+            try:
+                ident, room_bytes, msg_bytes = self._router_queue_ctrl.get_nowait()
+            except Empty:
+                break
+
+            if ident in deferred_identities:
+                deferred_packets.append((ident, room_bytes, msg_bytes))
+                continue
 
             try:
                 # Send via ROUTER: [identity, room_id, payload]
                 router.send_multipart(
                     [ident, room_bytes, msg_bytes], flags=zmq.DONTWAIT
                 )
-                self._blocked_router_packet = None
                 self._increment_stat("ctrl_unicast_sent")
             except zmq.Again:
-                self._blocked_router_packet = (ident, room_bytes, msg_bytes)
+                # Defer this identity to the tail so one slow client does not
+                # head-of-line block control messages for the rest of the room.
+                deferred_identities.add(ident)
+                deferred_packets.append((ident, room_bytes, msg_bytes))
                 self._increment_stat("ctrl_unicast_wouldblock")
-                break
             except Exception as exc:
-                self._blocked_router_packet = None
                 if isinstance(exc, zmq.ZMQError) and getattr(
                     exc, "errno", None
                 ) == getattr(zmq, "EHOSTUNREACH", None):
@@ -1283,6 +1285,15 @@ class NetSyncServer:
                 else:
                     self._increment_stat("ctrl_unicast_dropped")
                     logger.error(f"Router send error: {exc}")
+
+        for packet in deferred_packets:
+            try:
+                self._router_queue_ctrl.put_nowait(packet)
+            except Full:
+                self._increment_stat("ctrl_unicast_dropped")
+                logger.warning(
+                    "Router control queue full: dropping deferred control message"
+                )
 
     def _handle_client_hello(
         self, client_identity: bytes, room_id: str, data: dict[str, Any]
@@ -1295,11 +1306,10 @@ class NetSyncServer:
 
         device_id = device_id_raw
         is_stealth = bool(data.get("isStealthMode", False))
-        client_no = self._get_or_assign_client_no(room_id, device_id)
         now = time.monotonic()
 
         with self._rooms_lock:
-            self._initialize_room(room_id)
+            client_no = self._get_or_assign_client_no(room_id, device_id)
             is_new_client = device_id not in self.rooms[room_id]
             is_reconnect = False
             stealth_changed = False
@@ -1383,6 +1393,7 @@ class NetSyncServer:
         data_with_client_no["clientNo"] = client_no
         data_with_client_no["deviceId"] = device_id  # Keep device ID for reference
 
+        control_identity = None
         with self._rooms_lock:
             # Create room if it doesn't exist
             self._initialize_room(room_id)
@@ -1436,8 +1447,6 @@ class NetSyncServer:
             if is_new_client:
                 self.room_id_mapping_dirty[room_id] = True
 
-        control_identity = None
-        with self._rooms_lock:
             control_identity = self.rooms[room_id][device_id].get("control_identity")
 
         # Sync control state only through the control lane. If transform arrived
