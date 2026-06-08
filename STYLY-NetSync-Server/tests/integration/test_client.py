@@ -241,6 +241,7 @@ class TestClient:
         # Set global variable
         global_var_data = {
             "senderClientNo": self.client_no or 0,
+            "deviceId": self.device_id,
             "variableName": "TimeGlobal",
             "variableValue": current_time_str,
             "timestamp": current_time,
@@ -253,6 +254,7 @@ class TestClient:
         if self.client_no is not None:
             client_var_data = {
                 "senderClientNo": self.client_no,
+                "deviceId": self.device_id,
                 "targetClientNo": self.client_no,  # Set for self
                 "variableName": "TimeLocal",
                 "variableValue": current_time_str,
@@ -277,6 +279,7 @@ class TestClient:
         # Send RPC
         rpc_data = {
             "senderClientNo": self.client_no,
+            "deviceId": self.device_id,
             "functionName": "TestRPC",
             "argumentsJson": json.dumps(["TestRPC", current_time_str]),
         }

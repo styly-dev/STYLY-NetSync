@@ -95,6 +95,8 @@ namespace Styly.NetSync
     {
         // Client number of the sender
         public int senderClientNo;
+        // Stable sender device ID used for control identity binding
+        public string deviceId;
         // Target client numbers. Empty means broadcast.
         public int[] targetClientNos;
         // Name of function to call

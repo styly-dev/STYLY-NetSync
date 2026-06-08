@@ -288,12 +288,12 @@ def _reconstruct_physical_from_head_and_delta(
     return (px, ty, pz), physical_rot
 
 
-class TestTransformSerializationV5:
-    """Tests for protocol v7 transform compact serialization."""
+class TestTransformSerializationV8:
+    """Tests for protocol v8 transform compact serialization."""
 
-    def test_protocol_version_is_v7(self) -> None:
-        """Protocol version constant should be at v7."""
-        assert binary_serializer.PROTOCOL_VERSION == 7
+    def test_protocol_version_is_v8(self) -> None:
+        """Protocol version constant should be at v8."""
+        assert binary_serializer.PROTOCOL_VERSION == 8
 
     def test_client_roundtrip_without_flags_infers_valid_bits(self) -> None:
         """Serializer should infer valid bits when flags are omitted."""
@@ -418,7 +418,7 @@ class TestTransformSerializationV5:
 
             assert msg_type == binary_serializer.MSG_CLIENT_POSE
             assert decoded is not None
-            assert decoded["protocolVersion"] == 7
+            assert decoded["protocolVersion"] == 8
             assert len(raw) > 0
 
             o_head = original["head"]
@@ -822,7 +822,7 @@ class TestTransformSerializationV5:
 
         assert msg_type == binary_serializer.MSG_ROOM_POSE
         assert decoded is not None
-        assert decoded["protocolVersion"] == 7
+        assert decoded["protocolVersion"] == 8
         assert decoded["roomId"] == "room-v5"
         assert len(decoded["clients"]) == 2
 
@@ -991,6 +991,7 @@ class TestRPCMessageSerialization:
         """Broadcast RPC: 0 targets round-trips correctly."""
         data = {
             "senderClientNo": 42,
+            "deviceId": "device-a",
             "targetClientNos": [],
             "functionName": "SayHello",
             "argumentsJson": '["arg1","arg2"]',
@@ -1001,6 +1002,7 @@ class TestRPCMessageSerialization:
 
         assert msg_type == binary_serializer.MSG_RPC
         assert result["senderClientNo"] == 42
+        assert result["deviceId"] == "device-a"
         assert result["targetClientNos"] == []
         assert result["functionName"] == "SayHello"
         assert result["argumentsJson"] == '["arg1","arg2"]'
@@ -1009,6 +1011,7 @@ class TestRPCMessageSerialization:
         """Single-target RPC round-trips correctly."""
         data = {
             "senderClientNo": 1,
+            "deviceId": "device-a",
             "targetClientNos": [7],
             "functionName": "Ping",
             "argumentsJson": "[]",
@@ -1027,6 +1030,7 @@ class TestRPCMessageSerialization:
         targets = [1, 2, 50, 65535]
         data = {
             "senderClientNo": 100,
+            "deviceId": "device-a",
             "targetClientNos": targets,
             "functionName": "Broadcast",
             "argumentsJson": '["hello"]',
@@ -1042,6 +1046,7 @@ class TestRPCMessageSerialization:
         targets = list(range(255))
         data = {
             "senderClientNo": 0,
+            "deviceId": "device-a",
             "targetClientNos": targets,
             "functionName": "F",
             "argumentsJson": "",
@@ -1056,6 +1061,7 @@ class TestRPCMessageSerialization:
         """>255 targets raises ValueError."""
         data = {
             "senderClientNo": 0,
+            "deviceId": "device-a",
             "targetClientNos": list(range(256)),
             "functionName": "F",
             "argumentsJson": "",
@@ -1068,6 +1074,7 @@ class TestRPCMessageSerialization:
         """targetClientNos=None treated as broadcast (0 targets)."""
         data = {
             "senderClientNo": 5,
+            "deviceId": "device-a",
             "targetClientNos": None,
             "functionName": "Test",
             "argumentsJson": "[]",
@@ -1082,6 +1089,7 @@ class TestRPCMessageSerialization:
         """Omitted targetClientNos key treated as broadcast."""
         data = {
             "senderClientNo": 5,
+            "deviceId": "device-a",
             "functionName": "Test",
             "argumentsJson": "[]",
         }
@@ -1095,6 +1103,7 @@ class TestRPCMessageSerialization:
         """UTF-8 function name round-trips correctly."""
         data = {
             "senderClientNo": 1,
+            "deviceId": "device-a",
             "targetClientNos": [],
             "functionName": "OnDamage_テスト",
             "argumentsJson": "[]",
@@ -1106,12 +1115,47 @@ class TestRPCMessageSerialization:
         assert result["functionName"] == "OnDamage_テスト"
 
 
+class TestNetworkVariableSetSerialization:
+    """Tests for client-originated Network Variable set messages."""
+
+    def test_global_variable_set_roundtrip_with_device_id(self) -> None:
+        """Global variable set carries the sender device ID."""
+        data = {
+            "senderClientNo": 7,
+            "deviceId": "device-a",
+            "variableName": "score",
+            "variableValue": "10",
+        }
+
+        serialized = binary_serializer.serialize_global_var_set(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_GLOBAL_VAR_SET
+        assert result == data
+
+    def test_client_variable_set_roundtrip_with_device_id(self) -> None:
+        """Client variable set carries the sender device ID."""
+        data = {
+            "senderClientNo": 7,
+            "deviceId": "device-a",
+            "targetClientNo": 8,
+            "variableName": "hp",
+            "variableValue": "5",
+        }
+
+        serialized = binary_serializer.serialize_client_var_set(data)
+        msg_type, result, _ = binary_serializer.deserialize(serialized)
+
+        assert msg_type == binary_serializer.MSG_CLIENT_VAR_SET
+        assert result == data
+
+
 class TestClientVariableClearSerialization:
     """Tests for client variable clear serialization/deserialization."""
 
     def test_roundtrip_client_variable_clear(self) -> None:
         """Client variable clear message round-trips correctly."""
-        data = {"senderClientNo": 7}
+        data = {"senderClientNo": 7, "deviceId": "device-a"}
 
         serialized = binary_serializer.serialize_client_var_clear(data)
         msg_type, result, _ = binary_serializer.deserialize(serialized)

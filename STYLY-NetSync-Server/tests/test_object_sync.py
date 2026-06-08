@@ -180,26 +180,34 @@ class TestRoomObjectsSerialization:
 class TestOwnershipRequestSerialization:
     """Test MSG_OBJECT_OWNERSHIP_REQUEST (15) deserialize."""
 
-    def test_release_ownership(self) -> None:
+    @staticmethod
+    def _request_payload(operation_type: int, object_id: int) -> bytes:
+        device_id = b"device-a"
         buf = bytearray()
         buf.append(MSG_OBJECT_OWNERSHIP_REQUEST)
-        buf.append(1)  # ReleaseOwnership
-        buf.extend(struct.pack("<I", _OBJ_ID_1))
+        buf.append(binary_serializer.PROTOCOL_VERSION)
+        buf.append(len(device_id))
+        buf.extend(device_id)
+        buf.append(operation_type)
+        buf.extend(struct.pack("<I", object_id))
+        return bytes(buf)
 
-        msg_type, result, _ = deserialize(bytes(buf))
+    def test_release_ownership(self) -> None:
+        msg_type, result, _ = deserialize(
+            self._request_payload(1, _OBJ_ID_1)  # ReleaseOwnership
+        )
         assert msg_type == MSG_OBJECT_OWNERSHIP_REQUEST
         assert result is not None
+        assert result["deviceId"] == "device-a"
         assert result["operationType"] == 1
         assert result["objectId"] == _OBJ_ID_1
 
     def test_request_ownership(self) -> None:
-        buf = bytearray()
-        buf.append(MSG_OBJECT_OWNERSHIP_REQUEST)
-        buf.append(2)  # RequestOwnership
-        buf.extend(struct.pack("<I", _OBJ_ID_1))
-
-        _, result, _ = deserialize(bytes(buf))
+        _, result, _ = deserialize(
+            self._request_payload(2, _OBJ_ID_1)  # RequestOwnership
+        )
         assert result is not None
+        assert result["deviceId"] == "device-a"
         assert result["operationType"] == 2
 
 

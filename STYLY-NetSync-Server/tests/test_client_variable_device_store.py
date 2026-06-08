@@ -201,7 +201,9 @@ class TestServerClientVariableDeviceStore:
         server._send_ctrl_to_room_via_router.reset_mock()
 
         server._handle_client_var_clear(
-            b"ident-a", "room1", {"senderClientNo": 7, "timestamp": time.time()}
+            b"ident-a",
+            "room1",
+            {"senderClientNo": 7, "deviceId": "device-a", "timestamp": time.time()},
         )
 
         assert "device-a" not in server.client_variables["room1"]
@@ -218,7 +220,9 @@ class TestServerClientVariableDeviceStore:
         _connect_device(server, "room1", "device-a", 7, b"ident-a")
 
         server._handle_client_var_clear(
-            b"ident-a", "room1", {"senderClientNo": 7, "timestamp": time.time()}
+            b"ident-a",
+            "room1",
+            {"senderClientNo": 7, "deviceId": "device-a", "timestamp": time.time()},
         )
 
         server._send_ctrl_to_room_via_router.assert_called_once()
