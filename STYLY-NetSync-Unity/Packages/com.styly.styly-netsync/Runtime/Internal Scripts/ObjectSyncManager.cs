@@ -11,6 +11,7 @@ namespace Styly.NetSync
         private readonly IConnectionManager _connectionManager;
         private readonly MessageProcessor _messageProcessor;
         private readonly NetSyncTimeEstimator _timeEstimator;
+        private readonly string _deviceId;
         private readonly bool _enableDebugLogs;
 
         private readonly Dictionary<uint, NetSyncObject> _registeredObjects = new();
@@ -34,11 +35,13 @@ namespace Styly.NetSync
             IConnectionManager connectionManager,
             MessageProcessor messageProcessor,
             NetSyncTimeEstimator timeEstimator,
+            string deviceId,
             bool enableDebugLogs)
         {
             _connectionManager = connectionManager;
             _messageProcessor = messageProcessor;
             _timeEstimator = timeEstimator;
+            _deviceId = deviceId;
             _enableDebugLogs = enableDebugLogs;
 
             _messageProcessor.OnRoomObjectsReceived += HandleRoomObjects;
@@ -71,7 +74,7 @@ namespace Styly.NetSync
             if (objectId == 0u) return;
             _buf.EnsureCapacity(128);
             _buf.Stream.Position = 0;
-            BinarySerializer.SerializeObjectOwnershipRequestInto(_buf.Writer, operationType, objectId);
+            BinarySerializer.SerializeObjectOwnershipRequestInto(_buf.Writer, _deviceId, operationType, objectId);
             _buf.Writer.Flush();
 
             var length = (int)_buf.Stream.Position;

@@ -6,11 +6,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Message type identifiers
+# v8: Client-originated control messages carry deviceId so the server can
+# refresh stale control-lane identities independently of volatile client numbers.
 # v7: Control and transform traffic use separate sockets, and clients register
 # their control identity with MSG_CLIENT_HELLO.
 # Bumped so mixed old/new builds fail the handshake instead of silently
 # misparsing NV traffic (the version byte rides on transform/object messages).
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 8
 MSG_CLIENT_TRANSFORM = 1
 MSG_ROOM_TRANSFORM = 2  # Legacy room transform with short IDs only
 MSG_RPC = 3  # Remote procedure call
@@ -40,7 +42,7 @@ CLIENT_HELLO_FLAG_STEALTH = 0x01
 _max_virtual_transforms = 50
 MAX_VIRTUAL_TRANSFORMS = _max_virtual_transforms  # Legacy alias for backward compat
 
-# Protocol v7 pose encoding constants
+# Protocol v8 pose encoding constants
 ABS_POS_SCALE = 0.01
 LOCO_POS_SCALE = 0.01
 REL_POS_SCALE = 0.005
@@ -617,6 +619,9 @@ def _serialize_rpc_base(buffer: bytearray, data: dict[str, Any], msg_type: int) 
     sender_client_no = data.get("senderClientNo", 0)
     buffer.extend(struct.pack("<H", sender_client_no))
 
+    # Sender device ID for control identity binding.
+    _pack_string(buffer, data.get("deviceId", ""))
+
     # Target client numbers (count + each clientNo as ushort). 0 count means broadcast.
     target_client_nos = data.get("targetClientNos") or []
     if len(target_client_nos) > 255:
@@ -704,7 +709,7 @@ def serialize_global_var_set(data: dict[str, Any]) -> bytes:
     """Serialize global variable set message
 
     Args:
-        data: Dictionary with senderClientNo, variableName, variableValue
+        data: Dictionary with senderClientNo, deviceId, variableName, variableValue
     """
     buffer = bytearray()
 
@@ -713,6 +718,9 @@ def serialize_global_var_set(data: dict[str, Any]) -> bytes:
 
     # Sender client number (2 bytes)
     buffer.extend(struct.pack("<H", data.get("senderClientNo", 0)))
+
+    # Sender device ID for control identity binding.
+    _pack_string(buffer, data.get("deviceId", ""))
 
     # Variable name (max 64 bytes)
     name = data.get("variableName", "")[:64]
@@ -753,7 +761,7 @@ def serialize_client_var_set(data: dict[str, Any]) -> bytes:
     """Serialize client variable set message
 
     Args:
-        data: Dictionary with senderClientNo, targetClientNo, variableName,
+        data: Dictionary with senderClientNo, deviceId, targetClientNo, variableName,
             variableValue
     """
     buffer = bytearray()
@@ -763,6 +771,9 @@ def serialize_client_var_set(data: dict[str, Any]) -> bytes:
 
     # Sender client number (2 bytes)
     buffer.extend(struct.pack("<H", data.get("senderClientNo", 0)))
+
+    # Sender device ID for control identity binding.
+    _pack_string(buffer, data.get("deviceId", ""))
 
     # Target client number (2 bytes)
     buffer.extend(struct.pack("<H", data.get("targetClientNo", 0)))
@@ -782,7 +793,7 @@ def serialize_client_var_clear(data: dict[str, Any]) -> bytes:
     """Serialize client variable clear message.
 
     Args:
-        data: Dictionary with senderClientNo.
+        data: Dictionary with senderClientNo and deviceId.
     """
     buffer = bytearray()
 
@@ -791,6 +802,9 @@ def serialize_client_var_clear(data: dict[str, Any]) -> bytes:
 
     # Sender client number (2 bytes)
     buffer.extend(struct.pack("<H", data.get("senderClientNo", 0)))
+
+    # Sender device ID for control identity binding.
+    _pack_string(buffer, data.get("deviceId", ""))
 
     return bytes(buffer)
 
@@ -1180,6 +1194,8 @@ def _deserialize_rpc_message(data: bytes, offset: int) -> dict[str, Any]:
     result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
 
+    result["deviceId"], offset = _unpack_string(data, offset)
+
     target_count = data[offset]
     offset += 1
     target_client_nos: list[int] = []
@@ -1267,6 +1283,8 @@ def _deserialize_global_var_set(data: bytes, offset: int) -> dict[str, Any]:
     result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
 
+    result["deviceId"], offset = _unpack_string(data, offset)
+
     # Variable name
     result["variableName"], offset = _unpack_string(data, offset)
 
@@ -1304,6 +1322,8 @@ def _deserialize_client_var_set(data: bytes, offset: int) -> dict[str, Any]:
     result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
 
+    result["deviceId"], offset = _unpack_string(data, offset)
+
     # Target client number (2 bytes)
     result["targetClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
     offset += 2
@@ -1323,6 +1343,9 @@ def _deserialize_client_var_clear(data: bytes, offset: int) -> dict[str, Any]:
 
     # Sender client number (2 bytes)
     result["senderClientNo"] = struct.unpack("<H", data[offset : offset + 2])[0]
+    offset += 2
+
+    result["deviceId"], offset = _unpack_string(data, offset)
 
     return result
 
@@ -1538,6 +1561,11 @@ def _deserialize_room_objects(data: bytes, offset: int) -> dict[str, Any]:
 def _deserialize_object_ownership_request(data: bytes, offset: int) -> dict[str, Any]:
     """Deserialize ownership request (Client -> Server)."""
     result: dict[str, Any] = {}
+    protocol_version = data[offset]
+    offset += 1
+    if protocol_version != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported protocol version: {protocol_version}")
+    result["deviceId"], offset = _unpack_string(data, offset)
     result["operationType"] = data[offset]
     offset += 1
     result["objectId"] = struct.unpack("<I", data[offset : offset + 4])[0]

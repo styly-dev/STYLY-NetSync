@@ -778,76 +778,86 @@ class NetSyncServer:
 
             logger.info(f"Created new room: {room_id}")
 
-    def _get_device_id_from_identity(
-        self, client_identity: bytes, room_id: str
+    def _refresh_control_identity_from_device_id(
+        self, client_identity: bytes, room_id: str, device_id_raw: object
     ) -> str | None:
-        """Get device ID from any known client identity."""
-        return self._get_device_id_from_lane_identity(
-            client_identity, room_id, "control_identity"
-        ) or self._get_device_id_from_lane_identity(
-            client_identity, room_id, "transform_identity"
-        )
-
-    def _get_device_id_from_control_identity(
-        self, client_identity: bytes, room_id: str
-    ) -> str | None:
-        """Get device ID from a control-lane identity."""
-        return self._get_device_id_from_lane_identity(
-            client_identity, room_id, "control_identity"
-        )
-
-    def _refresh_control_identity_from_sender_client_no(
-        self, client_identity: bytes, room_id: str, sender_client_no_raw: object
-    ) -> str | None:
-        """Rebind a known client number to the control identity that sent a message."""
-        if isinstance(sender_client_no_raw, int):
-            sender_client_no = sender_client_no_raw
-        elif isinstance(sender_client_no_raw, str):
-            try:
-                sender_client_no = int(sender_client_no_raw)
-            except ValueError:
-                return None
-        else:
+        """Bind the sending control identity to its stable device ID."""
+        if not isinstance(device_id_raw, str) or not device_id_raw:
             return None
 
-        if sender_client_no <= 0:
-            return None
-
+        device_id = device_id_raw
+        now = time.monotonic()
         with self._rooms_lock:
-            device_id = self.room_client_no_to_device_id.get(room_id, {}).get(
-                sender_client_no
-            )
-            if device_id is None:
-                return None
+            self._initialize_room(room_id)
+            client_no = self._get_or_assign_client_no(room_id, device_id)
+            room = self.rooms[room_id]
 
-            room = self.rooms.get(room_id)
-            if room is None or device_id not in room:
-                return None
+            if device_id not in room:
+                room[device_id] = {
+                    "control_identity": client_identity,
+                    "transform_identity": None,
+                    "last_update": now,
+                    "transform_data": None,
+                    "client_no": client_no,
+                    "is_stealth": False,
+                }
+                self.room_id_mapping_dirty[room_id] = True
+                logger.info(
+                    "Registered control identity from control message: room={}, "
+                    "client={}, device={}",
+                    room_id,
+                    client_no,
+                    device_id[:8],
+                )
+                return device_id
 
             client_data = room[device_id]
             old_identity = client_data.get("control_identity")
             if old_identity != client_identity:
                 client_data["control_identity"] = client_identity
-                client_data["last_update"] = time.monotonic()
                 self.room_id_mapping_dirty[room_id] = True
                 logger.info(
-                    "Refreshed control identity from client number: room={}, client={}, device={}",
+                    "Refreshed control identity from device ID: room={}, client={}, "
+                    "device={}",
                     room_id,
-                    sender_client_no,
+                    client_no,
                     device_id[:8],
                 )
+            client_data["last_update"] = now
+            client_data["client_no"] = client_no
             return device_id
 
-    def _get_device_id_from_lane_identity(
-        self, client_identity: bytes, room_id: str, identity_key: str
-    ) -> str | None:
-        """Get device ID from a lane-specific ZeroMQ identity."""
-        with self._rooms_lock:
-            if room_id in self.rooms:
-                for device_id, client_data in self.rooms[room_id].items():
-                    if client_data.get(identity_key) == client_identity:
-                        return device_id
-        return None
+    def _resolve_control_sender(
+        self,
+        client_identity: bytes,
+        room_id: str,
+        data: dict[str, Any],
+        message_name: str,
+    ) -> tuple[str, int] | None:
+        """Resolve and refresh the sender of a client-originated control message."""
+        device_id = self._refresh_control_identity_from_device_id(
+            client_identity, room_id, data.get("deviceId")
+        )
+        if device_id is None:
+            logger.warning(
+                "%s ignored: missing or invalid deviceId in room %s",
+                message_name,
+                room_id,
+            )
+            return None
+
+        client_no = self._get_client_no_for_device_id(room_id, device_id)
+        if client_no <= 0:
+            logger.warning(
+                "%s ignored: device %s is not mapped in room %s",
+                message_name,
+                device_id,
+                room_id,
+            )
+            return None
+
+        data["senderClientNo"] = client_no
+        return device_id, client_no
 
     def _get_client_no_for_device_id(self, room_id: str, device_id: str) -> int:
         """Get client number for a given device ID in a room"""
@@ -1197,43 +1207,38 @@ class NetSyncServer:
         if msg_type == binary_serializer.MSG_CLIENT_HELLO:
             self._handle_client_hello(client_identity, room_id, data)
         elif msg_type == binary_serializer.MSG_RPC:
-            sender_device_id = self._get_device_id_from_control_identity(
-                client_identity, room_id
-            )
-            if sender_device_id is None:
-                sender_device_id = self._refresh_control_identity_from_sender_client_no(
-                    client_identity, room_id, data.get("senderClientNo", 0)
-                )
-            if sender_device_id:
-                data["senderClientNo"] = self._get_client_no_for_device_id(
-                    room_id, sender_device_id
-                )
+            sender = self._resolve_control_sender(client_identity, room_id, data, "RPC")
+            if sender is None:
+                return
             self._send_rpc_to_room(room_id, data)
         elif msg_type == binary_serializer.MSG_GLOBAL_VAR_SET:
-            self._refresh_control_identity_from_sender_client_no(
-                client_identity, room_id, data.get("senderClientNo", 0)
+            sender = self._resolve_control_sender(
+                client_identity, room_id, data, "Global variable set"
             )
+            if sender is None:
+                return
             self._buffer_global_var_set(room_id, data)
             self._monitor_nv_sliding_window(room_id)
         elif msg_type == binary_serializer.MSG_CLIENT_VAR_SET:
-            self._refresh_control_identity_from_sender_client_no(
-                client_identity, room_id, data.get("senderClientNo", 0)
+            sender = self._resolve_control_sender(
+                client_identity, room_id, data, "Client variable set"
             )
+            if sender is None:
+                return
             self._buffer_client_var_set(room_id, data)
             self._monitor_nv_sliding_window(room_id)
         elif msg_type == binary_serializer.MSG_CLIENT_VAR_CLEAR:
             self._handle_client_var_clear(client_identity, room_id, data)
         elif msg_type == binary_serializer.MSG_OBJECT_OWNERSHIP_REQUEST:
-            sender_device_id = self._get_device_id_from_control_identity(
-                client_identity, room_id
+            sender = self._resolve_control_sender(
+                client_identity, room_id, data, "Object ownership request"
             )
-            if sender_device_id:
-                sender_client_no = self._get_client_no_for_device_id(
-                    room_id, sender_device_id
-                )
-                self._handle_object_ownership_request(
-                    client_identity, room_id, sender_client_no, data
-                )
+            if sender is None:
+                return
+            _, sender_client_no = sender
+            self._handle_object_ownership_request(
+                client_identity, room_id, sender_client_no, data
+            )
         else:
             self._drop_wrong_lane("control", room_id, msg_type)
 
@@ -2012,30 +2017,14 @@ class NetSyncServer:
         self, client_identity: bytes, room_id: str, data: dict[str, Any]
     ) -> None:
         """Clear all client variables for the sending client."""
+        sender = self._resolve_control_sender(
+            client_identity, room_id, data, "Client variable clear"
+        )
+        if sender is None:
+            return
+        device_id, client_no = sender
+
         with self._rooms_lock:
-            device_id = self._get_device_id_from_control_identity(
-                client_identity, room_id
-            )
-            if device_id is None:
-                device_id = self._refresh_control_identity_from_sender_client_no(
-                    client_identity, room_id, data.get("senderClientNo", 0)
-                )
-            if device_id is None:
-                logger.warning(
-                    "Client variable clear ignored: sender is not mapped in room %s",
-                    room_id,
-                )
-                return
-
-            client_no = self.room_device_id_to_client_no.get(room_id, {}).get(device_id)
-            if client_no is None:
-                logger.warning(
-                    "Client variable clear ignored: device %s is not mapped in room %s",
-                    device_id,
-                    room_id,
-                )
-                return
-
             room_vars = self.client_variables.get(room_id, {})
             deleted_count = len(room_vars.get(device_id, {}))
             room_vars.pop(device_id, None)

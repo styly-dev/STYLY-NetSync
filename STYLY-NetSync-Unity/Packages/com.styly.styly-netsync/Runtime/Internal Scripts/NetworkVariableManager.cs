@@ -185,13 +185,14 @@ namespace Styly.NetSync
             var data = new Dictionary<string, object>
             {
                 ["senderClientNo"] = _netSyncManager.ClientNo,
+                ["deviceId"] = _deviceId,
                 ["variableName"] = name,
                 ["variableValue"] = value
             };
 
             try
             {
-                var required = EstimateGlobalVarSetSize(name, value);
+                var required = EstimateGlobalVarSetSize(_deviceId, name, value);
                 _buf.EnsureCapacity(required);
 
                 _buf.Stream.Position = 0;
@@ -291,6 +292,7 @@ namespace Styly.NetSync
             var data = new Dictionary<string, object>
             {
                 ["senderClientNo"] = _netSyncManager.ClientNo,
+                ["deviceId"] = _deviceId,
                 ["targetClientNo"] = targetClientNo,
                 ["variableName"] = name,
                 ["variableValue"] = value
@@ -298,7 +300,7 @@ namespace Styly.NetSync
 
             try
             {
-                var required = EstimateClientVarSetSize(name, value);
+                var required = EstimateClientVarSetSize(_deviceId, name, value);
                 _buf.EnsureCapacity(required);
 
                 _buf.Stream.Position = 0;
@@ -344,7 +346,8 @@ namespace Styly.NetSync
 
             var data = new Dictionary<string, object>
             {
-                ["senderClientNo"] = clientNo
+                ["senderClientNo"] = clientNo,
+                ["deviceId"] = _deviceId
             };
 
             try
@@ -575,20 +578,22 @@ namespace Styly.NetSync
 
         // Buffer growth handled by ReusableBufferWriter
 
-        private static int EstimateGlobalVarSetSize(string name, string value)
+        private static int EstimateGlobalVarSetSize(string deviceId, string name, string value)
         {
-            // 1 (type) + 2 (sender) + 1 + nameLen + 2 + valueLen
+            // 1 (type) + 2 (sender) + 1 + deviceIdLen + 1 + nameLen + 2 + valueLen
+            int deviceIdLen = ClampedUtf8Length(deviceId, 255);
             int nameLen = ClampedUtf8Length(name, 64);
             int valueLen = ClampedUtf8Length(value, 1024);
-            return 1 + 2 + 1 + nameLen + 2 + valueLen;
+            return 1 + 2 + 1 + deviceIdLen + 1 + nameLen + 2 + valueLen;
         }
 
-        private static int EstimateClientVarSetSize(string name, string value)
+        private static int EstimateClientVarSetSize(string deviceId, string name, string value)
         {
-            // 1 (type) + 2 (sender) + 2 (target) + 1 + nameLen + 2 + valueLen
+            // 1 (type) + 2 (sender) + 1 + deviceIdLen + 2 (target) + 1 + nameLen + 2 + valueLen
+            int deviceIdLen = ClampedUtf8Length(deviceId, 255);
             int nameLen = ClampedUtf8Length(name, 64);
             int valueLen = ClampedUtf8Length(value, 1024);
-            return 1 + 2 + 2 + 1 + nameLen + 2 + valueLen;
+            return 1 + 2 + 1 + deviceIdLen + 2 + 1 + nameLen + 2 + valueLen;
         }
 
         private static int ClampedUtf8Length(string s, int max)

@@ -42,7 +42,7 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 
 ## Wire protocol compatibility
 
-- Current wire protocol is `protocolVersion = 7`.
+- Current wire protocol is `protocolVersion = 8`.
 - Transport uses three sockets: control (`control_port`, default `5555`) for RPC, Network Variables, ownership, ID mapping, and client hello; transform uplink (`transform_port`, default `5557`) for client/object poses; PUB/SUB (`pub_port`, default `5556`) for room pose and room object downlink.
 - Discovery responses use `STYLY-NETSYNC2|controlPort|transformPort|pubPort|serverName`; legacy `STYLY-NETSYNC|...` responses are explicitly incompatible.
 - `dealer_port` / `--dealer-port` remain a one-release compatibility alias for `control_port` / `--control-port`.
@@ -51,7 +51,7 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 - Unbound poses keep the `xrOriginDelta` semantics: `xrOriginDelta` carries a Y component as a 4th `int16` (`dx, dy, dz, dyaw` = 8 bytes), so receivers can reconstruct the sender's rig-Y motion.
 - Legacy transform protocols (v2/v3) and JSON transform fallback are not supported.
 - Deploy Unity and Python updates together when changing transform protocol behavior.
-- Protocol v7 position quantization ranges:
+- Protocol v8 position quantization ranges:
   - Absolute (`headPosAbs` only): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.
   - XROrigin locomotion delta for unbound poses (`xrOriginDelta`, 4×`int16`: `dx, dy, dz, dyaw`): `0.01 m` per unit for translation, `0.1°` for yaw. Receivers reconstruct `physicalPos = invDeltaRot * (headPos − deltaPos)`; it is not on the wire as a separate absolute field.
   - Direct physical payload for moving-floor-local poses (`physical`, 4×`int16`: `x, y, z, yaw`): `0.01 m` per unit for translation, `0.1°` for yaw.
@@ -62,7 +62,7 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 
 The following options summarize trade-offs when expanding absolute-position range.
 
-Assumed unbound baseline (`protocolVersion=7`, `MovingFloorLocal` off):
+Assumed unbound baseline (`protocolVersion=8`, `MovingFloorLocal` off):
 - Client pose body with `Physical+Head+Right+Left` valid and `virtualCount=0`: `46 bytes` (matches `test_client_body_size_with_full_pose_no_virtuals`).
 - Room per-client entry (`clientNo + poseTime + clientBody`): `56 bytes`.
 

@@ -7,11 +7,13 @@ namespace Styly.NetSync
 {
     internal static class BinarySerializer
     {
+        // v8: Client-originated control messages carry deviceId so the server can
+        // refresh stale control-lane identities independently of volatile client numbers.
         // v7: Control and transform traffic use separate sockets, and clients register
         // their control identity with MSG_CLIENT_HELLO.
         // Bumped so mixed old/new builds fail the handshake instead of silently
         // misparsing NV traffic (the version byte rides on transform/object messages).
-        public const byte PROTOCOL_VERSION = 7;
+        public const byte PROTOCOL_VERSION = 8;
 
         // Message type identifiers
         public const byte MSG_CLIENT_TRANSFORM = 1;
@@ -36,7 +38,7 @@ namespace Styly.NetSync
 
         public const byte CLIENT_HELLO_FLAG_STEALTH = 0x01;
 
-        // Protocol v7 pose encoding constants
+        // Protocol v8 pose encoding constants
         private const float ABS_POS_SCALE = 0.01f;
         private const float LOCO_POS_SCALE = 0.01f;
         private const float REL_POS_SCALE = 0.005f;
@@ -646,9 +648,14 @@ namespace Styly.NetSync
             writer.Write(CompressQuaternionSmallestThree(NormalizeQuaternionSafe(rotation)));
         }
 
-        public static void SerializeObjectOwnershipRequestInto(BinaryWriter writer, byte operationType, uint objectId)
+        public static void SerializeObjectOwnershipRequestInto(BinaryWriter writer, string deviceId, byte operationType, uint objectId)
         {
             writer.Write(MSG_OBJECT_OWNERSHIP_REQUEST);
+            writer.Write(PROTOCOL_VERSION);
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId ?? "");
+            var deviceIdLength = System.Math.Min(deviceIdBytes.Length, byte.MaxValue);
+            writer.Write((byte)deviceIdLength);
+            writer.Write(deviceIdBytes, 0, deviceIdLength);
             writer.Write(operationType);
             writer.Write(objectId);
         }
@@ -976,6 +983,14 @@ namespace Styly.NetSync
             writer.Write(MSG_RPC);
             // Sender client number (2 bytes)
             writer.Write((ushort)msg.senderClientNo);
+            // Sender device ID for control identity binding.
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(msg.deviceId ?? string.Empty);
+            if (deviceIdBytes.Length > byte.MaxValue)
+            {
+                throw new ArgumentException("Device ID is too long. Maximum length is 255 bytes.");
+            }
+            writer.Write((byte)deviceIdBytes.Length);
+            writer.Write(deviceIdBytes);
             // Target client numbers (count + each clientNo as ushort). 0 count means broadcast.
             var targets = msg.targetClientNos;
             var targetCount = targets != null ? targets.Length : 0;
@@ -1031,6 +1046,13 @@ namespace Styly.NetSync
             var senderClientNo = data.TryGetValue("senderClientNo", out var senderObj) ? Convert.ToUInt16(senderObj) : (ushort)0;
             writer.Write(senderClientNo);
 
+            // Sender device ID for control identity binding.
+            var deviceId = data.TryGetValue("deviceId", out var deviceObj) ? (deviceObj != null ? deviceObj.ToString() : "") : "";
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId);
+            var deviceIdLength = System.Math.Min(deviceIdBytes.Length, byte.MaxValue);
+            writer.Write((byte)deviceIdLength);
+            writer.Write(deviceIdBytes, 0, deviceIdLength);
+
             // Variable name (max 64 bytes)
             var varName = data.TryGetValue("variableName", out var nameObj) ? (nameObj != null ? nameObj.ToString() : "") : "";
             if (varName.Length > 64) varName = varName.Substring(0, 64);
@@ -1069,6 +1091,13 @@ namespace Styly.NetSync
             var senderClientNo = data.TryGetValue("senderClientNo", out var senderObj) ? Convert.ToUInt16(senderObj) : (ushort)0;
             writer.Write(senderClientNo);
 
+            // Sender device ID for control identity binding.
+            var deviceId = data.TryGetValue("deviceId", out var deviceObj) ? (deviceObj != null ? deviceObj.ToString() : "") : "";
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId);
+            var deviceIdLength = System.Math.Min(deviceIdBytes.Length, byte.MaxValue);
+            writer.Write((byte)deviceIdLength);
+            writer.Write(deviceIdBytes, 0, deviceIdLength);
+
             // Target client number (2 bytes)
             var targetClientNo = data.TryGetValue("targetClientNo", out var targetObj) ? Convert.ToUInt16(targetObj) : (ushort)0;
             writer.Write(targetClientNo);
@@ -1101,6 +1130,12 @@ namespace Styly.NetSync
             var senderClientNo = data.TryGetValue("senderClientNo", out var senderObj) ? Convert.ToUInt16(senderObj) : (ushort)0;
             writer.Write(senderClientNo);
 
+            var deviceId = data.TryGetValue("deviceId", out var deviceObj) ? (deviceObj != null ? deviceObj.ToString() : "") : "";
+            var deviceIdBytes = System.Text.Encoding.UTF8.GetBytes(deviceId);
+            var deviceIdLength = System.Math.Min(deviceIdBytes.Length, byte.MaxValue);
+            writer.Write((byte)deviceIdLength);
+            writer.Write(deviceIdBytes, 0, deviceIdLength);
+
             return ms.ToArray();
         }
 
@@ -1111,6 +1146,8 @@ namespace Styly.NetSync
         {
             // Sender client number (2 bytes)
             var senderClientNo = reader.ReadUInt16();
+            var deviceIdLength = reader.ReadByte();
+            var deviceId = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(deviceIdLength));
             // Target client numbers
             var targetCount = reader.ReadByte();
             var targetClientNos = targetCount == 0 ? Array.Empty<int>() : new int[targetCount];
@@ -1127,6 +1164,7 @@ namespace Styly.NetSync
             return new RPCMessage
             {
                 senderClientNo = senderClientNo,
+                deviceId = deviceId,
                 targetClientNos = targetClientNos,
                 functionName = name,
                 argumentsJson = argsJson

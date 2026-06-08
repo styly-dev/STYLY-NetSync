@@ -115,6 +115,7 @@ namespace Styly.NetSync
                 functionName = functionName,
                 argumentsJson = JsonConvert.SerializeObject(args),
                 senderClientNo = _netSyncManager.ClientNo,
+                deviceId = _deviceId,
                 targetClientNos = targetClientNos ?? Array.Empty<int>()
             };
             // Estimate and ensure capacity
@@ -239,9 +240,11 @@ namespace Styly.NetSync
         {
             var nameLen = msg != null && msg.functionName != null ? Encoding.UTF8.GetByteCount(msg.functionName) : 0;
             if (nameLen > 255) nameLen = 255; // capped by serializer
+            var deviceIdLen = msg != null && msg.deviceId != null ? Encoding.UTF8.GetByteCount(msg.deviceId) : 0;
+            if (deviceIdLen > 255) deviceIdLen = 255;
             var argsLen = msg != null && msg.argumentsJson != null ? Encoding.UTF8.GetByteCount(msg.argumentsJson) : 0;
             var targetCount = msg != null && msg.targetClientNos != null ? msg.targetClientNos.Length : 0;
-            return 1 + 2 + 1 + (2 * targetCount) + 1 + nameLen + 2 + argsLen;
+            return 1 + 2 + 1 + deviceIdLen + 1 + (2 * targetCount) + 1 + nameLen + 2 + argsLen;
         }
 
         /// <summary>

@@ -130,6 +130,7 @@ def test_global_variable_set_rebinds_stale_control_identity() -> None:
         binary_serializer.MSG_GLOBAL_VAR_SET,
         {
             "senderClientNo": client_no,
+            "deviceId": device_id,
             "variableName": "score",
             "variableValue": "10",
         },
@@ -173,6 +174,38 @@ def _seed_stale_control_client(
         srv.room_client_no_to_device_id[room_id][client_no] = device_id
 
 
+def test_global_var_set_with_device_id_reaches_active_control_identity() -> None:
+    """An NV write must not echo its sync to a stale control identity."""
+    srv = NetSyncServer(enable_server_discovery=False)
+    room_id = "stale-control-room"
+    device_id = "device-a"
+    client_no = 1
+    _seed_stale_control_client(srv, room_id, device_id, client_no)
+
+    srv._handle_control_message(
+        b"active-control",
+        room_id,
+        binary_serializer.MSG_GLOBAL_VAR_SET,
+        {
+            "senderClientNo": 0,
+            "deviceId": device_id,
+            "variableName": "score",
+            "variableValue": "10",
+        },
+    )
+    srv._flush_nv_drain(room_id)
+
+    with srv._rooms_lock:
+        assert srv.global_variables[room_id]["score"]["value"] == "10"
+
+    queued = srv._router_queue_ctrl.get_nowait()
+    assert queued[0] == b"active-control"
+    assert queued[1] == room_id.encode("utf-8")
+    msg_type, data, _ = binary_serializer.deserialize(queued[2])
+    assert msg_type == binary_serializer.MSG_GLOBAL_VAR_SYNC
+    assert data["variables"][0]["lastWriterClientNo"] == client_no
+
+
 def test_client_variable_set_rebinds_stale_control_identity() -> None:
     """A client-var write from a known client refreshes its stale control identity."""
     srv = NetSyncServer(enable_server_discovery=False)
@@ -187,6 +220,7 @@ def test_client_variable_set_rebinds_stale_control_identity() -> None:
         binary_serializer.MSG_CLIENT_VAR_SET,
         {
             "senderClientNo": client_no,
+            "deviceId": device_id,
             "targetClientNo": client_no,
             "variableName": "hp",
             "variableValue": "5",
@@ -211,7 +245,7 @@ def test_client_variable_clear_rebinds_stale_control_identity() -> None:
         b"active-control",
         room_id,
         binary_serializer.MSG_CLIENT_VAR_CLEAR,
-        {"senderClientNo": client_no},
+        {"senderClientNo": client_no, "deviceId": device_id},
     )
 
     with srv._rooms_lock:
@@ -233,7 +267,8 @@ def test_rpc_rebinds_stale_control_identity_and_rewrites_sender() -> None:
         room_id,
         binary_serializer.MSG_RPC,
         {
-            "senderClientNo": client_no,  # client reports its own number
+            "senderClientNo": 0,
+            "deviceId": device_id,
             "functionName": "Ping",
             "args": ["v"],
             "targetClientNos": [],  # broadcast to room
@@ -252,37 +287,25 @@ def test_rpc_rebinds_stale_control_identity_and_rewrites_sender() -> None:
     assert data["senderClientNo"] == client_no
 
 
-def test_refresh_control_identity_rejects_unknown_or_invalid_client_no() -> None:
-    """The rebind helper only acts on a known, positive, numeric client number."""
+def test_refresh_control_identity_rejects_invalid_device_id() -> None:
+    """The rebind helper only acts on a non-empty device ID."""
     srv = NetSyncServer(enable_server_discovery=False)
     room_id = "stale-control-room"
     device_id = "device-a"
     client_no = 1
     _seed_stale_control_client(srv, room_id, device_id, client_no)
 
-    # Unknown client number, non-positive, and non-numeric inputs are ignored.
+    assert srv._refresh_control_identity_from_device_id(b"active", room_id, "") is None
     assert (
-        srv._refresh_control_identity_from_sender_client_no(b"active", room_id, 999)
-        is None
-    )
-    assert (
-        srv._refresh_control_identity_from_sender_client_no(b"active", room_id, 0)
-        is None
-    )
-    assert (
-        srv._refresh_control_identity_from_sender_client_no(b"active", room_id, "x")
-        is None
+        srv._refresh_control_identity_from_device_id(b"active", room_id, None) is None
     )
 
     with srv._rooms_lock:
         # None of the rejected calls mutated the stored identity.
         assert srv.rooms[room_id][device_id]["control_identity"] == b"stale-control"
 
-    # A known numeric string is accepted and rebinds.
     assert (
-        srv._refresh_control_identity_from_sender_client_no(
-            b"active", room_id, str(client_no)
-        )
+        srv._refresh_control_identity_from_device_id(b"active", room_id, device_id)
         == device_id
     )
     with srv._rooms_lock:

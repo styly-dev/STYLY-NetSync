@@ -678,7 +678,12 @@ class NetworkTransport:
             return False
 
     def send_client_variable(
-        self, room_id: str, sender_client_no: int, var_name: str, value: str
+        self,
+        room_id: str,
+        sender_client_no: int,
+        device_id: str,
+        var_name: str,
+        value: str,
     ) -> bool:
         """Send client variable data to server."""
         if not self.socket:
@@ -687,6 +692,9 @@ class NetworkTransport:
         try:
             var_data = {
                 "senderClientNo": sender_client_no,
+                # Stable device ID required by v8 for control-identity binding;
+                # the server drops client-originated control messages without it.
+                "deviceId": device_id,
                 "targetClientNo": sender_client_no,  # Set variable for ourselves
                 "variableName": var_name,
                 "variableValue": value,
@@ -1184,7 +1192,11 @@ class SimulatedClient:
         ):
             battery_value = f"{self.battery_level:.2f}"
             if self.transport.send_client_variable(
-                self.room_id, self.client_number, "BatteryLevel", battery_value
+                self.room_id,
+                self.client_number,
+                self.config.device_id,
+                "BatteryLevel",
+                battery_value,
             ):
                 self.logger.debug(f"Sent battery level: {battery_value} (normalized)")
             else:

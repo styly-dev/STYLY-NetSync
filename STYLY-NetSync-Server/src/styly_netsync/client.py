@@ -1228,6 +1228,7 @@ class net_sync_manager:
         try:
             rpc_data = {
                 "senderClientNo": self._client_no,
+                "deviceId": self._device_id,
                 "targetClientNos": target_client_nos or [],
                 "functionName": function_name,
                 "argumentsJson": json.dumps(args),
@@ -1248,6 +1249,7 @@ class net_sync_manager:
         try:
             var_data = {
                 "senderClientNo": self._client_no,
+                "deviceId": self._device_id,
                 "variableName": name,
                 "variableValue": value,
             }
@@ -1268,6 +1270,7 @@ class net_sync_manager:
         try:
             var_data = {
                 "senderClientNo": self._client_no,
+                "deviceId": self._device_id,
                 "targetClientNo": target_client_no,
                 "variableName": name,
                 "variableValue": value,
@@ -1289,6 +1292,7 @@ class net_sync_manager:
         try:
             clear_data = {
                 "senderClientNo": self._client_no,
+                "deviceId": self._device_id,
             }
             message = binary_serializer.serialize_client_var_clear(clear_data)
             sent = self._enqueue_control(
