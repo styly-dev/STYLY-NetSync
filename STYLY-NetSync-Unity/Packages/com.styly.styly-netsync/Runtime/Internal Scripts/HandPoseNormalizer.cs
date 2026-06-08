@@ -1,4 +1,4 @@
-// HandPoseNormalizer.cs - Follows HandVisualizer's wrist transform for cross-platform hand tracking
+// HandPoseNormalizer.cs - Drives the synced hand from the XRHandSubsystem wrist joint for cross-platform hand tracking
 using System;
 using System.Collections.Generic;
 using Unity.XR.CoreUtils;
@@ -9,12 +9,15 @@ using UnityEngine.XR.Hands;
 namespace Styly.NetSync.Internal
 {
     /// <summary>
-    /// Component that synchronizes hand pose with the HandVisualizer's wrist transform (L_Wrist/R_Wrist).
-    /// This approach ensures consistent hand positioning across different VR platforms (Quest, Pico, etc.)
-    /// by using the XR Hands subsystem's normalized joint data instead of platform-specific InputAction bindings.
+    /// Component that synchronizes the hand pose using the XR Hands subsystem's normalized wrist joint
+    /// (XRHandJointID.Wrist). Sourcing the pose from the subsystem keeps hand positioning consistent across
+    /// VR platforms (Quest, Pico, etc.) and is rig-agnostic: it works whether the rig uses a HandVisualizer
+    /// or skeleton-driven glove meshes (XRHandSkeletonDriver), and does not depend on a particular scene
+    /// Transform exposing a rig-relative localPosition.
     ///
-    /// Monitors the hand tracking state via activeInHierarchy:
-    /// - Hand tracking active: Disables TrackedPoseDriver and copies pose from HandVisualizer
+    /// A scene Transform named L_Wrist/R_Wrist (when present) is still used only as a hand-tracking
+    /// active-state probe via activeInHierarchy; the synced position/rotation comes from the subsystem:
+    /// - Hand tracking active: Disables TrackedPoseDriver and applies the subsystem wrist pose
     /// - Controller mode: Re-enables TrackedPoseDriver for controller-based tracking
     /// </summary>
     internal class HandPoseNormalizer : MonoBehaviour
@@ -160,18 +163,25 @@ namespace Styly.NetSync.Internal
                 return;
             }
 
-            // Check if hand tracking is active (HandVisualizer activates the hand object when tracking)
+            // Check if hand tracking is active. The matched wrist GameObject (HandVisualizer wrist or a
+            // skeleton-driven glove bone) is active while hand tracking is on; used only as a state probe.
             bool isHandTrackingActive = _handTransform.gameObject.activeInHierarchy;
 
             if (isHandTrackingActive)
             {
-                // Hand tracking mode: disable TrackedPoseDriver and copy from HandVisualizer
+                // Hand tracking mode: disable TrackedPoseDriver and apply the subsystem wrist pose.
                 DisableTrackedPoseDriver();
 
-                // Copy the hand transform's local position and rotation
-                _selfTransform.localPosition = _handTransform.localPosition;
-                _selfTransform.localRotation = _handTransform.localRotation;
-
+                // Source the pose from the XRHandSubsystem (rig-agnostic) instead of copying the
+                // matched scene Transform's localPosition. The matched Transform is used only as an
+                // active-state probe above; its localPosition is a valid rig-relative hand pose for a
+                // HandVisualizer wrist but a near-constant bone offset for skeleton-driven gloves.
+                if (TryGetWristPose(out var wristPose))
+                {
+                    _selfTransform.localPosition = wristPose.position;
+                    _selfTransform.localRotation = wristPose.rotation;
+                }
+                // If the wrist pose is momentarily unavailable, hold the last good pose.
             }
             else
             {
@@ -187,12 +197,11 @@ namespace Styly.NetSync.Internal
         }
 
         /// <summary>
-        /// Updates hand tracking state from XRHandSubsystem using state machine.
-        /// Uses delayed check for lost detection to distinguish controller switch from true lost.
+        /// Ensures a running XRHandSubsystem reference is cached.
+        /// Returns true when a running subsystem is available.
         /// </summary>
-        private void UpdateHandTrackingState()
+        private bool EnsureHandSubsystem()
         {
-            // Try to get XRHandSubsystem if not available or not running
             if (_handSubsystem == null || !_handSubsystem.running)
             {
                 var subsystems = new List<XRHandSubsystem>();
@@ -208,8 +217,47 @@ namespace Styly.NetSync.Internal
                 }
             }
 
+            return _handSubsystem != null && _handSubsystem.running;
+        }
+
+        /// <summary>
+        /// Gets the wrist joint pose directly from the XRHandSubsystem.
+        /// The pose is XROrigin-relative, which matches this transform's parent space (the avatar
+        /// root tracks the XROrigin), so it is applied as localPosition/localRotation.
+        ///
+        /// This is rig-agnostic: it works whether the rig uses a HandVisualizer-style shallow wrist
+        /// or skeleton-driven glove meshes (XRHandSkeletonDriver). It deliberately does NOT read the
+        /// matched scene Transform's localPosition, which only represents a rig-relative hand pose for
+        /// a HandVisualizer wrist and collapses to a near-constant bone offset for skeleton bones.
+        /// </summary>
+        private bool TryGetWristPose(out Pose pose)
+        {
+            pose = Pose.identity;
+
+            if (!EnsureHandSubsystem())
+            {
+                return false;
+            }
+
+            var hand = _handedness == Handedness.Left
+                ? _handSubsystem.leftHand
+                : _handSubsystem.rightHand;
+            if (!hand.isTracked)
+            {
+                return false;
+            }
+
+            return hand.GetJoint(XRHandJointID.Wrist).TryGetPose(out pose);
+        }
+
+        /// <summary>
+        /// Updates hand tracking state from XRHandSubsystem using state machine.
+        /// Uses delayed check for lost detection to distinguish controller switch from true lost.
+        /// </summary>
+        private void UpdateHandTrackingState()
+        {
             // If no running XRHandSubsystem, reset to Unknown state
-            if (_handSubsystem == null || !_handSubsystem.running)
+            if (!EnsureHandSubsystem())
             {
                 if (_trackingState != TrackingState.Unknown && _trackingState != TrackingState.ControllerMode)
                 {
