@@ -580,6 +580,16 @@ namespace Styly.NetSync
 
             if (!_hasCurrent)
             {
+                if (sample.State == SampleState.Empty)
+                {
+                    // No data to establish a pose yet (e.g. the channel was Clear()ed
+                    // while hand tracking was lost). Sample.Target is default = origin,
+                    // so adopting it here would pollute _current to (0,0,0) and leave
+                    // _hasCurrent == true, causing the next real snapshot to glide in
+                    // from the origin. Leave _current/_hasCurrent untouched so the first
+                    // snapshot after recovery snaps cleanly via AddSnapshot.
+                    return _current;
+                }
                 _current = sample.Target;
                 _hasCurrent = true;
                 return _current;
