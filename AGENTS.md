@@ -105,6 +105,7 @@ Key mappings: `NetSyncManager.cs` ↔ `client.py`, `ConnectionManager.cs` ↔ co
 
 ## Commit & PR Guidelines
 
+- Write all commit messages, PR titles/descriptions, issues, and code comments in English
 - Conventional Commits (`feat:`, `fix:`, `refactor:`); subject ≤72 chars
 - Target PRs to `develop`; manual PRs to `main` are blocked (use release workflow)
 - PR checklist: description, linked issues, test evidence (logs/screenshots)
