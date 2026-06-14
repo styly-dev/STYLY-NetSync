@@ -405,7 +405,7 @@ echo ''
 # immediately without starting the server, so this never restarts a running server.
 if ! " + uvxCommand + @" --version >/dev/null 2>&1; then
     if UV_OFFLINE=1 " + uvxCommand + @" --version >/dev/null 2>&1; then
-        echo 'Could not reach PyPI. Using cached packages (offline mode).'
+        echo 'Online resolution failed. Using cached packages (offline mode).'
         echo ''
         export UV_OFFLINE=1
     fi
@@ -552,11 +552,16 @@ Write-Host ''
 # immediately without starting the server, so this never restarts a running server.
 Invoke-Expression '" + EscapeForPowerShellSingleQuote(uvxCommand) + @" --version' *> $null
 if ($LASTEXITCODE -ne 0) {
+    # Preserve any pre-existing UV_OFFLINE so we can restore it if the offline probe fails.
+    $hadOffline = Test-Path Env:\UV_OFFLINE
+    $prevOffline = if ($hadOffline) { $env:UV_OFFLINE } else { $null }
     $env:UV_OFFLINE = '1'
     Invoke-Expression '" + EscapeForPowerShellSingleQuote(uvxCommand) + @" --version' *> $null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host 'Could not reach PyPI. Using cached packages (offline mode).' -ForegroundColor Yellow
+        Write-Host 'Online resolution failed. Using cached packages (offline mode).' -ForegroundColor Yellow
         Write-Host ''
+    } elseif ($hadOffline) {
+        $env:UV_OFFLINE = $prevOffline
     } else {
         Remove-Item Env:\UV_OFFLINE -ErrorAction SilentlyContinue
     }
@@ -728,7 +733,7 @@ echo ''
 # immediately without starting the server, so this never restarts a running server.
 if ! " + uvxCommand + @" --version >/dev/null 2>&1; then
     if UV_OFFLINE=1 " + uvxCommand + @" --version >/dev/null 2>&1; then
-        echo 'Could not reach PyPI. Using cached packages (offline mode).'
+        echo 'Online resolution failed. Using cached packages (offline mode).'
         echo ''
         export UV_OFFLINE=1
     fi
