@@ -400,6 +400,17 @@ echo ''
 echo '========================================='
 echo ''
 
+# Resolve the package. Try online first (downloads if needed); only if that fails
+# (e.g. no network) retry from uv's offline cache. The '--version' probe exits
+# immediately without starting the server, so this never restarts a running server.
+if ! " + uvxCommand + @" --version >/dev/null 2>&1; then
+    if UV_OFFLINE=1 " + uvxCommand + @" --version >/dev/null 2>&1; then
+        echo 'Could not reach PyPI. Using cached packages (offline mode).'
+        echo ''
+        export UV_OFFLINE=1
+    fi
+fi
+
 # Start the server
 " + uvxCommand + @"
 
@@ -535,6 +546,21 @@ Write-Host 'Running: " + EscapeForPowerShellSingleQuote(uvxCommand) + @"' -Foreg
 Write-Host ''
 Write-Host '=========================================' -ForegroundColor Cyan
 Write-Host ''
+
+# Resolve the package. Try online first (downloads if needed); only if that fails
+# (e.g. no network) retry from uv's offline cache. The '--version' probe exits
+# immediately without starting the server, so this never restarts a running server.
+Invoke-Expression '" + EscapeForPowerShellSingleQuote(uvxCommand) + @" --version' *> $null
+if ($LASTEXITCODE -ne 0) {
+    $env:UV_OFFLINE = '1'
+    Invoke-Expression '" + EscapeForPowerShellSingleQuote(uvxCommand) + @" --version' *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host 'Could not reach PyPI. Using cached packages (offline mode).' -ForegroundColor Yellow
+        Write-Host ''
+    } else {
+        Remove-Item Env:\UV_OFFLINE -ErrorAction SilentlyContinue
+    }
+}
 
 # Start the server
 " + uvxCommand + @"
@@ -696,6 +722,17 @@ echo 'Running: " + EscapeForBashSingleQuote(uvxCommand) + @"'
 echo ''
 echo '========================================='
 echo ''
+
+# Resolve the package. Try online first (downloads if needed); only if that fails
+# (e.g. no network) retry from uv's offline cache. The '--version' probe exits
+# immediately without starting the server, so this never restarts a running server.
+if ! " + uvxCommand + @" --version >/dev/null 2>&1; then
+    if UV_OFFLINE=1 " + uvxCommand + @" --version >/dev/null 2>&1; then
+        echo 'Could not reach PyPI. Using cached packages (offline mode).'
+        echo ''
+        export UV_OFFLINE=1
+    fi
+fi
 
 # Start the server
 " + uvxCommand + @"
