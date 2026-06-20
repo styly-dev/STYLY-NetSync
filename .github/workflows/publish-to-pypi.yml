@@ -20,6 +20,13 @@ jobs:
 
       # Check that tag and pyproject version match (to prevent mistakes)
       - name: Ensure tag == project.version (PEP 440)
+        env:
+          # For a release event, read the tag straight from the event payload.
+          # GITHUB_REF_NAME is unreliable here: when the tag, develop, and main all
+          # point to the same commit, GitHub resolves the run's ref to a branch
+          # instead of the tag, leaving GITHUB_REF_NAME without the tag value.
+          # Fall back to GITHUB_REF_NAME for manual workflow_dispatch runs.
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           python - <<'PY'
           import os, sys, re
@@ -28,7 +35,7 @@ jobs:
           except ModuleNotFoundError:
               import tomli as tomllib  # fallback
 
-          ref = os.environ.get("GITHUB_REF_NAME", "")
+          ref = os.environ.get("RELEASE_TAG") or os.environ.get("GITHUB_REF_NAME", "")
           tag = ref[1:] if ref.startswith("v") else ref
 
           with open("STYLY-NetSync-Server/pyproject.toml", "rb") as f:
