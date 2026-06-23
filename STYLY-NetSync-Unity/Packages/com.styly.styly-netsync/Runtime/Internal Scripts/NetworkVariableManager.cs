@@ -147,9 +147,18 @@ namespace Styly.NetSync
                 return true;
             }
 
-            // Dedupe: same as the last actually sent value -> skip, but treat as success
+            // Dedupe: same as the last actually sent value -> skip, but treat as success.
+            // Also cancel any pending (now-stale) trailing value: when the incoming value
+            // already equals what is on the wire, it is the most recent intent, so any
+            // surviving pending entry is necessarily an older opposite value that a later
+            // trailing flush would wrongly send. Dropping it is always correct and never
+            // loses a legitimate update.
             if (_lastSentGlobal.TryGetValue(name, out var lastSent) && lastSent == value)
+            {
+                _pendingGlobal.Remove(name);
+                _dueGlobal.Remove(name);
                 return true;
+            }
 
             double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
 
@@ -255,9 +264,19 @@ namespace Styly.NetSync
 
             var key = (targetClientNo, name);
 
-            // Dedupe: same as the last actually sent value -> skip, but treat as success
+            // Dedupe: same as the last actually sent value -> skip, but treat as success.
+            // Also cancel any pending (now-stale) trailing value: when the incoming value
+            // already equals what is on the wire, it is the most recent intent, so any
+            // surviving pending entry is necessarily an older opposite value that a later
+            // trailing flush would wrongly send. Dropping it is always correct and never
+            // loses a legitimate update. (Fixes A->B->A within the debounce window where the
+            // final A was dropped and the stale pending B overwrote the server value.)
             if (_lastSentClient.TryGetValue(key, out var lastSent) && lastSent == value)
+            {
+                _pendingClient.Remove(key);
+                _dueClient.Remove(key);
                 return true;
+            }
 
             double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
 
