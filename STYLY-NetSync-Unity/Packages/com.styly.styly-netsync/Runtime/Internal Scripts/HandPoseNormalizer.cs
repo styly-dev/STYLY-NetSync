@@ -70,10 +70,12 @@ namespace Styly.NetSync.Internal
         // jitters, so an exactly-repeated pose sustained this long does not occur during genuine
         // tracking.
         private Vector3 _staleLastWristPos;
+        private Quaternion _staleLastWristRot;
         private bool _staleHasLastWristPos = false;
         private float _staleUnchangedSince = 0f;
-        private const float PoseStaleEpsilon = 1e-6f;  // only a bit-identical repeat stays under this
-        private const float PoseStaleSeconds = 0.5f;   // sustained no-change before treating as lost
+        private const float PoseStaleEpsilon = 1e-6f;     // only a bit-identical position repeat stays under this
+        private const float PoseStaleRotEpsilon = 1e-3f;  // degrees; only a bit-identical rotation repeat stays under this
+        private const float PoseStaleSeconds = 0.5f;      // sustained no-change before treating as lost
 
         // Head transform reference for maintaining relative position during lost state
         private Transform _headTransform;
@@ -285,14 +287,21 @@ namespace Styly.NetSync.Internal
             {
                 _staleHasLastWristPos = true;
                 _staleLastWristPos = hasPose ? wristPose.position : Vector3.zero;
+                _staleLastWristRot = hasPose ? wristPose.rotation : Quaternion.identity;
                 _staleUnchangedSince = now;
                 return false;
             }
 
-            bool moved = hasPose && Vector3.Distance(wristPose.position, _staleLastWristPos) > PoseStaleEpsilon;
+            // Position OR rotation delta counts as movement. Rotation is included so a wrist that
+            // turns in place (near-constant position, live orientation) is not misread as stale;
+            // ORing it only makes `moved` fire more often, so it can only reduce false positives.
+            bool moved = hasPose && (
+                Vector3.Distance(wristPose.position, _staleLastWristPos) > PoseStaleEpsilon ||
+                Quaternion.Angle(wristPose.rotation, _staleLastWristRot) > PoseStaleRotEpsilon);
             if (moved)
             {
                 _staleLastWristPos = wristPose.position;
+                _staleLastWristRot = wristPose.rotation;
                 _staleUnchangedSince = now;
                 return false;
             }
