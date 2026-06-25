@@ -992,6 +992,9 @@ class NetSyncServer:
                     transform_port=self.transform_port,
                     sub_port=self.pub_port,
                     server=self,
+                    log_dir=Path(self._config.log_dir)
+                    if self._config.log_dir
+                    else None,
                 )
                 rest_api_port = self._config.rest_api_port
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(

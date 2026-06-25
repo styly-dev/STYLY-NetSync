@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -329,6 +332,32 @@ def _make_get_client(mock_bridge: MagicMock) -> TestClient:
         return TestClient(app)
 
 
+def _make_log_export_client(log_dir: Path) -> TestClient:
+    with patch("styly_netsync.rest_bridge.BridgeManager"):
+        app = create_app("localhost", 5555, 5556, log_dir=log_dir)
+        return TestClient(app)
+
+
+def _write_log_line(
+    path: Path, *, ts: str, level_name: str, level_no: int, message: str
+) -> None:
+    payload = {
+        "text": f"{message}\n",
+        "record": {
+            "message": message,
+            "time": {
+                "repr": ts,
+                "timestamp": datetime.fromisoformat(
+                    ts.replace("Z", "+00:00")
+                ).timestamp(),
+            },
+            "level": {"name": level_name, "no": level_no},
+        },
+    }
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(payload) + "\n")
+
+
 class TestGlobalVariablesGetEndpoint:
     def test_get_all_returns_snapshot(self) -> None:
         mock_bridge = MagicMock()
@@ -416,3 +445,114 @@ class TestClientVariablesGetEndpoint:
         long_name = "x" * 65
         resp = tc.get(f"/v1/rooms/room1/devices/device-x/client-variables/{long_name}")
         assert resp.status_code == 422
+
+
+class TestLogExportEndpoint:
+    def test_export_returns_filtered_ndjson(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "netsync-server.log"
+        _write_log_line(
+            log_file,
+            ts="2026-06-18T00:00:00+00:00",
+            level_name="INFO",
+            level_no=20,
+            message="before",
+        )
+        _write_log_line(
+            log_file,
+            ts="2026-06-18T01:00:00+00:00",
+            level_name="INFO",
+            level_no=20,
+            message="inside",
+        )
+        _write_log_line(
+            log_file,
+            ts="2026-06-18T02:00:00+00:00",
+            level_name="INFO",
+            level_no=20,
+            message="after",
+        )
+
+        tc = _make_log_export_client(tmp_path)
+        resp = tc.get(
+            "/logs/export",
+            params={
+                "from": "2026-06-18T00:30:00Z",
+                "to": "2026-06-18T01:30:00Z",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/x-ndjson")
+        lines = [json.loads(line) for line in resp.text.splitlines()]
+        assert [line["record"]["message"] for line in lines] == ["inside"]
+
+    def test_export_scans_rotated_files_and_filters_severity(
+        self, tmp_path: Path
+    ) -> None:
+        current = tmp_path / "netsync-server.log"
+        rotated = tmp_path / "netsync-server.2026-06-18_00-00-00_000000.log"
+        _write_log_line(
+            rotated,
+            ts="2026-06-18T01:00:00+00:00",
+            level_name="INFO",
+            level_no=20,
+            message="info",
+        )
+        _write_log_line(
+            current,
+            ts="2026-06-18T01:05:00+00:00",
+            level_name="ERROR",
+            level_no=40,
+            message="error",
+        )
+
+        tc = _make_log_export_client(tmp_path)
+        resp = tc.get(
+            "/logs/export",
+            params={
+                "from": "2026-06-18T00:00:00Z",
+                "to": "2026-06-18T02:00:00Z",
+                "min_severity": "ERROR",
+            },
+        )
+
+        assert resp.status_code == 200
+        lines = [json.loads(line) for line in resp.text.splitlines()]
+        assert [line["record"]["message"] for line in lines] == ["error"]
+
+    def test_export_without_log_dir_returns_404(self) -> None:
+        with patch("styly_netsync.rest_bridge.BridgeManager"):
+            app = create_app("localhost", 5555, 5556)
+            tc = TestClient(app)
+
+        resp = tc.get(
+            "/logs/export",
+            params={
+                "from": "2026-06-18T00:00:00Z",
+                "to": "2026-06-18T02:00:00Z",
+            },
+        )
+        assert resp.status_code == 404
+
+    def test_export_invalid_severity_returns_400(self, tmp_path: Path) -> None:
+        tc = _make_log_export_client(tmp_path)
+        resp = tc.get(
+            "/logs/export",
+            params={
+                "from": "2026-06-18T00:00:00Z",
+                "to": "2026-06-18T02:00:00Z",
+                "min_severity": "NOPE",
+            },
+        )
+        assert resp.status_code == 400
+
+    def test_export_invalid_range_returns_400(self, tmp_path: Path) -> None:
+        tc = _make_log_export_client(tmp_path)
+        resp = tc.get(
+            "/logs/export",
+            params={
+                "from": "2026-06-18T02:00:00Z",
+                "to": "2026-06-18T00:00:00Z",
+            },
+        )
+        assert resp.status_code == 400

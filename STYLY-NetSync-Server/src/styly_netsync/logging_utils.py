@@ -1,11 +1,12 @@
 # logging_utils.py
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import threading
-from collections.abc import Callable
-from datetime import time, timedelta
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,16 @@ LOG_ROTATION_SIZE_BYTES = 10 * 1024 * 1024
 LOG_ROTATION_MAX_AGE = timedelta(days=7)
 LOG_RETENTION_MAX_FILES = 20
 DEFAULT_LOG_FILENAME = "netsync-server.log"
+LOG_LEVEL_SEVERITY = {
+    "TRACE": 5,
+    "DEBUG": 10,
+    "INFO": 20,
+    "SUCCESS": 25,
+    "WARNING": 30,
+    "WARN": 30,
+    "ERROR": 40,
+    "CRITICAL": 50,
+}
 RotationRule = str | int | time | timedelta | Callable[..., bool]
 RetentionRule = str | int | timedelta | Callable[[list[str]], None]
 
@@ -222,6 +233,103 @@ def configure_logging(
 
     logging.basicConfig(handlers=[InterceptHandler()], level=logging.NOTSET, force=True)
     logging.captureWarnings(True)
+
+
+def iter_exported_log_lines(
+    log_dir: Path,
+    from_ts: datetime,
+    to_ts: datetime,
+    min_severity: str | None = None,
+) -> Iterator[str]:
+    """Yield original loguru JSONL lines matching the requested time window."""
+
+    min_level_no = _parse_min_severity(min_severity)
+    from_utc = _to_utc(from_ts)
+    to_utc = _to_utc(to_ts)
+
+    for log_file in sorted(log_dir.glob("netsync-server*.log")):
+        if not log_file.is_file():
+            continue
+        try:
+            with log_file.open("r", encoding="utf-8") as file:
+                for raw_line in file:
+                    line = raw_line.rstrip("\r\n")
+                    if not line:
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Skipping malformed NetSync log line in {log_file}")
+                        continue
+                    record = payload.get("record")
+                    if not isinstance(record, dict):
+                        logger.warning(f"Skipping NetSync log line without record in {log_file}")
+                        continue
+                    record_time = _extract_record_time(record)
+                    if record_time is None:
+                        logger.warning(f"Skipping NetSync log line without timestamp in {log_file}")
+                        continue
+                    record_time_utc = _to_utc(record_time)
+                    if record_time_utc < from_utc or record_time_utc > to_utc:
+                        continue
+                    if min_level_no is not None:
+                        level_no = _extract_level_no(record)
+                        if level_no is None or level_no < min_level_no:
+                            continue
+                    yield line
+        except OSError as exc:
+            logger.warning(f"Failed to read NetSync log file {log_file}: {exc}")
+
+
+def _parse_min_severity(min_severity: str | None) -> int | None:
+    if min_severity is None:
+        return None
+    normalized = min_severity.strip().upper()
+    if not normalized:
+        return None
+    if normalized not in LOG_LEVEL_SEVERITY:
+        raise ValueError(f"Unsupported min_severity: {min_severity}")
+    return LOG_LEVEL_SEVERITY[normalized]
+
+
+def _extract_record_time(record: dict[str, Any]) -> datetime | None:
+    time_value = record.get("time")
+    if not isinstance(time_value, dict):
+        return None
+
+    timestamp = time_value.get("timestamp")
+    if isinstance(timestamp, int | float):
+        return datetime.fromtimestamp(timestamp, tz=UTC)
+
+    repr_value = time_value.get("repr")
+    if isinstance(repr_value, str):
+        normalized = repr_value.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_level_no(record: dict[str, Any]) -> int | None:
+    level = record.get("level")
+    if not isinstance(level, dict):
+        return None
+
+    level_no = level.get("no")
+    if isinstance(level_no, int):
+        return level_no
+
+    level_name = level.get("name")
+    if isinstance(level_name, str):
+        return LOG_LEVEL_SEVERITY.get(level_name.upper())
+    return None
+
+
+def _to_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def reset_rotation_state() -> None:
