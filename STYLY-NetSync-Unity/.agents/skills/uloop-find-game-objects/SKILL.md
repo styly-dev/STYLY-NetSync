@@ -3,7 +3,7 @@ name: uloop-find-game-objects
 description: "Find or inspect Unity GameObjects, especially objects the user currently selected in the Hierarchy. Use for details, components, tags, layers, or name/path searches."
 ---
 
-# uloop find-game-objects
+# npx --yes uloop-cli@2.2.0 find-game-objects
 
 Find GameObjects with search criteria or get details for currently selected Hierarchy objects.
 
@@ -12,7 +12,7 @@ Use this before `execute-dynamic-code` when identifying or inspecting selected G
 ## Usage
 
 ```bash
-uloop find-game-objects [options]
+npx --yes uloop-cli@2.2.0 find-game-objects [options]
 ```
 
 ## Parameters
@@ -48,22 +48,22 @@ uloop find-game-objects [options]
 
 ```bash
 # Find by name
-uloop find-game-objects --name-pattern "Player"
+npx --yes uloop-cli@2.2.0 find-game-objects --name-pattern "Player"
 
 # Find with component
-uloop find-game-objects --required-components Rigidbody
+npx --yes uloop-cli@2.2.0 find-game-objects --required-components Rigidbody
 
 # Find by tag
-uloop find-game-objects --tag "Enemy"
+npx --yes uloop-cli@2.2.0 find-game-objects --tag "Enemy"
 
 # Regex search
-uloop find-game-objects --name-pattern "UI_.*" --search-mode Regex
+npx --yes uloop-cli@2.2.0 find-game-objects --name-pattern "UI_.*" --search-mode Regex
 
 # Get selected GameObjects
-uloop find-game-objects --search-mode Selected
+npx --yes uloop-cli@2.2.0 find-game-objects --search-mode Selected
 
 # Get selected including inactive
-uloop find-game-objects --search-mode Selected --include-inactive
+npx --yes uloop-cli@2.2.0 find-game-objects --search-mode Selected --include-inactive
 ```
 
 ## Output

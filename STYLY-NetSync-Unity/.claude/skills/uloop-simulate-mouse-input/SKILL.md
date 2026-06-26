@@ -10,16 +10,16 @@ Simulate mouse input via Input System in Unity PlayMode: $ARGUMENTS
 
 ## Workflow
 
-1. Ensure Unity is in PlayMode (use `uloop control-play-mode --action Play` if not)
-2. For Click/LongPress: determine the target screen position (use `uloop screenshot` to find coordinates)
-3. Execute the appropriate `uloop simulate-mouse-input` command
-4. Take a screenshot to verify the result: `uloop screenshot --capture-mode rendering`
+1. Ensure Unity is in PlayMode (use `npx --yes uloop-cli@2.2.0 control-play-mode --action Play` if not)
+2. For Click/LongPress: determine the target screen position (use `npx --yes uloop-cli@2.2.0 screenshot` to find coordinates)
+3. Execute the appropriate `npx --yes uloop-cli@2.2.0 simulate-mouse-input` command
+4. Take a screenshot to verify the result: `npx --yes uloop-cli@2.2.0 screenshot --capture-mode rendering`
 5. Report what happened
 
 ## Tool Reference
 
 ```bash
-uloop simulate-mouse-input --action <action> [options]
+npx --yes uloop-cli@2.2.0 simulate-mouse-input --action <action> [options]
 ```
 
 ### Parameters
@@ -68,25 +68,25 @@ uloop simulate-mouse-input --action <action> [options]
 
 ```bash
 # Left-click at screen center (for game logic)
-uloop simulate-mouse-input --action Click --x 400 --y 300
+npx --yes uloop-cli@2.2.0 simulate-mouse-input --action Click --x 400 --y 300
 
 # Right-click at screen center (e.g. place block)
-uloop simulate-mouse-input --action Click --x 400 --y 300 --button Right
+npx --yes uloop-cli@2.2.0 simulate-mouse-input --action Click --x 400 --y 300 --button Right
 
 # Hold left-click for 2 seconds (e.g. mine block)
-uloop simulate-mouse-input --action LongPress --x 400 --y 300 --duration 2.0
+npx --yes uloop-cli@2.2.0 simulate-mouse-input --action LongPress --x 400 --y 300 --duration 2.0
 
 # Look right (FPS camera)
-uloop simulate-mouse-input --action MoveDelta --delta-x 100 --delta-y 0
+npx --yes uloop-cli@2.2.0 simulate-mouse-input --action MoveDelta --delta-x 100 --delta-y 0
 
 # Scroll up (e.g. previous hotbar slot)
-uloop simulate-mouse-input --action Scroll --scroll-y 120
+npx --yes uloop-cli@2.2.0 simulate-mouse-input --action Scroll --scroll-y 120
 
 # Scroll down (e.g. next hotbar slot)
-uloop simulate-mouse-input --action Scroll --scroll-y -120
+npx --yes uloop-cli@2.2.0 simulate-mouse-input --action Scroll --scroll-y -120
 
 # Smooth camera pan right over 0.5 seconds
-uloop simulate-mouse-input --action SmoothDelta --delta-x 300 --delta-y 0 --duration 0.5
+npx --yes uloop-cli@2.2.0 simulate-mouse-input --action SmoothDelta --delta-x 300 --delta-y 0 --duration 0.5
 ```
 
 ## Prerequisites

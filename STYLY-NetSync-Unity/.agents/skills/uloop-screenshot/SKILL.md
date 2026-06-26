@@ -3,14 +3,14 @@ name: uloop-screenshot
 description: "Capture Unity Editor windows or Game View rendering as PNG. Use for visual checks, debugging, documentation, or annotated UI element coordinates."
 ---
 
-# uloop screenshot
+# npx --yes uloop-cli@2.2.0 screenshot
 
 Take a screenshot of any Unity EditorWindow by name and save as PNG.
 
 ## Usage
 
 ```bash
-uloop screenshot [--window-name <name>] [--resolution-scale <scale>] [--match-mode <mode>] [--capture-mode <mode>] [--annotate-elements] [--elements-only] [--output-directory <path>]
+npx --yes uloop-cli@2.2.0 screenshot [--window-name <name>] [--resolution-scale <scale>] [--match-mode <mode>] [--capture-mode <mode>] [--annotate-elements] [--elements-only] [--output-directory <path>]
 ```
 
 ## Parameters
@@ -47,28 +47,28 @@ The window name is the text displayed in the window's title bar (tab). Common na
 
 ```bash
 # Take a screenshot of Game View (default)
-uloop screenshot
+npx --yes uloop-cli@2.2.0 screenshot
 
 # Capture game rendering (coordinates match simulate-mouse, PlayMode required)
-uloop screenshot --capture-mode rendering
+npx --yes uloop-cli@2.2.0 screenshot --capture-mode rendering
 
 # Annotate interactive UI elements with index labels (for simulate-mouse workflow)
-uloop screenshot --capture-mode rendering --annotate-elements
+npx --yes uloop-cli@2.2.0 screenshot --capture-mode rendering --annotate-elements
 
 # Get UI element coordinates without capturing an image (fastest)
-uloop screenshot --capture-mode rendering --annotate-elements --elements-only
+npx --yes uloop-cli@2.2.0 screenshot --capture-mode rendering --annotate-elements --elements-only
 
 # Take a screenshot of Scene View
-uloop screenshot --window-name Scene
+npx --yes uloop-cli@2.2.0 screenshot --window-name Scene
 
 # Capture all windows starting with "Project" (prefix match)
-uloop screenshot --window-name Project --match-mode prefix
+npx --yes uloop-cli@2.2.0 screenshot --window-name Project --match-mode prefix
 
 # Save screenshot to a specific directory
-uloop screenshot --output-directory /tmp/screenshots
+npx --yes uloop-cli@2.2.0 screenshot --output-directory /tmp/screenshots
 
 # Combine options
-uloop screenshot --window-name Scene --resolution-scale 0.5 --output-directory /tmp/screenshots
+npx --yes uloop-cli@2.2.0 screenshot --window-name Scene --resolution-scale 0.5 --output-directory /tmp/screenshots
 ```
 
 ## Output
@@ -91,6 +91,6 @@ When multiple windows match (e.g., multiple Inspector windows or when using `con
 
 ## Notes
 
-- Use `uloop focus-window` first if needed
+- Use `npx --yes uloop-cli@2.2.0 focus-window` first if needed
 - Target window must be open in Unity Editor
 - Window name matching is always case-insensitive

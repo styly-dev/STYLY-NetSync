@@ -3,7 +3,7 @@ name: uloop-replay-input
 description: "Replay recorded PlayMode keyboard and mouse input. Use for exact gameplay reproduction, E2E runs, or consistent demos from JSON recordings."
 ---
 
-# uloop replay-input
+# npx --yes uloop-cli@2.2.0 replay-input
 
 Replay recorded keyboard and mouse input during PlayMode. Loads a JSON recording and injects input frame-by-frame via Input System with zero CLI overhead. Supports looping and progress monitoring.
 
@@ -11,19 +11,19 @@ Replay recorded keyboard and mouse input during PlayMode. Loads a JSON recording
 
 ```bash
 # Start replay (auto-detect latest recording)
-uloop replay-input --action Start
+npx --yes uloop-cli@2.2.0 replay-input --action Start
 
 # Start replay with specific file
-uloop replay-input --action Start --input-path scripts/my-play.json
+npx --yes uloop-cli@2.2.0 replay-input --action Start --input-path scripts/my-play.json
 
 # Start replay with looping
-uloop replay-input --action Start --loop true
+npx --yes uloop-cli@2.2.0 replay-input --action Start --loop true
 
 # Check replay progress
-uloop replay-input --action Status
+npx --yes uloop-cli@2.2.0 replay-input --action Status
 
 # Stop replay
-uloop replay-input --action Stop
+npx --yes uloop-cli@2.2.0 replay-input --action Stop
 ```
 
 ## Parameters

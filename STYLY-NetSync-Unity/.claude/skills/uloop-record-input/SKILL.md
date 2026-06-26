@@ -3,7 +3,7 @@ name: uloop-record-input
 description: "Record PlayMode keyboard and mouse input to JSON. Use to capture gameplay, bug repro, or E2E input sequences for replay."
 ---
 
-# uloop record-input
+# npx --yes uloop-cli@2.2.0 record-input
 
 Record keyboard and mouse input during PlayMode frame-by-frame into a JSON file. Captures key presses, mouse movement, clicks, and scroll events via Input System device state diffing.
 
@@ -11,16 +11,16 @@ Record keyboard and mouse input during PlayMode frame-by-frame into a JSON file.
 
 ```bash
 # Start recording
-uloop record-input --action Start
+npx --yes uloop-cli@2.2.0 record-input --action Start
 
 # Start recording with key filter
-uloop record-input --action Start --keys "W,A,S,D,Space"
+npx --yes uloop-cli@2.2.0 record-input --action Start --keys "W,A,S,D,Space"
 
 # Stop recording and save
-uloop record-input --action Stop
+npx --yes uloop-cli@2.2.0 record-input --action Stop
 
 # Stop and save to specific path
-uloop record-input --action Stop --output-path scripts/my-play.json
+npx --yes uloop-cli@2.2.0 record-input --action Stop --output-path scripts/my-play.json
 ```
 
 ## Parameters
