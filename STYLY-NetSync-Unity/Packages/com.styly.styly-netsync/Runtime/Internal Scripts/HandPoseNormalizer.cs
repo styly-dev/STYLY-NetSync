@@ -61,6 +61,22 @@ namespace Styly.NetSync.Internal
         private int _lostCheckFrameCount = 0;
         private const int LostCheckDelayFrames = 3; // Wait 3 frames before confirming lost
 
+        // --- Pose-staleness lost detection ---
+        // Some runtimes keep XRHand.isTracked == true while the wrist pose stops updating (the
+        // subsystem returns the bit-identical pose every frame), and the joint trackingState does
+        // NOT degrade in that case. The only reliable signal is pose staleness: when the wrist pose
+        // is unchanged for PoseStaleSeconds while tracked, treat the hand as lost so the validity
+        // flag clears and remote hands hide instead of freezing in place. A live tracked hand always
+        // jitters, so an exactly-repeated pose sustained this long does not occur during genuine
+        // tracking.
+        private Vector3 _staleLastWristPos;
+        private Quaternion _staleLastWristRot;
+        private bool _staleHasLastWristPos = false;
+        private float _staleUnchangedSince = 0f;
+        private const float PoseStaleEpsilon = 1e-6f;     // only a bit-identical position repeat stays under this
+        private const float PoseStaleRotEpsilon = 1e-3f;  // degrees; only a bit-identical rotation repeat stays under this
+        private const float PoseStaleSeconds = 0.5f;      // sustained no-change before treating as lost
+
         // Head transform reference for maintaining relative position during lost state
         private Transform _headTransform;
 
@@ -251,6 +267,50 @@ namespace Styly.NetSync.Internal
         }
 
         /// <summary>
+        /// Returns true when the wrist pose has been unchanged (stale) for at least PoseStaleSeconds
+        /// while the hand is tracked. Some runtimes keep isTracked == true while the subsystem returns
+        /// the bit-identical wrist pose every frame; that frozen source must be treated as not-tracked.
+        /// Must be called once per frame with the current subsystem hand.
+        /// </summary>
+        private bool IsWristPoseStale(XRHand hand, bool rawTracked)
+        {
+            if (!rawTracked)
+            {
+                _staleHasLastWristPos = false;
+                return false;
+            }
+
+            float now = Time.time;
+            bool hasPose = hand.GetJoint(XRHandJointID.Wrist).TryGetPose(out var wristPose);
+
+            if (!_staleHasLastWristPos)
+            {
+                _staleHasLastWristPos = true;
+                _staleLastWristPos = hasPose ? wristPose.position : Vector3.zero;
+                _staleLastWristRot = hasPose ? wristPose.rotation : Quaternion.identity;
+                _staleUnchangedSince = now;
+                return false;
+            }
+
+            // Position OR rotation delta counts as movement. Rotation is included so a wrist that
+            // turns in place (near-constant position, live orientation) is not misread as stale;
+            // ORing it only makes `moved` fire more often, so it can only reduce false positives.
+            bool moved = hasPose && (
+                Vector3.Distance(wristPose.position, _staleLastWristPos) > PoseStaleEpsilon ||
+                Quaternion.Angle(wristPose.rotation, _staleLastWristRot) > PoseStaleRotEpsilon);
+            if (moved)
+            {
+                _staleLastWristPos = wristPose.position;
+                _staleLastWristRot = wristPose.rotation;
+                _staleUnchangedSince = now;
+                return false;
+            }
+
+            // Pose unchanged (stale repeat) or no fresh pose while still tracked.
+            return (now - _staleUnchangedSince) >= PoseStaleSeconds;
+        }
+
+        /// <summary>
         /// Updates hand tracking state from XRHandSubsystem using state machine.
         /// Uses delayed check for lost detection to distinguish controller switch from true lost.
         /// </summary>
@@ -264,6 +324,9 @@ namespace Styly.NetSync.Internal
                     _trackingState = TrackingState.Unknown;
                     _lostCheckFrameCount = 0;
                 }
+                // Re-init staleness on next available frame so a subsystem drop/reacquire can't be
+                // misread as a stale (frozen) pose from before the gap.
+                _staleHasLastWristPos = false;
                 return;
             }
 
@@ -271,7 +334,11 @@ namespace Styly.NetSync.Internal
             var hand = _handedness == Handedness.Left
                 ? _handSubsystem.leftHand
                 : _handSubsystem.rightHand;
-            bool isTracked = hand.isTracked;
+            bool rawTracked = hand.isTracked;
+            // A frozen (stale) wrist pose while isTracked stays true is treated as not-tracked, so
+            // the existing lost path fires and remote hands hide instead of freezing in place.
+            bool poseStale = IsWristPoseStale(hand, rawTracked);
+            bool isTracked = rawTracked && !poseStale;
 
             // State machine transitions
             switch (_trackingState)
