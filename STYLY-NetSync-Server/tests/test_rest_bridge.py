@@ -534,6 +534,18 @@ class TestLogExportEndpoint:
         )
         assert resp.status_code == 404
 
+    def test_export_missing_log_dir_returns_404(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does-not-exist"
+        tc = _make_log_export_client(missing)
+        resp = tc.get(
+            "/logs/export",
+            params={
+                "from": "2026-06-18T00:00:00Z",
+                "to": "2026-06-18T02:00:00Z",
+            },
+        )
+        assert resp.status_code == 404
+
     def test_export_invalid_severity_returns_400(self, tmp_path: Path) -> None:
         tc = _make_log_export_client(tmp_path)
         resp = tc.get(

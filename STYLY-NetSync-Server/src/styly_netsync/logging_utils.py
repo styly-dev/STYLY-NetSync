@@ -31,6 +31,10 @@ LOG_LEVEL_SEVERITY = {
     "ERROR": 40,
     "CRITICAL": 50,
 }
+# Severity names accepted by the log export API, ordered from least to most severe.
+VALID_MIN_SEVERITIES = tuple(
+    sorted(LOG_LEVEL_SEVERITY, key=lambda name: (LOG_LEVEL_SEVERITY[name], name))
+)
 RotationRule = str | int | time | timedelta | Callable[..., bool]
 RetentionRule = str | int | timedelta | Callable[[list[str]], None]
 
@@ -259,15 +263,21 @@ def iter_exported_log_lines(
                     try:
                         payload = json.loads(line)
                     except json.JSONDecodeError:
-                        logger.warning(f"Skipping malformed NetSync log line in {log_file}")
+                        logger.warning(
+                            f"Skipping malformed NetSync log line in {log_file}"
+                        )
                         continue
                     record = payload.get("record")
                     if not isinstance(record, dict):
-                        logger.warning(f"Skipping NetSync log line without record in {log_file}")
+                        logger.warning(
+                            f"Skipping NetSync log line without record in {log_file}"
+                        )
                         continue
                     record_time = _extract_record_time(record)
                     if record_time is None:
-                        logger.warning(f"Skipping NetSync log line without timestamp in {log_file}")
+                        logger.warning(
+                            f"Skipping NetSync log line without timestamp in {log_file}"
+                        )
                         continue
                     record_time_utc = _to_utc(record_time)
                     if record_time_utc < from_utc or record_time_utc > to_utc:

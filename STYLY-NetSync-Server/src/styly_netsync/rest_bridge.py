@@ -14,7 +14,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, StringConstraints
 
 from .client import net_sync_manager
-from .logging_utils import LOG_LEVEL_SEVERITY, iter_exported_log_lines
+from .logging_utils import (
+    LOG_LEVEL_SEVERITY,
+    VALID_MIN_SEVERITIES,
+    iter_exported_log_lines,
+)
 
 if TYPE_CHECKING:
     import uvicorn
@@ -347,6 +351,10 @@ def create_app(
         """Stream filtered server JSONL logs from the configured log directory."""
         if log_dir is None:
             raise HTTPException(status_code=404, detail="file logging is not enabled")
+        if not log_dir.is_dir():
+            raise HTTPException(
+                status_code=404, detail="log directory is not available"
+            )
 
         try:
             from_ts = _parse_iso_datetime(from_, "from")
@@ -363,8 +371,7 @@ def create_app(
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "min_severity must be one of "
-                        "DEBUG, INFO, WARNING, ERROR, CRITICAL"
+                        "min_severity must be one of " + ", ".join(VALID_MIN_SEVERITIES)
                     ),
                 )
 
