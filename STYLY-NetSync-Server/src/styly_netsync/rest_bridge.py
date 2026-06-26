@@ -3,13 +3,22 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Iterator
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Protocol
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, StringConstraints
 
 from .client import net_sync_manager
+from .logging_utils import (
+    LOG_LEVEL_SEVERITY,
+    VALID_MIN_SEVERITIES,
+    iter_exported_log_lines,
+)
 
 if TYPE_CHECKING:
     import uvicorn
@@ -312,6 +321,7 @@ def create_app(
     sub_port: int,
     transform_port: int = 5557,
     server: ClientVariableServer | None = None,
+    log_dir: Path | None = None,
 ) -> FastAPI:
     """Create the FastAPI application hosting the REST bridge."""
     app = FastAPI(title="NetSync REST Bridge", version="1.0.0")
@@ -331,6 +341,50 @@ def create_app(
     def health_check() -> dict[str, str]:
         """Health check endpoint."""
         return {"status": "ok"}
+
+    @app.get("/logs/export")
+    def export_logs(
+        from_: Annotated[str, Query(alias="from")],
+        to: str,
+        min_severity: str | None = None,
+    ) -> StreamingResponse:
+        """Stream filtered server JSONL logs from the configured log directory."""
+        if log_dir is None:
+            raise HTTPException(status_code=404, detail="file logging is not enabled")
+        if not log_dir.is_dir():
+            raise HTTPException(
+                status_code=404, detail="log directory is not available"
+            )
+
+        try:
+            from_ts = _parse_iso_datetime(from_, "from")
+            to_ts = _parse_iso_datetime(to, "to")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if to_ts < from_ts:
+            raise HTTPException(status_code=400, detail="to must be after from")
+
+        if min_severity is not None:
+            normalized = min_severity.strip().upper()
+            if normalized and normalized not in LOG_LEVEL_SEVERITY:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "min_severity must be one of " + ", ".join(VALID_MIN_SEVERITIES)
+                    ),
+                )
+
+        def line_stream() -> Iterator[str]:
+            for line in iter_exported_log_lines(
+                log_dir,
+                from_ts,
+                to_ts,
+                min_severity=min_severity,
+            ):
+                yield f"{line}\n"
+
+        return StreamingResponse(line_stream(), media_type="application/x-ndjson")
 
     @app.post("/v1/rooms/{room_id}/devices/{device_id}/client-variables")
     def upsert(room_id: str, device_id: str, body: UpsertBody) -> dict[str, object]:
@@ -451,6 +505,13 @@ def create_app(
         return {"clientNo": client_no, "deletedCount": deleted_count}
 
     return app
+
+
+def _parse_iso_datetime(value: str, field_name: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO 8601 timestamp") from exc
 
 
 def run_uvicorn_in_thread(
