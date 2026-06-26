@@ -229,6 +229,26 @@ The response includes the room ID and whether each key was `"applied"`, `"queued
   curl -sS "http://127.0.0.1:8800/v1/rooms/default_room/global-variables/score"
   ```
 
+### Log export
+
+- Endpoint: `GET /logs/export`
+- Requires file logging to be enabled (`--log-dir DIR`, see [Logging](#logging)). Without it the endpoint returns `404 {"detail": "file logging is not enabled"}`.
+- Streams matching JSONL entries from `DIR/netsync-server*.log` (including rotated files) as `application/x-ndjson` — one original loguru JSON line per row.
+- Query parameters:
+  - `from` (required): ISO 8601 start timestamp, inclusive.
+  - `to` (required): ISO 8601 end timestamp, inclusive. Must be greater than or equal to `from`.
+  - `min_severity` (optional): minimum log level to include. One of `TRACE`, `DEBUG`, `INFO`, `SUCCESS`, `WARN`, `WARNING`, `ERROR`, `CRITICAL` (case-insensitive). Lines below this level are skipped.
+- Timestamps are compared in UTC; naive (offset-less) values are treated as UTC.
+- Errors:
+  - `400` — unparseable `from`/`to`, `to` earlier than `from`, or an unsupported `min_severity`.
+  - `404 {"detail": "file logging is not enabled"}` — `--log-dir` was not configured.
+  - `404 {"detail": "log directory is not available"}` — `--log-dir` was configured but the directory does not exist.
+- Example:
+
+  ```bash
+  curl -sS "http://127.0.0.1:8800/logs/export?from=2026-06-26T00:00:00Z&to=2026-06-26T23:59:59Z&min_severity=ERROR"
+  ```
+
 ### Read consistency
 
 GET endpoints return a snapshot of the REST bridge's in-process cache, which is populated by control-lane sync messages from the server. The first request to a room lazily creates a bridge and may return an empty snapshot until the initial sync arrives — retry after a short delay if needed.
