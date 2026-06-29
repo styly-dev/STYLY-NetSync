@@ -170,6 +170,7 @@ class net_sync_manager:
             transform_port if transform_port is not None else self._control_port + 2
         )
         self._sub_port = sub_port
+        self._rest_api_port: int | None = None
         self._room = room
         self._auto_dispatch = auto_dispatch
         self._reconnect_delay = reconnect_delay
@@ -345,6 +346,11 @@ class net_sync_manager:
     def sub_port(self) -> int:
         """Subscriber port."""
         return self._sub_port
+
+    @property
+    def rest_api_port(self) -> int | None:
+        """REST bridge port discovered from server discovery, if available."""
+        return self._rest_api_port
 
     def start(self) -> "net_sync_manager":
         """Start the client and connect to server."""
@@ -1616,17 +1622,19 @@ class net_sync_manager:
                         data, addr = sock.recvfrom(1024)
                         response = data.decode("utf-8")
 
-                        if response.startswith("STYLY-NETSYNC2|"):
+                        if response.startswith("STYLY-NETSYNC3|"):
                             parts = response.split("|")
-                            if len(parts) >= 5:
+                            if len(parts) >= 6:
                                 control_port = int(parts[1])
                                 transform_port = int(parts[2])
                                 sub_port = int(parts[3])
-                                server_name = parts[4]
+                                rest_api_port = int(parts[4])
+                                server_name = parts[5]
 
                                 logger.info(
                                     f"Discovered server: {server_name} at "
-                                    f"{addr[0]}:{control_port}/{transform_port}/{sub_port}"
+                                    f"{addr[0]}:{control_port}/{transform_port}/"
+                                    f"{sub_port} REST:{rest_api_port}"
                                 )
                                 server_address = f"tcp://{addr[0]}"
                                 self.on_server_discovered.invoke(
@@ -1643,6 +1651,7 @@ class net_sync_manager:
                                     self._dealer_port = control_port
                                     self._transform_port = transform_port
                                     self._sub_port = sub_port
+                                    self._rest_api_port = rest_api_port
                                     try:
                                         self.start()
                                     except Exception as e:
@@ -1653,7 +1662,9 @@ class net_sync_manager:
                                         break
                                 self._stop_discovery_internal()
                                 return
-                        elif response.startswith("STYLY-NETSYNC|"):
+                        elif response.startswith(
+                            "STYLY-NETSYNC2|"
+                        ) or response.startswith("STYLY-NETSYNC|"):
                             logger.warning(
                                 "Ignoring incompatible legacy discovery response from %s",
                                 addr[0],

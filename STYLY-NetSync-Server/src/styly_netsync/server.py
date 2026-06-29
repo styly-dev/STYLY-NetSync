@@ -979,10 +979,6 @@ class NetSyncServer:
             self.receive_thread.start()
             self.periodic_thread.start()
 
-            # Start server discovery if enabled
-            if self.enable_server_discovery:
-                self._start_server_discovery()
-
             try:
                 from .rest_bridge import create_app, run_uvicorn_in_thread
 
@@ -992,9 +988,9 @@ class NetSyncServer:
                     transform_port=self.transform_port,
                     sub_port=self.pub_port,
                     server=self,
-                    log_dir=Path(self._config.log_dir)
-                    if self._config.log_dir
-                    else None,
+                    log_dir=(
+                        Path(self._config.log_dir) if self._config.log_dir else None
+                    ),
                 )
                 rest_api_port = self._config.rest_api_port
                 self._rest_thread, self._rest_server = run_uvicorn_in_thread(
@@ -1004,10 +1000,20 @@ class NetSyncServer:
                 logger.info(
                     f"REST bridge started on http://{display_ip}:{rest_api_port}"
                 )
+                if self.enable_server_discovery:
+                    self._start_server_discovery()
+
                 # Display logo after all initialization is complete
                 display_logo()
             except Exception as rest_exc:
                 logger.error(f"Failed to start REST bridge: {rest_exc}")
+                if self.enable_server_discovery:
+                    logger.error(
+                        "Server discovery not started because server startup "
+                        "failed before discovery could be advertised."
+                    )
+                self.stop()
+                raise SystemExit(1) from rest_exc
 
             logger.info("Server is ready and waiting for connections...")
 
@@ -1053,7 +1059,7 @@ class NetSyncServer:
         self.running = False
 
         # Stop server discovery
-        if self.server_discovery_running:
+        if self.server_discovery_running or self.tcp_server_discovery_running:
             self._stop_server_discovery()
 
         if self._rest_server is not None:
@@ -2712,9 +2718,28 @@ class NetSyncServer:
             try:
                 data, addr = probe_sock.recvfrom(1024)
                 response = data.decode("utf-8", errors="replace")
-                # Accept both current v2 and legacy v1 discovery responses for
-                # conflict detection.
-                if response.startswith("STYLY-NETSYNC2|"):
+                # Accept current and older discovery responses for conflict
+                # detection only. Clients still require the current format.
+                if response.startswith("STYLY-NETSYNC3|"):
+                    parts = response.rstrip().split("|")
+                    if len(parts) >= 6:
+                        try:
+                            int(parts[1])
+                            int(parts[2])
+                            int(parts[3])
+                            int(parts[4])
+                        except ValueError:
+                            return
+                        server_name = parts[5]
+                        logger.opt(colors=True).warning(
+                            f"<red>⚠ DISCOVERY PORT CONFLICT:</red> "
+                            f"Another STYLY-NetSync server "
+                            f"('{server_name}') is already responding "
+                            f"on discovery port {self.server_discovery_port} "
+                            f"(from {addr[0]}:{addr[1]}). Clients on this "
+                            f"LAN may connect to the wrong server."
+                        )
+                elif response.startswith("STYLY-NETSYNC2|"):
                     parts = response.rstrip().split("|")
                     if len(parts) >= 5:
                         try:
@@ -2793,6 +2818,15 @@ class NetSyncServer:
         # Start TCP server discovery
         self._start_tcp_server_discovery()
 
+    def _build_discovery_response(self, *, newline: bool = False) -> str:
+        """Build the current discovery response payload."""
+        response = (
+            "STYLY-NETSYNC3|"
+            f"{self.control_port}|{self.transform_port}|{self.pub_port}|"
+            f"{self._config.rest_api_port}|{self.server_name}"
+        )
+        return f"{response}\n" if newline else response
+
     def _stop_server_discovery(self) -> None:
         """Stop server discovery service"""
         # Stop UDP server discovery
@@ -2816,12 +2850,8 @@ class NetSyncServer:
     def _server_discovery_loop(self) -> None:
         """UDP discovery service loop - responds to client discovery requests"""
         # Response message format:
-        # STYLY-NETSYNC2|controlPort|transformPort|pubPort|serverName
-        response = (
-            "STYLY-NETSYNC2|"
-            f"{self.control_port}|{self.transform_port}|{self.pub_port}|"
-            f"{self.server_name}"
-        )
+        # STYLY-NETSYNC3|controlPort|transformPort|pubPort|restApiPort|serverName
+        response = self._build_discovery_response()
         response_bytes = response.encode("utf-8")
         udp_socket = self.server_discovery_socket
         if udp_socket is None:
@@ -2894,12 +2924,8 @@ class NetSyncServer:
     def _tcp_server_discovery_loop(self) -> None:
         """TCP discovery service loop - responds to client discovery requests"""
         # Response message format:
-        # STYLY-NETSYNC2|controlPort|transformPort|pubPort|serverName\n
-        response = (
-            "STYLY-NETSYNC2|"
-            f"{self.control_port}|{self.transform_port}|{self.pub_port}|"
-            f"{self.server_name}\n"
-        )
+        # STYLY-NETSYNC3|controlPort|transformPort|pubPort|restApiPort|serverName\n
+        response = self._build_discovery_response(newline=True)
         response_bytes = response.encode("utf-8")
         tcp_socket = self.tcp_server_discovery_socket
         if tcp_socket is None:
@@ -3115,6 +3141,7 @@ def main() -> None:
     logger.info(f"  Control port: {config.control_port}")
     logger.info(f"  Transform port: {config.transform_port}")
     logger.info(f"  PUB port: {config.pub_port}")
+    logger.info(f"  REST bridge port: {config.rest_api_port}")
     if config.enable_server_discovery:
         logger.info(f"  Server discovery port: {config.server_discovery_port}")
         logger.info(f"  Server name: {config.server_name}")

@@ -40,7 +40,7 @@ namespace Styly.NetSync
         public int MaxParallelConnections { get; set; } = 20; // Scan up to 20 IPs concurrently
         public int TcpConnectionTimeoutMs { get; set; } = 300; // Reduced timeout for faster scanning
 
-        public event Action<string, int, int, int> OnServerDiscovered;
+        public event Action<string, int, int, int, int> OnServerDiscovered;
 
         public ServerDiscoveryManager(bool enableDebugLogs)
         {
@@ -565,9 +565,9 @@ namespace Styly.NetSync
                 var parts = message.Split('|');
 
                 // Clients and servers always run the same version, so any reply
-                // that is not a current STYLY-NETSYNC2 response is not a
+                // that is not a current STYLY-NETSYNC3 response is not a
                 // compatible server. Treat it as "not found" and keep scanning.
-                if (parts.Length < 5 || parts[0] != "STYLY-NETSYNC2")
+                if (parts.Length < 6 || parts[0] != "STYLY-NETSYNC3")
                 {
                     DebugLog($"Ignoring non-matching discovery response from {sender.Address}");
                     return false;
@@ -576,18 +576,19 @@ namespace Styly.NetSync
                 var controlPort = int.Parse(parts[1]);
                 var transformPort = int.Parse(parts[2]);
                 var subPort = int.Parse(parts[3]);
-                var serverName = parts[4];
+                var restApiPort = int.Parse(parts[4]);
+                var serverName = parts[5];
 
                 var serverAddress = $"tcp://{sender.Address}";
 
                 // Cache the discovered server IP for future connections
                 QueueCacheServerIp(sender.Address.ToString());
 
-                DebugLog($"Discovered server '{serverName}' at {serverAddress} (control:{controlPort}, transform:{transformPort}, sub:{subPort})");
+                DebugLog($"Discovered server '{serverName}' at {serverAddress} (control:{controlPort}, transform:{transformPort}, sub:{subPort}, rest:{restApiPort})");
 
                 if (OnServerDiscovered != null)
                 {
-                    OnServerDiscovered.Invoke(serverAddress, controlPort, transformPort, subPort);
+                    OnServerDiscovered.Invoke(serverAddress, controlPort, transformPort, subPort, restApiPort);
                 }
 
                 // Stop sending more discovery requests once we found a server
