@@ -33,7 +33,7 @@ if env_is_green.lower() == "true":
 else:
     import zmq  # type: ignore[no-redef]
 
-from . import binary_serializer
+from . import binary_serializer, discovery
 from .adapters import (
     client_transform_from_wire,
     client_transform_to_wire,
@@ -1590,7 +1590,7 @@ class net_sync_manager:
                 if not sockets:
                     break
 
-                message = b"STYLY-NETSYNC-DISCOVER"
+                message = discovery.DISCOVERY_REQUEST.encode("utf-8")
 
                 # Send discovery broadcast on every NIC socket
                 for sock in sockets:
@@ -1622,8 +1622,8 @@ class net_sync_manager:
                         data, addr = sock.recvfrom(1024)
                         response = data.decode("utf-8")
 
-                        if response.startswith("STYLY-NETSYNC3|"):
-                            parts = response.split("|")
+                        if response.startswith(discovery.DISCOVERY_RESPONSE_PREFIX):
+                            parts = response.split("|", 5)
                             if len(parts) >= 6:
                                 control_port = int(parts[1])
                                 transform_port = int(parts[2])
@@ -1662,11 +1662,14 @@ class net_sync_manager:
                                         break
                                 self._stop_discovery_internal()
                                 return
-                        elif response.startswith(
-                            "STYLY-NETSYNC2|"
-                        ) or response.startswith("STYLY-NETSYNC|"):
                             logger.warning(
-                                "Ignoring incompatible legacy discovery response from %s",
+                                "Ignoring malformed %s discovery response from %s",
+                                discovery.DISCOVERY_RESPONSE_VERSION,
+                                addr[0],
+                            )
+                        else:
+                            logger.warning(
+                                "Ignoring incompatible discovery response from %s",
                                 addr[0],
                             )
                     except TimeoutError:

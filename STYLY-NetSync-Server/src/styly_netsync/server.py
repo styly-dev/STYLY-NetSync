@@ -40,6 +40,7 @@ except Exception:
 import zmq
 from loguru import logger
 from . import binary_serializer
+from . import discovery
 from . import network_utils
 from .logging_utils import configure_logging
 from .config import (
@@ -2711,7 +2712,7 @@ class NetSyncServer:
             probe_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             probe_sock.settimeout(1.0)
 
-            probe_msg = b"STYLY-NETSYNC-DISCOVER"
+            probe_msg = discovery.DISCOVERY_REQUEST.encode("utf-8")
             probe_sock.sendto(probe_msg, ("<broadcast>", self.server_discovery_port))
 
             # Listen for any valid response within the timeout
@@ -2720,8 +2721,8 @@ class NetSyncServer:
                 response = data.decode("utf-8", errors="replace")
                 # Accept current and older discovery responses for conflict
                 # detection only. Clients still require the current format.
-                if response.startswith("STYLY-NETSYNC3|"):
-                    parts = response.rstrip().split("|")
+                if response.startswith(discovery.DISCOVERY_RESPONSE_PREFIX):
+                    parts = response.rstrip().split("|", 5)
                     if len(parts) >= 6:
                         try:
                             int(parts[1])
@@ -2821,9 +2822,9 @@ class NetSyncServer:
     def _build_discovery_response(self, *, newline: bool = False) -> str:
         """Build the current discovery response payload."""
         response = (
-            "STYLY-NETSYNC3|"
-            f"{self.control_port}|{self.transform_port}|{self.pub_port}|"
-            f"{self._config.rest_api_port}|{self.server_name}"
+            discovery.DISCOVERY_RESPONSE_PREFIX
+            + f"{self.control_port}|{self.transform_port}|{self.pub_port}|"
+            + f"{self._config.rest_api_port}|{self.server_name}"
         )
         return f"{response}\n" if newline else response
 
@@ -2864,7 +2865,7 @@ class NetSyncServer:
                 request = data.decode("utf-8")
 
                 # Validate request format
-                if request == "STYLY-NETSYNC-DISCOVER":
+                if request == discovery.DISCOVERY_REQUEST:
                     # Send response back to requesting client
                     udp_socket.sendto(response_bytes, client_addr)
                     logger.debug(
@@ -2943,7 +2944,7 @@ class NetSyncServer:
                     request = data.decode("utf-8").strip()
 
                     # Validate request format
-                    if request == "STYLY-NETSYNC-DISCOVER":
+                    if request == discovery.DISCOVERY_REQUEST:
                         # Send response back to requesting client
                         client_socket.sendall(response_bytes)
                         logger.debug(

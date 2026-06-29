@@ -24,6 +24,8 @@ namespace Styly.NetSync
 
         // PlayerPrefs key for server IP caching
         private const string CACHED_SERVER_IP_KEY = "STYLY_NetSync_LastServerIP";
+        private const string DISCOVERY_REQUEST = "STYLY-NETSYNC-DISCOVER";
+        private const string DISCOVERY_RESPONSE_VERSION = "STYLY-NETSYNC3";
 
         public bool EnableDiscovery { get; set; } = true;
         public float DiscoveryTimeout { get; set; } = 1f;
@@ -136,7 +138,7 @@ namespace Styly.NetSync
                     if (!_isDiscovering) return; // Check if discovery was stopped
                     DebugLog("Proceeding with UDP broadcast discovery.");
 
-                    var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
+                    var discoveryMessage = Encoding.UTF8.GetBytes(DISCOVERY_REQUEST);
                     var lastRequestTime = DateTime.MinValue;
 
                     while (_isDiscovering)
@@ -361,7 +363,7 @@ namespace Styly.NetSync
                 client.EndConnect(connectResult);
 
                 // Send discovery request
-                var discoveryMessage = Encoding.UTF8.GetBytes("STYLY-NETSYNC-DISCOVER");
+                var discoveryMessage = Encoding.UTF8.GetBytes(DISCOVERY_REQUEST);
                 NetworkStream stream = client.GetStream();
                 stream.Write(discoveryMessage, 0, discoveryMessage.Length);
 
@@ -567,7 +569,7 @@ namespace Styly.NetSync
                 // Clients and servers always run the same version, so any reply
                 // that is not a current STYLY-NETSYNC3 response is not a
                 // compatible server. Treat it as "not found" and keep scanning.
-                if (parts.Length < 6 || parts[0] != "STYLY-NETSYNC3")
+                if (parts.Length < 6 || parts[0] != DISCOVERY_RESPONSE_VERSION)
                 {
                     DebugLog($"Ignoring non-matching discovery response from {sender.Address}");
                     return false;
