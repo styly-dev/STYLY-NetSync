@@ -511,6 +511,7 @@ namespace Styly.NetSync
         private int _discoveredDealerPort;
         private int _discoveredTransformPort;
         private int _discoveredSubPort;
+        private int _discoveredRestApiPort;
         private float _discoveryStartTime;
         private const float ReconnectDelay = 10f;
         private const float DiscoveryRetryDelay = 5f; // Retry discovery every 5 seconds after failure
@@ -580,6 +581,11 @@ namespace Styly.NetSync
             get => _serverDiscoveryPort;
             set => _serverDiscoveryPort = value;
         }
+
+        /// <summary>
+        /// REST bridge port resolved via auto-discovery. Zero until discovery completes.
+        /// </summary>
+        public int DiscoveredRestApiPort => _discoveredRestApiPort;
 
         /// <summary>
         /// Transform sync frequency in Hz (sends per second). Valid range: 0.5-60.
@@ -1175,12 +1181,13 @@ namespace Styly.NetSync
             _shouldCheckReady = true;
         }
 
-        private void OnServerDiscovered(string serverAddress, int controlPort, int transformPort, int subPort)
+        private void OnServerDiscovered(string serverAddress, int controlPort, int transformPort, int subPort, int restApiPort)
         {
             _discoveredServer = serverAddress;
             _discoveredDealerPort = controlPort;
             _discoveredTransformPort = transformPort;
             _discoveredSubPort = subPort;
+            _discoveredRestApiPort = restApiPort;
 
             // Update the server address for future connections
             // Remove tcp:// prefix (discovery always returns with tcp://)
@@ -1189,7 +1196,7 @@ namespace Styly.NetSync
             _transformPort = transformPort;
             _subPort = subPort;
 
-            DebugLog($"Server discovered: {serverAddress} (control:{controlPort}, transform:{transformPort}, sub:{subPort})");
+            DebugLog($"Server discovered: {serverAddress} (control:{controlPort}, transform:{transformPort}, sub:{subPort}, rest:{restApiPort})");
         }
         #endregion ------------------------------------------------------------------------
 

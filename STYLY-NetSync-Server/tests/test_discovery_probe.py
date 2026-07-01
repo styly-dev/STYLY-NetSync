@@ -5,10 +5,12 @@ from __future__ import annotations
 import io
 import socket
 import threading
+from dataclasses import replace
 from unittest.mock import patch
 
 from loguru import logger
 
+from styly_netsync.config import load_default_config
 from styly_netsync.server import NetSyncServer
 
 
@@ -21,6 +23,21 @@ def _find_free_port() -> int:
 
 class TestDiscoveryProbe:
     """Tests for _probe_existing_discovery_server."""
+
+    def test_builds_current_discovery_response_with_rest_port(self) -> None:
+        """Discovery response should include the REST bridge port."""
+        config = replace(load_default_config(), rest_api_port=9900)
+        server = NetSyncServer(
+            dealer_port=5555,
+            transform_port=5557,
+            pub_port=5556,
+            server_name="TestServer",
+            config=config,
+        )
+
+        expected = "STYLY-NETSYNC3|5555|5557|5556|9900|TestServer"
+        assert server._build_discovery_response() == expected
+        assert server._build_discovery_response(newline=True) == f"{expected}\n"
 
     def test_no_conflict_when_no_other_server(self) -> None:
         """Probe should produce no warning when nobody responds."""
@@ -57,7 +74,7 @@ class TestDiscoveryProbe:
                 try:
                     data, addr = sock.recvfrom(1024)
                     if data == b"STYLY-NETSYNC-DISCOVER":
-                        response = b"STYLY-NETSYNC2|5555|5557|5556|FakeServer"
+                        response = b"STYLY-NETSYNC3|5555|5557|5556|8800|FakeServer"
                         sock.sendto(response, addr)
                 except TimeoutError:
                     continue

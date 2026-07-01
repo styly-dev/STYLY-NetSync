@@ -43,8 +43,8 @@ styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 ## Wire protocol compatibility
 
 - Current wire protocol is `protocolVersion = 8`.
-- Transport uses three sockets: control (`control_port`, default `5555`) for RPC, Network Variables, ownership, ID mapping, and client hello; transform uplink (`transform_port`, default `5557`) for client/object poses; PUB/SUB (`pub_port`, default `5556`) for room pose and room object downlink.
-- Discovery responses use `STYLY-NETSYNC2|controlPort|transformPort|pubPort|serverName`; legacy `STYLY-NETSYNC|...` responses are explicitly incompatible.
+- Transport uses three ZeroMQ sockets: control (`control_port`, default `5555`) for RPC, Network Variables, ownership, ID mapping, and client hello; transform uplink (`transform_port`, default `5557`) for client/object poses; PUB/SUB (`pub_port`, default `5556`) for room pose and room object downlink. The REST bridge (`rest_api_port`, default `8800`) is also required for server startup.
+- Discovery responses use `STYLY-NETSYNC3|controlPort|transformPort|pubPort|restApiPort|serverName`; legacy discovery responses are explicitly incompatible.
 - `dealer_port` / `--dealer-port` remain a one-release compatibility alias for `control_port` / `--control-port`.
 - Transform messages use `MSG_CLIENT_POSE` (11) and `MSG_ROOM_POSE` (12) with the compact pose body. Clients register control identity with `MSG_CLIENT_HELLO` (19).
 - Moving-floor-local poses set the `MovingFloorLocal` pose flag. Bound avatars send head, hands, and virtual transforms in the registered moving floor's local coordinates, and reuse the existing 8-byte physical slot as direct physical position/yaw.
@@ -119,7 +119,7 @@ Bridging: stdlib `logging` is routed to loguru automatically.
 
 ## REST bridge
 
-The server launches an embedded FastAPI application that exposes REST endpoints for managing Network Variables. Default port: `8800` (override with `--rest-api-port` CLI argument or `rest_api_port` in config file).
+The server launches an embedded FastAPI application that exposes REST endpoints for managing Network Variables. Default port: `8800` (override with `--rest-api-port` CLI argument or `rest_api_port` in config file). The REST bridge is required: if it cannot start, server startup fails before discovery is advertised. Server discovery includes the REST bridge port only after the bridge has started successfully.
 
 ### Client variables
 

@@ -86,7 +86,7 @@ The uvx command automatically downloads the package, creates an isolated virtual
 
 - Keep Unity package and server versions aligned.
 - The current wire protocol is `protocolVersion = 8`; it is not backward compatible with older clients or servers.
-- Transport uses separate ports for control (`5555`), transform uplink (`5557`), and PUB/SUB downlink (`5556`). Legacy discovery responses are treated as incompatible.
+- Transport uses separate ports for control (`5555`), transform uplink (`5557`), PUB/SUB downlink (`5556`), and the required REST bridge (`8800`). Discovery responses use `STYLY-NETSYNC3|controlPort|transformPort|pubPort|restApiPort|serverName`; legacy discovery responses are treated as incompatible. Server startup fails if the REST bridge cannot start.
 - `xrOriginDelta` carries a Y component (4×`int16`: `dx, dy, dz, dyaw`) so receivers can reconstruct vertical rig motion (e.g. elevators).
 - Protocol v8 position quantization uses:
   - Absolute scale (`Head`): signed `int24` at `0.01 m` per unit, per-axis range `[-83,886.08 m, 83,886.07 m]`.

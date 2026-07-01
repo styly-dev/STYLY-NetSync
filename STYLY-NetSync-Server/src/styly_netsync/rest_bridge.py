@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 import time
 from collections.abc import Iterator
@@ -517,13 +518,37 @@ def _parse_iso_datetime(value: str, field_name: str) -> datetime:
 def run_uvicorn_in_thread(
     app: FastAPI, host: str = "0.0.0.0", port: int = 8800
 ) -> tuple[threading.Thread, uvicorn.Server]:
-    """Spawn a Uvicorn server for the given FastAPI app in a background thread."""
+    """Spawn a Uvicorn server after binding its socket in the caller thread."""
     import uvicorn
 
     config = uvicorn.Config(
         app=app, host=host, port=port, log_level="warning", lifespan="off"
     )
     server = uvicorn.Server(config=config)
-    thread = threading.Thread(target=server.run, daemon=True)
+    try:
+        bound_socket = config.bind_socket()
+    except SystemExit as exc:
+        raise RuntimeError(f"Failed to bind REST bridge on {host}:{port}") from exc
+
+    def run_server(sock: socket.socket) -> None:
+        server.run(sockets=[sock])
+
+    thread = threading.Thread(target=run_server, args=(bound_socket,), daemon=True)
     thread.start()
+
+    startup_deadline = time.monotonic() + 5.0
+    while not server.started and thread.is_alive():
+        if time.monotonic() >= startup_deadline:
+            server.should_exit = True
+            thread.join(timeout=2.0)
+            bound_socket.close()
+            raise RuntimeError(
+                f"Timed out waiting for REST bridge to start on {host}:{port}"
+            )
+        time.sleep(0.01)
+
+    if not server.started:
+        bound_socket.close()
+        raise RuntimeError(f"REST bridge exited before starting on {host}:{port}")
+
     return thread, server

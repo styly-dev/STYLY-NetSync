@@ -78,7 +78,7 @@ black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 ### Backward Compatibility Policy
 
 - Network protocol changes do NOT require backward compatibility — deploy server and clients together
-- This also covers the discovery handshake (`STYLY-NETSYNC2`): a reply that is not the current format is simply "not a compatible server"; do not add legacy-version detection branches or fallbacks
+- This also covers the discovery handshake (`STYLY-NETSYNC3`): a reply that is not the current format is simply "not a compatible server"; do not add legacy-version detection branches or fallbacks
 - Avoid unnecessary breaking changes to non-networking code
 - Always notify the user of breaking changes
 

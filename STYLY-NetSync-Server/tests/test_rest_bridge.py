@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -15,7 +16,49 @@ from styly_netsync.rest_bridge import (
     GlobalVarStore,
     RoomBridge,
     create_app,
+    run_uvicorn_in_thread,
 )
+
+# ---------------------------------------------------------------------------
+# REST bridge server lifecycle tests
+# ---------------------------------------------------------------------------
+
+
+class TestRestBridgeServerLifecycle:
+    def test_run_uvicorn_in_thread_raises_when_port_is_occupied(self) -> None:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+            occupied.bind(("127.0.0.1", 0))
+            occupied.listen(1)
+            port = int(occupied.getsockname()[1])
+
+            app = create_app("localhost", 5555, 5556)
+            with pytest.raises(RuntimeError, match="Failed to bind REST bridge"):
+                run_uvicorn_in_thread(app, host="127.0.0.1", port=port)
+
+    def test_run_uvicorn_in_thread_closes_socket_on_startup_timeout(self) -> None:
+        fake_socket = MagicMock(spec=socket.socket)
+        fake_config = MagicMock()
+        fake_config.bind_socket.return_value = fake_socket
+        fake_server = MagicMock()
+        fake_server.started = False
+        fake_thread = MagicMock()
+        fake_thread.is_alive.return_value = True
+
+        with (
+            patch("uvicorn.Config", return_value=fake_config),
+            patch("uvicorn.Server", return_value=fake_server),
+            patch("threading.Thread", return_value=fake_thread),
+            patch("styly_netsync.rest_bridge.time.monotonic", side_effect=[0.0, 6.0]),
+            patch("styly_netsync.rest_bridge.time.sleep"),
+            pytest.raises(RuntimeError, match="Timed out waiting"),
+        ):
+            app = create_app("localhost", 5555, 5556)
+            run_uvicorn_in_thread(app, host="127.0.0.1", port=8800)
+
+        assert fake_server.should_exit is True
+        fake_thread.join.assert_called_once_with(timeout=2.0)
+        fake_socket.close.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # GlobalVarStore tests
