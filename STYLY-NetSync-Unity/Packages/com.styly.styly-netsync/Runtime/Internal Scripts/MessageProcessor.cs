@@ -367,6 +367,10 @@ namespace Styly.NetSync
                     // Skip local avatar by client number
                     if (c.clientNo == _localClientNo) { continue; }
 
+                    // Stamp the carrying broadcast's time so the applier can
+                    // measure the server relay wait (broadcastTime - poseTime).
+                    c.relayBroadcastTime = room.broadcastTime;
+
                     alive.Add(c.clientNo);
 
                     // Check if avatar already exists and just needs update

@@ -29,6 +29,14 @@ namespace Styly.NetSync
         private readonly SendIntervalEstimator _intervalEstimator = new SendIntervalEstimator();
         private double _configuredSendIntervalSeconds = 0.1;
 
+        // Measures how long poses waited on the server before relay
+        // (broadcastTime - poseTime). Sampled only when the pose sequence
+        // advances, so rebroadcasts of an unchanged pose don't inflate it.
+        private readonly RelayAgeEnvelope _relayAge = new RelayAgeEnvelope();
+        private ushort _lastRelaySeq;
+        private double _lastRelayPoseTime;
+        private bool _hasRelaySample;
+
         private PoseChannel _physical;
         private PoseChannel _head;
         private PoseChannel _rightHand;
@@ -117,6 +125,7 @@ namespace Styly.NetSync
             _lastTickApplied = false;
             ClearLastAvatarSamples();
             _intervalEstimator.Reset();
+            ResetRelayAgeTracking();
         }
 
         public void InitializeForSingle(
@@ -147,6 +156,52 @@ namespace Styly.NetSync
             _lastTickApplied = false;
             ClearLastAvatarSamples();
             _intervalEstimator.Reset();
+            ResetRelayAgeTracking();
+        }
+
+        private void ResetRelayAgeTracking()
+        {
+            _relayAge.Reset();
+            _hasRelaySample = false;
+            _lastRelaySeq = 0;
+            _lastRelayPoseTime = 0;
+        }
+
+        /// <summary>
+        /// Feed one relay-age observation (broadcastTime - poseTime) when the pose
+        /// sequence actually advanced. Rebroadcasts of an unchanged pose carry a
+        /// growing age that says nothing about relay latency, so they are skipped.
+        /// </summary>
+        private void SampleRelayAge(double broadcastTime, double poseTime, ushort poseSeq)
+        {
+            if (broadcastTime <= 0 || poseTime <= 0)
+            {
+                return;
+            }
+
+            bool isNew;
+            if (!_hasRelaySample)
+            {
+                isNew = true;
+            }
+            else if (poseSeq != 0 && _lastRelaySeq != 0)
+            {
+                isNew = SequenceUtil.IsNewer(poseSeq, _lastRelaySeq);
+            }
+            else
+            {
+                isNew = poseTime > _lastRelayPoseTime;
+            }
+
+            if (!isNew)
+            {
+                return;
+            }
+
+            _lastRelaySeq = poseSeq;
+            _lastRelayPoseTime = poseTime;
+            _hasRelaySample = true;
+            _relayAge.AddSample(broadcastTime - poseTime, NetSyncClock.NowSeconds());
         }
 
         public void AddSnapshot(ClientTransformData data)
@@ -170,6 +225,7 @@ namespace Styly.NetSync
             _isMovingFloorLocal = movingFloorLocal;
             _hasAnySnapshot = true;
             _intervalEstimator.OnPoseTime(data.poseTime);
+            SampleRelayAge(data.relayBroadcastTime, data.poseTime, data.poseSeq);
 
             if ((data.flags & PoseFlags.PhysicalValid) != 0 && data.physical != null)
             {
@@ -227,7 +283,7 @@ namespace Styly.NetSync
             }
         }
 
-        public void AddSingleSnapshot(double poseTime, ushort poseSeq, Vector3 position, Quaternion rotation)
+        public void AddSingleSnapshot(double poseTime, ushort poseSeq, Vector3 position, Quaternion rotation, double broadcastTime = 0)
         {
             if (_singleChannel == null)
             {
@@ -236,6 +292,7 @@ namespace Styly.NetSync
 
             _hasAnySnapshot = true;
             _intervalEstimator.OnPoseTime(poseTime);
+            SampleRelayAge(broadcastTime, poseTime, poseSeq);
             _singleChannel.AddSnapshot(poseTime, poseSeq, new PoseSampleData(position, rotation));
         }
 
@@ -279,7 +336,11 @@ namespace Styly.NetSync
                 _settings.DynamicTolerance,
                 _settings.MinBufferMultiplier,
                 _settings.MaxBufferMultiplier);
-            var renderServerTime = serverNow - (bufferMul * sendInterval);
+            // Delay rendering by the buffer (send interval + jitter) plus the
+            // measured server relay wait, so snapshots arrive before the render
+            // point reaches them even when the relay clock beats against the
+            // sender clock.
+            var renderServerTime = serverNow - (bufferMul * sendInterval) - _relayAge.Current(localNow);
 
             if (_singleChannel != null)
             {
