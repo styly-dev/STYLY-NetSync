@@ -329,13 +329,14 @@ namespace Styly.NetSync
         /// <summary>
         /// Compares two 16-bit sequence numbers accounting for wrap-around.
         /// Uses the RFC 1982 serial number arithmetic approach:
-        /// a is less than or equal to b if (a - b) interpreted as unsigned >= 0x8000.
+        /// a is less than or equal to b if the values are equal, or if
+        /// (a - b) interpreted as unsigned is >= 0x8000.
         /// This correctly handles wrap-around when sequence numbers cross 65535->0.
         /// Example: SequenceLE(65535, 0) returns true (65535 comes before 0 after wrap).
         /// </summary>
         private static bool SequenceLE(ushort a, ushort b)
         {
-            return (ushort)(a - b) >= 0x8000;
+            return a == b || (ushort)(a - b) >= 0x8000;
         }
     }
 
