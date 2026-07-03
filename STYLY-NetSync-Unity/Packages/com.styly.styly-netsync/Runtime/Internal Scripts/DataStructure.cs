@@ -59,6 +59,10 @@ namespace Styly.NetSync
         public string deviceId;
         public int clientNo;  // Client number assigned by server (0 if not assigned)
         public double poseTime;
+        // Not on the wire: broadcastTime of the room broadcast that carried this pose,
+        // stamped on receive. broadcastTime - poseTime measures how long the pose sat
+        // on the server before being relayed (both are server-monotonic seconds).
+        public double relayBroadcastTime;
         public ushort poseSeq;
         public PoseFlags flags;
         // XROrigin locomotion delta (SE(2)): x/z translation in meters and yaw delta in degrees.

@@ -195,6 +195,72 @@ namespace Styly.NetSync
         }
     }
 
+    internal static class SequenceUtil
+    {
+        /// <summary>
+        /// True when sequence number <paramref name="a"/> comes strictly after
+        /// <paramref name="b"/>, using RFC 1982 serial number arithmetic to
+        /// handle 65535->0 wrap-around.
+        /// </summary>
+        public static bool IsNewer(ushort a, ushort b)
+        {
+            return a != b && (ushort)(a - b) < 0x8000;
+        }
+    }
+
+    /// <summary>
+    /// Tracks how long poses sit on the server before being relayed
+    /// (broadcastTime - poseTime, both server-monotonic seconds). The server
+    /// rebroadcasts at its own rate, so a pose can wait up to one broadcast
+    /// interval before relay; that wait drifts slowly (beat between the client
+    /// send clock and the server broadcast clock) and is invisible to the
+    /// broadcast-offset jitter estimator. Keeps a slowly decaying maximum so
+    /// the render buffer can absorb the relay wait without a fixed worst-case
+    /// latency penalty.
+    /// </summary>
+    internal sealed class RelayAgeEnvelope
+    {
+        // Ignore pathological ages (e.g. first broadcast after a receive stall).
+        private const double MaxAgeSeconds = 0.5;
+        // Shrink 50 ms per second once the relay wait improves; rises are instant.
+        private const double DecayPerSecond = 0.05;
+
+        private double _envelope;
+        private double _lastSampleTime;
+        private bool _has;
+
+        public void Reset()
+        {
+            _has = false;
+            _envelope = 0;
+            _lastSampleTime = 0;
+        }
+
+        public void AddSample(double ageSeconds, double localNow)
+        {
+            if (double.IsNaN(ageSeconds)) return;
+            if (ageSeconds < 0) ageSeconds = 0;
+            if (ageSeconds > MaxAgeSeconds) ageSeconds = MaxAgeSeconds;
+            _envelope = Math.Max(Decayed(localNow), ageSeconds);
+            _lastSampleTime = localNow;
+            _has = true;
+        }
+
+        public double Current(double localNow)
+        {
+            return Decayed(localNow);
+        }
+
+        private double Decayed(double localNow)
+        {
+            if (!_has) return 0;
+            var dt = localNow - _lastSampleTime;
+            if (dt <= 0) return _envelope;
+            var decayed = _envelope - dt * DecayPerSecond;
+            return decayed > 0 ? decayed : 0;
+        }
+    }
+
     internal enum SampleState
     {
         Empty,
@@ -329,13 +395,14 @@ namespace Styly.NetSync
         /// <summary>
         /// Compares two 16-bit sequence numbers accounting for wrap-around.
         /// Uses the RFC 1982 serial number arithmetic approach:
-        /// a is less than or equal to b if (a - b) interpreted as unsigned >= 0x8000.
+        /// a is less than or equal to b if the values are equal, or if
+        /// (a - b) interpreted as unsigned is >= 0x8000.
         /// This correctly handles wrap-around when sequence numbers cross 65535->0.
         /// Example: SequenceLE(65535, 0) returns true (65535 comes before 0 after wrap).
         /// </summary>
         private static bool SequenceLE(ushort a, ushort b)
         {
-            return (ushort)(a - b) >= 0x8000;
+            return a == b || (ushort)(a - b) >= 0x8000;
         }
     }
 
@@ -422,14 +489,17 @@ namespace Styly.NetSync
     [Serializable]
     internal sealed class NetSyncSmoothingSettings
     {
-        public double BaseBufferMultiplier = 0.45;
+        // Covers the client send interval plus network jitter. The server-side
+        // relay wait (up to one broadcast interval) is compensated separately by
+        // RelayAgeEnvelope in NetSyncTransformApplier, so this stays small.
+        public double BaseBufferMultiplier = 1.3;
         public bool DynamicBuffer = true;
-        public double DynamicTolerance = 0.1;
-        public double MinBufferMultiplier = 1.1;
-        public double MaxBufferMultiplier = 1.2;
+        public double DynamicTolerance = 0.3;
+        public double MinBufferMultiplier = 1.25;
+        public double MaxBufferMultiplier = 2.0;
 
         public PoseChannelSettings Physical = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.02f, TauMaxSeconds = 0.06f };
-        public PoseChannelSettings Head = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, EnableSecondPhaseSmoothing = false, TauMinSeconds = 0.02f, TauMaxSeconds = 0.05f };
+        public PoseChannelSettings Head = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.02f, TauMaxSeconds = 0.05f };
         public PoseChannelSettings Right = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.01f, TauMaxSeconds = 0.03f };
         public PoseChannelSettings Left = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.01f, TauMaxSeconds = 0.03f };
         public PoseChannelSettings Virtual = new PoseChannelSettings { MaxExtrapolationSeconds = 0.08, TauMinSeconds = 0.05f, TauMaxSeconds = 0.12f };

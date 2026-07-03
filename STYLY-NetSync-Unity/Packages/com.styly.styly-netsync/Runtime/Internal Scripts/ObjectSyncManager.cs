@@ -165,7 +165,7 @@ namespace Styly.NetSync
                     var applier = obj.TransformApplier;
                     if (applier != null)
                     {
-                        applier.AddSingleSnapshot(objState.poseTime, objState.poseSeq, objState.position, objState.rotation);
+                        applier.AddSingleSnapshot(objState.poseTime, objState.poseSeq, objState.position, objState.rotation, data.broadcastTime);
                     }
                 }
             }
