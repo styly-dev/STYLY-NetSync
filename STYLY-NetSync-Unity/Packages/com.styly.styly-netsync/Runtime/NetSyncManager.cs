@@ -619,6 +619,31 @@ namespace Styly.NetSync
         public GameObject GetLocalAvatarPrefab() => _localAvatarPrefab;
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
         public GameObject GetHumanPresencePrefab() => _humanPresencePrefab;
+
+#if UNITY_INCLUDE_TESTS
+        /// <summary>
+        /// Test-only configuration hook. Must be called while the GameObject is
+        /// inactive (before Awake), e.g. AddComponent on an inactive object, then
+        /// SetActive(true). A non-empty <paramref name="serverAddress"/> bypasses
+        /// UDP discovery so integration tests connect straight to the given ports.
+        /// </summary>
+        internal void ConfigureForTests(string serverAddress, int controlPort, int transformPort,
+                                        int subPort, string roomId, bool offlineMode)
+        {
+            _serverAddress = serverAddress;
+            _dealerPort = controlPort;
+            _transformPort = transformPort;
+            _subPort = subPort;
+            _roomId = roomId;
+            _offlineMode = offlineMode;
+        }
+
+        /// <summary>Test-only setter for the local avatar prefab (before activation).</summary>
+        internal void SetLocalAvatarPrefabForTests(GameObject prefab)
+        {
+            _localAvatarPrefab = prefab;
+        }
+#endif
         #endregion ------------------------------------------------------------------------
 
         #region === Unity Callbacks ===
