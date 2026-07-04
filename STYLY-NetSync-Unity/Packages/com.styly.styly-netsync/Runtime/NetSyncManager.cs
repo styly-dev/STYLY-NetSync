@@ -9,7 +9,7 @@ using UnityEngine.Events;
 namespace Styly.NetSync
 {
     [DefaultExecutionOrder(-1000)]
-    public class NetSyncManager : MonoBehaviour
+    public class NetSyncManager : MonoBehaviour, INetSyncContext
     {
         #region === Inspector ===
         [Header("Network Info")]
