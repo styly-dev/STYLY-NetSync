@@ -74,9 +74,9 @@ def build_cases() -> dict[str, bytes]:
         version=(0, 17, 1),
     )
 
-    # Object pose: positions are exact multiples of 0.01 m and rotation is
-    # identity, so int24 quantization and smallest-three compression are exact
-    # in both languages.
+    # Object pose: positions are chosen away from int24 quantization midpoints
+    # (and rotation is identity), so the C# and Python encoders round to the
+    # same quantized values even though the floats are not exactly representable.
     cases["object_pose_identity"] = bs.serialize_object_pose(
         {
             "deviceId": "owner",

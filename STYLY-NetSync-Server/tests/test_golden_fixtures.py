@@ -30,19 +30,20 @@ def _load_generator():
     return module
 
 
+# Built once at collection; the cases are deterministic pure functions of the
+# serializer, so every test can share the same dict.
+_CASES: dict[str, bytes] = _load_generator().build_cases()
+
+
 def test_manifest_lists_every_case() -> None:
-    generator = _load_generator()
-    cases = generator.build_cases()
     manifest = json.loads((FIXTURE_DIR / "manifest.json").read_text())
-    assert set(cases.keys()) == set(manifest.keys())
+    assert set(_CASES.keys()) == set(manifest.keys())
 
 
-@pytest.mark.parametrize("name", sorted(_load_generator().build_cases().keys()))
+@pytest.mark.parametrize("name", sorted(_CASES.keys()))
 def test_golden_bytes_match_serializer(name: str) -> None:
-    generator = _load_generator()
     expected = (FIXTURE_DIR / f"{name}.bin").read_bytes()
-    actual = generator.build_cases()[name]
-    assert actual == expected, (
+    assert _CASES[name] == expected, (
         f"Golden fixture '{name}' is stale. Regenerate with "
         "`uv run python tests/fixtures/protocol_v8/generate_golden.py`."
     )

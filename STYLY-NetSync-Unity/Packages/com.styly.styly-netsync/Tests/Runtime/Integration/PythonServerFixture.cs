@@ -3,11 +3,14 @@
 // src-layout runs (never a released PyPI build), on ephemeral loopback ports with
 // UDP discovery disabled so a developer's manually-running server is untouched.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace Styly.NetSync.Tests
@@ -189,21 +192,48 @@ namespace Styly.NetSync.Tests
             using var killer = Process.Start(psi);
             killer.WaitForExit(5000);
 #else
-            try
+            // Walk the whole descendant tree: `uv` may interpose a shim so the
+            // python server that owns the sockets can be a grandchild, which a
+            // plain `pkill -P {pid}` (direct children only) would orphan.
+            var descendants = new List<int>();
+            CollectDescendantPids(pid, descendants);
+            foreach (var child in descendants)
             {
-                using var pkill = Process.Start(new ProcessStartInfo
-                {
-                    FileName = "pkill",
-                    Arguments = $"-TERM -P {pid}",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                });
-                pkill?.WaitForExit(5000);
+                try { Process.GetProcessById(child).Kill(); } catch { /* best effort */ }
             }
-            catch { /* best effort */ }
             try { Process.GetProcessById(pid).Kill(); } catch { }
 #endif
         }
+
+#if !(UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN)
+        private static void CollectDescendantPids(int pid, List<int> result)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "pgrep",
+                    Arguments = $"-P {pid}",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                };
+                using var pgrep = Process.Start(psi);
+                var output = pgrep.StandardOutput.ReadToEnd();
+                pgrep.WaitForExit(5000);
+                foreach (var line in output.Split('\n'))
+                {
+                    if (int.TryParse(line.Trim(), out var child))
+                    {
+                        result.Add(child);
+                        CollectDescendantPids(child, result);
+                    }
+                }
+            }
+            catch { /* best effort */ }
+        }
+#endif
 
         public string DumpLogs()
         {
@@ -215,13 +245,18 @@ namespace Styly.NetSync.Tests
 
         #region === REST helpers (synchronous, loopback only) ===
 
+        // Loopback-only requests answer in milliseconds; a short timeout bounds
+        // the worst-case main-thread stall when called from PlayMode poll loops.
+        private const int HttpTimeoutMs = 2000;
+
         public (bool ok, int status, string body) HttpGet(string url)
         {
             try
             {
                 var req = (HttpWebRequest)WebRequest.Create(url);
                 req.Method = "GET";
-                req.Timeout = 5000;
+                req.Timeout = HttpTimeoutMs;
+                req.ReadWriteTimeout = HttpTimeoutMs;
                 using var resp = (HttpWebResponse)req.GetResponse();
                 using var reader = new StreamReader(resp.GetResponseStream());
                 return (true, (int)resp.StatusCode, reader.ReadToEnd());
@@ -244,7 +279,8 @@ namespace Styly.NetSync.Tests
                 var req = (HttpWebRequest)WebRequest.Create(url);
                 req.Method = "POST";
                 req.ContentType = "application/json";
-                req.Timeout = 5000;
+                req.Timeout = HttpTimeoutMs;
+                req.ReadWriteTimeout = HttpTimeoutMs;
                 var bytes = Encoding.UTF8.GetBytes(json);
                 using (var s = req.GetRequestStream()) { s.Write(bytes, 0, bytes.Length); }
                 using var resp = (HttpWebResponse)req.GetResponse();
@@ -266,7 +302,8 @@ namespace Styly.NetSync.Tests
         public bool TryGetGlobalVariable(string room, string name, out string value)
         {
             value = null;
-            var (ok, status, body) = HttpGet($"{RestBaseUrl}/v1/rooms/{room}/global-variables/{name}");
+            var (ok, status, body) = HttpGet(
+                $"{RestBaseUrl}/v1/rooms/{Uri.EscapeDataString(room)}/global-variables/{Uri.EscapeDataString(name)}");
             if (!ok || status != 200) { return false; }
             value = ExtractJsonString(body, "value");
             return value != null;
@@ -274,8 +311,14 @@ namespace Styly.NetSync.Tests
 
         public void PostGlobalVariable(string room, string name, string value)
         {
-            var json = $"{{\"variables\":{{\"{name}\":\"{value}\"}}}}";
-            var (ok, status, body) = HttpPostJson($"{RestBaseUrl}/v1/rooms/{room}/global-variables", json);
+            // Serialize the body properly so names/values containing quotes or
+            // backslashes reach the server unmangled.
+            var json = new JObject
+            {
+                ["variables"] = new JObject { [name] = value },
+            }.ToString(Formatting.None);
+            var (ok, status, body) = HttpPostJson(
+                $"{RestBaseUrl}/v1/rooms/{Uri.EscapeDataString(room)}/global-variables", json);
             if (!ok) { throw new Exception($"POST global var failed ({status}): {body}"); }
         }
 
@@ -283,21 +326,28 @@ namespace Styly.NetSync.Tests
         {
             value = null;
             var (ok, status, body) = HttpGet(
-                $"{RestBaseUrl}/v1/rooms/{room}/devices/{deviceId}/client-variables/{name}");
+                $"{RestBaseUrl}/v1/rooms/{Uri.EscapeDataString(room)}/devices/{Uri.EscapeDataString(deviceId)}" +
+                $"/client-variables/{Uri.EscapeDataString(name)}");
             if (!ok || status != 200) { return false; }
             value = ExtractJsonString(body, "value");
             return value != null;
         }
 
-        // Minimal extractor for the small, known REST responses (avoids a JSON dependency).
+        // Parse the response as real JSON so escaped quotes/backslashes in valid
+        // payloads are read correctly.
         private static string ExtractJsonString(string json, string key)
         {
-            var marker = $"\"{key}\":\"";
-            var start = json.IndexOf(marker, StringComparison.Ordinal);
-            if (start < 0) { return null; }
-            start += marker.Length;
-            var end = json.IndexOf('"', start);
-            return end < 0 ? null : json.Substring(start, end - start);
+            try
+            {
+                var token = JObject.Parse(json)[key];
+                return token != null && token.Type == JTokenType.String
+                    ? token.Value<string>()
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
 
         #endregion
