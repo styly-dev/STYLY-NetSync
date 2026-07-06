@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import io
 import socket
 import threading
 from dataclasses import replace
 from unittest.mock import patch
-
-from loguru import logger
 
 from styly_netsync.config import load_default_config
 from styly_netsync.server import NetSyncServer
@@ -40,7 +37,7 @@ class TestDiscoveryProbe:
         assert server._build_discovery_response(newline=True) == f"{expected}\n"
 
     def test_no_conflict_when_no_other_server(self) -> None:
-        """Probe should produce no warning when nobody responds."""
+        """Probe should return None when nobody responds."""
         port = _find_free_port()
         server = NetSyncServer(
             dealer_port=_find_free_port(),
@@ -48,16 +45,10 @@ class TestDiscoveryProbe:
             server_discovery_port=port,
             enable_server_discovery=False,
         )
-        sink = io.StringIO()
-        handler_id = logger.add(sink, level="WARNING", format="{message}")
-        try:
-            server._probe_existing_discovery_server()
-        finally:
-            logger.remove(handler_id)
-        assert "Another STYLY-NetSync server" not in sink.getvalue()
+        assert server._probe_existing_discovery_server() is None
 
-    def test_warns_when_another_server_responds(self) -> None:
-        """Probe should log a warning when an existing server responds."""
+    def test_detects_conflict_when_another_server_responds(self) -> None:
+        """Probe should return a conflict description when a server responds."""
         port = _find_free_port()
 
         # Simulate an existing server that responds to DISCOVER probes
@@ -93,22 +84,18 @@ class TestDiscoveryProbe:
                 server_discovery_port=port,
                 enable_server_discovery=False,
             )
-            sink = io.StringIO()
-            handler_id = logger.add(sink, level="WARNING", format="{message}")
-            try:
-                server._probe_existing_discovery_server()
-            finally:
-                logger.remove(handler_id)
+            conflict = server._probe_existing_discovery_server()
 
-            output = sink.getvalue()
-            assert "Another STYLY-NetSync server" in output
-            assert str(port) in output
+            assert conflict is not None
+            assert "Another STYLY-NetSync server" in conflict
+            assert "FakeServer" in conflict
+            assert str(port) in conflict
         finally:
             stop_event.set()
             t.join(timeout=2)
 
     def test_probe_does_not_block_on_exception(self) -> None:
-        """Probe should not raise even if socket operations fail."""
+        """Probe should return None (not raise) if socket operations fail."""
         server = NetSyncServer(
             dealer_port=_find_free_port(),
             pub_port=_find_free_port(),
@@ -116,5 +103,50 @@ class TestDiscoveryProbe:
             enable_server_discovery=False,
         )
         with patch("socket.socket", side_effect=OSError("mock error")):
-            # Should not raise
-            server._probe_existing_discovery_server()
+            assert server._probe_existing_discovery_server() is None
+
+
+class TestParseDiscoveryServerName:
+    """Tests for _parse_discovery_server_name across known response formats."""
+
+    def test_parses_current_v3_response(self) -> None:
+        name = NetSyncServer._parse_discovery_server_name(
+            "STYLY-NETSYNC3|5555|5557|5556|8800|MyServer"
+        )
+        assert name == "MyServer"
+
+    def test_v3_name_may_contain_pipe(self) -> None:
+        # maxsplit keeps everything after the 5th '|' as the name.
+        name = NetSyncServer._parse_discovery_server_name(
+            "STYLY-NETSYNC3|5555|5557|5556|8800|Room|A"
+        )
+        assert name == "Room|A"
+
+    def test_parses_legacy_v2_response(self) -> None:
+        name = NetSyncServer._parse_discovery_server_name(
+            "STYLY-NETSYNC2|5555|5557|5556|LegacyServer"
+        )
+        assert name == "LegacyServer"
+
+    def test_parses_legacy_v1_response(self) -> None:
+        name = NetSyncServer._parse_discovery_server_name(
+            "STYLY-NETSYNC|5555|5557|OldServer"
+        )
+        assert name == "OldServer"
+
+    def test_rejects_unrelated_payload(self) -> None:
+        assert NetSyncServer._parse_discovery_server_name("HELLO-WORLD") is None
+
+    def test_rejects_non_integer_ports(self) -> None:
+        assert (
+            NetSyncServer._parse_discovery_server_name(
+                "STYLY-NETSYNC3|5555|abc|5556|8800|MyServer"
+            )
+            is None
+        )
+
+    def test_rejects_truncated_response(self) -> None:
+        assert (
+            NetSyncServer._parse_discovery_server_name("STYLY-NETSYNC3|5555|5557")
+            is None
+        )
