@@ -35,6 +35,12 @@ server_name = "STYLY-NetSync-Server"
 # Enable/disable UDP discovery service
 enable_server_discovery = true
 
+# Refuse to start when another server is already responding on the same
+# discovery port (detected via a UDP broadcast probe at startup). This prevents
+# clients on the LAN from silently connecting to the wrong server. Set to true
+# to start anyway despite a detected conflict.
+allow_discovery_port_conflict = false
+
 # Timing Settings
 # Broadcast interval when server is idle (0.5Hz default)
 idle_broadcast_interval = 2.0

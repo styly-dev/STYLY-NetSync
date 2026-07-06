@@ -231,6 +231,9 @@ class NetSyncServer:
         self.server_name = (
             server_name if server_name is not None else config.server_name
         )
+        # Refuse to start when another server already owns the discovery port,
+        # unless the operator explicitly allows it.
+        self.allow_discovery_port_conflict = config.allow_discovery_port_conflict
         self.server_discovery_socket: socket.socket | None = None
         self.server_discovery_thread: threading.Thread | None = None
         self.server_discovery_running = False
@@ -935,6 +938,32 @@ class NetSyncServer:
     def start(self, ip_addresses: list[str] | None = None) -> None:
         """Start the server"""
         try:
+            # Refuse to start if another server already owns this discovery port,
+            # so clients on the LAN cannot silently connect to the wrong server.
+            # Probe before binding anything, so a conflict aborts cleanly with no
+            # partial startup to tear down. The operator can override.
+            if self.enable_server_discovery:
+                conflict = self._probe_existing_discovery_server()
+                if conflict is not None:
+                    if self.allow_discovery_port_conflict:
+                        logger.opt(colors=True).warning(
+                            f"<yellow>⚠ DISCOVERY PORT CONFLICT (ignored):</yellow> "
+                            f"{conflict} is already responding on discovery port "
+                            f"{self.server_discovery_port}. Starting anyway because "
+                            f"allow_discovery_port_conflict is set; clients on this "
+                            f"LAN may connect to the wrong server."
+                        )
+                    else:
+                        logger.opt(colors=True).error(
+                            f"<red>⚠ DISCOVERY PORT CONFLICT:</red> {conflict} is "
+                            f"already responding on discovery port "
+                            f"{self.server_discovery_port}. Refusing to start so "
+                            f"clients cannot connect to the wrong server. Stop the "
+                            f"other server, choose a different --server-discovery-port, "
+                            f"or pass --allow-discovery-port-conflict to start anyway."
+                        )
+                        raise SystemExit(1)
+
             # Raise FD soft limit early to avoid connection drops when many clients connect
             self._bump_fd_soft_limit(self.DEFAULT_FD_LIMIT)
 
@@ -2702,10 +2731,46 @@ class NetSyncServer:
         for room_id, changed_msg in ownership_release_broadcasts:
             self._send_ctrl_to_room_via_router(room_id, changed_msg)
 
-    def _probe_existing_discovery_server(self) -> None:
+    @staticmethod
+    def _parse_discovery_server_name(response: str) -> str | None:
+        """Extract the server name from a discovery response of any known
+        format, or None if the payload is not a recognizable discovery reply.
+
+        Current and older formats are all accepted for conflict detection only;
+        clients still require the current format. A stale v1/v2 server on the
+        LAN is a legitimate conflict — it usually means a previous server was
+        not shut down before an upgrade."""
+        text = response.rstrip()
+        if text.startswith(discovery.DISCOVERY_RESPONSE_PREFIX):
+            # STYLY-NETSYNC3|control|transform|pub|rest|name  (name may contain '|')
+            parts = text.split("|", 5)
+            int_field_count, name_index = 4, 5
+        elif text.startswith("STYLY-NETSYNC2|"):
+            parts = text.split("|")
+            int_field_count, name_index = 3, 4
+        elif text.startswith("STYLY-NETSYNC|"):
+            parts = text.split("|")
+            int_field_count, name_index = 2, 3
+        else:
+            return None
+
+        if len(parts) <= name_index:
+            return None
+        try:
+            for i in range(1, int_field_count + 1):
+                int(parts[i])
+        except ValueError:
+            return None
+        return parts[name_index]
+
+    def _probe_existing_discovery_server(self) -> str | None:
         """Send a UDP broadcast probe to check if another server is already
-        responding on the same discovery port.  Logs a warning if a valid
-        response is received; never blocks startup."""
+        responding on the same discovery port.
+
+        Returns a human-readable description of the conflicting server (name and
+        source address) if a valid discovery response is received, or None when
+        no conflict is detected. Never raises. Self-detection is impossible
+        because this runs before the server binds its own discovery socket."""
         probe_sock: socket.socket | None = None
         try:
             probe_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -2719,64 +2784,12 @@ class NetSyncServer:
             try:
                 data, addr = probe_sock.recvfrom(1024)
                 response = data.decode("utf-8", errors="replace")
-                # Accept current and older discovery responses for conflict
-                # detection only. Clients still require the current format.
-                if response.startswith(discovery.DISCOVERY_RESPONSE_PREFIX):
-                    parts = response.rstrip().split("|", 5)
-                    if len(parts) >= 6:
-                        try:
-                            int(parts[1])
-                            int(parts[2])
-                            int(parts[3])
-                            int(parts[4])
-                        except ValueError:
-                            return
-                        server_name = parts[5]
-                        logger.opt(colors=True).warning(
-                            f"<red>⚠ DISCOVERY PORT CONFLICT:</red> "
-                            f"Another STYLY-NetSync server "
-                            f"('{server_name}') is already responding "
-                            f"on discovery port {self.server_discovery_port} "
-                            f"(from {addr[0]}:{addr[1]}). Clients on this "
-                            f"LAN may connect to the wrong server."
-                        )
-                elif response.startswith("STYLY-NETSYNC2|"):
-                    parts = response.rstrip().split("|")
-                    if len(parts) >= 5:
-                        try:
-                            int(parts[1])
-                            int(parts[2])
-                            int(parts[3])
-                        except ValueError:
-                            return
-                        server_name = parts[4]
-                        logger.opt(colors=True).warning(
-                            f"<red>⚠ DISCOVERY PORT CONFLICT:</red> "
-                            f"Another STYLY-NetSync server "
-                            f"('{server_name}') is already responding "
-                            f"on discovery port {self.server_discovery_port} "
-                            f"(from {addr[0]}:{addr[1]}). Clients on this "
-                            f"LAN may connect to the wrong server."
-                        )
-                elif response.startswith("STYLY-NETSYNC|"):
-                    parts = response.rstrip().split("|")
-                    if len(parts) >= 4:
-                        try:
-                            int(parts[1])
-                            int(parts[2])
-                        except ValueError:
-                            return
-                        server_name = parts[3]
-                        # Highlight the marker in red on color-capable sinks.
-                        # File/JSON sinks strip color tags automatically.
-                        logger.opt(colors=True).warning(
-                            f"<red>⚠ DISCOVERY PORT CONFLICT:</red> "
-                            f"Another STYLY-NetSync server "
-                            f"('{server_name}') is already responding "
-                            f"on discovery port {self.server_discovery_port} "
-                            f"(from {addr[0]}:{addr[1]}). Clients on this "
-                            f"LAN may connect to the wrong server."
-                        )
+                server_name = self._parse_discovery_server_name(response)
+                if server_name is not None:
+                    return (
+                        f"Another STYLY-NetSync server ('{server_name}') "
+                        f"from {addr[0]}:{addr[1]}"
+                    )
             except TimeoutError:
                 # No response — no conflict detected
                 pass
@@ -2785,12 +2798,13 @@ class NetSyncServer:
         finally:
             if probe_sock is not None:
                 probe_sock.close()
+        return None
 
     def _start_server_discovery(self) -> None:
-        """Start server discovery service to respond to client requests"""
-        # Probe for existing servers before binding
-        self._probe_existing_discovery_server()
+        """Start server discovery service to respond to client requests.
 
+        The discovery-port conflict probe runs earlier in start() so a conflict
+        can abort before any sockets bind; do not re-probe here."""
         # Start UDP server discovery
         try:
             self.server_discovery_socket = socket.socket(
@@ -2991,6 +3005,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--no-server-discovery", action="store_true", help="Disable server discovery"
+    )
+    parser.add_argument(
+        "--allow-discovery-port-conflict",
+        action="store_true",
+        help=(
+            "Start even if another server is already responding on the discovery "
+            "port (default: refuse to start on conflict)"
+        ),
     )
     parser.add_argument(
         "-V",
