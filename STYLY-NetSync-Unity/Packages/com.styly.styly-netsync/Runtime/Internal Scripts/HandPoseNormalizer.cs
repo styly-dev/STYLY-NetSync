@@ -75,7 +75,7 @@ namespace Styly.NetSync.Internal
         private float _staleUnchangedSince = 0f;
         private const float PoseStaleEpsilon = 1e-6f;     // only a bit-identical position repeat stays under this
         private const float PoseStaleRotEpsilon = 1e-3f;  // degrees; only a bit-identical rotation repeat stays under this
-        private const float PoseStaleSeconds = 0.5f;      // sustained no-change before treating as lost
+        private const float PoseStaleSeconds = 0.1f;      // sustained no-change before treating as lost
 
         // Head transform reference for maintaining relative position during lost state
         private Transform _headTransform;
