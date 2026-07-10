@@ -654,11 +654,36 @@ namespace Styly.NetSync
             var rightValid = headValid && (data.flags & PoseFlags.RightValid) != 0 && data.rightHand != null;
             var leftValid = headValid && (data.flags & PoseFlags.LeftValid) != 0 && data.leftHand != null;
 
-            ApplyRemoteHandVisibility(_rightHand, _rightHandInitialActiveSelf, rightValid, rightValid ? data.rightHand : null);
-            ApplyRemoteHandVisibility(_leftHand, _leftHandInitialActiveSelf, leftValid, leftValid ? data.leftHand : null);
+            // When the sender is on a moving floor, hand poses arrive in floor-local space
+            // (see FillFromTransform on send / BinarySerializer on receive). Resolving them to
+            // world requires the moving-floor transform, which is delivered on a separate
+            // channel (@system:movingFloor client variable) and may not be resolved yet on this
+            // side. Until it is, hold hand visibility instead of activating a hand at raw
+            // floor-local coordinates interpreted as world space — that would fling the hand
+            // tens of meters from the body until the floor id finally resolves. This mirrors
+            // NetSyncTransformApplier.Tick, which holds head/hands while the floor is unresolved.
+            // Note: data.clientNo is used (not _clientNo) because SetTransformData assigns
+            // _clientNo only after this call.
+            var movingFloorLocal = data != null && (data.flags & PoseFlags.MovingFloorLocal) != 0;
+            Transform movingFloor = null;
+            if (movingFloorLocal)
+            {
+                bool floorResolved = _netSyncManager != null
+                    && _netSyncManager.TryGetMovingFloorForClient(data.clientNo, false, out movingFloor)
+                    && movingFloor != null;
+                if (!floorResolved)
+                {
+                    // Floor not resolved yet: freeze current hand visibility, consistent with the
+                    // held head/hands in Tick. Hands appear (correctly placed) once it resolves.
+                    return;
+                }
+            }
+
+            ApplyRemoteHandVisibility(_rightHand, _rightHandInitialActiveSelf, rightValid, rightValid ? data.rightHand : null, movingFloor);
+            ApplyRemoteHandVisibility(_leftHand, _leftHandInitialActiveSelf, leftValid, leftValid ? data.leftHand : null, movingFloor);
         }
 
-        private static void ApplyRemoteHandVisibility(Transform handTransform, bool initialActiveSelf, bool isValid, TransformData handData)
+        private static void ApplyRemoteHandVisibility(Transform handTransform, bool initialActiveSelf, bool isValid, TransformData handData, Transform movingFloor)
         {
             if (handTransform == null) { return; }
 
@@ -666,8 +691,20 @@ namespace Styly.NetSync
             var shouldBeActive = initialActiveSelf && isValid;
             if (shouldBeActive && !handObject.activeSelf && handData != null)
             {
-                handTransform.position = handData.GetPosition();
-                handTransform.rotation = handData.GetRotation();
+                // Snap to the incoming pose on activation so the hand doesn't flash at its stale
+                // position for a frame before Tick catches up. Project through the moving floor
+                // when present so floor-local coordinates land in world space (matches
+                // NetSyncTransformApplier.ApplyBinding).
+                if (movingFloor != null)
+                {
+                    handTransform.position = movingFloor.TransformPoint(handData.GetPosition());
+                    handTransform.rotation = movingFloor.rotation * handData.GetRotation();
+                }
+                else
+                {
+                    handTransform.position = handData.GetPosition();
+                    handTransform.rotation = handData.GetRotation();
+                }
             }
 
             if (handObject.activeSelf != shouldBeActive)
