@@ -448,6 +448,19 @@ namespace Styly.NetSync
 
                         if (!string.IsNullOrEmpty(name) && value != null)
                         {
+                            // Reconcile send-side deduplication with the authoritative value.
+                            // First remove the redundant trailing copy of the last successful
+                            // send. If another client changed the value, invalidate the local
+                            // sent cache so restoring that value is not incorrectly deduped.
+                            if (_lastSentGlobal.TryGetValue(name, out var lastSent))
+                            {
+                                ClearPendingGlobalIfMatches(name, lastSent);
+                                if (!string.Equals(lastSent, value, StringComparison.Ordinal))
+                                {
+                                    _lastSentGlobal.Remove(name);
+                                }
+                            }
+
                             var oldValue = _globalVariables.TryGetValue(name, out var existing) ? existing : null;
                             // Skip if value is unchanged
                             if (object.Equals(oldValue, value))
@@ -665,6 +678,16 @@ namespace Styly.NetSync
             }
 
             return allFlushed;
+        }
+
+        private void ClearPendingGlobalIfMatches(string name, string value)
+        {
+            if (_pendingGlobal.TryGetValue(name, out var pendingValue) &&
+                string.Equals(pendingValue, value, StringComparison.Ordinal))
+            {
+                _pendingGlobal.Remove(name);
+                _dueGlobal.Remove(name);
+            }
         }
 
         /// <summary>
