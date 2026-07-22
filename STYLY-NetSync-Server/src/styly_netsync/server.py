@@ -1422,15 +1422,19 @@ class NetSyncServer:
             if is_stealth:
                 self.room_dirty_flags[room_id] = True
 
+            if is_new_client or is_reconnect:
+                # Queue the local client's ID mapping before releasing
+                # _rooms_lock. Once the new control identity is visible in the
+                # room, a periodic/NV broadcast can target it; enqueueing here
+                # closes that ordering race.
+                mapping_payload = self._build_id_mapping_payload(room_id)
+                if mapping_payload is not None:
+                    self._enqueue_router(client_identity, room_id, mapping_payload)
+
         if is_new_client:
-            # Assign the client its ClientNo (via ID mapping) before the NV
-            # snapshot so NV-changed handlers that fire before OnReady already
-            # read a valid ClientNo instead of 0.
-            self._sync_id_mapping_to_client(room_id, client_identity)
             self._sync_network_variables_to_new_client(room_id)
             self._sync_objects_to_new_client(client_identity, room_id)
         elif is_reconnect:
-            self._sync_id_mapping_to_client(room_id, client_identity)
             self._sync_network_variables_to_client(room_id, client_identity)
             # If a transform message created this entry before the hello arrived,
             # the control lane is binding for the first time here. Send the
@@ -2303,21 +2307,6 @@ class NetSyncServer:
         if message_bytes is not None:
             self._send_ctrl_to_room_via_router(room_id, message_bytes)
             logger.info(f"Broadcasted ID mappings to room {room_id} via ROUTER")
-
-    def _sync_id_mapping_to_client(self, room_id: str, identity: bytes) -> None:
-        """Unicast the current device ID mapping to a single client.
-
-        Sent before the NV snapshot on (re)connect so the client's local client
-        number is assigned before any NV change event fires. Both messages travel
-        the same ROUTER control queue, which a single receive thread drains FIFO
-        per identity, so enqueueing the mapping first guarantees the client sees
-        it first and reads a valid ClientNo inside NV-changed handlers.
-        """
-        with self._rooms_lock:
-            message_bytes = self._build_id_mapping_payload(room_id)
-
-        if message_bytes is not None:
-            self._enqueue_router(identity, room_id, message_bytes)
 
     def _flush_debounced_id_mapping_broadcasts(self, current_time: float) -> None:
         """Flush ID mapping broadcasts that have been debounced long enough."""

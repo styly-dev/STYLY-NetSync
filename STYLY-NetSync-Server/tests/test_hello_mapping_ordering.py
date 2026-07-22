@@ -56,6 +56,18 @@ def _spy_enqueue(server: NetSyncServer) -> list[int]:
     return recorded
 
 
+def _spy_enqueue_with_lock_state(server: NetSyncServer) -> list[tuple[int, bool]]:
+    """Record message types and whether _rooms_lock is held during enqueue."""
+    recorded: list[tuple[int, bool]] = []
+
+    def spy(identity: bytes, room_id: str, message_bytes: bytes) -> None:
+        is_owned = server._rooms_lock._is_owned()
+        recorded.append((message_bytes[0], bool(is_owned)))
+
+    server._enqueue_router = spy  # type: ignore[method-assign]
+    return recorded
+
+
 def test_reconnect_enqueues_mapping_before_nv() -> None:
     """Reconnect hello sends the ID mapping before global and client NV snapshots.
 
@@ -119,3 +131,38 @@ def test_new_client_enqueues_mapping_before_nv() -> None:
     assert recorded.index(binary_serializer.MSG_DEVICE_ID_MAPPING) < recorded.index(
         binary_serializer.MSG_GLOBAL_VAR_SYNC
     ), f"mapping must be enqueued before NV sync, got order: {recorded}"
+
+
+def test_new_client_enqueues_mapping_before_releasing_room_lock() -> None:
+    """First-connect hello does not expose the identity before mapping enqueue.
+
+    A periodic NV broadcast can target the new identity as soon as the hello
+    handler writes it into the room. The ID mapping must be enqueued while the
+    same room-state critical section is still held, otherwise that broadcast can
+    slip in first and deliver NV changes while ClientNo is still 0.
+    """
+    server = _make_server()
+
+    with server._rooms_lock:
+        server._initialize_room(ROOM)
+        other_no = server._get_or_assign_client_no(ROOM, "other-device")
+        server.rooms[ROOM]["other-device"] = {
+            "control_identity": b"other-identity",
+            "transform_identity": None,
+            "last_update": time.monotonic(),
+            "transform_data": None,
+            "client_no": other_no,
+            "is_stealth": False,
+        }
+    assert server._apply_global_var_set(ROOM, other_no, "k", "v")
+
+    recorded = _spy_enqueue_with_lock_state(server)
+
+    server._handle_client_hello(
+        b"fresh-identity", ROOM, {"deviceId": DEVICE_ID, "isStealthMode": False}
+    )
+
+    assert recorded[0] == (
+        binary_serializer.MSG_DEVICE_ID_MAPPING,
+        True,
+    ), f"first enqueue must be the ID mapping under _rooms_lock, got: {recorded}"
