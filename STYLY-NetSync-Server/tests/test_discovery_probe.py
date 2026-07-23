@@ -107,7 +107,7 @@ class TestDiscoveryProbe:
 
 
 class TestParseDiscoveryServerName:
-    """Tests for _parse_discovery_server_name across known response formats."""
+    """Tests for _parse_discovery_server_name against the current format."""
 
     def test_parses_current_v3_response(self) -> None:
         name = NetSyncServer._parse_discovery_server_name(
@@ -122,17 +122,21 @@ class TestParseDiscoveryServerName:
         )
         assert name == "Room|A"
 
-    def test_parses_legacy_v2_response(self) -> None:
-        name = NetSyncServer._parse_discovery_server_name(
-            "STYLY-NETSYNC2|5555|5557|5556|LegacyServer"
+    def test_rejects_older_response_formats(self) -> None:
+        # Only the current format counts as a conflict; older shapes are simply
+        # not a compatible server (see the repo backward-compatibility policy).
+        assert (
+            NetSyncServer._parse_discovery_server_name(
+                "STYLY-NETSYNC2|5555|5557|5556|LegacyServer"
+            )
+            is None
         )
-        assert name == "LegacyServer"
-
-    def test_parses_legacy_v1_response(self) -> None:
-        name = NetSyncServer._parse_discovery_server_name(
-            "STYLY-NETSYNC|5555|5557|OldServer"
+        assert (
+            NetSyncServer._parse_discovery_server_name(
+                "STYLY-NETSYNC|5555|5557|OldServer"
+            )
+            is None
         )
-        assert name == "OldServer"
 
     def test_rejects_unrelated_payload(self) -> None:
         assert NetSyncServer._parse_discovery_server_name("HELLO-WORLD") is None

@@ -2733,35 +2733,25 @@ class NetSyncServer:
 
     @staticmethod
     def _parse_discovery_server_name(response: str) -> str | None:
-        """Extract the server name from a discovery response of any known
-        format, or None if the payload is not a recognizable discovery reply.
+        """Extract the server name from a current-format discovery response, or
+        None if the payload is not a recognizable discovery reply.
 
-        Current and older formats are all accepted for conflict detection only;
-        clients still require the current format. A stale v1/v2 server on the
-        LAN is a legitimate conflict — it usually means a previous server was
-        not shut down before an upgrade."""
+        Only the current format is recognized: a reply in any other shape is
+        simply not a compatible server, so it is not treated as a conflict."""
         text = response.rstrip()
-        if text.startswith(discovery.DISCOVERY_RESPONSE_PREFIX):
-            # STYLY-NETSYNC3|control|transform|pub|rest|name  (name may contain '|')
-            parts = text.split("|", 5)
-            int_field_count, name_index = 4, 5
-        elif text.startswith("STYLY-NETSYNC2|"):
-            parts = text.split("|")
-            int_field_count, name_index = 3, 4
-        elif text.startswith("STYLY-NETSYNC|"):
-            parts = text.split("|")
-            int_field_count, name_index = 2, 3
-        else:
+        if not text.startswith(discovery.DISCOVERY_RESPONSE_PREFIX):
             return None
 
-        if len(parts) <= name_index:
+        # STYLY-NETSYNC3|control|transform|pub|rest|name  (name may contain '|')
+        parts = text.split("|", 5)
+        if len(parts) < 6:
             return None
         try:
-            for i in range(1, int_field_count + 1):
-                int(parts[i])
+            for field in parts[1:5]:
+                int(field)
         except ValueError:
             return None
-        return parts[name_index]
+        return parts[5]
 
     def _probe_existing_discovery_server(self) -> str | None:
         """Send a UDP broadcast probe to check if another server is already
