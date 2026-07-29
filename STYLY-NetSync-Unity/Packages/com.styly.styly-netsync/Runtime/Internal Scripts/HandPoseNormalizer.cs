@@ -61,6 +61,18 @@ namespace Styly.NetSync.Internal
         private int _lostCheckFrameCount = 0;
         private const int LostCheckDelayFrames = 3; // Wait 3 frames before confirming lost
 
+        // --- Rig scan gating ---
+        // Both rig scans (FindHandTransform / TryFindActiveWristTransform) walk every Transform
+        // under XROrigin and marshal a managed string per Transform via Transform.name, so neither
+        // may run per frame. A wrist GameObject only becomes active while the hand is tracked, so
+        // the scans are gated on isTracked; the interval bounds the residual case where a tracked
+        // hand never matches a wrist (the first attempt still runs immediately).
+        private float _nextWristScanTime = 0f;
+        private const float WristScanIntervalSeconds = 0.5f;
+
+        // Reused so the subsystem lookup below allocates nothing when called every frame.
+        private readonly List<XRHandSubsystem> _handSubsystems = new();
+
         // --- Pose-staleness lost detection ---
         // Some runtimes keep XRHand.isTracked == true while the wrist pose stops updating (the
         // subsystem returns the bit-identical pose every frame), and the joint trackingState does
@@ -160,10 +172,15 @@ namespace Styly.NetSync.Internal
                     return;
             }
 
-            // Try to find hand transform if not initialized
+            // Try to find hand transform if not initialized. Rigs can create the wrist objects at
+            // runtime, but only once hand tracking starts, so this retry is gated the same way as
+            // the active-wrist scan below instead of running every frame.
             if (!_isInitialized)
             {
-                FindHandTransform();
+                if (TryBeginWristScan())
+                {
+                    FindHandTransform();
+                }
                 if (!_isInitialized)
                 {
                     // Hand not found - TrackedPoseDriver handles tracking
@@ -201,8 +218,13 @@ namespace Styly.NetSync.Internal
             }
             else
             {
-                // Wrist transform is inactive - might be wrong platform, try to find the correct one
-                TryFindActiveWristTransform();
+                // Wrist transform is inactive - might be wrong platform, try to find the correct one.
+                // Gated: no wrist is active until the hand is tracked, so an ungated retry here costs
+                // a full rig walk per frame for a result that cannot exist yet.
+                if (TryBeginWristScan())
+                {
+                    TryFindActiveWristTransform();
+                }
 
                 // Controller mode: re-enable TrackedPoseDriver
                 EnableTrackedPoseDriver();
@@ -220,10 +242,11 @@ namespace Styly.NetSync.Internal
         {
             if (_handSubsystem == null || !_handSubsystem.running)
             {
-                var subsystems = new List<XRHandSubsystem>();
-                SubsystemManager.GetSubsystems(subsystems);
+                // Reuse the list: while no subsystem is running (the controller-only case) this
+                // path is reached every frame, so allocating a fresh List here would leak per frame.
+                SubsystemManager.GetSubsystems(_handSubsystems);
                 _handSubsystem = null;
-                foreach (var s in subsystems)
+                foreach (var s in _handSubsystems)
                 {
                     if (s.running)
                     {
@@ -234,6 +257,41 @@ namespace Styly.NetSync.Internal
             }
 
             return _handSubsystem != null && _handSubsystem.running;
+        }
+
+        /// <summary>
+        /// Gates the rig scans and claims the next scan slot when it returns true.
+        ///
+        /// Both scans look for an *active* wrist GameObject, and a wrist is only active while the
+        /// hand is tracked - so scanning before that is a guaranteed miss that still walks the whole
+        /// rig and marshals a managed string per Transform. Without this gate a session that never
+        /// acquires hand tracking stays in TrackingState.Unknown and scans every frame, on both
+        /// hands, for its entire lifetime.
+        /// </summary>
+        private bool TryBeginWristScan()
+        {
+            if (!EnsureHandSubsystem())
+            {
+                return false;
+            }
+
+            var hand = _handedness == Handedness.Left
+                ? _handSubsystem.leftHand
+                : _handSubsystem.rightHand;
+            if (!hand.isTracked)
+            {
+                return false;
+            }
+
+            // Tracked but still unmatched: retry on an interval rather than every frame.
+            float now = Time.unscaledTime;
+            if (now < _nextWristScanTime)
+            {
+                return false;
+            }
+
+            _nextWristScanTime = now + WristScanIntervalSeconds;
+            return true;
         }
 
         /// <summary>
