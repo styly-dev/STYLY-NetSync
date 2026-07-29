@@ -18,17 +18,30 @@ namespace Styly.NetSync.Tests
         [OneTimeSetUp]
         public void OneTimeSetUp()
         {
-            if (!PythonServerFixture.IsUvAvailable())
-            {
-                if (Environment.GetEnvironmentVariable("STYLY_NETSYNC_TESTS_REQUIRE_SERVER") == "1")
-                {
-                    Assert.Fail("uv not found on PATH but STYLY_NETSYNC_TESTS_REQUIRE_SERVER=1");
-                }
-                Assert.Ignore("uv not found on PATH - skipping server integration tests");
-            }
+            RequireOrIgnore(
+                PythonServerFixture.IsServerProjectPresent(),
+                "STYLY-NetSync-Server project not checked out alongside the Unity project");
+            RequireOrIgnore(
+                PythonServerFixture.IsUvAvailable(),
+                "uv not found on PATH");
 
             Server = new PythonServerFixture();
             Server.Start();
+        }
+
+        /// <summary>
+        /// Skip the suite when a server prerequisite is missing, or fail loudly
+        /// when STYLY_NETSYNC_TESTS_REQUIRE_SERVER=1 (CI) so coverage cannot
+        /// silently disappear.
+        /// </summary>
+        private static void RequireOrIgnore(bool condition, string reason)
+        {
+            if (condition) { return; }
+            if (Environment.GetEnvironmentVariable("STYLY_NETSYNC_TESTS_REQUIRE_SERVER") == "1")
+            {
+                Assert.Fail($"{reason} but STYLY_NETSYNC_TESTS_REQUIRE_SERVER=1");
+            }
+            Assert.Ignore($"{reason} - skipping server integration tests");
         }
 
         [OneTimeTearDown]
@@ -49,6 +62,13 @@ namespace Styly.NetSync.Tests
                 Manager = null;
             }
             yield return null;
+            // The destroyed manager kicks off an async NetMQ context termination
+            // (Task.Run + 500ms bound in ConnectionManager). A socket created while
+            // that is still in flight dies with TerminatingException, failing the
+            // next test. NetMQConfig.Cleanup serializes on the library lock, so a
+            // synchronous call here blocks until any in-flight termination has
+            // finished and the next test starts against a fresh context.
+            NetMQLifecycle.Cleanup();
         }
 
         protected static string NewRoom() => "it_" + Guid.NewGuid().ToString("N").Substring(0, 8);

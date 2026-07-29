@@ -3,7 +3,6 @@
     "rootNamespace": "",
     "references": [
         "UnityEngine.TestRunner",
-        "UnityEditor.TestRunner",
         "com.styly.styly-netsync"
     ],
     "includePlatforms": [],

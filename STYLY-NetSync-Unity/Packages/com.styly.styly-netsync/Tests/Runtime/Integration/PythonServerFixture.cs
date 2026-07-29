@@ -37,6 +37,13 @@ namespace Styly.NetSync.Tests
 
         private static bool? _uvAvailable;
 
+        /// <summary>
+        /// True if the server project is checked out alongside the Unity project
+        /// (false when the package is consumed standalone).
+        /// </summary>
+        public static bool IsServerProjectPresent() =>
+            File.Exists(Path.Combine(ServerDir, "pyproject.toml"));
+
         /// <summary>True if `uv` is runnable on PATH (cached for the session).</summary>
         public static bool IsUvAvailable()
         {
