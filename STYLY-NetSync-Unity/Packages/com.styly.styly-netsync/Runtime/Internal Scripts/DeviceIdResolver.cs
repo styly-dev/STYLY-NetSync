@@ -11,12 +11,6 @@ namespace Styly.NetSync.Internal
     /// </summary>
     internal sealed class DeviceIdResolver
     {
-        /// <summary>
-        /// PlayerPrefs key to remember that the user denied the media permission.
-        /// Cleared automatically on app reinstall (PlayerPrefs is wiped).
-        /// </summary>
-        private const string PermissionDeniedKey = "DeviceIdProvider_PermissionDenied";
-
         // Android permission strings required by Device-ID-Provider
         private const string PermissionReadExternalStorage = "android.permission.READ_EXTERNAL_STORAGE";
         private const string PermissionReadMediaImages = "android.permission.READ_MEDIA_IMAGES";
@@ -67,9 +61,7 @@ namespace Styly.NetSync.Internal
             else if (_permissionDenied)
             {
                 _permissionDenied = false;
-                Log("Android: permission denied (deferred), saving denial and using fallback");
-                PlayerPrefs.SetInt(PermissionDeniedKey, 1);
-                PlayerPrefs.Save();
+                Log("Android: permission denied (deferred), using fallback");
                 ResolveWithFallback();
             }
         }
@@ -102,23 +94,8 @@ namespace Styly.NetSync.Internal
             // Check if permission is already granted (e.g., user granted it later in system settings)
             if (UnityEngine.Android.Permission.HasUserAuthorizedPermission(permission))
             {
-                // Clear any stale denial flag so we don't skip the provider path next time
-                if (PlayerPrefs.GetInt(PermissionDeniedKey, 0) == 1)
-                {
-                    PlayerPrefs.DeleteKey(PermissionDeniedKey);
-                    PlayerPrefs.Save();
-                }
                 Log("Android: permission already granted, calling Device-ID-Provider");
                 ResolveWithDeviceIdProvider();
-                return;
-            }
-
-            // If the user previously denied permission, skip straight to fallback
-            // (don't show the dialog again until the app is reinstalled or permission is granted externally)
-            if (PlayerPrefs.GetInt(PermissionDeniedKey, 0) == 1)
-            {
-                Log("Android: permission was previously denied, using fallback");
-                ResolveWithFallback();
                 return;
             }
 
@@ -129,7 +106,9 @@ namespace Styly.NetSync.Internal
             var callbacks = new UnityEngine.Android.PermissionCallbacks();
             callbacks.PermissionGranted += OnPermissionGranted;
             callbacks.PermissionDenied += OnPermissionDenied;
-            callbacks.PermissionDeniedAndDontAskAgain += OnPermissionDenied;
+            callbacks.PermissionRequestDismissed += OnPermissionDenied;
+            // PermissionDeniedAndDontAskAgain is obsolete in Unity 6. When it is not
+            // subscribed, Unity reports that result through PermissionDenied instead.
             UnityEngine.Android.Permission.RequestUserPermission(permission, callbacks);
         }
 
