@@ -1422,6 +1422,15 @@ class NetSyncServer:
             if is_stealth:
                 self.room_dirty_flags[room_id] = True
 
+            if is_new_client or is_reconnect:
+                # Queue the local client's ID mapping before releasing
+                # _rooms_lock. Once the new control identity is visible in the
+                # room, a periodic/NV broadcast can target it; enqueueing here
+                # closes that ordering race.
+                mapping_payload = self._build_id_mapping_payload(room_id)
+                if mapping_payload is not None:
+                    self._enqueue_router(client_identity, room_id, mapping_payload)
+
         if is_new_client:
             self._sync_network_variables_to_new_client(room_id)
             self._sync_objects_to_new_client(client_identity, room_id)
@@ -2259,6 +2268,33 @@ class NetSyncServer:
         else:
             logger.debug(f"NV flush took {elapsed_ms:.2f} ms (room={room_id})")
 
+    def _build_id_mapping_payload(self, room_id: str) -> bytes | None:
+        """Serialize the current device ID mappings for a room.
+
+        Caller must hold ``_rooms_lock``. Returns ``None`` when the room has no
+        connected clients to include in the mapping.
+        """
+        if room_id not in self.room_device_id_to_client_no:
+            return None
+
+        # Collect mappings only for clients still connected in the room
+        mappings: list[tuple[int, str, bool]] = []
+        room_clients = self.rooms.get(room_id, {})
+        for device_id, client_no in self.room_device_id_to_client_no[room_id].items():
+            # Skip clients that have been cleaned up from self.rooms
+            # (their mapping entry is kept for device ID reuse)
+            if device_id not in room_clients:
+                continue
+            client_data = room_clients[device_id]
+            is_stealth = client_data.get("is_stealth", False)
+            mappings.append((client_no, device_id, is_stealth))
+
+        if not mappings:
+            return None
+
+        server_version = binary_serializer.parse_version(get_version())
+        return binary_serializer.serialize_device_id_mapping(mappings, server_version)
+
     def _broadcast_id_mappings(self, room_id: str) -> None:
         """Broadcast all device ID mappings for a room via ROUTER unicast.
 
@@ -2266,35 +2302,11 @@ class NetSyncServer:
         rather than via PUB which can drop messages under load.
         """
         with self._rooms_lock:
-            if room_id not in self.room_device_id_to_client_no:
-                return
+            message_bytes = self._build_id_mapping_payload(room_id)
 
-            # Collect mappings only for clients still connected in the room
-            mappings = []
-            room_clients = self.rooms.get(room_id, {})
-            for device_id, client_no in self.room_device_id_to_client_no[
-                room_id
-            ].items():
-                # Skip clients that have been cleaned up from self.rooms
-                # (their mapping entry is kept for device ID reuse)
-                if device_id not in room_clients:
-                    continue
-                client_data = room_clients[device_id]
-                is_stealth = client_data.get("is_stealth", False)
-                mappings.append((client_no, device_id, is_stealth))
-
-            if mappings:
-                # Serialize and broadcast the mappings with server version
-                server_version = binary_serializer.parse_version(get_version())
-                message_bytes = binary_serializer.serialize_device_id_mapping(
-                    mappings, server_version
-                )
-                # Send via ROUTER unicast (lock is held, but _send_ctrl_to_room_via_router
-                # will acquire the lock again - RLock allows this)
-                self._send_ctrl_to_room_via_router(room_id, message_bytes)
-                logger.info(
-                    f"Broadcasted {len(mappings)} ID mappings to room {room_id} via ROUTER"
-                )
+        if message_bytes is not None:
+            self._send_ctrl_to_room_via_router(room_id, message_bytes)
+            logger.info(f"Broadcasted ID mappings to room {room_id} via ROUTER")
 
     def _flush_debounced_id_mapping_broadcasts(self, current_time: float) -> None:
         """Flush ID mapping broadcasts that have been debounced long enough."""
