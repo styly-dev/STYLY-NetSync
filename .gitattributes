@@ -1,0 +1,3 @@
+# Golden protocol fixtures (and any other .bin) are raw byte sequences.
+# Never let autocrlf/text=auto rewrite bytes like 0x0A on checkout.
+*.bin binary
