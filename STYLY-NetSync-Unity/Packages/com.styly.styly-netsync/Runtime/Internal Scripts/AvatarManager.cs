@@ -45,7 +45,7 @@ namespace Styly.NetSync
             }
             else
             {
-                localGO = Object.Instantiate(localAvatarPrefab);
+                localGO = InstantiateInManagerScene(localAvatarPrefab, netSyncManager);
 
                 // Resolve the transform that the local avatar root should
                 // follow. Shares its priority order (XROrigin first, then
@@ -86,7 +86,8 @@ namespace Styly.NetSync
                 return;
             }
 
-            var go = Object.Instantiate(remoteAvatarPrefab);
+            var go = InstantiateInManagerScene(remoteAvatarPrefab, netSyncManager);
+
             var net = go.GetComponent<NetSyncAvatar>();
             if (!net)
             {
@@ -315,6 +316,31 @@ namespace Styly.NetSync
                 // Subscribe to hand tracking state changes
                 leftNormalizer.OnTrackingStateChanged += HandleHandTrackingStateChanged;
             }
+        }
+
+        private static GameObject InstantiateInManagerScene(GameObject prefab, NetSyncManager netSyncManager)
+        {
+            var managerScene = netSyncManager.gameObject.scene;
+            if (!managerScene.IsValid())
+            {
+                Debug.LogError("[NetSync] Cannot instantiate an avatar because NetSyncManager is not in a valid scene.");
+                return null;
+            }
+
+            if (managerScene.isLoaded)
+            {
+                return (GameObject)Object.Instantiate(prefab, managerScene);
+            }
+
+            // During scene activation, isLoaded can still be false while the manager's
+            // OnEnable is already running. Parent the avatar to the manager first so its
+            // Awake and OnEnable callbacks run in the manager scene. These callbacks
+            // temporarily observe netSyncManager.transform as the parent. Detach after
+            // instantiation while preserving the avatar's world transform; only the
+            // returned instance is guaranteed to be a scene root.
+            var instance = Object.Instantiate(prefab, netSyncManager.transform, true);
+            instance.transform.SetParent(null, true);
+            return instance;
         }
 
         /// <summary>
