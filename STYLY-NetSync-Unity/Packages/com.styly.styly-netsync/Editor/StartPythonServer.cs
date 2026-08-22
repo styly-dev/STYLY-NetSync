@@ -298,6 +298,270 @@ namespace Styly.NetSync.Editor
             }
         }
 
+        /// <summary>
+        /// Open the STYLY NetSync Launcher: a desktop window with start/stop
+        /// buttons, a live server log and the Unity package installer.
+        /// Unlike <see cref="LaunchServer"/> this never opens a terminal.
+        /// </summary>
+        internal static void LaunchLauncherGui(ServerLaunchConfig config)
+        {
+            string uvPath = ResolveUvExecutable();
+            if (string.IsNullOrEmpty(uvPath))
+            {
+                bool useTerminal = EditorUtility.DisplayDialog("uv Not Found",
+                    "The launcher window needs the 'uv' runtime, which was not found on this machine.\n\n" +
+                    "You can start the server the classic way instead: a terminal opens and offers " +
+                    "to install uv for you. After that, the launcher window works too.",
+                    "Start in Terminal", "Cancel");
+                if (useTerminal)
+                {
+                    LaunchServer(config);
+                }
+                return;
+            }
+
+            List<string> arguments = BuildLauncherArguments(config);
+
+            try
+            {
+                if (Application.platform == RuntimePlatform.WindowsEditor)
+                {
+                    StartDetachedWindows(uvPath, arguments);
+                }
+                else
+                {
+                    StartDetachedUnix(uvPath, arguments);
+                }
+                Debug.Log("STYLY NetSync: Opening the NetSync Launcher window...");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"Failed to open the NetSync Launcher: {e.Message}");
+                EditorUtility.DisplayDialog("Error",
+                    $"Failed to open the NetSync Launcher:\n\n{e.Message}", "OK");
+            }
+        }
+
+        /// <summary>
+        /// Build the "uv tool run" argument list that starts the launcher GUI.
+        /// </summary>
+        private static List<string> BuildLauncherArguments(ServerLaunchConfig config)
+        {
+            var arguments = new List<string> { "tool", "run" };
+
+            string localSource = FindLocalServerSource();
+            if (string.IsNullOrEmpty(localSource))
+            {
+                // Keep resolution off brand-new third-party releases while still
+                // allowing any version of NetSync itself.
+                arguments.Add("--exclude-newer");
+                arguments.Add("5 days");
+                arguments.Add("--exclude-newer-package");
+                arguments.Add("styly-netsync-server=2999-12-31");
+                arguments.Add("--from");
+                arguments.Add($"styly-netsync-server@{GetServerVersionSafe()}");
+            }
+            else
+            {
+                // Working inside the NetSync repository: run the checked-out
+                // server so the launcher always matches this source tree.
+                arguments.Add("--from");
+                arguments.Add(localSource);
+            }
+
+            arguments.Add("styly-netsync-launcher");
+
+            int resolvedControlPort = config.ControlPort != 5555 ? config.ControlPort : config.DealerPort;
+            if (resolvedControlPort != 5555)
+            {
+                arguments.Add("--control-port");
+                arguments.Add(resolvedControlPort.ToString());
+            }
+            if (config.TransformPort != 5557)
+            {
+                arguments.Add("--transform-port");
+                arguments.Add(config.TransformPort.ToString());
+            }
+            if (config.PubPort != 5556)
+            {
+                arguments.Add("--pub-port");
+                arguments.Add(config.PubPort.ToString());
+            }
+            if (config.RestApiPort != 8800)
+            {
+                arguments.Add("--rest-api-port");
+                arguments.Add(config.RestApiPort.ToString());
+            }
+            if (config.DisableServerDiscovery)
+            {
+                arguments.Add("--no-server-discovery");
+            }
+            else if (config.ServerDiscoveryPort != DefaultServerDiscoveryPort)
+            {
+                arguments.Add("--server-discovery-port");
+                arguments.Add(config.ServerDiscoveryPort.ToString());
+            }
+            if (!string.IsNullOrEmpty(config.ConfigFile))
+            {
+                arguments.Add("--config");
+                arguments.Add(config.ConfigFile);
+            }
+
+            string projectPath = Path.GetDirectoryName(Application.dataPath);
+            if (!string.IsNullOrEmpty(projectPath))
+            {
+                arguments.Add("--unity-project");
+                arguments.Add(projectPath);
+            }
+
+            return arguments;
+        }
+
+        /// <summary>
+        /// Locate the server sources when this package lives inside a checkout
+        /// of the NetSync repository. Returns null for a registry install.
+        /// </summary>
+        private static string FindLocalServerSource()
+        {
+            try
+            {
+                var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(
+                    typeof(StartPythonServer).Assembly);
+                if (packageInfo == null || string.IsNullOrEmpty(packageInfo.resolvedPath))
+                {
+                    return null;
+                }
+
+                DirectoryInfo directory = new DirectoryInfo(packageInfo.resolvedPath);
+                for (int depth = 0; depth < 5 && directory != null; depth++)
+                {
+                    string candidate = Path.Combine(directory.FullName, "STYLY-NetSync-Server");
+                    if (File.Exists(Path.Combine(candidate, "pyproject.toml")))
+                    {
+                        return candidate;
+                    }
+                    directory = directory.Parent;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"STYLY NetSync: Could not inspect the package location: {e.Message}");
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Find the uv executable without relying on the shell PATH an Editor
+        /// launched from Finder or Explorer may not have inherited.
+        /// </summary>
+        private static string ResolveUvExecutable()
+        {
+            bool isWindows = Application.platform == RuntimePlatform.WindowsEditor;
+            string executable = isWindows ? "uv.exe" : "uv";
+            var candidates = new List<string>();
+
+            string pathVariable = Environment.GetEnvironmentVariable("PATH");
+            if (!string.IsNullOrEmpty(pathVariable))
+            {
+                foreach (string entry in pathVariable.Split(Path.PathSeparator))
+                {
+                    if (!string.IsNullOrEmpty(entry))
+                    {
+                        candidates.Add(Path.Combine(entry, executable));
+                    }
+                }
+            }
+
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrEmpty(home))
+            {
+                candidates.Add(Path.Combine(home, ".local", "bin", executable));
+            }
+
+            if (isWindows)
+            {
+                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                if (!string.IsNullOrEmpty(localAppData))
+                {
+                    candidates.Add(Path.Combine(localAppData, "Microsoft", "WinGet", "Links", executable));
+                    candidates.Add(Path.Combine(localAppData, "Programs", "uv", executable));
+                }
+            }
+            else
+            {
+                candidates.Add("/opt/homebrew/bin/uv");
+                candidates.Add("/usr/local/bin/uv");
+            }
+
+            foreach (string candidate in candidates)
+            {
+                try
+                {
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+                catch (Exception)
+                {
+                    // Malformed PATH entries are simply skipped.
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Start a detached, windowless process on Windows.
+        /// A short PowerShell script does the detaching so the launcher keeps
+        /// running after the Editor's child process exits, and so its console
+        /// handles stay valid without Unity having to drain any pipes.
+        /// </summary>
+        private static void StartDetachedWindows(string executable, List<string> arguments)
+        {
+            string quotedArguments = string.Join(", ", arguments.ConvertAll(QuoteForPowerShell));
+            string script =
+                "$ErrorActionPreference = 'SilentlyContinue'\n" +
+                $"Start-Process -FilePath {QuoteForPowerShell(executable)} " +
+                $"-ArgumentList @({quotedArguments}) -WindowStyle Hidden\n";
+
+            string tempScriptPath = Path.Combine(Path.GetTempPath(), $"{TempScriptPrefix}{Guid.NewGuid():N}.ps1");
+            File.WriteAllText(tempScriptPath, script);
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{tempScriptPath}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = GetProjectRoot()
+            };
+            Process.Start(startInfo);
+        }
+
+        /// <summary>
+        /// Start a detached, windowless process on macOS and Linux.
+        /// </summary>
+        private static void StartDetachedUnix(string executable, List<string> arguments)
+        {
+            string quotedArguments = string.Join(" ", arguments.ConvertAll(QuoteForShell));
+            string script =
+                "#!/bin/bash\n" +
+                $"nohup {QuoteForShell(executable)} {quotedArguments} >/dev/null 2>&1 &\n";
+
+            string tempScriptPath = Path.Combine(Path.GetTempPath(), $"{TempScriptPrefix}{Guid.NewGuid():N}.sh");
+            File.WriteAllText(tempScriptPath, script);
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "/bin/bash",
+                Arguments = $"\"{tempScriptPath}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = GetProjectRoot()
+            };
+            Process.Start(startInfo);
+        }
+
         private static void StartServerMac(ServerLaunchConfig config)
         {
             string serverVersion = GetServerVersionSafe();

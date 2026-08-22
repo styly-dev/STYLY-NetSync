@@ -53,6 +53,14 @@ namespace Styly.NetSync.Editor
         {
             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
 
+            EditorGUILayout.HelpBox(
+                "Open Launcher opens a small window with Start/Stop buttons, a live server log " +
+                "and a one-click installer for the Unity package - no terminal involved. " +
+                "It installs the 'uv' runtime by itself the first time.",
+                MessageType.Info);
+
+            EditorGUILayout.Space(8);
+
             // --- Server Discovery Port ---
             _serverDiscoveryPort = PortField("Server Discovery Port", _serverDiscoveryPort);
 
@@ -164,10 +172,15 @@ namespace Styly.NetSync.Editor
                 ResetToDefaults();
             }
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Start Server", GUILayout.Width(120), GUILayout.Height(30)))
+            if (GUILayout.Button("Start in Terminal", GUILayout.Width(130), GUILayout.Height(30)))
             {
                 SaveSettings();
                 StartPythonServer.LaunchServer(BuildConfig());
+            }
+            if (GUILayout.Button("Open Launcher", GUILayout.Width(130), GUILayout.Height(30)))
+            {
+                SaveSettings();
+                StartPythonServer.LaunchLauncherGui(BuildConfig());
             }
             EditorGUILayout.EndHorizontal();
 
