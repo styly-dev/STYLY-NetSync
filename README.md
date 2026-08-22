@@ -40,6 +40,29 @@ Some features are provided via dependent package STYLY XR Rig.
 
 ## Installation
 
+### Option A: Launcher app (no terminal)
+
+Double-click the launcher and do the whole setup in a window — installing the
+Unity package, starting and stopping the server, and running simulated clients.
+
+| Platform | File |
+|---|---|
+| Windows | `tools/Windows/STYLY NetSync Launcher.vbs` |
+| macOS / Linux | `tools/macOS-Linux/STYLY NetSync Launcher.command` |
+
+It installs [uv](https://docs.astral.sh/uv/) itself on first run (user-level, no
+administrator rights) and needs neither Node.js nor the OpenUPM CLI: the
+**Unity Project** tab writes the OpenUPM scoped registry and the package version
+directly into your project's `Packages/manifest.json`, and Unity imports the
+package the next time it gets focus.
+
+Already have the package in a project? **STYLY → STYLY NetSync → Start NetSync
+Server → Open Launcher** opens the same window from the Editor.
+
+See [tools/README.md](tools/README.md) for details.
+
+### Option B: Command line
+
 ### Prerequisites
 
 uv/uvx: Required to start the server.
