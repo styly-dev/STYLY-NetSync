@@ -42,6 +42,8 @@ _CREATE_NO_WINDOW = 0x08000000
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 _LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+# The simulator's argparse accepts a narrower set than the server's.
+_SIMULATOR_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 _MAX_LOG_LINES = 4000
 
 # Loopback port used only as a single-instance lock, never for traffic.
@@ -92,11 +94,21 @@ class ServerSettings:
 
 @dataclass
 class SimulatorSettings:
-    """Client simulator options exposed by the launcher."""
+    """Client simulator options exposed by the launcher.
+
+    Defaults mirror ``client_simulator.main``; only values that differ from the
+    defaults are passed on the command line. The ports are not here on purpose:
+    they are taken from the Server tab so both halves cannot disagree.
+    """
 
     clients: int = 10
     server: str = "localhost"
     room: str = "default_room"
+    transform_send_rate: float = 10.0
+    spawn_batch_size: int = 0
+    spawn_batch_interval: float = 0.0
+    sync_battery: bool = True
+    log_level: str = "INFO"
 
 
 def settings_path() -> Path:
@@ -256,8 +268,14 @@ def build_simulator_command(
     server_settings: ServerSettings,
     python_executable: str | None = None,
 ) -> list[str]:
-    """Build the command that runs the client simulator in a child process."""
-    return [
+    """Build the command that runs the client simulator in a child process.
+
+    Ports come from *server_settings* rather than from the simulator's own
+    fields, so pointing the simulator somewhere else cannot silently leave it
+    talking to the wrong ports.
+    """
+    defaults = SimulatorSettings()
+    command = [
         python_executable or sys.executable,
         "-m",
         "styly_netsync.client_simulator",
@@ -274,6 +292,20 @@ def build_simulator_command(
         "--sub-port",
         str(server_settings.pub_port),
     ]
+
+    if settings.transform_send_rate != defaults.transform_send_rate:
+        command += ["--transform-send-rate", str(settings.transform_send_rate)]
+    if settings.spawn_batch_size != defaults.spawn_batch_size:
+        command += ["--spawn-batch-size", str(settings.spawn_batch_size)]
+        # The simulator only honours an interval when batching is on.
+        if settings.spawn_batch_interval != defaults.spawn_batch_interval:
+            command += ["--spawn-batch-interval", str(settings.spawn_batch_interval)]
+    if not settings.sync_battery:
+        command.append("--no-sync-battery")
+    if settings.log_level != defaults.log_level:
+        command += ["--log-level", settings.log_level]
+
+    return command
 
 
 # --------------------------------------------------------------------------
@@ -826,7 +858,7 @@ class LauncherApp:
     def _build_simulator_tab(self, master: tk.Misc) -> ttk.Frame:
         tab = ttk.Frame(master, padding=12)
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(2, weight=1)
+        tab.rowconfigure(3, weight=1)
 
         ttk.Label(
             tab,
@@ -860,8 +892,69 @@ class LauncherApp:
             row=0, column=5, sticky="w", padx=(6, 18)
         )
 
-        buttons = ttk.Frame(options)
-        buttons.grid(row=1, column=0, columnspan=6, sticky="w", pady=(10, 0))
+        advanced = ttk.LabelFrame(tab, text="Advanced", padding=10)
+        advanced.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        advanced.columnconfigure(5, weight=1)
+
+        ttk.Label(advanced, text="Send rate (Hz)").grid(row=0, column=0, sticky="w")
+        self.sim_rate_var = tk.StringVar(
+            value=str(self.simulator_settings.transform_send_rate)
+        )
+        ttk.Spinbox(
+            advanced,
+            from_=0.5,
+            to=60,
+            increment=0.5,
+            textvariable=self.sim_rate_var,
+            width=8,
+        ).grid(row=0, column=1, sticky="w", padx=(6, 18))
+
+        ttk.Label(advanced, text="Spawn batch").grid(row=0, column=2, sticky="w")
+        self.sim_batch_size_var = tk.StringVar(
+            value=str(self.simulator_settings.spawn_batch_size)
+        )
+        ttk.Spinbox(
+            advanced, from_=0, to=1000, textvariable=self.sim_batch_size_var, width=8
+        ).grid(row=0, column=3, sticky="w", padx=(6, 18))
+
+        ttk.Label(advanced, text="Batch interval (s)").grid(row=0, column=4, sticky="w")
+        self.sim_batch_interval_var = tk.StringVar(
+            value=str(self.simulator_settings.spawn_batch_interval)
+        )
+        ttk.Spinbox(
+            advanced,
+            from_=0,
+            to=60,
+            increment=0.1,
+            textvariable=self.sim_batch_interval_var,
+            width=8,
+        ).grid(row=0, column=5, sticky="w", padx=(6, 18))
+
+        self.sim_battery_var = tk.BooleanVar(value=self.simulator_settings.sync_battery)
+        ttk.Checkbutton(
+            advanced, text="Sync battery level", variable=self.sim_battery_var
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        ttk.Label(advanced, text="Log level").grid(
+            row=1, column=2, sticky="w", pady=(8, 0)
+        )
+        self.sim_log_level_var = tk.StringVar(value=self.simulator_settings.log_level)
+        ttk.Combobox(
+            advanced,
+            textvariable=self.sim_log_level_var,
+            values=list(_SIMULATOR_LOG_LEVELS),
+            state="readonly",
+            width=10,
+        ).grid(row=1, column=3, sticky="w", padx=(6, 18), pady=(8, 0))
+
+        ttk.Label(
+            advanced,
+            text="Ports come from the Server tab, so both halves cannot disagree.",
+            foreground="#6b7280",
+        ).grid(row=2, column=0, columnspan=6, sticky="w", pady=(8, 0))
+
+        buttons = ttk.Frame(tab)
+        buttons.grid(row=2, column=0, sticky="w", pady=(12, 0))
         self.sim_start_button = ttk.Button(
             buttons, text="Start Simulator", command=self.start_simulator, width=16
         )
@@ -876,7 +969,7 @@ class LauncherApp:
         self.sim_stop_button.grid(row=0, column=1, padx=(8, 0))
 
         log_frame = ttk.LabelFrame(tab, text="Simulator log", padding=(6, 6))
-        log_frame.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        log_frame.grid(row=3, column=0, sticky="nsew", pady=(12, 0))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self.simulator_log = LogView(log_frame, height=12)
@@ -967,8 +1060,20 @@ class LauncherApp:
             clients=_parse_int(self.sim_clients_var.get(), 10, 1, 1000),
             server=self.sim_server_var.get().strip() or "localhost",
             room=self.sim_room_var.get().strip() or "default_room",
+            transform_send_rate=_parse_float(self.sim_rate_var.get(), 10.0, 0.5, 60.0),
+            spawn_batch_size=_parse_int(self.sim_batch_size_var.get(), 0, 0, 1000),
+            spawn_batch_interval=_parse_float(
+                self.sim_batch_interval_var.get(), 0.0, 0.0, 60.0
+            ),
+            sync_battery=self.sim_battery_var.get(),
+            log_level=self.sim_log_level_var.get(),
         )
         self.sim_clients_var.set(str(self.simulator_settings.clients))
+        self.sim_rate_var.set(str(self.simulator_settings.transform_send_rate))
+        self.sim_batch_size_var.set(str(self.simulator_settings.spawn_batch_size))
+        self.sim_batch_interval_var.set(
+            str(self.simulator_settings.spawn_batch_interval)
+        )
         command = build_simulator_command(
             self.simulator_settings, self._collect_server_settings()
         )
@@ -1169,6 +1274,14 @@ def _parse_port(text: str, fallback: int) -> int:
 def _parse_int(text: str, fallback: int, low: int, high: int) -> int:
     try:
         value = int(text.strip())
+    except ValueError:
+        return fallback
+    return max(low, min(high, value))
+
+
+def _parse_float(text: str, fallback: float, low: float, high: float) -> float:
+    try:
+        value = float(text.strip())
     except ValueError:
         return fallback
     return max(low, min(high, value))

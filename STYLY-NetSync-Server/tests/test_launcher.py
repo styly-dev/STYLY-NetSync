@@ -24,6 +24,7 @@ from styly_netsync.cli import (  # noqa: E402 - after importorskip
 )
 from styly_netsync.launcher import (  # noqa: E402 - after importorskip
     _ANSI_RE,
+    _SIMULATOR_LOG_LEVELS,
     ManagedProcess,
     ServerSettings,
     SimulatorSettings,
@@ -120,6 +121,77 @@ def test_simulator_command_follows_the_server_ports() -> None:
     assert command[command.index("--control-port") + 1] == "6000"
     assert command[command.index("--transform-port") + 1] == "6002"
     assert command[command.index("--sub-port") + 1] == "6001"
+
+
+def test_simulator_defaults_add_no_advanced_flags() -> None:
+    command = build_simulator_command(SimulatorSettings(), ServerSettings(), PYTHON)
+
+    for flag in (
+        "--transform-send-rate",
+        "--spawn-batch-size",
+        "--spawn-batch-interval",
+        "--no-sync-battery",
+        "--log-level",
+    ):
+        assert flag not in command
+
+
+def test_simulator_advanced_options_become_flags() -> None:
+    command = build_simulator_command(
+        SimulatorSettings(
+            transform_send_rate=30.0,
+            spawn_batch_size=25,
+            spawn_batch_interval=0.5,
+            sync_battery=False,
+            log_level="DEBUG",
+        ),
+        ServerSettings(),
+        PYTHON,
+    )
+
+    assert command[command.index("--transform-send-rate") + 1] == "30.0"
+    assert command[command.index("--spawn-batch-size") + 1] == "25"
+    assert command[command.index("--spawn-batch-interval") + 1] == "0.5"
+    assert "--no-sync-battery" in command
+    assert command[command.index("--log-level") + 1] == "DEBUG"
+
+
+def test_batch_interval_needs_batching_to_be_on() -> None:
+    """The simulator rejects an interval without a batch size, so never send one."""
+    command = build_simulator_command(
+        SimulatorSettings(spawn_batch_interval=0.5), ServerSettings(), PYTHON
+    )
+
+    assert "--spawn-batch-interval" not in command
+
+
+def test_offered_simulator_options_exist_in_the_real_cli() -> None:
+    """Guard against the GUI offering a flag or level the simulator rejects."""
+    help_text = subprocess.run(
+        [sys.executable, "-m", "styly_netsync.client_simulator", "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    ).stdout
+
+    for flag in (
+        "--clients",
+        "--server",
+        "--room",
+        "--control-port",
+        "--transform-port",
+        "--sub-port",
+        "--transform-send-rate",
+        "--spawn-batch-size",
+        "--spawn-batch-interval",
+        "--no-sync-battery",
+        "--log-level",
+    ):
+        assert flag in help_text, f"{flag} is not a real simulator option"
+
+    for level in _SIMULATOR_LOG_LEVELS:
+        assert level in help_text, f"the combo box offers {level}, argparse does not"
 
 
 # --------------------------------------------------------------------------

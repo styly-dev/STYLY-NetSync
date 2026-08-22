@@ -19,7 +19,10 @@ window that does the whole local setup without a terminal.
   the package version straight into `Packages/manifest.json`, so **Node.js and
   the OpenUPM CLI are not needed**. Unity imports the package the next time it
   gets focus. The previous manifest is kept as `manifest.json.netsync-backup`.
-- **Simulator** — spawn simulated clients to check a room end to end.
+- **Simulator** — spawn simulated clients to check a room end to end: client
+  count, server address and room, plus transform send rate, spawn batching,
+  battery sync and log level. Ports are taken from the Server tab so the two
+  halves cannot disagree.
 
 ## First run
 
