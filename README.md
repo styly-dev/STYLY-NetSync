@@ -50,6 +50,8 @@ Unity package, starting and stopping the server, and running simulated clients.
 | Windows | `tools/Windows/STYLY NetSync Launcher.vbs` |
 | macOS / Linux | `tools/macOS-Linux/STYLY NetSync Launcher.command` |
 
+<img width="600" alt="STYLY NetSync Launcher" src="_images/Screenshots/NetSync_Launcher.png" />
+
 It installs [uv](https://docs.astral.sh/uv/) itself on first run (user-level, no
 administrator rights) and needs neither Node.js nor the OpenUPM CLI: the
 **Unity Project** tab writes the OpenUPM scoped registry and the package version

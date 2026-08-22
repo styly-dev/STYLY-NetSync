@@ -365,6 +365,10 @@ namespace Styly.NetSync.Editor
             {
                 // Working inside the NetSync repository: run the checked-out
                 // server so the launcher always matches this source tree.
+                // uv caches the build of a local directory and does not notice
+                // edits to it, so without --reinstall a checkout keeps running
+                // whatever it built the first time.
+                arguments.Add("--reinstall");
                 arguments.Add("--from");
                 arguments.Add(localSource);
             }

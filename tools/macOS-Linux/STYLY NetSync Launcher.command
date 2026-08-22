@@ -35,7 +35,9 @@ fi
 # Prefer this checkout when the script sits inside the repository.
 server_dir="${repo_root}/STYLY-NetSync-Server"
 if [ -f "${server_dir}/pyproject.toml" ]; then
-    from_args=(--from "${server_dir}")
+    # uv caches the build of a local directory and does not notice edits to it,
+    # so without --reinstall a checkout keeps running whatever it built first.
+    from_args=(--reinstall --from "${server_dir}")
 else
     version="latest"
     package_json="${repo_root}/STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json"

@@ -229,7 +229,11 @@ function Get-UvArguments {
     param([pscustomobject]$Source, [string[]]$Extra)
 
     $arguments = @('tool', 'run')
-    if (-not $Source.IsLocal) {
+    if ($Source.IsLocal) {
+        # uv caches the build of a local directory and does not notice edits to
+        # it, so without this a checkout keeps running whatever it built first.
+        $arguments += '--reinstall'
+    } else {
         # Keep resolution off brand-new third-party releases, while still
         # allowing any version of NetSync itself. Mirrors the Unity launcher.
         $arguments += @(
