@@ -60,8 +60,8 @@ namespace Styly.NetSync
         private bool _offlineMode = false;
         [SerializeField, Range(0.5f, 60), Tooltip("Transform sync frequency in Hz (sends per second). Higher values provide smoother movement but increase network traffic.")]
         private float _transformSendRate = 10f;
-        [Tooltip("UDP port used for server discovery.")]
-        [SerializeField, Min(1)] private int _serverDiscoveryPort = 9999;
+        [Tooltip("UDP port used for server discovery. Should be in the dynamic/private port range (49152-65535) to avoid conflicts with well-known services.")]
+        [SerializeField, Range(49152, 65535)] private int _serverDiscoveryPort = 49999;
         [Tooltip("Enable synchronization of battery levels across devices.")]
         [SerializeField] private bool _syncBatteryLevel = true;
         [SerializeField, Tooltip("Clear this client's network variables once after the first connection.")]

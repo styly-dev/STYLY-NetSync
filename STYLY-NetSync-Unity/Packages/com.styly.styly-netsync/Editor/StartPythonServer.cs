@@ -94,7 +94,7 @@ namespace Styly.NetSync.Editor
 
     internal static class StartPythonServer
     {
-        internal const int DefaultServerDiscoveryPort = 9999;
+        internal const int DefaultServerDiscoveryPort = 49999;
 
         internal static bool TryGetServerDiscoveryPortFromScene(out int port)
         {

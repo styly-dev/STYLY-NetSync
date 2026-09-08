@@ -41,7 +41,7 @@ class TestLoadDefaultConfig:
         assert config.dealer_port == 5555
         assert config.transform_port == 5557
         assert config.pub_port == 5556
-        assert config.server_discovery_port == 9999
+        assert config.server_discovery_port == 49999
         assert config.rest_api_port == 8800
         assert config.server_name == "STYLY-NetSync-Server"
         assert config.enable_server_discovery is True
@@ -611,7 +611,7 @@ class TestMergeCliArgs:
         merged = merge_cli_args(default_config, args)
         assert merged.server_discovery_port == 8888
         # Original config unchanged
-        assert default_config.server_discovery_port == 9999
+        assert default_config.server_discovery_port == 49999
 
     def test_cli_overrides_rest_api_port(self, default_config: ServerConfig) -> None:
         """Test that CLI rest_api_port overrides config."""
@@ -646,7 +646,7 @@ class TestMergeCliArgs:
         )
 
         merged = merge_cli_args(default_config, args)
-        assert merged.server_discovery_port == 9999
+        assert merged.server_discovery_port == 49999
 
     def test_missing_attributes_handled(self, default_config: ServerConfig) -> None:
         """Test that missing CLI attributes are handled gracefully."""

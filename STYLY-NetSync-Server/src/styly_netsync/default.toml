@@ -23,8 +23,8 @@ transform_port = 5557
 # ZeroMQ PUB port for server-to-client broadcasts
 pub_port = 5556
 
-# UDP port for server discovery service
-server_discovery_port = 9999
+# UDP port for server discovery service (dynamic/private range: 49152-65535)
+server_discovery_port = 49999
 
 # HTTP port for REST API bridge (FastAPI)
 rest_api_port = 8800
