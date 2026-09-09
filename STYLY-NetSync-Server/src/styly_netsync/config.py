@@ -70,6 +70,7 @@ class ServerConfig:
     rest_api_port: int
     server_name: str
     enable_server_discovery: bool
+    allow_discovery_port_conflict: bool
 
     # Timing settings
     idle_broadcast_interval: float
@@ -115,6 +116,7 @@ _VALID_KEYS: set[str] = {
     "rest_api_port",
     "server_name",
     "enable_server_discovery",
+    "allow_discovery_port_conflict",
     # Timing settings
     "idle_broadcast_interval",
     "transform_broadcast_rate",
@@ -406,6 +408,13 @@ def merge_cli_args(config: ServerConfig, args: argparse.Namespace) -> ServerConf
     # Special handling for --no-server-discovery flag
     if hasattr(args, "no_server_discovery") and args.no_server_discovery:
         updates["enable_server_discovery"] = False
+
+    # Special handling for --allow-discovery-port-conflict flag
+    if (
+        hasattr(args, "allow_discovery_port_conflict")
+        and args.allow_discovery_port_conflict
+    ):
+        updates["allow_discovery_port_conflict"] = True
 
     # Logging settings from CLI
     if hasattr(args, "log_dir") and args.log_dir is not None:
