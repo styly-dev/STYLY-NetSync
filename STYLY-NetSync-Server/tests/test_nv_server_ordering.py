@@ -128,6 +128,66 @@ class TestLiveVsRestOrderingRegression:
         assert server.client_variables["room1"]["device-a"]["hp"]["value"] == "20"
 
 
+class TestVersionFieldIsAGenuineLwwGuard:
+    """Issue #485: the ``version`` field must actually gate application, not
+    just record a monotonic stamp. The sequence is minted when a write is
+    buffered (arrival order), carried through to flush, and compared against
+    the stored version at apply time.
+    """
+
+    def test_stale_buffered_global_write_is_dropped_at_flush(
+        self, server: NetSyncServer
+    ) -> None:
+        server._initialize_room("room1")
+
+        # An older write for "score" is buffered, capturing seq N.
+        server._buffer_global_var_set(
+            "room1",
+            {"senderClientNo": 1, "variableName": "score", "variableValue": "100"},
+        )
+
+        # A newer write for the same key lands directly, out of band, and
+        # gets a higher seq than the one already buffered.
+        assert server._apply_global_var_set("room1", 2, "score", "200") is True
+
+        # Draining the buffer must not resurrect the stale "100" over "200".
+        server._flush_nv_drain("room1")
+
+        stored = server.global_variables["room1"]["score"]
+        assert stored["value"] == "200"
+        assert stored["lastWriterClientNo"] == 2
+
+    def test_apply_rejects_a_global_seq_not_newer_than_stored_version(
+        self, server: NetSyncServer
+    ) -> None:
+        server._initialize_room("room1")
+        server._apply_global_var_set("room1", 1, "score", "100")
+        stored_version = server.global_variables["room1"]["score"]["version"]
+
+        # A write carrying a seq no newer than what's stored is rejected
+        # outright, even though the value differs from what's stored.
+        assert (
+            server._apply_global_var_set("room1", 2, "score", "999", seq=stored_version)
+            is False
+        )
+        assert server.global_variables["room1"]["score"]["value"] == "100"
+
+    def test_apply_rejects_a_client_seq_not_newer_than_stored_version(
+        self, server: NetSyncServer
+    ) -> None:
+        _map_device(server, "room1", "device-a", 7)
+        server._apply_client_var_set_for_device("room1", 3, "device-a", "hp", "20")
+        stored_version = server.client_variables["room1"]["device-a"]["hp"]["version"]
+
+        assert (
+            server._apply_client_var_set_for_device(
+                "room1", 2, "device-a", "hp", "999", seq=stored_version
+            )
+            is False
+        )
+        assert server.client_variables["room1"]["device-a"]["hp"]["value"] == "20"
+
+
 class TestRoomCleanupReleasesNvWriteSeq:
     """Regression: room cleanup must drop nv_write_seq so per-room sequence
     entries do not accumulate under room churn."""
