@@ -790,8 +790,8 @@ namespace Styly.NetSync
                     CompleteDeviceIdResolution();
                 }
 
-                _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
                 _startupPending = false;
+                _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
                 StartNetworking();
             }
 
