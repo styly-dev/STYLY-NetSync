@@ -19,7 +19,7 @@ pip install -e ".[dev]"
 
 # Run server
 styly-netsync-server
-styly-netsync-server --control-port 5555 --transform-port 5557 --pub-port 5556 --server-discovery-port 9999
+styly-netsync-server --control-port 5555 --transform-port 5557 --pub-port 5556 --server-discovery-port 49999
 styly-netsync-server --config my-config.toml
 
 # Quality pipeline (run before committing)

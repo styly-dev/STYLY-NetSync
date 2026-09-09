@@ -1447,7 +1447,7 @@ class net_sync_manager:
         return dispatched
 
     # Discovery API
-    def start_discovery(self, server_discovery_port: int = 9999) -> None:
+    def start_discovery(self, server_discovery_port: int = 49999) -> None:
         """Start UDP discovery for servers.
 
         Creates one UDP socket per physical NIC and broadcasts discovery
