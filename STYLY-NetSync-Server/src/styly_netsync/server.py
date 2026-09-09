@@ -3187,9 +3187,11 @@ def main() -> None:
                 break
 
     except SystemExit:
-        # Server failed to start due to port already in use
-        logger.info("Server startup failed. Exiting...")
-        return
+        # Any fatal startup abort from start() (REST bridge failure, port in
+        # use). Re-raise so the process exits non-zero for supervisors and
+        # $?-based deploy gates.
+        logger.error("Server startup failed. Exiting...")
+        raise
     except KeyboardInterrupt:
         # Handle Ctrl+C during startup
         logger.info("\nReceived interrupt signal during startup...")
