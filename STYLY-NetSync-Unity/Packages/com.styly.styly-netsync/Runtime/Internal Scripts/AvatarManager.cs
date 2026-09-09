@@ -45,7 +45,7 @@ namespace Styly.NetSync
             }
             else
             {
-                localGO = Object.Instantiate(localAvatarPrefab);
+                localGO = InstantiateInManagerScene(localAvatarPrefab, netSyncManager);
 
                 // Resolve the transform that the local avatar root should
                 // follow. Shares its priority order (XROrigin first, then
@@ -86,7 +86,8 @@ namespace Styly.NetSync
                 return;
             }
 
-            var go = Object.Instantiate(remoteAvatarPrefab);
+            var go = InstantiateInManagerScene(remoteAvatarPrefab, netSyncManager);
+
             var net = go.GetComponent<NetSyncAvatar>();
             if (!net)
             {
@@ -315,6 +316,12 @@ namespace Styly.NetSync
                 // Subscribe to hand tracking state changes
                 leftNormalizer.OnTrackingStateChanged += HandleHandTrackingStateChanged;
             }
+        }
+
+        private static GameObject InstantiateInManagerScene(GameObject prefab, NetSyncManager netSyncManager)
+        {
+            var managerScene = netSyncManager.gameObject.scene;
+            return (GameObject)Object.Instantiate(prefab, managerScene);
         }
 
         /// <summary>

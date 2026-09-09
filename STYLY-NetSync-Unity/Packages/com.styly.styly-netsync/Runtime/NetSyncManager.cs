@@ -558,7 +558,9 @@ namespace Styly.NetSync
 
         // Async device ID resolution
         private DeviceIdResolver _deviceIdResolver;
-        private bool _networkingPending;
+
+        // Defer avatar creation until Update so the manager scene has finished activation.
+        private bool _startupPending;
         #endregion ------------------------------------------------------------------------
 
         #region === Public Properties ===
@@ -654,7 +656,6 @@ namespace Styly.NetSync
             if (_deviceIdResolver.IsResolved)
             {
                 CompleteDeviceIdResolution();
-                _networkingPending = false; // Prevent double-init by disabling the deferred Update() initialization path
             }
             // Otherwise, Update() will complete initialization when the resolver finishes
         }
@@ -682,24 +683,14 @@ namespace Styly.NetSync
         {
             if (_isDuplicateInstance) { return; }
 
-            if (_deviceIdResolver != null && _deviceIdResolver.IsResolved)
-            {
-                _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
-                StartNetworking();
-            }
-            else
-            {
-                // Device ID not yet resolved (async permission dialog on Android).
-                // Networking will start once the resolver completes.
-                _networkingPending = true;
-            }
+            _startupPending = true;
         }
 
         private void OnDisable()
         {
             if (_isDuplicateInstance) { return; }
 
-            _networkingPending = false;
+            _startupPending = false;
 
             if (_connectionManager != null)
             {
@@ -789,11 +780,17 @@ namespace Styly.NetSync
                 _deviceIdResolver.Tick();
             }
 
-            // Complete deferred device ID resolution (async Android permission path)
-            if (_networkingPending && _deviceIdResolver != null && _deviceIdResolver.IsResolved)
+            if (_startupPending)
             {
-                _networkingPending = false;
-                CompleteDeviceIdResolution();
+                if (_deviceIdResolver == null || !_deviceIdResolver.IsResolved) { return; }
+
+                // The synchronous path already initialized managers in Awake.
+                if (_connectionManager == null)
+                {
+                    CompleteDeviceIdResolution();
+                }
+
+                _startupPending = false;
                 _avatarManager.InitializeLocalAvatar(_localAvatarPrefab, _deviceId, this);
                 StartNetworking();
             }
@@ -1203,6 +1200,9 @@ namespace Styly.NetSync
         #region === Networking ===
         private void StartNetworking()
         {
+            // Focus and resume callbacks must wait until the avatar is initialized.
+            if (_startupPending) { return; }
+
             if (_offlineMode)
             {
                 _connectionManager.Connect("", 0, 0, 0, _roomId);

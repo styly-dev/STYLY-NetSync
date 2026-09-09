@@ -47,8 +47,8 @@ namespace Styly.NetSync
                 return;
             }
 
-            // Instantiate presence
-            GameObject go = Object.Instantiate(prefab);
+            // Keep presence in the manager scene even when no remote avatar is configured.
+            GameObject go = (GameObject)Object.Instantiate(prefab, _netSyncManager.gameObject.scene);
             if (go != null)
             {
                 go.name = $"HumanPresence ({clientNo})";
