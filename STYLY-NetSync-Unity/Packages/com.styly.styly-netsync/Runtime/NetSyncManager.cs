@@ -139,18 +139,20 @@ namespace Styly.NetSync
         /// <summary>
         /// Configure the RPC rate limit. Set rpcLimit to 0 or less to disable rate limiting.
         /// Safe to call before initialization completes (e.g. while the Android permission
-        /// dialog defers it); the values are stored and applied when the RPC manager is created.
+        /// dialog defers it); the values are applied when the RPC manager is created.
         /// </summary>
         /// <param name="rpcLimit">Maximum number of RPCs allowed per window (0 or less disables)</param>
         /// <param name="windowSeconds">Time window in seconds</param>
         /// <param name="warnCooldown">Minimum seconds between warning messages</param>
         public void ConfigureRpcLimit(int rpcLimit, double windowSeconds = 1.0, double warnCooldown = 0.5)
         {
-            _rpcLimitOverride = (rpcLimit, windowSeconds, warnCooldown);
-
             if (_rpcManager != null)
             {
                 _rpcManager.ConfigureRpcLimit(rpcLimit, windowSeconds, warnCooldown);
+            }
+            else
+            {
+                _pendingRpcLimit = (rpcLimit, windowSeconds, warnCooldown); // applied when RPCManager is created
             }
         }
 
@@ -498,8 +500,6 @@ namespace Styly.NetSync
         private IConnectionManager _connectionManager;
         private AvatarManager _avatarManager;
         private RPCManager _rpcManager;
-        // Last requested RPC rate limit, kept so it survives (and is re-applied on) manager initialization
-        private (int rpcLimit, double windowSeconds, double warnCooldown)? _rpcLimitOverride;
         private TransformSyncManager _transformSyncManager;
         private MessageProcessor _messageProcessor;
         private ServerDiscoveryManager _discoveryManager;
@@ -525,6 +525,7 @@ namespace Styly.NetSync
         private float _reconnectAt;
         private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
         private bool _pendingClearMyClientVariables;
+        private (int rpcLimit, double windowSeconds, double warnCooldown)? _pendingRpcLimit;
         private bool _hasClearedClientNetworkVariablesOnStart;
         private bool _hasInvokedReady = false;
         private bool _shouldCheckReady = false;
@@ -922,11 +923,12 @@ namespace Styly.NetSync
                 _connectionManager = new ConnectionManager(this, _messageProcessor, _enableDebugLogs, _logNetworkTraffic);
             _avatarManager = new AvatarManager(_enableDebugLogs);
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
-            if (_rpcLimitOverride.HasValue)
+            if (_pendingRpcLimit.HasValue)
             {
-                var config = _rpcLimitOverride.Value;
+                var config = _pendingRpcLimit.Value;
                 _rpcManager.ConfigureRpcLimit(config.rpcLimit, config.windowSeconds, config.warnCooldown);
-                DebugLog($"Applied deferred RPC rate limit: {config.rpcLimit}/{config.windowSeconds}s");
+                _pendingRpcLimit = null;
+                DebugLog($"Applied pending RPC rate limit: {config.rpcLimit}/{config.windowSeconds}s");
             }
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _transformSendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
