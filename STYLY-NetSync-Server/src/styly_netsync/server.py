@@ -337,13 +337,17 @@ class NetSyncServer:
         # The assigned sequence is stored in each variable's "version" field.
         self.nv_write_seq: dict[str, int] = {}  # room_id -> last assigned write seq
 
-        # NV Pending buffers for coalescing (latest-wins per key)
-        self.pending_global_nv: dict[str, dict[str, tuple]] = (
+        # NV Pending buffers for coalescing (latest-wins per key). Each buffered
+        # write carries the write sequence assigned when it was buffered, so a
+        # stale write cannot clobber a newer one applied before the next flush.
+        self.pending_global_nv: dict[str, dict[str, tuple[int, str, int]]] = (
             {}
-        )  # room_id -> {var_name: (sender_client_no, value)}
-        self.pending_client_nv: dict[str, dict[tuple, tuple]] = (
+        )  # room_id -> {var_name: (sender_client_no, value, seq)}
+        self.pending_client_nv: dict[
+            str, dict[tuple[int, str], tuple[int, str, int]]
+        ] = (
             {}
-        )  # room_id -> {(target_client_no, var_name): (sender_client_no, value)}
+        )  # room_id -> {(target_client_no, var_name): (sender_client_no, value, seq)}
 
         # NV flush cadence configuration (from config)
         self.nv_flush_interval = config.nv_flush_interval
@@ -1768,10 +1772,13 @@ class NetSyncServer:
         with self._rooms_lock:
             self._initialize_room(room_id)
 
-            # Buffer the update (latest-wins per key)
+            # Buffer the update (latest-wins per key). The write sequence is
+            # minted here, at arrival order, so a write that was buffered
+            # before a newer one landed cannot clobber it at flush time.
             self.pending_global_nv[room_id][var_name] = (
                 sender_client_no,
                 var_value,
+                self._next_nv_seq(room_id),
             )
 
     def _apply_global_var_set(
@@ -1780,8 +1787,17 @@ class NetSyncServer:
         sender_client_no: int,
         var_name: str,
         var_value: str,
+        seq: int | None = None,
     ) -> bool:
-        """Apply global variable update (used by flush, returns True if applied)"""
+        """Apply global variable update (used by flush, returns True if applied).
+
+        ``seq`` is the write sequence captured when the update was buffered;
+        a write no newer than the currently stored version is dropped as
+        stale. This is the guard that keeps last-writer-wins correct even if
+        application is ever de-serialized off the single room lock. Callers
+        applying immediately (``seq=None``) mint a fresh sequence, which is
+        always newer than anything already stored.
+        """
         with self._rooms_lock:
             # Check limits
             global_vars = self.global_variables[room_id]
@@ -1789,19 +1805,35 @@ class NetSyncServer:
                 logger.warning(f"Global variable limit reached in room {room_id}")
                 return False
 
+            existing = global_vars.get(var_name)
+
+            # Drop a buffered write that a newer write has already superseded.
+            if (
+                seq is not None
+                and existing is not None
+                and seq <= existing.get("version", 0)
+            ):
+                logger.debug(
+                    f"Dropped stale global variable write: room={room_id}, "
+                    f"name='{var_name}', seq={seq} <= stored version={existing.get('version', 0)}"
+                )
+                return False
+
             # Skip if value unchanged (no-op)
-            if var_name in global_vars:
-                if global_vars[var_name].get("value") == var_value:
-                    return False
+            if existing is not None and existing.get("value") == var_value:
+                return False
 
             # Store old value for logging
-            old_value = global_vars.get(var_name, {}).get("value", None)
+            old_value = existing.get("value") if existing is not None else None
+
+            if seq is None:
+                seq = self._next_nv_seq(room_id)
 
             # Last-writer-wins ordered by the server-assigned write sequence,
             # not client timestamps (device clocks can drift offline).
             global_vars[var_name] = {
                 "value": var_value,
-                "version": self._next_nv_seq(room_id),
+                "version": seq,
                 "lastWriterClientNo": sender_client_no,
             }
 
@@ -1836,11 +1868,14 @@ class NetSyncServer:
         with self._rooms_lock:
             self._initialize_room(room_id)
 
-            # Buffer the update (latest-wins per key)
+            # Buffer the update (latest-wins per key). The write sequence is
+            # minted here, at arrival order, so a write that was buffered
+            # before a newer one landed cannot clobber it at flush time.
             key = (target_client_no, var_name)
             self.pending_client_nv[room_id][key] = (
                 sender_client_no,
                 var_value,
+                self._next_nv_seq(room_id),
             )
 
     def _apply_client_var_set(
@@ -1850,6 +1885,7 @@ class NetSyncServer:
         target_client_no: int,
         var_name: str,
         var_value: str,
+        seq: int | None = None,
     ) -> bool:
         """Apply a client variable update addressed by volatile client number."""
         with self._rooms_lock:
@@ -1868,6 +1904,7 @@ class NetSyncServer:
                 target_device_id,
                 var_name,
                 var_value,
+                seq,
             )
 
     def _apply_client_var_set_for_device(
@@ -1877,8 +1914,14 @@ class NetSyncServer:
         target_device_id: str,
         var_name: str,
         var_value: str,
+        seq: int | None = None,
     ) -> bool:
-        """Apply a client variable update to the authoritative device-keyed store."""
+        """Apply a client variable update to the authoritative device-keyed store.
+
+        ``seq`` is the write sequence captured when the update was buffered;
+        a write no newer than the currently stored version is dropped as
+        stale (see ``_apply_global_var_set`` for the full rationale).
+        """
         with self._rooms_lock:
             self._initialize_room(room_id)
 
@@ -1894,19 +1937,36 @@ class NetSyncServer:
                 )
                 return False
 
+            existing = client_vars.get(var_name)
+
+            # Drop a buffered write that a newer write has already superseded.
+            if (
+                seq is not None
+                and existing is not None
+                and seq <= existing.get("version", 0)
+            ):
+                logger.debug(
+                    f"Dropped stale client variable write: room={room_id}, "
+                    f"device={target_device_id}, name='{var_name}', "
+                    f"seq={seq} <= stored version={existing.get('version', 0)}"
+                )
+                return False
+
             # Skip if value unchanged (no-op)
-            if var_name in client_vars:
-                if client_vars[var_name].get("value") == var_value:
-                    return False
+            if existing is not None and existing.get("value") == var_value:
+                return False
 
             # Store old value for logging
-            old_value = client_vars.get(var_name, {}).get("value", None)
+            old_value = existing.get("value") if existing is not None else None
+
+            if seq is None:
+                seq = self._next_nv_seq(room_id)
 
             # Last-writer-wins ordered by the server-assigned write sequence,
             # not client timestamps (device clocks can drift offline).
             client_vars[var_name] = {
                 "value": var_value,
-                "version": self._next_nv_seq(room_id),
+                "version": seq,
                 "lastWriterClientNo": sender_client_no,
             }
 
@@ -2217,22 +2277,23 @@ class NetSyncServer:
         # Drain and apply under a single lock hold. _rooms_lock is an RLock, so
         # the nested acquisitions inside _apply_* are reentrant. Holding the lock
         # across both steps prevents an immediate write (e.g. a REST upsert) from
-        # interleaving in the drain/apply gap, where a stale buffered write would
-        # otherwise overwrite the newer immediate one (last-writer-wins is now
-        # ordered by application order, not by client timestamps).
+        # interleaving in the drain/apply gap. The per-write seq captured at
+        # buffer time is also passed through so _apply_* rejects it as stale if
+        # a newer write already landed — a second line of defense on top of the
+        # lock, not a replacement for it.
         with self._rooms_lock:
             globals_to_apply = list(self.pending_global_nv.get(room_id, {}).items())
             clients_to_apply = list(self.pending_client_nv.get(room_id, {}).items())
             self.pending_global_nv[room_id] = {}
             self.pending_client_nv[room_id] = {}
 
-            for var_name, (sender, value) in globals_to_apply:
-                if self._apply_global_var_set(room_id, sender, var_name, value):
+            for var_name, (sender, value, seq) in globals_to_apply:
+                if self._apply_global_var_set(room_id, sender, var_name, value, seq):
                     applied_globals.append(var_name)
 
-            for (target_client_no, var_name), (sender, value) in clients_to_apply:
+            for (target_client_no, var_name), (sender, value, seq) in clients_to_apply:
                 if self._apply_client_var_set(
-                    room_id, sender, target_client_no, var_name, value
+                    room_id, sender, target_client_no, var_name, value, seq
                 ):
                     applied_client_nos.add(target_client_no)
 

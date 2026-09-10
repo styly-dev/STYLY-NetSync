@@ -72,6 +72,7 @@ black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 - Position quantization: absolute `int24 @ 0.01m`, head-relative `int16 @ 0.005m`; out-of-range values clamped
 - Quaternion: 32-bit smallest-three compression
 - Server relays raw client pose body bytes (opaque relay, no decode)
+- Network Variable last-writer-wins uses a server-assigned per-room write sequence, minted at buffer time and compared at apply time; it is server-internal bookkeeping and does not ride the wire
 - **Do NOT use `ZMQ_CONFLATE`**: It corrupts 2-frame multipart messages (topic + payload). Implement conflate-like behavior at the application level.
 - Priority-based sending: Control messages (RPC, Network Variables) prioritized over Transform updates
 
