@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from loguru import logger
 
 from styly_netsync.server import NetSyncServer, main
 
@@ -27,8 +28,13 @@ def test_main_exits_nonzero_when_start_fails() -> None:
         patch.object(NetSyncServer, "start", side_effect=SystemExit(1)) as mock_start,
         patch.object(NetSyncServer, "stop") as mock_stop,
     ):
-        with pytest.raises(SystemExit) as excinfo:
-            main()
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                main()
+        finally:
+            # main() reconfigures loguru onto pytest's captured stderr; drop that
+            # handler so it does not outlive the stream and poison later tests.
+            logger.remove()
 
     assert excinfo.value.code == 1
     mock_start.assert_called_once()
