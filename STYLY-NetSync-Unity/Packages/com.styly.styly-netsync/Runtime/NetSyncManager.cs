@@ -138,6 +138,8 @@ namespace Styly.NetSync
 
         /// <summary>
         /// Configure the RPC rate limit. Set rpcLimit to 0 or less to disable rate limiting.
+        /// Safe to call before initialization completes (e.g. while the Android permission
+        /// dialog defers it); the values are applied when the RPC manager is created.
         /// </summary>
         /// <param name="rpcLimit">Maximum number of RPCs allowed per window (0 or less disables)</param>
         /// <param name="windowSeconds">Time window in seconds</param>
@@ -147,6 +149,10 @@ namespace Styly.NetSync
             if (_rpcManager != null)
             {
                 _rpcManager.ConfigureRpcLimit(rpcLimit, windowSeconds, warnCooldown);
+            }
+            else
+            {
+                _pendingRpcLimit = (rpcLimit, windowSeconds, warnCooldown); // applied when RPCManager is created
             }
         }
 
@@ -519,6 +525,7 @@ namespace Styly.NetSync
         private float _reconnectAt;
         private readonly List<(string name, string value)> _pendingSelfClientNV = new List<(string name, string value)>();
         private bool _pendingClearMyClientVariables;
+        private (int rpcLimit, double windowSeconds, double warnCooldown)? _pendingRpcLimit;
         private bool _hasClearedClientNetworkVariablesOnStart;
         private bool _hasInvokedReady = false;
         private bool _shouldCheckReady = false;
@@ -913,6 +920,13 @@ namespace Styly.NetSync
                 _connectionManager = new ConnectionManager(this, _messageProcessor, _enableDebugLogs, _logNetworkTraffic);
             _avatarManager = new AvatarManager(_enableDebugLogs);
             _rpcManager = new RPCManager(_connectionManager, _deviceId, this);
+            if (_pendingRpcLimit.HasValue)
+            {
+                var config = _pendingRpcLimit.Value;
+                _rpcManager.ConfigureRpcLimit(config.rpcLimit, config.windowSeconds, config.warnCooldown);
+                _pendingRpcLimit = null;
+                DebugLog($"Applied pending RPC rate limit: {config.rpcLimit}/{config.windowSeconds}s");
+            }
             _transformSyncManager = new TransformSyncManager(_connectionManager, _deviceId, _transformSendRate);
             _discoveryManager = new ServerDiscoveryManager(_enableDebugLogs);
             _discoveryManager.SetServerDiscoveryPort(ServerDiscoveryPort);
