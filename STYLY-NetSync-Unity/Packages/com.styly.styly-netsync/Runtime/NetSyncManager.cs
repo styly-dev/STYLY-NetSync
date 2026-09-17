@@ -1226,10 +1226,10 @@ namespace Styly.NetSync
                 _movingFloorManager.RemoveClient(clientNo);
             }
 
-            // Resolve before invoking: this runs synchronously within the same
-            // room-transform processing pass that detected the disconnect, so the
-            // ClientNo->DeviceId map still reflects the state at detection time.
-            string deviceId = GetDeviceIdByClientNo(clientNo);
+            // Use the device ID captured at connect time, not the live ID mapping:
+            // the server broadcasts the updated mapping (without the departed client)
+            // before the room pose that reveals the disconnect.
+            string deviceId = _messageProcessor != null ? _messageProcessor.GetAnnouncedDeviceId(clientNo) : null;
 
 #pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
             OnAvatarDisconnected?.Invoke(clientNo);
@@ -1240,7 +1240,7 @@ namespace Styly.NetSync
             }
         }
 
-        private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
+        private void OnRPCReceivedHandler(int senderClientNo, string senderDeviceId, string functionName, string[] args)
         {
             string argsStr = args != null && args.Length > 0 ? string.Join(", ", args) : "none";
 
@@ -1256,8 +1256,9 @@ namespace Styly.NetSync
 #pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
                 OnRPCReceived?.Invoke(senderClientNo, functionName, args);
 #pragma warning restore CS0618
-                string senderDeviceId = GetDeviceIdByClientNo(senderClientNo);
-                if (senderDeviceId != null)
+                // The sender device ID comes from the RPC message itself, so this does not
+                // depend on the (debounced) ID mapping having arrived yet.
+                if (!string.IsNullOrEmpty(senderDeviceId))
                 {
                     OnRPCReceivedByDeviceId?.Invoke(senderDeviceId, functionName, args);
                 }

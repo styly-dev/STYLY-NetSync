@@ -16,13 +16,14 @@ namespace Styly.NetSync
         private readonly IConnectionManager _connectionManager;
         private readonly string _deviceId;
         private readonly NetSyncManager _netSyncManager;
-        private readonly ConcurrentQueue<(int senderClientNo, string fn, string[] args)> _rpcQueue = new();
+        private readonly ConcurrentQueue<(int senderClientNo, string senderDeviceId, string fn, string[] args)> _rpcQueue = new();
 
         // Reusable serialization resources to reduce GC
         private readonly ReusableBufferWriter _buf;
         private const int INITIAL_BUFFER_CAPACITY = 512;
 
-        public UnityEvent<int, string, string[]> OnRPCReceived { get; } = new();
+        // Args: (senderClientNo, senderDeviceId, functionName, args)
+        public UnityEvent<int, string, string, string[]> OnRPCReceived { get; } = new();
 
         // ===== Client-side RPC rate limiter (single cap) =====
         private readonly object _rlLock = new();
@@ -105,7 +106,7 @@ namespace Styly.NetSync
             {
                 if (targetClientNos == null || targetClientNos.Length == 0 || Array.IndexOf(targetClientNos, _netSyncManager.ClientNo) >= 0)
                 {
-                    EnqueueRPC(_netSyncManager.ClientNo, functionName, args);
+                    EnqueueRPC(_netSyncManager.ClientNo, _deviceId, functionName, args);
                 }
                 return true;
             }
@@ -224,14 +225,14 @@ namespace Styly.NetSync
             {
                 if (OnRPCReceived != null)
                 {
-                    OnRPCReceived.Invoke(rpc.senderClientNo, rpc.fn, rpc.args);
+                    OnRPCReceived.Invoke(rpc.senderClientNo, rpc.senderDeviceId, rpc.fn, rpc.args);
                 }
             }
         }
 
-        public void EnqueueRPC(int senderClientNo, string functionName, string[] args)
+        public void EnqueueRPC(int senderClientNo, string senderDeviceId, string functionName, string[] args)
         {
-            _rpcQueue.Enqueue((senderClientNo, functionName, args));
+            _rpcQueue.Enqueue((senderClientNo, senderDeviceId, functionName, args));
         }
 
         // Buffer growth handled by ReusableBufferWriter

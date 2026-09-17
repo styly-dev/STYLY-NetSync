@@ -26,7 +26,11 @@ namespace Styly.NetSync
         private readonly Dictionary<string, int> _deviceIdToClientNo = new();
         private readonly Dictionary<int, bool> _clientNoToIsStealthMode = new();
         private readonly Dictionary<int, ClientTransformData> _pendingClients = new(); // Clients waiting for ID mapping
-        private readonly HashSet<int> _knownConnectedClients = new HashSet<int>(); // Clients we announced via OnAvatarConnected
+        // Clients we announced via OnAvatarConnected, with the device ID captured at announce time.
+        // The disconnect path must use this instead of the live ID mapping: the server
+        // broadcasts the updated mapping (without the departed client) before the room pose
+        // that reveals the disconnect, so the live mapping is usually already gone by then.
+        private readonly Dictionary<int, string> _knownConnectedClients = new Dictionary<int, string>();
         private string _localDeviceId;
         private int _localClientNo = 0;
         private NetSyncManager _netSyncManager; // Reference to NetSyncManager for triggering ready checks
@@ -109,7 +113,7 @@ namespace Styly.NetSync
                         _messageQueue.Enqueue(new NetworkMessage
                         {
                             type = "rpc",
-                            dataObj = new RpcMessageData { senderClientNo = rpc.senderClientNo, functionName = rpc.functionName, args = args }
+                            dataObj = new RpcMessageData { senderClientNo = rpc.senderClientNo, senderDeviceId = rpc.deviceId, functionName = rpc.functionName, args = args }
                         });
                         _messagesReceived++;
                         break;
@@ -208,7 +212,7 @@ namespace Styly.NetSync
                     case "rpc":
                         if (msg.dataObj is RpcMessageData rpcObj)
                         {
-                            rpcManager.EnqueueRPC(rpcObj.senderClientNo, rpcObj.functionName, rpcObj.args);
+                            rpcManager.EnqueueRPC(rpcObj.senderClientNo, rpcObj.senderDeviceId, rpcObj.functionName, rpcObj.args);
                         }
                         else
                         {
@@ -317,7 +321,7 @@ namespace Styly.NetSync
                                 }
 
                                 // Announce connection regardless of avatar prefab
-                                if (!_knownConnectedClients.Contains(clientNo))
+                                if (!_knownConnectedClients.ContainsKey(clientNo))
                                 {
 #pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
                                     if (netSyncManager.OnAvatarConnected != null)
@@ -326,7 +330,7 @@ namespace Styly.NetSync
                                     }
 #pragma warning restore CS0618
                                     netSyncManager.OnAvatarConnectedByDeviceId?.Invoke(deviceId);
-                                    _knownConnectedClients.Add(clientNo);
+                                    _knownConnectedClients[clientNo] = deviceId;
                                 }
                             }
                             else
@@ -405,7 +409,7 @@ namespace Styly.NetSync
                 // Check for disconnected clients (including ones without avatars)
                 var toDisconnect = _scratchToDisconnect;
                 toDisconnect.Clear();
-                foreach (var known in _knownConnectedClients)
+                foreach (var known in _knownConnectedClients.Keys)
                 {
                     if (!alive.Contains(known)) { toDisconnect.Add(known); }
                 }
@@ -430,12 +434,16 @@ namespace Styly.NetSync
                                 netSyncManager.OnAvatarDisconnected.Invoke(clientNo);
                             }
 #pragma warning restore CS0618
-                            if (_clientNoToDeviceId.TryGetValue(clientNo, out var deviceId))
+                            var deviceId = GetAnnouncedDeviceId(clientNo);
+                            if (deviceId != null)
                             {
                                 netSyncManager.OnAvatarDisconnectedByDeviceId?.Invoke(deviceId);
                             }
                         }
                     }
+                    // Remove only after the disconnect events above so that listeners
+                    // (including NetSyncManager.OnRemoteAvatarDisconnected) can still
+                    // resolve the device ID via GetAnnouncedDeviceId.
                     _knownConnectedClients.Remove(clientNo);
                 }
             }
@@ -448,6 +456,7 @@ namespace Styly.NetSync
         private class RpcMessageData
         {
             public int senderClientNo { get; set; }
+            public string senderDeviceId { get; set; }
             public string functionName { get; set; }
             public string[] args { get; set; }
         }
@@ -542,6 +551,17 @@ namespace Styly.NetSync
         public string GetDeviceIdFromClientNo(int clientNo)
         {
             return _clientNoToDeviceId.TryGetValue(clientNo, out var deviceId) ? deviceId : null;
+        }
+
+        /// <summary>
+        /// Returns the device ID captured when the client was announced via OnAvatarConnected,
+        /// or null if the client is not currently announced. Unlike
+        /// <see cref="GetDeviceIdFromClientNo"/>, this stays valid while the disconnect is
+        /// being announced, after the live ID mapping has already dropped the client.
+        /// </summary>
+        internal string GetAnnouncedDeviceId(int clientNo)
+        {
+            return _knownConnectedClients.TryGetValue(clientNo, out var deviceId) && !string.IsNullOrEmpty(deviceId) ? deviceId : null;
         }
 
         /// <summary>

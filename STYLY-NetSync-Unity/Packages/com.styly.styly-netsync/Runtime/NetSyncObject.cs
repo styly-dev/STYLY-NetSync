@@ -30,8 +30,7 @@ namespace Styly.NetSync
         /// The stable device ID of the current owner, or null when unowned or when the
         /// mapping is not currently known.
         /// </summary>
-        public string OwnerDeviceId =>
-            _ownerClientNo == 0 ? null : NetSyncManager.Instance?.GetDeviceIdByClientNo(_ownerClientNo);
+        public string OwnerDeviceId => ResolveDeviceId(_ownerClientNo);
 
         public bool IsOwnedByMe
         {
@@ -91,10 +90,15 @@ namespace Styly.NetSync
             OnOwnershipChanged.Invoke(newOwner, previousOwner);
 #pragma warning restore CS0618
 
+            OnOwnershipChangedByDeviceId.Invoke(ResolveDeviceId(newOwner), ResolveDeviceId(previousOwner));
+        }
+
+        // Returns null for 0 (no owner) or when the mapping is unknown.
+        // NetSyncManager is a MonoBehaviour, so use Unity's null check instead of ?.
+        private static string ResolveDeviceId(int clientNo)
+        {
             var manager = NetSyncManager.Instance;
-            string newOwnerDeviceId = newOwner == 0 ? null : manager?.GetDeviceIdByClientNo(newOwner);
-            string previousOwnerDeviceId = previousOwner == 0 ? null : manager?.GetDeviceIdByClientNo(previousOwner);
-            OnOwnershipChangedByDeviceId.Invoke(newOwnerDeviceId, previousOwnerDeviceId);
+            return manager != null ? manager.GetDeviceIdByClientNo(clientNo) : null;
         }
 
 #if UNITY_EDITOR
