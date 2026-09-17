@@ -319,10 +319,13 @@ namespace Styly.NetSync
                                 // Announce connection regardless of avatar prefab
                                 if (!_knownConnectedClients.Contains(clientNo))
                                 {
+#pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
                                     if (netSyncManager.OnAvatarConnected != null)
                                     {
                                         netSyncManager.OnAvatarConnected.Invoke(clientNo);
                                     }
+#pragma warning restore CS0618
+                                    netSyncManager.OnAvatarConnectedByDeviceId?.Invoke(deviceId);
                                     _knownConnectedClients.Add(clientNo);
                                 }
                             }
@@ -419,9 +422,18 @@ namespace Styly.NetSync
                     }
                     else
                     {
-                        if (netSyncManager != null && netSyncManager.OnAvatarDisconnected != null)
+                        if (netSyncManager != null)
                         {
-                            netSyncManager.OnAvatarDisconnected.Invoke(clientNo);
+#pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
+                            if (netSyncManager.OnAvatarDisconnected != null)
+                            {
+                                netSyncManager.OnAvatarDisconnected.Invoke(clientNo);
+                            }
+#pragma warning restore CS0618
+                            if (_clientNoToDeviceId.TryGetValue(clientNo, out var deviceId))
+                            {
+                                netSyncManager.OnAvatarDisconnectedByDeviceId?.Invoke(deviceId);
+                            }
                         }
                     }
                     _knownConnectedClients.Remove(clientNo);
