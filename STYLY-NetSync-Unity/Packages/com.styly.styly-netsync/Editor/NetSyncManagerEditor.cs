@@ -26,10 +26,14 @@ namespace Styly.NetSync.Editor
         private static readonly HashSet<string> EventProperties = new HashSet<string>
         {
             "OnAvatarConnected",
+            "OnAvatarConnectedByDeviceId",
             "OnAvatarDisconnected",
+            "OnAvatarDisconnectedByDeviceId",
             "OnRPCReceived",
+            "OnRPCReceivedByDeviceId",
             "OnGlobalVariableChanged",
             "OnClientVariableChanged",
+            "OnClientVariableChangedByDeviceId",
             "OnReady",
             "OnVersionMismatch"
         };

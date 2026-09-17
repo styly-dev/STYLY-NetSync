@@ -55,6 +55,7 @@ namespace Styly.NetSync.Editor
             EditorGUILayout.Space();
             
             // Client Network Variables section
+#pragma warning disable CS0618 // editor-only debug display keyed on the deprecated ClientNo
             int displayClientNo = _netSyncAvatar.ClientNo;
             if (displayClientNo == 0 && NetSyncManager.Instance != null)
             {
@@ -65,9 +66,10 @@ namespace Styly.NetSync.Editor
             if (_showClientVariables)
             {
                 EditorGUI.indentLevel++;
-                
+
                 // Get client variables for this network object's client (with fallback)
                 var clientVars = NetSyncManager.Instance != null ? NetSyncManager.Instance.GetAllClientVariables(displayClientNo) : null;
+#pragma warning restore CS0618
                 
                 if (clientVars == null || clientVars.Count == 0)
                 {
