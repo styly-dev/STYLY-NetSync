@@ -36,16 +36,28 @@ namespace Styly.NetSync
         // The "Events" header and per-event tooltips are rendered by
         // NetSyncManagerEditor so UnityEventDrawer doesn't swallow them.
         // Initialize UnityEvents at declaration to ensure they are always non-null
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         [Tooltip("Fired when a remote avatar connects. Parameter: clientNo (int) — the unique client number assigned to the connected avatar.")]
         public UnityEvent<int> OnAvatarConnected = new UnityEvent<int>();
+        [Tooltip("Fired when a remote avatar connects. Parameter: deviceId (string) — the stable device identifier of the connected avatar.")]
+        public UnityEvent<string> OnAvatarConnectedByDeviceId = new UnityEvent<string>();
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         [Tooltip("Fired when a remote avatar disconnects. Parameter: clientNo (int) — the unique client number of the disconnected avatar.")]
         public UnityEvent<int> OnAvatarDisconnected = new UnityEvent<int>();
+        [Tooltip("Fired when a remote avatar disconnects. Parameter: deviceId (string) — the stable device identifier of the disconnected avatar.")]
+        public UnityEvent<string> OnAvatarDisconnectedByDeviceId = new UnityEvent<string>();
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         [Tooltip("Fired when an RPC is received. Parameters: senderClientNo (int), functionName (string), args (string[]).")]
         public UnityEvent<int, string, string[]> OnRPCReceived = new UnityEvent<int, string, string[]>();
+        [Tooltip("Fired when an RPC is received. Parameters: senderDeviceId (string), functionName (string), args (string[]).")]
+        public UnityEvent<string, string, string[]> OnRPCReceivedByDeviceId = new UnityEvent<string, string, string[]>();
         [Tooltip("Fired when a global network variable changes. Parameters: name (string), oldValue (string), newValue (string).")]
         public UnityEvent<string, string, string> OnGlobalVariableChanged = new UnityEvent<string, string, string>();
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         [Tooltip("Fired when a client-specific network variable changes. Parameters: clientNo (int), name (string), oldValue (string), newValue (string).")]
         public UnityEvent<int, string, string, string> OnClientVariableChanged = new UnityEvent<int, string, string, string>();
+        [Tooltip("Fired when a client-specific network variable changes. Parameters: deviceId (string), name (string), oldValue (string), newValue (string).")]
+        public UnityEvent<string, string, string, string> OnClientVariableChangedByDeviceId = new UnityEvent<string, string, string, string>();
         [Tooltip("Fired when the client is fully connected and synchronized (connected, handshaked, and network variables synced).")]
         public UnityEvent OnReady = new UnityEvent();
         /// <summary>
@@ -70,6 +82,10 @@ namespace Styly.NetSync
         private float _discoveryTimeout = 10f;
 
         internal const string PrefixForSystem = "@system:"; // Prefix for system-only message names
+
+        // ClientNo changes across reconnects; DeviceId is stable. See issue #393.
+        private const string ClientNoIdentifierObsoleteMessage =
+            "ClientNo changes across reconnects; use the DeviceId-based member instead. See issue #393.";
 
         #endregion ------------------------------------------------------------------------
 
@@ -104,11 +120,13 @@ namespace Styly.NetSync
             }
         }
 
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         public void Rpc(string functionName, string[] args, int targetClientNo)
         {
             Rpc(functionName, args, new[] { targetClientNo });
         }
 
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         public void Rpc(string functionName, string[] args, int[] targetClientNos)
         {
             if (args == null) { args = Array.Empty<string>(); }
@@ -122,6 +140,56 @@ namespace Styly.NetSync
             {
                 _rpcManager.SendTo(_roomId, targetClientNos, functionName, args);
             }
+        }
+
+        /// <summary>
+        /// Sends an RPC to a single device. No-ops with a warning if the device ID
+        /// is not currently resolvable to a client number.
+        /// </summary>
+        public void Rpc(string functionName, string[] args, string targetDeviceId)
+        {
+            int clientNo = GetClientNoByDeviceId(targetDeviceId);
+            if (clientNo <= 0)
+            {
+                Debug.LogWarning($"[NetSyncManager] Rpc: unresolved targetDeviceId '{targetDeviceId}', RPC not sent.");
+                return;
+            }
+#pragma warning disable CS0618 // intentionally calling the ClientNo-based overload internally
+            Rpc(functionName, args, clientNo);
+#pragma warning restore CS0618
+        }
+
+        /// <summary>
+        /// Sends an RPC to a set of devices. Unresolved device IDs are skipped with a
+        /// warning. If none of the device IDs resolve, the RPC is not sent — an empty
+        /// target array means "broadcast" on the wire, so silently falling through to
+        /// that would send the RPC to everyone instead of no one.
+        /// </summary>
+        public void Rpc(string functionName, string[] args, string[] targetDeviceIds)
+        {
+            if (targetDeviceIds == null || targetDeviceIds.Length == 0) { return; }
+
+            var resolved = new List<int>(targetDeviceIds.Length);
+            foreach (var deviceId in targetDeviceIds)
+            {
+                int clientNo = GetClientNoByDeviceId(deviceId);
+                if (clientNo <= 0)
+                {
+                    Debug.LogWarning($"[NetSyncManager] Rpc: unresolved targetDeviceId '{deviceId}', skipping.");
+                    continue;
+                }
+                resolved.Add(clientNo);
+            }
+
+            if (resolved.Count == 0)
+            {
+                Debug.LogWarning("[NetSyncManager] Rpc: no targetDeviceIds resolved, RPC not sent.");
+                return;
+            }
+
+#pragma warning disable CS0618 // intentionally calling the ClientNo-based overload internally
+            Rpc(functionName, args, resolved.ToArray());
+#pragma warning restore CS0618
         }
 
         internal void Rpc_SystemRPC(string functionName, string[] args = null)
@@ -177,9 +245,27 @@ namespace Styly.NetSync
             return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(name, value, _clientNo, _roomId) : false;
         }
 
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         public bool SetClientVariable(string name, string value, int targetClientNo)
         {
             return _networkVariableManager != null ? _networkVariableManager.SetClientVariable(name, value, targetClientNo, _roomId) : false;
+        }
+
+        /// <summary>
+        /// Sets a network variable owned by the specified device. Returns false with a
+        /// warning if the device ID is not currently resolvable to a client number.
+        /// </summary>
+        public bool SetClientVariable(string name, string value, string targetDeviceId)
+        {
+            int clientNo = GetClientNoByDeviceId(targetDeviceId);
+            if (clientNo <= 0)
+            {
+                Debug.LogWarning($"[NetSyncManager] SetClientVariable: unresolved targetDeviceId '{targetDeviceId}'.");
+                return false;
+            }
+#pragma warning disable CS0618 // intentionally calling the ClientNo-based overload internally
+            return SetClientVariable(name, value, clientNo);
+#pragma warning restore CS0618
         }
 
         /// <summary>
@@ -215,17 +301,52 @@ namespace Styly.NetSync
             return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(name, _clientNo, defaultValue) : defaultValue;
         }
 
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         public string GetClientVariable(string name, int clientNo, string defaultValue = null)
         {
             return _networkVariableManager != null ? _networkVariableManager.GetClientVariable(name, clientNo, defaultValue) : defaultValue;
         }
 
         /// <summary>
+        /// Gets a network variable owned by the specified device. Returns
+        /// <paramref name="defaultValue"/> if the device ID is not currently
+        /// resolvable to a client number.
+        /// </summary>
+        /// <remarks>
+        /// Named distinctly rather than overloading <see cref="GetClientVariable(string, string)"/>:
+        /// both take two strings when <paramref name="defaultValue"/> is omitted, so an
+        /// overload here would let a caller who forgot the deviceId argument silently
+        /// compile against the self-targeting overload instead.
+        /// </remarks>
+        public string GetClientVariableByDeviceId(string name, string deviceId, string defaultValue = null)
+        {
+            int clientNo = GetClientNoByDeviceId(deviceId);
+            if (clientNo <= 0) { return defaultValue; }
+#pragma warning disable CS0618 // intentionally calling the ClientNo-based overload internally
+            return GetClientVariable(name, clientNo, defaultValue);
+#pragma warning restore CS0618
+        }
+
+        /// <summary>
         /// Gets all variables for a specific client (for debugging)
         /// </summary>
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         public Dictionary<string, string> GetAllClientVariables(int clientNo)
         {
             return _networkVariableManager != null ? _networkVariableManager.GetAllClientVariables(clientNo) : new Dictionary<string, string>();
+        }
+
+        /// <summary>
+        /// Gets all variables for a specific device (for debugging). Returns an empty
+        /// dictionary if the device ID is not currently resolvable to a client number.
+        /// </summary>
+        public Dictionary<string, string> GetAllClientVariables(string deviceId)
+        {
+            int clientNo = GetClientNoByDeviceId(deviceId);
+            if (clientNo <= 0) { return new Dictionary<string, string>(); }
+#pragma warning disable CS0618 // intentionally calling the ClientNo-based overload internally
+            return GetAllClientVariables(clientNo);
+#pragma warning restore CS0618
         }
 
         /// <summary>
@@ -241,9 +362,25 @@ namespace Styly.NetSync
         /// </summary>
         /// <param name="clientNo">The client number to check</param>
         /// <returns>True if the client is in stealth mode, false otherwise</returns>
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         public bool IsClientStealthMode(int clientNo)
         {
             return _messageProcessor != null ? _messageProcessor.IsClientStealthMode(clientNo) : false;
+        }
+
+        /// <summary>
+        /// Checks if a device is in stealth mode (no visible avatar). Returns false if
+        /// the device ID is not currently resolvable to a client number.
+        /// </summary>
+        /// <param name="deviceId">The stable device identifier to check.</param>
+        /// <returns>True if the device is in stealth mode, false otherwise.</returns>
+        public bool IsClientStealthMode(string deviceId)
+        {
+            int clientNo = GetClientNoByDeviceId(deviceId);
+            if (clientNo <= 0) { return false; }
+#pragma warning disable CS0618 // intentionally calling the ClientNo-based overload internally
+            return IsClientStealthMode(clientNo);
+#pragma warning restore CS0618
         }
 
         /// <summary>
@@ -281,6 +418,7 @@ namespace Styly.NetSync
         /// </summary>
         /// <param name="includeStealthClients">If true, includes clients in stealth mode (no visible avatar). Default is false.</param>
         /// <returns>An int[] containing the client numbers of all connected clients</returns>
+        [Obsolete(ClientNoIdentifierObsoleteMessage)]
         public int[] GetAliveClients(bool includeStealthClients = false)
         {
             var set = _avatarManager?.GetAliveClients(_messageProcessor, includeStealthClients, _clientNo);
@@ -288,6 +426,25 @@ namespace Styly.NetSync
             var arr = new int[set.Count];
             set.CopyTo(arr);
             return arr;
+        }
+
+        /// <summary>
+        /// Gets a list (string[]) of all currently connected device IDs.
+        /// </summary>
+        /// <param name="includeStealthClients">If true, includes clients in stealth mode (no visible avatar). Default is false.</param>
+        /// <returns>A string[] containing the device IDs of all connected clients</returns>
+        public string[] GetAliveDevices(bool includeStealthClients = false)
+        {
+#pragma warning disable CS0618 // intentionally calling the ClientNo-based overload internally
+            var clientNos = GetAliveClients(includeStealthClients);
+#pragma warning restore CS0618
+            var result = new List<string>(clientNos.Length);
+            foreach (var clientNo in clientNos)
+            {
+                var deviceId = GetDeviceIdByClientNo(clientNo);
+                if (deviceId != null) { result.Add(deviceId); }
+            }
+            return result.ToArray();
         }
 
         internal void RegisterNetSyncObject(NetSyncObject obj)
@@ -939,9 +1096,14 @@ namespace Styly.NetSync
             _avatarManager.OnAvatarDisconnected.AddListener(OnRemoteAvatarDisconnected);
             _rpcManager.OnRPCReceived.AddListener(OnRPCReceivedHandler);
 
-            // Human Presence lifecycle follows avatar connect/disconnect events
+            // Human Presence lifecycle follows avatar connect/disconnect events.
+            // HumanPresenceManager is internal and keyed by clientNo (matching the
+            // wire-level physical-pose messages), so it intentionally stays on the
+            // ClientNo-based events rather than the DeviceId-based ones.
+#pragma warning disable CS0618
             OnAvatarConnected.AddListener(_humanPresenceManager.HandleAvatarConnected);
             OnAvatarDisconnected.AddListener(_humanPresenceManager.HandleAvatarDisconnected);
+#pragma warning restore CS0618
 
             // Setup network variable events
             if (_networkVariableManager != null)
@@ -1064,7 +1226,18 @@ namespace Styly.NetSync
                 _movingFloorManager.RemoveClient(clientNo);
             }
 
+            // Resolve before invoking: this runs synchronously within the same
+            // room-transform processing pass that detected the disconnect, so the
+            // ClientNo->DeviceId map still reflects the state at detection time.
+            string deviceId = GetDeviceIdByClientNo(clientNo);
+
+#pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
             OnAvatarDisconnected?.Invoke(clientNo);
+#pragma warning restore CS0618
+            if (deviceId != null)
+            {
+                OnAvatarDisconnectedByDeviceId?.Invoke(deviceId);
+            }
         }
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
@@ -1080,7 +1253,14 @@ namespace Styly.NetSync
             }
             else
             {
+#pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
                 OnRPCReceived?.Invoke(senderClientNo, functionName, args);
+#pragma warning restore CS0618
+                string senderDeviceId = GetDeviceIdByClientNo(senderClientNo);
+                if (senderDeviceId != null)
+                {
+                    OnRPCReceivedByDeviceId?.Invoke(senderDeviceId, functionName, args);
+                }
                 Debug.Log($"[NetSyncManager] RPC Received - Sender: Client#{senderClientNo}, Function: {functionName}, Args: [{argsStr}]");
             }
         }
@@ -1110,7 +1290,14 @@ namespace Styly.NetSync
                 _movingFloorManager.SetClientFloorId(clientNo, newValue);
             }
 
+#pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
             OnClientVariableChanged?.Invoke(clientNo, name, oldValue, newValue);
+#pragma warning restore CS0618
+            string deviceId = GetDeviceIdByClientNo(clientNo);
+            if (deviceId != null)
+            {
+                OnClientVariableChangedByDeviceId?.Invoke(deviceId, name, oldValue, newValue);
+            }
         }
 
         private void OnLocalClientNoAssigned(int clientNo)
