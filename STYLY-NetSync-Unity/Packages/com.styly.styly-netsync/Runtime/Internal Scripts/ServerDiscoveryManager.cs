@@ -29,7 +29,7 @@ namespace Styly.NetSync
 
         public bool EnableDiscovery { get; set; } = true;
         public float DiscoveryTimeout { get; set; } = 1f;
-        private int _serverDiscoveryPort = 9999;
+        private int _serverDiscoveryPort = 49999;
         public int ServerDiscoveryPort
         {
             get => Volatile.Read(ref _serverDiscoveryPort);

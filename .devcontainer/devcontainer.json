@@ -10,7 +10,7 @@
 	"runArgs": [
 		"-p", "5555:5555",           // Expose ZeroMQ ROUTER (TCP)
 		"-p", "5556:5556",           // Expose ZeroMQ PUB (TCP)
-		"-p", "9999:9999/udp"        // Expose UDP discovery port (unicast only)
+		"-p", "49999:49999/udp"      // Expose UDP discovery port (unicast only)
 	],
 	"customizations": {
 		"vscode": {
