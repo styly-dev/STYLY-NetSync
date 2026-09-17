@@ -58,6 +58,7 @@ black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
 - **Server**: Multi-threaded Python (receive, periodic, discovery threads) with ZeroMQ control/transform DEALER-ROUTER sockets + PUB-SUB and group-based room management
 - **Unity Client**: Manager pattern with internal components (connection, transform sync, RPC, network variables, avatars)
 - **Protocol**: Binary v8 with quantized positions and smallest-three quaternion compression
+- **Network Variable ordering**: Server-side last-writer-wins follows application order under the room lock (no per-write sequence number); see the contract comment in `_flush_nv_drain` before changing NV locking or adding an immediate-apply path
 - **Technology**: Python 3.11+ / pyzmq / FastAPI / msgpack (server), Unity 6 / NetMQ / Newtonsoft.Json (client)
 
 ## Protocol Rules
