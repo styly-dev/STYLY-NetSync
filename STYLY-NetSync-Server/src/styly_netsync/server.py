@@ -152,6 +152,16 @@ class NetSyncServer:
     DEFAULT_FD_LIMIT = 4096
     ID_MAPPING_DEBOUNCE_INTERVAL = 0.5  # Debounce ID mapping broadcasts (500ms)
 
+    # Grace period, in seconds, that a client entry is retained after it stops
+    # heartbeating. Timing out only marks the client absent (see
+    # _cleanup_clients); the entry — and with it the control identity, client
+    # number and Network Variable state — survives until this much additional
+    # time has elapsed. A client that returns within the window resumes its
+    # existing registration instead of re-joining as a brand new client, which
+    # keeps a transient link stall from costing the whole room a full state
+    # re-sync.
+    ABSENT_CLIENT_RETENTION = 60.0
+
     # Control traffic priority settings:
     # - CTRL_DRAIN_BATCH: Max control messages (RPC/NV) to drain per publisher loop
     # - CTRL_BACKLOG_WATERMARK: Skip transform work when control queue exceeds this
@@ -395,6 +405,28 @@ class NetSyncServer:
         """Thread-safe increment of statistics"""
         with self._stats_lock:
             setattr(self, stat_name, getattr(self, stat_name) + amount)
+
+    @staticmethod
+    def _is_present(client_data: dict[str, Any]) -> bool:
+        """Whether a client entry represents a currently connected client.
+
+        Entries linger after a timeout so a returning client keeps its
+        registration (see ABSENT_CLIENT_RETENTION); absent entries must be
+        excluded from anything peers observe or that is sent over the wire.
+        """
+        return bool(client_data.get("is_present", True))
+
+    @staticmethod
+    def _restore_presence_locked(client_data: dict[str, Any]) -> bool:
+        """Mark a lingering entry present again. Caller must hold _rooms_lock.
+
+        Returns True only on the absent -> present transition, so callers can
+        re-sync the returning client without doing so on every message.
+        """
+        if client_data.get("is_present", True):
+            return False
+        client_data["is_present"] = True
+        return True
 
     def _bump_fd_soft_limit(self, target: int) -> None:
         """Best-effort bump of RLIMIT_NOFILE for macOS/Linux."""
@@ -705,6 +737,8 @@ class NetSyncServer:
 
             # Collect all client identities in the room while holding the lock
             for _device_id, client_data in self.rooms[room_id].items():
+                if not self._is_present(client_data):
+                    continue
                 identity = client_data.get("control_identity")
                 if identity is None:
                     continue
@@ -781,8 +815,13 @@ class NetSyncServer:
 
     def _refresh_control_identity_from_device_id(
         self, client_identity: bytes, room_id: str, device_id_raw: object
-    ) -> str | None:
-        """Bind the sending control identity to its stable device ID."""
+    ) -> tuple[str, bool] | None:
+        """Bind the sending control identity to its stable device ID.
+
+        Returns ``(device_id, needs_resync)`` where ``needs_resync`` is True
+        when this message revived an entry that had been marked absent, so the
+        caller can re-send the room state the client missed while away.
+        """
         if not isinstance(device_id_raw, str) or not device_id_raw:
             return None
 
@@ -801,6 +840,7 @@ class NetSyncServer:
                     "transform_data": None,
                     "client_no": client_no,
                     "is_stealth": False,
+                    "is_present": True,
                 }
                 self.room_id_mapping_dirty[room_id] = True
                 logger.info(
@@ -810,7 +850,7 @@ class NetSyncServer:
                     client_no,
                     device_id[:8],
                 )
-                return device_id
+                return device_id, False
 
             client_data = room[device_id]
             old_identity = client_data.get("control_identity")
@@ -824,9 +864,19 @@ class NetSyncServer:
                     client_no,
                     device_id[:8],
                 )
+            returned_from_absence = self._restore_presence_locked(client_data)
+            if returned_from_absence:
+                self.room_id_mapping_dirty[room_id] = True
+                logger.info(
+                    "Client {}... (client number: {}) returned from absence via "
+                    "control message in room {}",
+                    device_id[:8],
+                    client_no,
+                    room_id,
+                )
             client_data["last_update"] = now
             client_data["client_no"] = client_no
-            return device_id
+            return device_id, returned_from_absence
 
     def _resolve_control_sender(
         self,
@@ -836,16 +886,22 @@ class NetSyncServer:
         message_name: str,
     ) -> tuple[str, int] | None:
         """Resolve and refresh the sender of a client-originated control message."""
-        device_id = self._refresh_control_identity_from_device_id(
+        refreshed = self._refresh_control_identity_from_device_id(
             client_identity, room_id, data.get("deviceId")
         )
-        if device_id is None:
+        if refreshed is None:
             logger.warning(
                 "%s ignored: missing or invalid deviceId in room %s",
                 message_name,
                 room_id,
             )
             return None
+
+        device_id, returned_from_absence = refreshed
+        if returned_from_absence:
+            # Control sends skip absent clients, so this one may have missed
+            # variable updates while it was away.
+            self._sync_network_variables_to_client(room_id, client_identity)
 
         client_no = self._get_client_no_for_device_id(room_id, device_id)
         if client_no <= 0:
@@ -1386,6 +1442,8 @@ class NetSyncServer:
             # new-client object-ownership sync.
             control_was_unbound = False
 
+            returned_from_absence = False
+
             if is_new_client:
                 self.rooms[room_id][device_id] = {
                     "control_identity": client_identity,
@@ -1394,6 +1452,7 @@ class NetSyncServer:
                     "transform_data": None,
                     "client_no": client_no,
                     "is_stealth": is_stealth,
+                    "is_present": True,
                 }
                 self.room_id_mapping_dirty[room_id] = True
                 stealth_text = " (stealth mode)" if is_stealth else ""
@@ -1412,17 +1471,27 @@ class NetSyncServer:
                 is_reconnect = old_identity != client_identity
                 control_was_unbound = old_identity is None
                 stealth_changed = old_stealth != is_stealth
+                returned_from_absence = self._restore_presence_locked(client_data)
                 client_data["control_identity"] = client_identity
                 client_data["last_update"] = now
                 client_data["client_no"] = client_no
                 client_data["is_stealth"] = is_stealth
-                if is_reconnect or stealth_changed:
+                if is_reconnect or stealth_changed or returned_from_absence:
                     self.room_id_mapping_dirty[room_id] = True
+                if returned_from_absence:
+                    self.room_dirty_flags[room_id] = True
+                    logger.info(
+                        "Client %s... (client number: %s) returned from absence "
+                        "in room %s",
+                        device_id[:8],
+                        client_no,
+                        room_id,
+                    )
 
             if is_stealth:
                 self.room_dirty_flags[room_id] = True
 
-            if is_new_client or is_reconnect:
+            if is_new_client or is_reconnect or returned_from_absence:
                 # Queue the local client's ID mapping before releasing
                 # _rooms_lock. Once the new control identity is visible in the
                 # room, a periodic/NV broadcast can target it; enqueueing here
@@ -1432,9 +1501,19 @@ class NetSyncServer:
                     self._enqueue_router(client_identity, room_id, mapping_payload)
 
         if is_new_client:
-            self._sync_network_variables_to_new_client(room_id)
+            # Unicast, not broadcast: the joining client is the only one that
+            # needs the whole room snapshot — peers already hold that state.
+            # Broadcasting it here made every join cost the room O(N) messages
+            # of O(N) payload. Peers are told only about the joiner's own
+            # variables, and only when it actually has some.
+            self._sync_network_variables_to_client(room_id, client_identity)
+            self._announce_joining_client_variables(
+                room_id, device_id, client_no, client_identity
+            )
             self._sync_objects_to_new_client(client_identity, room_id)
-        elif is_reconnect:
+        elif is_reconnect or returned_from_absence:
+            # A client that was absent is skipped by control-lane sends, so it
+            # may have missed variable updates while away.
             self._sync_network_variables_to_client(room_id, client_identity)
             # If a transform message created this entry before the hello arrived,
             # the control lane is binding for the first time here. Send the
@@ -1477,6 +1556,7 @@ class NetSyncServer:
             # Update or create client (using device ID as key for backward compatibility)
             is_new_client = device_id not in self.rooms[room_id]
             is_reconnect = False
+            returned_from_absence = False
             if is_new_client:
                 self.rooms[room_id][device_id] = {
                     "control_identity": None,
@@ -1485,6 +1565,7 @@ class NetSyncServer:
                     "transform_data": data_with_client_no,
                     "client_no": client_no,
                     "is_stealth": is_stealth,
+                    "is_present": True,
                 }
                 self.room_dirty_flags[room_id] = True  # Mark room as dirty
                 if body_bytes:
@@ -1497,13 +1578,15 @@ class NetSyncServer:
                 # Update existing client and mark room as dirty.
                 # Detect transform-lane reconnection without overwriting the
                 # control identity used for reliable unicasts.
-                old_identity = self.rooms[room_id][device_id].get("transform_identity")
+                client_data = self.rooms[room_id][device_id]
+                old_identity = client_data.get("transform_identity")
                 is_reconnect = old_identity != client_identity
-                self.rooms[room_id][device_id]["transform_identity"] = client_identity
-                self.rooms[room_id][device_id]["transform_data"] = data_with_client_no
-                self.rooms[room_id][device_id]["last_update"] = time.monotonic()
-                self.rooms[room_id][device_id]["client_no"] = client_no
-                self.rooms[room_id][device_id]["is_stealth"] = is_stealth
+                returned_from_absence = self._restore_presence_locked(client_data)
+                client_data["transform_identity"] = client_identity
+                client_data["transform_data"] = data_with_client_no
+                client_data["last_update"] = time.monotonic()
+                client_data["client_no"] = client_no
+                client_data["is_stealth"] = is_stealth
 
                 if body_bytes:
                     self.client_transform_body_cache[client_no] = body_bytes
@@ -1519,6 +1602,15 @@ class NetSyncServer:
                         f"Client {device_id[:8]}... reconnected with new identity in room {room_id}"
                     )
 
+                if returned_from_absence:
+                    # Peers dropped this client from their mapping when it went
+                    # absent; put it back so they re-announce the connection.
+                    self.room_id_mapping_dirty[room_id] = True
+                    logger.info(
+                        f"Client {device_id[:8]}... (client number: {client_no}) "
+                        f"returned from absence in room {room_id}"
+                    )
+
             # Mark room for debounced ID mapping broadcast when a new client joins
             if is_new_client:
                 self.room_id_mapping_dirty[room_id] = True
@@ -1529,9 +1621,13 @@ class NetSyncServer:
         # before hello, the hello handler will sync after control identity exists.
         if control_identity is not None:
             if is_new_client:
-                self._sync_network_variables_to_new_client(room_id)
+                # Unicast to the joiner only — see _handle_client_hello.
+                self._sync_network_variables_to_client(room_id, control_identity)
+                self._announce_joining_client_variables(
+                    room_id, device_id, client_no, control_identity
+                )
                 self._sync_objects_to_new_client(control_identity, room_id)
-            elif is_reconnect:
+            elif is_reconnect or returned_from_absence:
                 self._sync_network_variables_to_client(room_id, control_identity)
 
     def _extract_transform_body(self, raw_payload: bytes) -> bytes:
@@ -1712,6 +1808,8 @@ class NetSyncServer:
             if room_id not in self.rooms:
                 return
             for _device_id, client_data in self.rooms[room_id].items():
+                if not self._is_present(client_data):
+                    continue
                 client_no = client_data.get("client_no")
                 if client_no not in target_set:
                     continue
@@ -2183,20 +2281,35 @@ class NetSyncServer:
             self._send_ctrl_to_room_via_router(room_id, message_bytes)
             logger.debug(f"Broadcasted client variables to room {room_id}")
 
-    def _sync_network_variables_to_new_client(self, room_id: str) -> None:
-        """Send current Network Variables state to a newly connected client.
+    def _announce_joining_client_variables(
+        self, room_id: str, device_id: str, client_no: int, joiner_identity: bytes
+    ) -> None:
+        """Tell peers about a joining client's own variables, if it has any.
 
-        Broadcasts to all clients in the room (suitable for new-client joins
-        where the full room needs the updated mapping anyway).
+        A device can already own variables before it ever connects — the REST
+        bridge can seed them for an unmapped device — so a join may carry state
+        that peers genuinely do not have yet. Only the joiner's own entry is
+        broadcast; the full room snapshot goes to the joiner alone via
+        _sync_network_variables_to_client. That keeps the per-join cost at
+        O(N) small messages instead of O(N) messages of O(N) payload.
         """
-        self._broadcast_global_var_sync(room_id)
-        self._broadcast_client_var_sync(room_id)
+        with self._rooms_lock:
+            if not self.client_variables.get(room_id, {}).get(device_id):
+                return
+            payload = self._build_client_var_sync_payload(room_id, {client_no})
+
+        if payload is not None:
+            self._send_ctrl_to_room_via_router(
+                room_id, payload, exclude_identity=joiner_identity
+            )
 
     def _sync_network_variables_to_client(self, room_id: str, identity: bytes) -> None:
         """Unicast current Network Variables state to a single client.
 
-        Used on reconnect so that only the reconnecting client receives the
-        full NV snapshot, avoiding unnecessary traffic to other clients.
+        Used on join, reconnect and return-from-absence so that only that
+        client receives the full NV snapshot. Broadcasting the snapshot to the
+        whole room instead would cost O(N) messages of O(N) payload per event,
+        which dominates control traffic in large rooms.
         """
         with self._rooms_lock:
             global_payload = self._build_global_var_sync_payload(room_id)
@@ -2286,6 +2399,10 @@ class NetSyncServer:
             if device_id not in room_clients:
                 continue
             client_data = room_clients[device_id]
+            # Absent clients are still registered but are not connected; peers
+            # must see them leave the mapping so they fire disconnect events.
+            if not self._is_present(client_data):
+                continue
             is_stealth = client_data.get("is_stealth", False)
             mappings.append((client_no, device_id, is_stealth))
 
@@ -2383,9 +2500,12 @@ class NetSyncServer:
 
                     normal_clients = 0
                     stealth_clients = 0
+                    absent_clients = 0
                     for clients in rooms_snapshot.values():
                         for client in clients:
-                            if client.get("is_stealth", False):
+                            if not self._is_present(client):
+                                absent_clients += 1
+                            elif client.get("is_stealth", False):
                                 stealth_clients += 1
                             else:
                                 normal_clients += 1
@@ -2393,6 +2513,7 @@ class NetSyncServer:
                     logger.info(
                         f"Status: {num_rooms} rooms, {normal_clients} normal clients, "
                         f"{stealth_clients} stealth clients, "
+                        f"{absent_clients} absent clients, "
                         f"{total_device_ids} tracked device IDs"
                     )
                     last_log = current_time
@@ -2437,6 +2558,8 @@ class NetSyncServer:
                 if should_broadcast:
                     client_snapshot = []
                     for client_data in clients.values():
+                        if not self._is_present(client_data):
+                            continue
                         if client_data.get("is_stealth", False):
                             continue
                         client_no = client_data.get("client_no", 0)
@@ -2561,8 +2684,20 @@ class NetSyncServer:
         return bytes(buffer)
 
     def _cleanup_clients(self, current_time: float) -> None:
-        """Clean up disconnected clients with atomic operations to prevent memory leaks"""
+        """Expire stale clients in two stages: mark absent, then remove.
+
+        A client that stops heartbeating is first only marked absent — peers
+        see it disconnect, but the server keeps its registration (control
+        identity, client number, Network Variables). Only after
+        ABSENT_CLIENT_RETENTION has additionally elapsed is the entry dropped.
+
+        This keeps a transient link stall from being indistinguishable from a
+        real departure: a client returning within the window resumes its
+        existing entry instead of re-joining as a new client, which would
+        otherwise force a full room-wide state re-sync per flap.
+        """
         timeout = self.CLIENT_TIMEOUT
+        removal_deadline = timeout + self.ABSENT_CLIENT_RETENTION
 
         # Collected outside the rooms lock, enqueued after the lock is released
         # to avoid holding the lock while serializing + pushing N router
@@ -2573,36 +2708,44 @@ class NetSyncServer:
             rooms_to_remove = []
 
             for room_id, clients in list(self.rooms.items()):
+                clients_going_absent = []
                 clients_to_remove = []
 
                 # Use items() to avoid repeated dict lookups
                 for device_id, client_data in clients.items():
-                    if current_time - client_data["last_update"] > timeout:
+                    idle = current_time - client_data["last_update"]
+                    if idle <= timeout:
+                        continue
+                    if self._is_present(client_data):
+                        clients_going_absent.append(device_id)
+                    elif idle > removal_deadline:
                         clients_to_remove.append(device_id)
 
-                # Remove timed out clients in batch
-                if clients_to_remove:
-                    removed_client_nos: list[int] = []
-                    for device_id in clients_to_remove:
-                        client_no = clients[device_id].get("client_no")
+                # Stage 1: mark timed-out clients absent. The entry stays so a
+                # returning client keeps its identity and room state.
+                if clients_going_absent:
+                    absent_client_nos: list[int] = []
+                    for device_id in clients_going_absent:
+                        client_data = clients[device_id]
+                        client_data["is_present"] = False
+                        client_no = client_data.get("client_no")
                         if client_no is not None:
-                            removed_client_nos.append(client_no)
-                        del clients[device_id]
-                        # Clean up binary cache by client number
+                            absent_client_nos.append(client_no)
+                        # Stop replaying the last pose of a client that is gone.
                         if client_no and client_no in self.client_transform_body_cache:
                             del self.client_transform_body_cache[client_no]
-                        # Note: We don't remove device ID->clientNo mapping here
-                        # It will be cleaned up after DEVICE_ID_EXPIRY_TIME
                         logger.info(
-                            f"Client {device_id[:8]}... (client number: {client_no}) removed (timeout)"
+                            f"Client {device_id[:8]}... (client number: {client_no}) "
+                            f"marked absent (timeout); retained for "
+                            f"{self.ABSENT_CLIENT_RETENTION}s"
                         )
 
-                    # Release objects owned by removed clients.
+                    # Release objects owned by absent clients.
                     # Mutate state under the lock; defer serialization + router
                     # enqueues to after the lock so we don't hold it while
                     # iterating per-client identity queues.
-                    if room_id in self.room_objects and removed_client_nos:
-                        removed_set = set(removed_client_nos)
+                    if room_id in self.room_objects and absent_client_nos:
+                        removed_set = set(absent_client_nos)
                         any_released = False
                         for obj_id, obj_state in self.room_objects[room_id].items():
                             if obj_state["owner_client_no"] in removed_set:
@@ -2622,14 +2765,30 @@ class NetSyncServer:
                         if any_released:
                             self.room_object_dirty[room_id] = True
 
-                    # Mark room as dirty since clients were removed
+                    # Mark room as dirty since clients left the broadcast set
                     self.room_dirty_flags[room_id] = True
 
                     # Mark room for debounced ID mapping broadcast
                     self.room_id_mapping_dirty[room_id] = True
 
-                # Handle empty room tracking with delayed removal
-                if not clients:
+                # Stage 2: drop entries that stayed absent past the retention
+                # window. Nothing observable changes here — absent clients were
+                # already excluded from broadcasts and ID mappings — so this
+                # needs no dirty flags.
+                for device_id in clients_to_remove:
+                    client_no = clients[device_id].get("client_no")
+                    del clients[device_id]
+                    # Note: We don't remove device ID->clientNo mapping here
+                    # It will be cleaned up after DEVICE_ID_EXPIRY_TIME
+                    logger.info(
+                        f"Client {device_id[:8]}... (client number: {client_no}) "
+                        f"removed after absence"
+                    )
+
+                # Handle empty room tracking with delayed removal. A room whose
+                # clients are all absent counts as empty: the entries are only
+                # retained in case those clients come back.
+                if not any(self._is_present(c) for c in clients.values()):
                     # Room is empty - track when it became empty
                     if room_id not in self.room_empty_since:
                         # Just became empty - start tracking

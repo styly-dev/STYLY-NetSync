@@ -304,10 +304,9 @@ def test_refresh_control_identity_rejects_invalid_device_id() -> None:
         # None of the rejected calls mutated the stored identity.
         assert srv.rooms[room_id][device_id]["control_identity"] == b"stale-control"
 
-    assert (
-        srv._refresh_control_identity_from_device_id(b"active", room_id, device_id)
-        == device_id
-    )
+    assert srv._refresh_control_identity_from_device_id(
+        b"active", room_id, device_id
+    ) == (device_id, False)
     with srv._rooms_lock:
         assert srv.rooms[room_id][device_id]["control_identity"] == b"active"
 
