@@ -95,6 +95,7 @@ class TestServerConfig:
             rest_api_port=9900,
             server_name="Custom Server",
             enable_server_discovery=False,
+            allow_discovery_port_conflict=True,
             idle_broadcast_interval=default_config.idle_broadcast_interval,
             transform_broadcast_rate=default_config.transform_broadcast_rate,
             client_timeout=default_config.client_timeout,
@@ -128,6 +129,7 @@ class TestServerConfig:
         assert config.rest_api_port == 9900
         assert config.server_name == "Custom Server"
         assert config.enable_server_discovery is False
+        assert config.allow_discovery_port_conflict is True
 
 
 class TestLoadConfigFromToml:
@@ -637,6 +639,33 @@ class TestMergeCliArgs:
 
         merged = merge_cli_args(default_config, args)
         assert merged.enable_server_discovery is False
+
+    def test_allow_discovery_port_conflict_flag(
+        self, default_config: ServerConfig
+    ) -> None:
+        """--allow-discovery-port-conflict flips the config to True."""
+        assert default_config.allow_discovery_port_conflict is False
+        args = argparse.Namespace(
+            server_discovery_port=None,
+            no_server_discovery=False,
+            allow_discovery_port_conflict=True,
+        )
+
+        merged = merge_cli_args(default_config, args)
+        assert merged.allow_discovery_port_conflict is True
+
+    def test_allow_discovery_port_conflict_default_false(
+        self, default_config: ServerConfig
+    ) -> None:
+        """Without the flag the conflict guard stays enabled (config False)."""
+        args = argparse.Namespace(
+            server_discovery_port=None,
+            no_server_discovery=False,
+            allow_discovery_port_conflict=False,
+        )
+
+        merged = merge_cli_args(default_config, args)
+        assert merged.allow_discovery_port_conflict is False
 
     def test_none_values_dont_override(self, default_config: ServerConfig) -> None:
         """Test that None CLI values don't override config."""

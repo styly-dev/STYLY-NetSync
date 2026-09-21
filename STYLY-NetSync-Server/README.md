@@ -121,6 +121,10 @@ Bridging: stdlib `logging` is routed to loguru automatically.
 
 The server launches an embedded FastAPI application that exposes REST endpoints for managing Network Variables. Default port: `8800` (override with `--rest-api-port` CLI argument or `rest_api_port` in config file). The REST bridge is required: if it cannot start, server startup fails before discovery is advertised. Server discovery includes the REST bridge port only after the bridge has started successfully.
 
+## Server discovery
+
+Clients locate the server via a UDP broadcast handshake on `server_discovery_port` (default `9999`). At startup the server probes that port with a broadcast: if another STYLY-NetSync server is already responding on it, the server **refuses to start** so clients on the LAN cannot silently connect to the wrong server. Stop the other server, choose a different `--server-discovery-port`, or pass `--allow-discovery-port-conflict` (config: `allow_discovery_port_conflict = true`) to start anyway despite the conflict. Disable discovery entirely with `--no-server-discovery`.
+
 ### Client variables
 
 - Endpoint: `POST /v1/rooms/{roomId}/devices/{deviceId}/client-variables`
