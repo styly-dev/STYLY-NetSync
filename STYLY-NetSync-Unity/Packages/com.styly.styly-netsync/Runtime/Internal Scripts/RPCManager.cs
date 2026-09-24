@@ -15,7 +15,7 @@ namespace Styly.NetSync
     {
         private readonly IConnectionManager _connectionManager;
         private readonly string _deviceId;
-        private readonly NetSyncManager _netSyncManager;
+        private readonly INetSyncContext _netSyncManager;
         private readonly ConcurrentQueue<(int senderClientNo, string fn, string[] args)> _rpcQueue = new();
 
         // Reusable serialization resources to reduce GC
@@ -142,7 +142,7 @@ namespace Styly.NetSync
             }
         }
 
-        public RPCManager(IConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
+        public RPCManager(IConnectionManager connectionManager, string deviceId, INetSyncContext netSyncManager)
         {
             _connectionManager = connectionManager;
             _deviceId = deviceId;
