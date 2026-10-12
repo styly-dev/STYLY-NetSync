@@ -53,6 +53,15 @@ would not guarantee that the tarball matches the intended release source.
 The calling job needs `contents: write` and must pass the three signing secrets.
 The common workflow does not require a Unity Editor installation.
 
+## Testing before a release
+
+Set `attach-to-release: false` to test the same signing and package validation
+steps without creating or changing a GitHub Release. Pass the source commit
+and `v<package-version>` as usual; no Git tag needs to exist in this mode.
+The workflow saves the signed tarball as an Actions artifact for seven days.
+This test does not require the OpenUPM metadata migration. A caller can pin
+the reusable workflow to a pushed commit before its PR is merged.
+
 References:
 - [Unity UPM CLI setup](https://docs.unity.com/en-us/engine/6000.3/manual/packages-list/upm-signature-lp/upm-command-line/upm-cli-install)
 - [OpenUPM signed package publishing](https://openupm.com/docs/signing-upm-packages)

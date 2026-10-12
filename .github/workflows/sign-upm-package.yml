@@ -15,6 +15,11 @@ on:
         description: Draft release tag matching the package version
         required: true
         type: string
+      attach-to-release:
+        description: Attach to a draft release; false saves a test artifact only
+        required: false
+        default: true
+        type: boolean
     secrets:
       UPM_SERVICE_ACCOUNT_KEY_ID:
         required: true
@@ -34,6 +39,7 @@ jobs:
       PACKAGE_PATH: ${{ inputs.package-path }}
       RELEASE_COMMIT: ${{ inputs.release-commit }}
       RELEASE_TAG: ${{ inputs.release-tag }}
+      ATTACH_TO_RELEASE: ${{ inputs.attach-to-release }}
       UPM_CLI_VERSION: v9.34.0
 
     steps:
@@ -67,23 +73,25 @@ jobs:
             exit 1
           fi
 
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --json tagName,isDraft,targetCommitish > "$RUNNER_TEMP/upm-release.json"
-          jq -e --arg tag "$RELEASE_TAG" \
-            '.tagName == $tag and .isDraft == true' \
-            "$RUNNER_TEMP/upm-release.json" >/dev/null
-
-          # An existing tag is authoritative; draft-only tags use targetCommitish.
-          git ls-remote --tags origin "refs/tags/$RELEASE_TAG" > "$RUNNER_TEMP/upm-tag-ref"
-          if [[ -s "$RUNNER_TEMP/upm-tag-ref" ]]; then
-            git fetch --quiet --no-tags origin "refs/tags/$RELEASE_TAG"
-            if [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$RELEASE_COMMIT" ]]; then
-              echo 'Error: release tag does not point to the package source commit'
-              exit 1
-            fi
-          else
-            jq -e --arg commit "$RELEASE_COMMIT" '.targetCommitish == $commit' \
+          if [[ "$ATTACH_TO_RELEASE" == true ]]; then
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --json tagName,isDraft,targetCommitish > "$RUNNER_TEMP/upm-release.json"
+            jq -e --arg tag "$RELEASE_TAG" \
+              '.tagName == $tag and .isDraft == true' \
               "$RUNNER_TEMP/upm-release.json" >/dev/null
+
+            # An existing tag is authoritative; draft-only tags use targetCommitish.
+            git ls-remote --tags origin "refs/tags/$RELEASE_TAG" > "$RUNNER_TEMP/upm-tag-ref"
+            if [[ -s "$RUNNER_TEMP/upm-tag-ref" ]]; then
+              git fetch --quiet --no-tags origin "refs/tags/$RELEASE_TAG"
+              if [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$RELEASE_COMMIT" ]]; then
+                echo 'Error: release tag does not point to the package source commit'
+                exit 1
+              fi
+            else
+              jq -e --arg commit "$RELEASE_COMMIT" '.targetCommitish == $commit' \
+                "$RUNNER_TEMP/upm-release.json" >/dev/null
+            fi
           fi
 
           printf 'PACKAGE_ROOT=%s\n' "$PACKAGE_ROOT" >> "$GITHUB_ENV"
@@ -157,6 +165,7 @@ jobs:
           PY
 
       - name: Attach signed package to draft release
+        if: inputs.attach-to-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -193,4 +202,26 @@ jobs:
             printf '\nSHA-256: `%s`\n' "$(sha256sum "$SIGNED_PACKAGE" | cut -d ' ' -f 1)"
             echo
             echo 'The release remains a draft. Review its notes and publish after all jobs succeed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save signed package for testing
+        if: ${{ !inputs.attach-to-release }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-upm-test-${{ github.run_id }}
+          path: ${{ env.SIGNED_PACKAGE }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize signing test
+        if: ${{ !inputs.attach-to-release }}
+        run: |
+          {
+            echo '## UPM signing test'
+            printf '\nPackage: `%s@%s`\n' "$PACKAGE_NAME" "$PACKAGE_VERSION"
+            printf '\nSource commit: `%s`\n' "$RELEASE_COMMIT"
+            printf '\nAsset: `%s`\n' "$(basename "$SIGNED_PACKAGE")"
+            printf '\nSHA-256: `%s`\n' "$(sha256sum "$SIGNED_PACKAGE" | cut -d ' ' -f 1)"
+            echo
+            echo 'The signed tarball is saved as a workflow artifact. No release was created or modified.'
           } >> "$GITHUB_STEP_SUMMARY"
