@@ -1,0 +1,227 @@
+name: Sign UPM package
+
+on:
+  workflow_call:
+    inputs:
+      package-path:
+        description: Package folder in the calling repository
+        required: true
+        type: string
+      release-commit:
+        description: Full commit SHA used to create the draft release
+        required: true
+        type: string
+      release-tag:
+        description: Draft release tag matching the package version
+        required: true
+        type: string
+      attach-to-release:
+        description: Attach to a draft release; false saves a test artifact only
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      UPM_SERVICE_ACCOUNT_KEY_ID:
+        required: true
+      UPM_SERVICE_ACCOUNT_KEY_SECRET:
+        required: true
+      UPM_ORG_ID:
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  sign-and-attach:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PACKAGE_PATH: ${{ inputs.package-path }}
+      RELEASE_COMMIT: ${{ inputs.release-commit }}
+      RELEASE_TAG: ${{ inputs.release-tag }}
+      ATTACH_TO_RELEASE: ${{ inputs.attach-to-release }}
+      UPM_CLI_VERSION: v9.34.0
+
+    steps:
+      - name: Checkout release commit from the calling repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release-commit }}
+          persist-credentials: false
+
+      - name: Validate package and draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ || "$(git rev-parse HEAD)" != "$RELEASE_COMMIT" ]]; then
+            echo 'Error: checkout does not match the full release commit SHA'
+            exit 1
+          fi
+
+          PACKAGE_ROOT="$(realpath -e -- "$PACKAGE_PATH")"
+          WORKSPACE_ROOT="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          if [[ "$PACKAGE_ROOT" != "$WORKSPACE_ROOT/"* ]]; then
+            echo 'Error: package folder must be inside the calling repository'
+            exit 1
+          fi
+          PACKAGE_NAME="$(jq -er '.name | select(type == "string" and length > 0)' "$PACKAGE_ROOT/package.json")"
+          PACKAGE_VERSION="$(jq -er '.version | select(type == "string" and length > 0)' "$PACKAGE_ROOT/package.json")"
+          if [[ ! "$PACKAGE_NAME" =~ ^[a-z0-9][a-z0-9._-]*$ || "$RELEASE_TAG" != "v$PACKAGE_VERSION" ]]; then
+            echo 'Error: package name is invalid or the release tag does not match its version'
+            exit 1
+          fi
+
+          if [[ "$ATTACH_TO_RELEASE" == true ]]; then
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --json tagName,isDraft,targetCommitish > "$RUNNER_TEMP/upm-release.json"
+            jq -e --arg tag "$RELEASE_TAG" \
+              '.tagName == $tag and .isDraft == true' \
+              "$RUNNER_TEMP/upm-release.json" >/dev/null
+
+            # An existing tag is authoritative; draft-only tags use targetCommitish.
+            git ls-remote --tags origin "refs/tags/$RELEASE_TAG" > "$RUNNER_TEMP/upm-tag-ref"
+            if [[ -s "$RUNNER_TEMP/upm-tag-ref" ]]; then
+              git fetch --quiet --no-tags origin "refs/tags/$RELEASE_TAG"
+              if [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$RELEASE_COMMIT" ]]; then
+                echo 'Error: release tag does not point to the package source commit'
+                exit 1
+              fi
+            else
+              jq -e --arg commit "$RELEASE_COMMIT" '.targetCommitish == $commit' \
+                "$RUNNER_TEMP/upm-release.json" >/dev/null
+            fi
+          fi
+
+          printf 'PACKAGE_ROOT=%s\n' "$PACKAGE_ROOT" >> "$GITHUB_ENV"
+          printf 'PACKAGE_NAME=%s\n' "$PACKAGE_NAME" >> "$GITHUB_ENV"
+          printf 'PACKAGE_VERSION=%s\n' "$PACKAGE_VERSION" >> "$GITHUB_ENV"
+
+      - name: Install Unity UPM CLI
+        run: |
+          set -euo pipefail
+
+          curl -fsSL https://cdn.packages.unity.com/upm-cli/install.sh \
+            -o "$RUNNER_TEMP/install-upm-cli.sh"
+          bash "$RUNNER_TEMP/install-upm-cli.sh" "$UPM_CLI_VERSION"
+          printf '%s/.upm/bin\n' "$HOME" >> "$GITHUB_PATH"
+          "$HOME/.upm/bin/upm" --version
+
+      - name: Pack and sign package
+        env:
+          UPM_SERVICE_ACCOUNT_KEY_ID: ${{ secrets.UPM_SERVICE_ACCOUNT_KEY_ID }}
+          UPM_SERVICE_ACCOUNT_KEY_SECRET: ${{ secrets.UPM_SERVICE_ACCOUNT_KEY_SECRET }}
+          UPM_ORG_ID: ${{ secrets.UPM_ORG_ID }}
+        run: |
+          set -euo pipefail
+
+          for NAME in UPM_SERVICE_ACCOUNT_KEY_ID UPM_SERVICE_ACCOUNT_KEY_SECRET UPM_ORG_ID; do
+            if [[ -z "${!NAME}" ]]; then
+              echo "Error: missing signing secret: $NAME"
+              exit 1
+            fi
+          done
+
+          upm pack "$PACKAGE_ROOT" --organization-id "$UPM_ORG_ID" \
+            --destination "$RUNNER_TEMP/signed-upm"
+
+      - name: Verify signed tarball
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import tarfile
+
+          output_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "signed-upm"
+          tarballs = list(output_dir.glob("*.tgz"))
+          if len(tarballs) != 1:
+              raise SystemExit("Expected exactly one signed UPM tarball")
+
+          with tarfile.open(tarballs[0], "r:gz") as archive:
+              for name in ("package/package.json", "package/.attestation.p7m"):
+                  entries = [entry for entry in archive.getmembers() if entry.name == name]
+                  if len(entries) != 1 or not entries[0].isfile() or entries[0].size == 0:
+                      raise SystemExit(f"Missing or invalid signed package entry: {name}")
+              manifest_file = archive.extractfile("package/package.json")
+              if manifest_file is None:
+                  raise SystemExit("Cannot read the packaged manifest")
+              manifest = json.load(manifest_file)
+
+          if manifest.get("name") != os.environ["PACKAGE_NAME"]:
+              raise SystemExit("Packaged name differs from the release source")
+          if manifest.get("version") != os.environ["PACKAGE_VERSION"]:
+              raise SystemExit("Packaged version differs from the release source")
+
+          asset_name = f'{manifest["name"]}-{manifest["version"]}.tgz'
+          asset_path = output_dir / asset_name
+          tarballs[0].rename(asset_path)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"SIGNED_PACKAGE={asset_path}\n")
+          print(f"Verified manifest and signing attestation in {asset_name}")
+          PY
+
+      - name: Attach signed package to draft release
+        if: inputs.attach-to-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Recheck the draft before uploading so publishing cannot silently race signing.
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,targetCommitish > "$RUNNER_TEMP/upm-release.json"
+          jq -e '.isDraft == true' "$RUNNER_TEMP/upm-release.json" >/dev/null
+          git ls-remote --tags origin "refs/tags/$RELEASE_TAG" > "$RUNNER_TEMP/upm-tag-ref"
+          if [[ -s "$RUNNER_TEMP/upm-tag-ref" ]]; then
+            git fetch --quiet --no-tags origin "refs/tags/$RELEASE_TAG"
+            test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$RELEASE_COMMIT"
+          else
+            jq -e --arg commit "$RELEASE_COMMIT" '.targetCommitish == $commit' \
+              "$RUNNER_TEMP/upm-release.json" >/dev/null
+          fi
+
+          gh release upload "$RELEASE_TAG" "$SIGNED_PACKAGE" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets > "$RUNNER_TEMP/upm-assets.json"
+          jq -e --arg name "$(basename "$SIGNED_PACKAGE")" \
+            --argjson size "$(stat -c %s "$SIGNED_PACKAGE")" \
+            '.assets | any(.name == $name and .size == $size and .state == "uploaded")' \
+            "$RUNNER_TEMP/upm-assets.json" >/dev/null
+
+          {
+            echo '## Signed UPM release asset'
+            printf '\nPackage: `%s@%s`\n' "$PACKAGE_NAME" "$PACKAGE_VERSION"
+            printf '\nSource commit: `%s`\n' "$RELEASE_COMMIT"
+            printf '\nAsset: `%s`\n' "$(basename "$SIGNED_PACKAGE")"
+            printf '\nSHA-256: `%s`\n' "$(sha256sum "$SIGNED_PACKAGE" | cut -d ' ' -f 1)"
+            echo
+            echo 'The release remains a draft. Review its notes and publish after all jobs succeed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save signed package for testing
+        if: ${{ !inputs.attach-to-release }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-upm-test-${{ github.run_id }}
+          path: ${{ env.SIGNED_PACKAGE }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize signing test
+        if: ${{ !inputs.attach-to-release }}
+        run: |
+          {
+            echo '## UPM signing test'
+            printf '\nPackage: `%s@%s`\n' "$PACKAGE_NAME" "$PACKAGE_VERSION"
+            printf '\nSource commit: `%s`\n' "$RELEASE_COMMIT"
+            printf '\nAsset: `%s`\n' "$(basename "$SIGNED_PACKAGE")"
+            printf '\nSHA-256: `%s`\n' "$(sha256sum "$SIGNED_PACKAGE" | cut -d ' ' -f 1)"
+            echo
+            echo 'The signed tarball is saved as a workflow artifact. No release was created or modified.'
+          } >> "$GITHUB_STEP_SUMMARY"
