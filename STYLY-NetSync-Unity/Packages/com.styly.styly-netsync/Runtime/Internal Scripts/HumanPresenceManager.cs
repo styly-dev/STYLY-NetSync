@@ -35,8 +35,10 @@ namespace Styly.NetSync
             // Do not show local user
             if (clientNo == _netSyncManager.ClientNo) { return; }
 
-            // Ignore stealth clients (not displayed)
+            // Ignore stealth clients (not displayed). Internal, clientNo-keyed check.
+#pragma warning disable CS0618
             if (_netSyncManager.IsClientStealthMode(clientNo)) { return; }
+#pragma warning restore CS0618
 
             if (_presenceByClient.ContainsKey(clientNo)) { return; }
 
