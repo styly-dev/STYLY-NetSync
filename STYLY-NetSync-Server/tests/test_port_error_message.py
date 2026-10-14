@@ -3,11 +3,37 @@
 Test platform-specific error messages when port is already in use.
 """
 
+import socket
 import unittest.mock as mock
+from dataclasses import replace
 
 import pytest
 
+from styly_netsync.config import load_default_config
 from styly_netsync.server import NetSyncServer
+
+
+def _free_tcp_port() -> int:
+    """Return a free TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _make_server(control_port: int, pub_port: int) -> NetSyncServer:
+    """Build a server that isolates the ZMQ port-conflict path.
+
+    Discovery is disabled so the discovery-port conflict probe cannot preempt
+    the ZMQ "address already in use" error, and the REST bridge uses a free
+    port so the test does not depend on the default REST port being available.
+    """
+    config = replace(load_default_config(), rest_api_port=_free_tcp_port())
+    return NetSyncServer(
+        dealer_port=control_port,
+        pub_port=pub_port,
+        enable_server_discovery=False,
+        config=config,
+    )
 
 
 class TestPortErrorMessage:
@@ -18,12 +44,12 @@ class TestPortErrorMessage:
         with mock.patch("platform.system", return_value="Linux"):
             with mock.patch("styly_netsync.server.logger") as mock_logger:
                 # Create a server to bind to a port
-                server1 = NetSyncServer(dealer_port=15555, pub_port=15556)
+                server1 = _make_server(control_port=15555, pub_port=15556)
                 try:
                     server1.start()
 
                     # Try to create a second server on the same port
-                    server2 = NetSyncServer(dealer_port=15555, pub_port=15557)
+                    server2 = _make_server(control_port=15555, pub_port=15557)
                     with pytest.raises(SystemExit):
                         server2.start()
 
@@ -51,12 +77,12 @@ class TestPortErrorMessage:
         with mock.patch("platform.system", return_value="Windows"):
             with mock.patch("styly_netsync.server.logger") as mock_logger:
                 # Create a server to bind to a port
-                server1 = NetSyncServer(dealer_port=16555, pub_port=16556)
+                server1 = _make_server(control_port=16555, pub_port=16556)
                 try:
                     server1.start()
 
                     # Try to create a second server on the same port
-                    server2 = NetSyncServer(dealer_port=16555, pub_port=16557)
+                    server2 = _make_server(control_port=16555, pub_port=16557)
                     with pytest.raises(SystemExit):
                         server2.start()
 
@@ -85,12 +111,12 @@ class TestPortErrorMessage:
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("styly_netsync.server.logger") as mock_logger:
                 # Create a server to bind to a port
-                server1 = NetSyncServer(dealer_port=17555, pub_port=17556)
+                server1 = _make_server(control_port=17555, pub_port=17556)
                 try:
                     server1.start()
 
                     # Try to create a second server on the same port
-                    server2 = NetSyncServer(dealer_port=17555, pub_port=17557)
+                    server2 = _make_server(control_port=17555, pub_port=17557)
                     with pytest.raises(SystemExit):
                         server2.start()
 
