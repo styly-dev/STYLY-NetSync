@@ -14,7 +14,7 @@ namespace Styly.NetSync
     {
         private readonly IConnectionManager _connectionManager;
         private readonly string _deviceId;
-        private readonly NetSyncManager _netSyncManager;
+        private readonly INetSyncContext _netSyncManager;
 
         // Reusable serialization resources to reduce allocations per send
         private readonly ReusableBufferWriter _buf;
@@ -115,7 +115,7 @@ namespace Styly.NetSync
             }
         }
 
-        public NetworkVariableManager(IConnectionManager connectionManager, string deviceId, NetSyncManager netSyncManager)
+        public NetworkVariableManager(IConnectionManager connectionManager, string deviceId, INetSyncContext netSyncManager)
         {
             _connectionManager = connectionManager;
             _deviceId = deviceId;
