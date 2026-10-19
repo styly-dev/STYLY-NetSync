@@ -1791,19 +1791,6 @@ class NetSyncServer:
             )
             return True
 
-    def _handle_global_var_set(self, room_id: str, data: dict[str, Any]) -> None:
-        """Handle global variable set request (for backward compat - immediate apply+broadcast)"""
-        sender_client_no = data.get("senderClientNo", 0)
-        var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
-        var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
-
-        if not var_name:
-            return
-
-        if self._apply_global_var_set(room_id, sender_client_no, var_name, var_value):
-            # Broadcast sync to all clients
-            self._broadcast_global_var_sync(room_id)
-
     def _buffer_client_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Buffer client variable set request for later processing"""
         sender_client_no = data.get("senderClientNo", 0)
@@ -2040,22 +2027,6 @@ class NetSyncServer:
             pending_removed,
         )
         self._broadcast_client_var_sync(room_id, {client_no})
-
-    def _handle_client_var_set(self, room_id: str, data: dict[str, Any]) -> None:
-        """Handle client variable set request (for backward compat - immediate apply+broadcast)"""
-        sender_client_no = data.get("senderClientNo", 0)
-        target_client_no = data.get("targetClientNo", 0)
-        var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
-        var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
-
-        if not var_name:
-            return
-
-        if self._apply_client_var_set(
-            room_id, sender_client_no, target_client_no, var_name, var_value
-        ):
-            # Broadcast sync to all clients
-            self._broadcast_client_var_sync(room_id)
 
     def _build_global_var_sync_payload(self, room_id: str) -> bytes | None:
         """Build a serialized global-variable sync payload for the given room.
