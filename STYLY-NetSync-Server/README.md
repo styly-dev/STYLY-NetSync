@@ -123,7 +123,7 @@ The server launches an embedded FastAPI application that exposes REST endpoints 
 
 ## Server discovery
 
-Clients locate the server via a UDP broadcast handshake on `server_discovery_port` (default `9999`). At startup the server probes that port with a broadcast: if another STYLY-NetSync server is already responding on it, the server **refuses to start** so clients on the LAN cannot silently connect to the wrong server. Stop the other server, choose a different `--server-discovery-port`, or pass `--allow-discovery-port-conflict` (config: `allow_discovery_port_conflict = true`) to start anyway despite the conflict. Disable discovery entirely with `--no-server-discovery`.
+Clients locate the server via a UDP broadcast handshake on `server_discovery_port` (default `49999`). At startup the server probes that port with a broadcast: if another STYLY-NetSync server is already responding on it, the server **refuses to start** so clients on the LAN cannot silently connect to the wrong server. Stop the other server, choose a different `--server-discovery-port`, or pass `--allow-discovery-port-conflict` (config: `allow_discovery_port_conflict = true`) to start anyway despite the conflict. Disable discovery entirely with `--no-server-discovery`.
 
 ### Client variables
 
