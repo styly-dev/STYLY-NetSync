@@ -140,7 +140,12 @@ def test_global_variable_set_rebinds_stale_control_identity() -> None:
     with srv._rooms_lock:
         assert srv.rooms[room_id][device_id]["control_identity"] == b"active-control"
 
-    queued = srv._router_queue_ctrl.get_nowait()
+    router = MagicMock()
+    srv.control_router = router
+    srv._drain_router_ctrl_queue()
+    frames = [call.args[0] for call in router.send_multipart.call_args_list]
+    assert frames[0][2][0] == binary_serializer.MSG_DEVICE_ID_MAPPING
+    queued = next(f for f in frames if f[2][0] == binary_serializer.MSG_GLOBAL_VAR_SYNC)
     assert queued[0] == b"active-control"
     assert queued[1] == room_id.encode("utf-8")
     msg_type, data, _ = binary_serializer.deserialize(queued[2])
@@ -198,7 +203,12 @@ def test_global_var_set_with_device_id_reaches_active_control_identity() -> None
     with srv._rooms_lock:
         assert srv.global_variables[room_id]["score"]["value"] == "10"
 
-    queued = srv._router_queue_ctrl.get_nowait()
+    router = MagicMock()
+    srv.control_router = router
+    srv._drain_router_ctrl_queue()
+    frames = [call.args[0] for call in router.send_multipart.call_args_list]
+    assert frames[0][2][0] == binary_serializer.MSG_DEVICE_ID_MAPPING
+    queued = next(f for f in frames if f[2][0] == binary_serializer.MSG_GLOBAL_VAR_SYNC)
     assert queued[0] == b"active-control"
     assert queued[1] == room_id.encode("utf-8")
     msg_type, data, _ = binary_serializer.deserialize(queued[2])
@@ -239,7 +249,7 @@ def test_client_variable_clear_rebinds_stale_control_identity() -> None:
     client_no = 1
     _seed_stale_control_client(srv, room_id, device_id, client_no)
     with srv._rooms_lock:
-        srv.client_variables[room_id][device_id] = {"hp": "5"}
+        srv._apply_client_var_set(room_id, client_no, client_no, "hp", "5")
 
     srv._handle_control_message(
         b"active-control",
