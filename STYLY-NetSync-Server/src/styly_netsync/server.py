@@ -1348,7 +1348,7 @@ class NetSyncServer:
                     exc, "errno", None
                 ) == getattr(zmq, "EHOSTUNREACH", None):
                     self._increment_stat("ctrl_unicast_unreachable")
-                    logger.warning("Router control identity unreachable: %s", exc)
+                    logger.warning("Router control identity unreachable: {}", exc)
                 else:
                     self._increment_stat("ctrl_unicast_dropped")
                     logger.error(f"Router send error: {exc}")
@@ -1398,8 +1398,8 @@ class NetSyncServer:
                 self.room_id_mapping_dirty[room_id] = True
                 stealth_text = " (stealth mode)" if is_stealth else ""
                 logger.info(
-                    "New client %s... (client number: %s)%s registered control lane "
-                    "in room %s",
+                    "New client {}... (client number: {}){} registered control lane "
+                    "in room {}",
                     device_id[:8],
                     client_no,
                     stealth_text,
