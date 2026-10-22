@@ -1,4 +1,5 @@
 // NetSyncObject.cs - Synchronizes a GameObject's Transform across the network
+using System;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -22,7 +23,14 @@ namespace Styly.NetSync
         private NetSyncTransformApplier _transformApplier;
 
         public uint ObjectId => _objectId;
+        [Obsolete("ClientNo changes across reconnects; use OwnerDeviceId instead. See issue #393.")]
         public int OwnerClientNo => _ownerClientNo;
+
+        /// <summary>
+        /// The stable device ID of the current owner, or null when unowned or when the
+        /// mapping is not currently known.
+        /// </summary>
+        public string OwnerDeviceId => ResolveDeviceId(_ownerClientNo);
 
         public bool IsOwnedByMe
         {
@@ -36,7 +44,9 @@ namespace Styly.NetSync
 
         // Tooltip and "Events" header are rendered by NetSyncObjectEditor so
         // that UnityEventDrawer doesn't swallow them.
+        [Obsolete("ClientNo changes across reconnects; use OnOwnershipChangedByDeviceId instead. See issue #393.")]
         public UnityEvent<int, int> OnOwnershipChanged = new UnityEvent<int, int>();
+        public UnityEvent<string, string> OnOwnershipChangedByDeviceId = new UnityEvent<string, string>();
 
         internal NetSyncTransformApplier TransformApplier => _transformApplier;
 
@@ -65,6 +75,10 @@ namespace Styly.NetSync
             return false;
         }
 
+        // Non-obsolete internal accessor for package-internal code (e.g. ObjectSyncManager)
+        // that still needs to read the wire-level ClientNo without triggering CS0618.
+        internal int OwnerClientNoInternal => _ownerClientNo;
+
         internal void SetOwnerClientNoInternal(int ownerClientNo)
         {
             _ownerClientNo = ownerClientNo;
@@ -72,7 +86,19 @@ namespace Styly.NetSync
 
         internal void InvokeOwnershipChanged(int newOwner, int previousOwner)
         {
+#pragma warning disable CS0618 // bridging to the obsolete ClientNo-based event
             OnOwnershipChanged.Invoke(newOwner, previousOwner);
+#pragma warning restore CS0618
+
+            OnOwnershipChangedByDeviceId.Invoke(ResolveDeviceId(newOwner), ResolveDeviceId(previousOwner));
+        }
+
+        // Returns null for 0 (no owner) or when the mapping is unknown.
+        // NetSyncManager is a MonoBehaviour, so use Unity's null check instead of ?.
+        private static string ResolveDeviceId(int clientNo)
+        {
+            var manager = NetSyncManager.Instance;
+            return manager != null ? manager.GetDeviceIdByClientNo(clientNo) : null;
         }
 
 #if UNITY_EDITOR
