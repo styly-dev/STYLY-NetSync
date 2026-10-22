@@ -326,16 +326,10 @@ class NetSyncServer:
         # Network Variables storage
         self.global_variables: dict[str, dict[str, Any]] = (
             {}
-        )  # room_id -> {var_name: {value, version, lastWriterClientNo}}
+        )  # room_id -> {var_name: {value, lastWriterClientNo}}
         self.client_variables: dict[str, dict[str, dict[str, Any]]] = (
             {}
-        )  # room_id -> {device_id -> {var_name: {value, version, lastWriterClientNo}}}
-
-        # Per-room monotonic write sequence. The server assigns the ordering for
-        # Network Variable last-writer-wins instead of trusting client-supplied
-        # timestamps, whose device clocks can drift on offline LAN deployments.
-        # The assigned sequence is stored in each variable's "version" field.
-        self.nv_write_seq: dict[str, int] = {}  # room_id -> last assigned write seq
+        )  # room_id -> {device_id -> {var_name: {value, lastWriterClientNo}}}
 
         # NV Pending buffers for coalescing (latest-wins per key)
         self.pending_global_nv: dict[str, dict[str, tuple]] = (
@@ -763,7 +757,6 @@ class NetSyncServer:
             # Initialize Network Variables for the room
             self.global_variables[room_id] = {}
             self.client_variables[room_id] = {}
-            self.nv_write_seq[room_id] = 0
 
             # Initialize NV pending buffers
             self.pending_global_nv[room_id] = {}
@@ -1745,17 +1738,6 @@ class NetSyncServer:
                     f"High NV request rate in room {room_id}: {len(self.nv_monitor_window[room_id])} req/s"
                 )
 
-    def _next_nv_seq(self, room_id: str) -> int:
-        """Return the next per-room monotonic NV write sequence.
-
-        Caller must hold ``_rooms_lock``. This sequence is the server-assigned
-        ordering authority for last-writer-wins, replacing client timestamps so
-        that skewed device clocks cannot freeze or steal Network Variables.
-        """
-        seq = self.nv_write_seq.get(room_id, 0) + 1
-        self.nv_write_seq[room_id] = seq
-        return seq
-
     def _buffer_global_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Buffer global variable set request for later processing"""
         sender_client_no = data.get("senderClientNo", 0)
@@ -1797,11 +1779,10 @@ class NetSyncServer:
             # Store old value for logging
             old_value = global_vars.get(var_name, {}).get("value", None)
 
-            # Last-writer-wins ordered by the server-assigned write sequence,
-            # not client timestamps (device clocks can drift offline).
+            # Last-writer-wins by server application order (see _flush_nv_drain
+            # for the ordering contract); client timestamps are not trusted.
             global_vars[var_name] = {
                 "value": var_value,
-                "version": self._next_nv_seq(room_id),
                 "lastWriterClientNo": sender_client_no,
             }
 
@@ -1809,19 +1790,6 @@ class NetSyncServer:
                 f"Global Variable Changed: room={room_id}, client={sender_client_no}, name='{var_name}', old='{old_value}', new='{var_value}'"
             )
             return True
-
-    def _handle_global_var_set(self, room_id: str, data: dict[str, Any]) -> None:
-        """Handle global variable set request (for backward compat - immediate apply+broadcast)"""
-        sender_client_no = data.get("senderClientNo", 0)
-        var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
-        var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
-
-        if not var_name:
-            return
-
-        if self._apply_global_var_set(room_id, sender_client_no, var_name, var_value):
-            # Broadcast sync to all clients
-            self._broadcast_global_var_sync(room_id)
 
     def _buffer_client_var_set(self, room_id: str, data: dict[str, Any]) -> None:
         """Buffer client variable set request for later processing"""
@@ -1902,11 +1870,10 @@ class NetSyncServer:
             # Store old value for logging
             old_value = client_vars.get(var_name, {}).get("value", None)
 
-            # Last-writer-wins ordered by the server-assigned write sequence,
-            # not client timestamps (device clocks can drift offline).
+            # Last-writer-wins by server application order (see _flush_nv_drain
+            # for the ordering contract); client timestamps are not trusted.
             client_vars[var_name] = {
                 "value": var_value,
-                "version": self._next_nv_seq(room_id),
                 "lastWriterClientNo": sender_client_no,
             }
 
@@ -2061,22 +2028,6 @@ class NetSyncServer:
         )
         self._broadcast_client_var_sync(room_id, {client_no})
 
-    def _handle_client_var_set(self, room_id: str, data: dict[str, Any]) -> None:
-        """Handle client variable set request (for backward compat - immediate apply+broadcast)"""
-        sender_client_no = data.get("senderClientNo", 0)
-        target_client_no = data.get("targetClientNo", 0)
-        var_name = data.get("variableName", "")[: self.MAX_VAR_NAME_LENGTH]
-        var_value = data.get("variableValue", "")[: self.MAX_VAR_VALUE_LENGTH]
-
-        if not var_name:
-            return
-
-        if self._apply_client_var_set(
-            room_id, sender_client_no, target_client_no, var_name, var_value
-        ):
-            # Broadcast sync to all clients
-            self._broadcast_client_var_sync(room_id)
-
     def _build_global_var_sync_payload(self, room_id: str) -> bytes | None:
         """Build a serialized global-variable sync payload for the given room.
 
@@ -2214,12 +2165,21 @@ class NetSyncServer:
         applied_globals: list[str] = []
         applied_client_nos: set[int] = set()
 
-        # Drain and apply under a single lock hold. _rooms_lock is an RLock, so
-        # the nested acquisitions inside _apply_* are reentrant. Holding the lock
-        # across both steps prevents an immediate write (e.g. a REST upsert) from
-        # interleaving in the drain/apply gap, where a stale buffered write would
-        # otherwise overwrite the newer immediate one (last-writer-wins is now
-        # ordered by application order, not by client timestamps).
+        # Network Variable last-writer-wins is ordered by server application
+        # order. There is no per-write sequence number; correctness rests on:
+        #   1. Every NV mutation (buffer, immediate apply, drain + apply) runs
+        #      under _rooms_lock. The drain and the apply below share one lock
+        #      hold (RLock, so the nested acquisitions in _apply_* are
+        #      reentrant), so no immediate write can land in between.
+        #   2. The pending buffers are latest-wins per key, so a flush applies
+        #      at most one write per key: the newest one received.
+        #   3. Every immediate-apply path (REST client-variable upsert/delete,
+        #      Client Var Clear) prunes the buffered write for the same key
+        #      inside the same lock hold, so a flush cannot resurrect a value
+        #      older than an immediate write.
+        # Moving NV application off _rooms_lock requires redesigning ordering.
+        # Comparing a write sequence at apply time would not be enough on its
+        # own, because that read-compare-write would itself race.
         with self._rooms_lock:
             globals_to_apply = list(self.pending_global_nv.get(room_id, {}).items())
             clients_to_apply = list(self.pending_client_nv.get(room_id, {}).items())
@@ -2686,8 +2646,6 @@ class NetSyncServer:
                         del self.pending_global_nv[room_id]
                     if room_id in self.pending_client_nv:
                         del self.pending_client_nv[room_id]
-                    if room_id in self.nv_write_seq:
-                        del self.nv_write_seq[room_id]
                     if room_id in self.room_last_nv_flush:
                         del self.room_last_nv_flush[room_id]
                     if room_id in self.nv_monitor_window:

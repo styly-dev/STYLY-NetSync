@@ -1,8 +1,11 @@
-"""Server-authoritative Network Variable ordering (issue #448).
+"""Server-authoritative Network Variable ordering (issues #448, #485).
 
-The server assigns a per-room monotonic write sequence for last-writer-wins
-instead of trusting client-supplied timestamps, so skewed device clocks on
-offline LAN deployments cannot freeze or steal Network Variables.
+Last-writer-wins is ordered by server application order instead of
+client-supplied timestamps, so skewed device clocks on offline LAN deployments
+cannot freeze or steal Network Variables. There is no per-write sequence
+number: ordering relies on _rooms_lock serialization, latest-wins pending
+buffers, and immediate-apply paths pruning superseded buffered writes (see
+``NetSyncServer._flush_nv_drain``).
 """
 
 from __future__ import annotations
@@ -44,27 +47,13 @@ class TestGlobalVariableServerOrdering:
         assert stored["value"] == "200"
         assert stored["lastWriterClientNo"] == 2
 
-    def test_write_sequence_is_monotonic_and_server_assigned(
-        self, server: NetSyncServer
-    ) -> None:
-        server._initialize_room("room1")
-        assert server.nv_write_seq["room1"] == 0
-
-        server._apply_global_var_set("room1", 1, "a", "1")
-        server._apply_global_var_set("room1", 1, "b", "2")
-
-        assert server.global_variables["room1"]["a"]["version"] == 1
-        assert server.global_variables["room1"]["b"]["version"] == 2
-        assert server.nv_write_seq["room1"] == 2
-
-    def test_no_op_value_does_not_consume_sequence(self, server: NetSyncServer) -> None:
+    def test_same_value_write_is_a_no_op(self, server: NetSyncServer) -> None:
         server._initialize_room("room1")
         assert server._apply_global_var_set("room1", 1, "a", "1") is True
-        seq_after_first = server.nv_write_seq["room1"]
 
-        # Same value -> no-op, returns False and must not bump the sequence
+        # Same value -> no-op, returns False and keeps the original last writer
         assert server._apply_global_var_set("room1", 2, "a", "1") is False
-        assert server.nv_write_seq["room1"] == seq_after_first
+        assert server.global_variables["room1"]["a"]["lastWriterClientNo"] == 1
 
 
 class TestClientVariableServerOrdering:
@@ -78,18 +67,12 @@ class TestClientVariableServerOrdering:
         assert stored["value"] == "20"
         assert stored["lastWriterClientNo"] == 3
 
-    def test_rest_and_live_writes_share_one_sequence_domain(
-        self, server: NetSyncServer
-    ) -> None:
+    def test_rest_write_after_live_write_wins(self, server: NetSyncServer) -> None:
         _map_device(server, "room1", "device-a", 7)
 
         server._apply_client_var_set("room1", 2, 7, "hp", "10")
-        live_seq = server.client_variables["room1"]["device-a"]["hp"]["version"]
-
         server.upsert_client_variables_for_device("room1", "device-a", {"hp": "30"})
-        rest_seq = server.client_variables["room1"]["device-a"]["hp"]["version"]
 
-        assert rest_seq > live_seq
         assert server.client_variables["room1"]["device-a"]["hp"]["value"] == "30"
 
 
@@ -126,22 +109,3 @@ class TestLiveVsRestOrderingRegression:
         server._flush_nv_drain("room1")
 
         assert server.client_variables["room1"]["device-a"]["hp"]["value"] == "20"
-
-
-class TestRoomCleanupReleasesNvWriteSeq:
-    """Regression: room cleanup must drop nv_write_seq so per-room sequence
-    entries do not accumulate under room churn."""
-
-    def test_nv_write_seq_entry_is_removed_on_room_cleanup(
-        self, server: NetSyncServer
-    ) -> None:
-        server._initialize_room("room1")
-        server._apply_global_var_set("room1", 1, "a", "1")
-        assert "room1" in server.nv_write_seq
-
-        # Room has been empty long enough to be reclaimed by the real cleanup.
-        server.room_empty_since["room1"] = 0.0
-        server._cleanup_clients(server.EMPTY_ROOM_EXPIRY_TIME + 100.0)
-
-        assert "room1" not in server.rooms
-        assert "room1" not in server.nv_write_seq
