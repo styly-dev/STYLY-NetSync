@@ -40,6 +40,42 @@ styly-netsync-simulator --clients 50
 styly-netsync-simulator --server tcp://localhost --room my_room --clients 50
 ```
 
+### Matching Unity client traffic
+
+Use the stealth option for Unity clients without a local avatar prefab:
+
+```bash
+styly-netsync-simulator --clients 50 --server 127.0.0.1 --room test_room \
+  --stealth --transform-send-rate 10
+```
+
+The simulator models the current Unity `ConnectionManager`,
+`TransformSyncManager`, and initial Network Variable synchronization:
+
+- Stealth clients send `CLIENT_HELLO` on the **control** lane at the configured
+  send rate (10 Hz by default). The 1 Hz idle filter only applies to unchanged
+  visible-avatar poses; it does not apply to Unity's stealth path.
+- Each client has a network thread separate from application updates. Control
+  traffic has a 256-packet outbox, 5-second application-queue TTL, FIFO retry on
+  backpressure, and a maximum of 64 successful sends per network iteration.
+  Poses use a single latest-value slot and retain the latest pose on backpressure.
+- SUB traffic is coalesced separately for the exact room and room-object topics.
+  Control receives are drained without the old 1 ms/100-message application budget.
+- Ready requires a client number and initial variable synchronization, with the
+  same 2-second initial-sync fallback as Unity. Global and client variable state
+  is retained for application-level simulation; an empty client snapshot clears
+  that client's cached variables.
+- A fatal network-thread error resets readiness and schedules reconnection after
+  10 seconds. Server silence and backpressure alone do not schedule application
+  reconnection. TCP reconnection is handled by libzmq, and repeated stealth HELLOs
+  rebind control state when a server comes back.
+
+The simulator still uses Python/libzmq, not Unity/NetMQ. It does not simulate
+Unity's LAN discovery, rendering, device-specific networking failures, or an
+application's RPC/NV workload. Code using `NetworkTransport` must enqueue control
+packets instead of accessing its sockets from another thread. The default
+non-stealth movement simulation remains available without `--stealth`.
+
 ## Wire protocol compatibility
 
 - Current wire protocol is `protocolVersion = 8`.

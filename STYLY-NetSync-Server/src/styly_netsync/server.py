@@ -20,6 +20,7 @@ import socket
 import threading
 import time
 import traceback
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
@@ -43,6 +44,7 @@ from . import binary_serializer
 from . import discovery
 from . import network_utils
 from .logging_utils import configure_logging
+from .control_outbox import ControlEventQueue, PendingStateSync
 from .config import (
     ConfigurationError,
     DefaultConfigError,
@@ -163,6 +165,9 @@ class NetSyncServer:
     CTRL_DRAIN_BATCH = 256
     ROUTER_CTRL_DRAIN_BATCH = 64
     ROUTER_CTRL_QUEUE_MAXSIZE = 1024
+    ROUTER_RECV_BATCH = 64
+    ROUTER_RECV_BUDGET_SECONDS = 0.002
+    STATE_SYNC_RETRY_SECONDS = 0.005
     CTRL_BACKLOG_WATERMARK = 500
     TRANSFORM_BUDGET_BYTES_PER_SEC = 15_000_000
     BACKLOG_SLEEP_SEC = 0.005
@@ -260,9 +265,9 @@ class NetSyncServer:
         self._transform_last_refill = time.monotonic()
         self._transform_budget_lock = threading.Lock()
 
-        # Router control queue for unicast control messages (RPC/NV/ID mapping)
+        # Ordered event queue; replaceable mapping/NV state has a separate outbox.
         # Format: (identity, room_id_bytes, message_bytes)
-        self._router_queue_ctrl: Queue[tuple[bytes, bytes, bytes]] = Queue(
+        self._router_queue_ctrl = ControlEventQueue(
             maxsize=self.ROUTER_CTRL_QUEUE_MAXSIZE
         )
 
@@ -272,6 +277,14 @@ class NetSyncServer:
         self.ctrl_unicast_dropped = 0
         self.ctrl_unicast_unreachable = 0
         self.wrong_lane_dropped = 0
+        self.state_sync_sent = 0
+        self.state_sync_retries = 0
+        self.state_sync_sent_types: dict[int, int] = {}
+        self._state_sync: dict[tuple[str, str], PendingStateSync] = {}
+        self._pending_state_sync: OrderedDict[tuple[str, str], None] = OrderedDict()
+        self._mapping_generation: dict[str, int] = {}
+        self._last_control_drop_log = 0.0
+        self._logged_control_drops = 0
 
         # PUB socket monitor for tracking SUB connections
         self._pub_monitor: zmq.sugar.socket.Socket[bytes] | None = None
@@ -593,6 +606,8 @@ class NetSyncServer:
                         break
 
                     topic_bytes, message_bytes = item
+                    if topic_bytes is None or message_bytes is None:
+                        continue
 
                     try:
                         self.pub.send_multipart(
@@ -660,26 +675,185 @@ class NetSyncServer:
                 self._increment_stat("skipped_broadcasts")
                 logger.debug("PUB queue full: dropping new message")
 
+    def _mark_id_mapping_dirty(self, room_id: str) -> None:
+        """Advance the room generation under _rooms_lock before exposing changes."""
+        self._mapping_generation[room_id] = self._mapping_generation.get(room_id, 0) + 1
+        self.room_id_mapping_dirty[room_id] = True
+
+    def _queue_state_payload(
+        self,
+        room_id: str,
+        payload: bytes,
+        identity: bytes | None,
+        exclude_identity: bytes | None = None,
+    ) -> bool:
+        """Keep sync intent, not serialized copies of obsolete state per receiver."""
+        if not payload or payload[0] not in (
+            binary_serializer.MSG_DEVICE_ID_MAPPING,
+            binary_serializer.MSG_GLOBAL_VAR_SYNC,
+            binary_serializer.MSG_CLIENT_VAR_SYNC,
+        ):
+            return False
+        targets: set[int] = set()
+        if payload[0] == binary_serializer.MSG_CLIENT_VAR_SYNC:
+            _, data, _ = binary_serializer.deserialize(payload)
+            if data is not None:
+                targets = {int(n) for n in data.get("clientVariables", {})}
+        with self._rooms_lock:
+            for device_id, client in self.rooms.get(room_id, {}).items():
+                current = client.get("control_identity")
+                if current is None or current == exclude_identity:
+                    continue
+                if identity is not None and current != identity:
+                    continue
+                key = (room_id, device_id)
+                pending = self._state_sync.get(key)
+                if pending is None or pending.identity != current:
+                    pending = PendingStateSync(current, time.monotonic())
+                    self._state_sync[key] = pending
+                if key not in self._pending_state_sync:
+                    pending.since = time.monotonic()
+                pending.revision += 1
+                pending.globals |= payload[0] == binary_serializer.MSG_GLOBAL_VAR_SYNC
+                if payload[0] == binary_serializer.MSG_CLIENT_VAR_SYNC:
+                    if pending.clients is not None:
+                        pending.clients.update(targets)
+                self._pending_state_sync[key] = None
+        return True
+
+    def state_sync_stats(self) -> dict[str, Any]:
+        """Expose pending state separately from the bounded event FIFO."""
+        with self._rooms_lock:
+            now = time.monotonic()
+            ages = [now - self._state_sync[k].since for k in self._pending_state_sync]
+        with self._stats_lock:
+            return {
+                "pending_receivers": len(ages),
+                "oldest_seconds": max(ages, default=0.0),
+                "sent": self.state_sync_sent,
+                "retries": self.state_sync_retries,
+                "sent_types": dict(self.state_sync_sent_types),
+            }
+
+    def _control_poll_timeout(self) -> int:
+        with self._rooms_lock:
+            now = time.monotonic()
+            if any(
+                self._state_sync[k].retry_at <= now for k in self._pending_state_sync
+            ):
+                return 0
+            has_retry = bool(self._pending_state_sync)
+        if has_retry or not self._router_queue_ctrl.empty():
+            return min(self.POLL_TIMEOUT, 5)
+        return self.POLL_TIMEOUT
+
+    def _drain_state_sync(
+        self, router: zmq.sugar.socket.Socket[bytes], budget: int
+    ) -> int:
+        """Round-robin sync bundles, mapping first, with a bounded send budget."""
+        with self._rooms_lock:
+            candidates = list(self._pending_state_sync)
+        attempts = 0
+        for key in candidates:
+            if attempts + 3 > budget:
+                break
+            room_id, device_id = key
+            with self._rooms_lock:
+                pending = self._state_sync.get(key)
+                client = self.rooms.get(room_id, {}).get(device_id)
+                if pending is None or client is None:
+                    self._pending_state_sync.pop(key, None)
+                    self._state_sync.pop(key, None)
+                    continue
+                if pending.retry_at > time.monotonic():
+                    continue
+                self._pending_state_sync.move_to_end(key)
+                identity = client.get("control_identity")
+                if identity != pending.identity:
+                    # A reconnect request will initialize a fresh receiver state.
+                    self._pending_state_sync.pop(key, None)
+                    self._state_sync.pop(key, None)
+                    continue
+                revision = pending.revision
+                mapping_generation = self._mapping_generation.get(room_id, 0)
+                payloads: list[bytes] = []
+                if pending.mapping_generation != mapping_generation:
+                    mapping = self._build_id_mapping_payload(room_id)
+                    if mapping is not None:
+                        payloads.append(mapping)
+                if pending.globals:
+                    global_payload = self._build_global_var_sync_payload(room_id)
+                    if global_payload is not None:
+                        payloads.append(global_payload)
+                if pending.clients is None or pending.clients:
+                    client_payload = self._build_client_var_sync_payload(
+                        room_id, pending.clients
+                    )
+                    if client_payload is not None:
+                        payloads.append(client_payload)
+            # One coherent snapshot was built under the room lock. Producers may
+            # update it now; revision checks below retain their newer requests.
+            completed = True
+            mapping_sent = False
+            for payload in payloads:
+                attempts += 1
+                try:
+                    router.send_multipart(
+                        [identity, room_id.encode(), payload], flags=zmq.DONTWAIT
+                    )
+                except zmq.ZMQError as exc:
+                    completed = False
+                    self._increment_stat("state_sync_retries")
+                    if exc.errno == zmq.EHOSTUNREACH:
+                        self._increment_stat("ctrl_unicast_unreachable")
+                    else:
+                        self._increment_stat("ctrl_unicast_wouldblock")
+                    break
+                self._increment_stat("ctrl_unicast_sent")
+                with self._stats_lock:
+                    self.state_sync_sent += 1
+                    kind = payload[0]
+                    self.state_sync_sent_types[kind] = (
+                        self.state_sync_sent_types.get(kind, 0) + 1
+                    )
+                mapping_sent |= payload[0] == binary_serializer.MSG_DEVICE_ID_MAPPING
+            with self._rooms_lock:
+                if self._state_sync.get(key) is not pending:
+                    continue
+                if mapping_sent:
+                    pending.mapping_generation = mapping_generation
+                if completed and pending.revision == revision:
+                    pending.bootstrap = False
+                    pending.globals = False
+                    pending.clients = set()
+                    pending.retry_at = 0.0
+                    self._pending_state_sync.pop(key, None)
+                elif not completed:
+                    pending.retry_at = time.monotonic() + self.STATE_SYNC_RETRY_SECONDS
+        return attempts
+
     def _enqueue_router(
         self, identity: bytes, room_id: str, message_bytes: bytes
     ) -> None:
         """Thread-safe enqueue of a control message for unicast via ROUTER.
 
-        Used for control-like messages (RPC, NV sync, ID mapping) that are
-        retried after socket backpressure. Messages are dropped only when this
-        application queue is already full.
+        Mapping/NV messages retain replaceable sync intent outside the event
+        FIFO. Events retain per-identity order and reserve their retry capacity;
+        only new events can be rejected when the bounded FIFO is full.
 
         Args:
             identity: Client's ZeroMQ identity (from ROUTER socket)
             room_id: Room ID string
             message_bytes: Serialized message payload
         """
+        if self._queue_state_payload(room_id, message_bytes, identity):
+            return
         room_bytes = room_id.encode("utf-8")
         try:
             self._router_queue_ctrl.put_nowait((identity, room_bytes, message_bytes))
         except Full:
             self._increment_stat("ctrl_unicast_dropped")
-            logger.warning("Router control queue full: dropping new control message")
+            # Report drops in the periodic loop, not once per dropped packet.
 
     def _send_ctrl_to_room_via_router(
         self,
@@ -698,6 +872,8 @@ class NetSyncServer:
             message_bytes: Serialized message payload
             exclude_identity: Optional client identity to exclude (e.g., sender)
         """
+        if self._queue_state_payload(room_id, message_bytes, None, exclude_identity):
+            return
         identities_to_send: list[bytes] = []
         with self._rooms_lock:
             if room_id not in self.rooms:
@@ -802,7 +978,7 @@ class NetSyncServer:
                     "client_no": client_no,
                     "is_stealth": False,
                 }
-                self.room_id_mapping_dirty[room_id] = True
+                self._mark_id_mapping_dirty(room_id)
                 logger.info(
                     "Registered control identity from control message: room={}, "
                     "client={}, device={}",
@@ -810,13 +986,18 @@ class NetSyncServer:
                     client_no,
                     device_id[:8],
                 )
+                self._sync_network_variables_to_new_client(room_id, client_identity)
+                self._sync_objects_to_new_client(client_identity, room_id)
                 return device_id
 
             client_data = room[device_id]
             old_identity = client_data.get("control_identity")
             if old_identity != client_identity:
                 client_data["control_identity"] = client_identity
-                self.room_id_mapping_dirty[room_id] = True
+                self._mark_id_mapping_dirty(room_id)
+                self._sync_network_variables_to_client(room_id, client_identity)
+                if old_identity is None:
+                    self._sync_objects_to_new_client(client_identity, room_id)
                 logger.info(
                     "Refreshed control identity from device ID: room={}, client={}, "
                     "device={}",
@@ -1143,7 +1324,7 @@ class NetSyncServer:
 
         while self.running:
             try:
-                events = dict(poller.poll(self.POLL_TIMEOUT))
+                events = dict(poller.poll(self._control_poll_timeout()))
                 if control_router is not None and control_router in events:
                     self._drain_incoming_router(control_router, "control")
                 if transform_router is not None and transform_router in events:
@@ -1160,8 +1341,9 @@ class NetSyncServer:
     def _drain_incoming_router(
         self, router: zmq.sugar.socket.Socket[bytes], lane: str
     ) -> None:
-        """Drain all currently available messages from one ROUTER socket."""
-        while True:
+        """Bound each lane's work so incoming traffic cannot starve sends."""
+        deadline = time.monotonic() + self.ROUTER_RECV_BUDGET_SECONDS
+        for _ in range(self.ROUTER_RECV_BATCH):
             try:
                 parts = router.recv_multipart(flags=zmq.DONTWAIT)
             except zmq.Again:
@@ -1180,6 +1362,9 @@ class NetSyncServer:
                     len(parts),
                     exc,
                 )
+
+            if time.monotonic() >= deadline:
+                break
 
     def _handle_incoming_router_message(self, lane: str, parts: list[bytes]) -> None:
         """Dispatch one incoming ROUTER multipart message for a specific lane."""
@@ -1321,12 +1506,26 @@ class NetSyncServer:
         deferred_packets: list[tuple[bytes, bytes, bytes]] = []
         deferred_identities: set[bytes] = set()
 
-        for _ in range(self.ROUTER_CTRL_DRAIN_BATCH):
-            try:
-                ident, room_bytes, msg_bytes = self._router_queue_ctrl.get_nowait()
-            except Empty:
-                break
-
+        # Reserve at least half of a busy iteration for ordered events.
+        state_budget = (
+            self.ROUTER_CTRL_DRAIN_BATCH
+            if self._router_queue_ctrl.empty()
+            else self.ROUTER_CTRL_DRAIN_BATCH // 2
+        )
+        state_attempts = self._drain_state_sync(router, state_budget)
+        with self._rooms_lock:
+            for key in self._pending_state_sync:
+                pending = self._state_sync[key]
+                if (
+                    pending.bootstrap
+                    or pending.mapping_generation
+                    != self._mapping_generation.get(key[0], 0)
+                ):
+                    deferred_identities.add(pending.identity)
+        batch = self._router_queue_ctrl.take_batch(
+            self.ROUTER_CTRL_DRAIN_BATCH - state_attempts
+        )
+        for ident, room_bytes, msg_bytes in batch:
             if ident in deferred_identities:
                 deferred_packets.append((ident, room_bytes, msg_bytes))
                 continue
@@ -1338,8 +1537,7 @@ class NetSyncServer:
                 )
                 self._increment_stat("ctrl_unicast_sent")
             except zmq.Again:
-                # Defer this identity to the tail so one slow client does not
-                # head-of-line block control messages for the rest of the room.
+                # The queue rotates identities while preserving each one's FIFO.
                 deferred_identities.add(ident)
                 deferred_packets.append((ident, room_bytes, msg_bytes))
                 self._increment_stat("ctrl_unicast_wouldblock")
@@ -1353,14 +1551,7 @@ class NetSyncServer:
                     self._increment_stat("ctrl_unicast_dropped")
                     logger.error(f"Router send error: {exc}")
 
-        for packet in deferred_packets:
-            try:
-                self._router_queue_ctrl.put_nowait(packet)
-            except Full:
-                self._increment_stat("ctrl_unicast_dropped")
-                logger.warning(
-                    "Router control queue full: dropping deferred control message"
-                )
+        self._router_queue_ctrl.finish_batch(len(batch), deferred_packets)
 
     def _handle_client_hello(
         self, client_identity: bytes, room_id: str, data: dict[str, Any]
@@ -1395,7 +1586,7 @@ class NetSyncServer:
                     "client_no": client_no,
                     "is_stealth": is_stealth,
                 }
-                self.room_id_mapping_dirty[room_id] = True
+                self._mark_id_mapping_dirty(room_id)
                 stealth_text = " (stealth mode)" if is_stealth else ""
                 logger.info(
                     "New client {}... (client number: {}){} registered control lane "
@@ -1417,7 +1608,7 @@ class NetSyncServer:
                 client_data["client_no"] = client_no
                 client_data["is_stealth"] = is_stealth
                 if is_reconnect or stealth_changed:
-                    self.room_id_mapping_dirty[room_id] = True
+                    self._mark_id_mapping_dirty(room_id)
 
             if is_stealth:
                 self.room_dirty_flags[room_id] = True
@@ -1432,7 +1623,7 @@ class NetSyncServer:
                     self._enqueue_router(client_identity, room_id, mapping_payload)
 
         if is_new_client:
-            self._sync_network_variables_to_new_client(room_id)
+            self._sync_network_variables_to_new_client(room_id, client_identity)
             self._sync_objects_to_new_client(client_identity, room_id)
         elif is_reconnect:
             self._sync_network_variables_to_client(room_id, client_identity)
@@ -1514,14 +1705,14 @@ class NetSyncServer:
                 if is_reconnect:
                     # Re-broadcast ID mapping so peers keep a fresh view of
                     # this device/client registration.
-                    self.room_id_mapping_dirty[room_id] = True
+                    self._mark_id_mapping_dirty(room_id)
                     logger.info(
                         f"Client {device_id[:8]}... reconnected with new identity in room {room_id}"
                     )
 
             # Mark room for debounced ID mapping broadcast when a new client joins
             if is_new_client:
-                self.room_id_mapping_dirty[room_id] = True
+                self._mark_id_mapping_dirty(room_id)
 
             control_identity = self.rooms[room_id][device_id].get("control_identity")
 
@@ -1529,7 +1720,7 @@ class NetSyncServer:
         # before hello, the hello handler will sync after control identity exists.
         if control_identity is not None:
             if is_new_client:
-                self._sync_network_variables_to_new_client(room_id)
+                self._sync_network_variables_to_new_client(room_id, control_identity)
                 self._sync_objects_to_new_client(control_identity, room_id)
             elif is_reconnect:
                 self._sync_network_variables_to_client(room_id, control_identity)
@@ -2183,14 +2374,16 @@ class NetSyncServer:
             self._send_ctrl_to_room_via_router(room_id, message_bytes)
             logger.debug(f"Broadcasted client variables to room {room_id}")
 
-    def _sync_network_variables_to_new_client(self, room_id: str) -> None:
-        """Send current Network Variables state to a newly connected client.
-
-        Broadcasts to all clients in the room (suitable for new-client joins
-        where the full room needs the updated mapping anyway).
-        """
-        self._broadcast_global_var_sync(room_id)
-        self._broadcast_client_var_sync(room_id)
+    def _sync_network_variables_to_new_client(
+        self, room_id: str, identity: bytes
+    ) -> None:
+        """Unicast the full snapshot; peers need only the joining client's state."""
+        self._sync_network_variables_to_client(room_id, identity)
+        with self._rooms_lock:
+            for client in self.rooms.get(room_id, {}).values():
+                if client.get("control_identity") == identity:
+                    self._broadcast_client_var_sync(room_id, {client["client_no"]})
+                    break
 
     def _sync_network_variables_to_client(self, room_id: str, identity: bytes) -> None:
         """Unicast current Network Variables state to a single client.
@@ -2369,6 +2562,16 @@ class NetSyncServer:
                     self._cleanup_expired_device_id_mappings(current_time)
                     last_device_id_cleanup = current_time
 
+                if current_time - self._last_control_drop_log >= 1.0:
+                    dropped = self.ctrl_unicast_dropped
+                    delta = dropped - self._logged_control_drops
+                    if delta:
+                        logger.warning(
+                            "Router control events dropped in last interval: {}", delta
+                        )
+                    self._logged_control_drops = dropped
+                    self._last_control_drop_log = current_time
+
                 # Log status periodically
                 if current_time - last_log >= self.STATUS_LOG_INTERVAL:
                     # Count normal and stealth clients separately
@@ -2394,6 +2597,14 @@ class NetSyncServer:
                         f"Status: {num_rooms} rooms, {normal_clients} normal clients, "
                         f"{stealth_clients} stealth clients, "
                         f"{total_device_ids} tracked device IDs"
+                    )
+                    sync_stats = self.state_sync_stats()
+                    logger.info(
+                        "State sync: pending={}, oldest={:.3f}s, sent={}, retries={}",
+                        sync_stats["pending_receivers"],
+                        sync_stats["oldest_seconds"],
+                        sync_stats["sent"],
+                        sync_stats["retries"],
                     )
                     last_log = current_time
 
@@ -2588,6 +2799,8 @@ class NetSyncServer:
                         if client_no is not None:
                             removed_client_nos.append(client_no)
                         del clients[device_id]
+                        self._state_sync.pop((room_id, device_id), None)
+                        self._pending_state_sync.pop((room_id, device_id), None)
                         # Clean up binary cache by client number
                         if client_no and client_no in self.client_transform_body_cache:
                             del self.client_transform_body_cache[client_no]
@@ -2626,7 +2839,7 @@ class NetSyncServer:
                     self.room_dirty_flags[room_id] = True
 
                     # Mark room for debounced ID mapping broadcast
-                    self.room_id_mapping_dirty[room_id] = True
+                    self._mark_id_mapping_dirty(room_id)
 
                 # Handle empty room tracking with delayed removal
                 if not clients:
@@ -2667,6 +2880,11 @@ class NetSyncServer:
                     if room_id in self.room_client_no_to_device_id:
                         del self.room_client_no_to_device_id[room_id]
 
+                    self._mapping_generation.pop(room_id, None)
+                    for key in list(self._state_sync):
+                        if key[0] == room_id:
+                            self._state_sync.pop(key, None)
+                            self._pending_state_sync.pop(key, None)
                     # Clean up ID mapping debounce tracking
                     if room_id in self.room_id_mapping_dirty:
                         del self.room_id_mapping_dirty[room_id]
