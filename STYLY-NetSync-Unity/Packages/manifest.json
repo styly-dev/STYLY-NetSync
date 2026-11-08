@@ -70,5 +70,8 @@
       ],
       "overrideBuiltIns": true
     }
+  ],
+  "testables": [
+    "com.styly.styly-netsync"
   ]
 }

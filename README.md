@@ -131,8 +131,8 @@ The uvx command automatically downloads the package, creates an isolated virtual
 <strong>Properties</strong>
 - _deviceId - Displays the unique device ID assigned to this client.
 - _clientNo - Shows the numeric client number assigned by the server.
-- _serverAddress - Server IP or hostname; leave empty to auto-discover on the local network.
-- _roomId - Identifier of the current room to join.
+- _serverAddress - Server IP or hostname; leave empty to auto-discover on the local network. Can also be set from code via `NetSyncManager.ServerAddress` before connecting (see [Configuring connection settings from code](#configuring-connection-settings-from-code)).
+- _roomId - Identifier of the current room to join. Can also be set from code via `NetSyncManager.RoomId` before connecting; use `SetRoomId()` to switch rooms at runtime.
 - _localAvatarPrefab - Prefab used for the local user's avatar.
 - _remoteAvatarPrefab - Prefab used for remote users'avatars.
 - _humanPresencePrefab - Prefab shown at each remote user's physical position (used for "human presence" visualization).
@@ -167,6 +167,43 @@ The uvx command automatically downloads the package, creates an isolated virtual
 using Styly.NetSync;
 ```
 
+
+### Configuring connection settings from code
+`ServerAddress`, `RoomId` and `OfflineMode` can be assigned from code so that one build can be pointed at a different server or room without rebuilding (e.g. by loading them from a config file at startup).
+
+Rules:
+- Assign them **before networking starts**. `NetSyncManager` creates its managers and connects on its first `Update()`, so any other component in the same scene can assign them from its `Awake()` or `Start()`.
+- Assignments made after networking has started are **ignored and an error is logged**, so the Inspector value and the live connection never silently diverge. To switch rooms on a live connection, call `SetRoomId()`.
+- `ServerAddress` takes a host name or IP address without `tcp://` or a port. An empty string enables auto-discovery.
+- `ServerDiscoveryPort` and `TransformSendRate` can be changed at any time.
+
+```csharp
+using Styly.NetSync;
+using UnityEngine;
+
+public class NetSyncBootstrap : MonoBehaviour
+{
+    // Runs after NetSyncManager.Awake (execution order -1000) and before its first Update.
+    void Awake()
+    {
+        var settings = LoadAppConfig(); // your own config loader
+
+        var manager = NetSyncManager.Instance;
+        manager.ServerAddress = settings.ServerAddress; // e.g. "192.168.1.100"
+        manager.RoomId = settings.RoomId;               // e.g. "room_a"
+        manager.OfflineMode = settings.OfflineMode;
+    }
+}
+```
+
+If the values are not available during the first frame, place `NetSyncManager` in the scene with the component **disabled**, assign the settings whenever they are ready, and then enable the component. `NetSyncManager.Instance` is available as soon as its `Awake()` has run (the GameObject must be active); networking starts on the first `Update()` after the component is enabled.
+
+```csharp
+var manager = NetSyncManager.Instance; // component is disabled in the scene
+manager.ServerAddress = address;
+manager.RoomId = roomId;
+manager.enabled = true; // connects on the next frame
+```
 
 ### RPC
 All RPC arguments are strings for simplicity.

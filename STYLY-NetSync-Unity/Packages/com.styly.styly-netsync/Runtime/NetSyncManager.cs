@@ -17,11 +17,11 @@ namespace Styly.NetSync
         [SerializeField, ReadOnly] private int _clientNo = 0;
 
         [Header("Connection Settings")]
-        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network")] private string _serverAddress = "";
+        [SerializeField, Tooltip("Server IP address or hostname (e.g. 192.168.1.100, localhost). Leave empty to auto-discover server on local network. Can also be set from code via NetSyncManager.ServerAddress, but only before the first connection is established.")] private string _serverAddress = "";
         private int _dealerPort = 5555;
         private int _transformPort = 5557;
         private int _subPort = 5556;
-        [SerializeField] private string _roomId = "default_room";
+        [SerializeField, Tooltip("Room to join. Can also be set from code via NetSyncManager.RoomId, but only before the first connection is established. Use SetRoomId() to switch rooms at runtime.")] private string _roomId = "default_room";
 
         [Header("Avatar Settings")]
         [SerializeField] private GameObject _localAvatarPrefab;
@@ -56,7 +56,7 @@ namespace Styly.NetSync
         public UnityEvent<string, string> OnVersionMismatch = new UnityEvent<string, string>();
 
         // Advanced Options (drawn by NetSyncManagerEditor in a foldout)
-        [SerializeField, Tooltip("Enable offline mode for testing without a server.")]
+        [SerializeField, Tooltip("Enable offline mode for testing without a server. Can also be set from code via NetSyncManager.OfflineMode, but only before the first connection is established.")]
         private bool _offlineMode = false;
         [SerializeField, Range(0.5f, 60), Tooltip("Transform sync frequency in Hz (sends per second). Higher values provide smoother movement but increase network traffic.")]
         private float _transformSendRate = 10f;
@@ -455,6 +455,15 @@ namespace Styly.NetSync
                 return; // No-op for same room or invalid input
             }
 
+            // Networking has not started yet: there is no live connection to switch,
+            // so just adopt the new ID and let the first connection use it.
+            if (_connectionManager == null)
+            {
+                _roomId = newRoomId;
+                DebugLog($"Room ID set to '{newRoomId}' before networking started");
+                return;
+            }
+
             // Prevent reentrancy
             if (_roomSwitching)
             {
@@ -565,6 +574,7 @@ namespace Styly.NetSync
 
         // Async device ID resolution
         private DeviceIdResolver _deviceIdResolver;
+        private bool _deviceIdApplied;
 
         // Defer avatar creation until Update so the manager scene has finished activation.
         private bool _startupPending;
@@ -573,14 +583,42 @@ namespace Styly.NetSync
         #region === Public Properties ===
         public string DeviceId => _deviceId;
         public int ClientNo => _clientNo;
-        public string RoomId => _roomId;
+
+        /// <summary>
+        /// Room ID to join. Can be assigned from code only before networking has
+        /// started (i.e. before NetSyncManager's first Update, e.g. from another
+        /// component's Awake/Start). Later assignments are rejected with an error;
+        /// use <see cref="SetRoomId"/> to switch rooms on a live connection.
+        /// </summary>
+        public string RoomId
+        {
+            get => _roomId;
+            set
+            {
+                if (string.IsNullOrEmpty(value))
+                {
+                    Debug.LogError("[NetSyncManager] RoomId cannot be null or empty.", this);
+                    return;
+                }
+                SetPreConnectionSetting(ref _roomId, value, nameof(RoomId),
+                    "To switch rooms after connecting, call SetRoomId() instead.");
+            }
+        }
 
         /// <summary>
         /// Server address the client is configured to connect to, or the
         /// address resolved via auto-discovery when the inspector field is left empty.
         /// Empty string until auto-discovery completes.
+        /// Can be assigned from code only before networking has started (i.e. before
+        /// NetSyncManager's first Update); later assignments are rejected with an error.
+        /// Pass a host name or IP address without the "tcp://" scheme or a port.
+        /// Assign an empty string to use auto-discovery.
         /// </summary>
-        public string ServerAddress => _serverAddress;
+        public string ServerAddress
+        {
+            get => _serverAddress;
+            set => SetPreConnectionSetting(ref _serverAddress, value == null ? "" : value.Trim(), nameof(ServerAddress));
+        }
 
         /// <summary>
         /// UDP port used for server discovery.
@@ -619,6 +657,21 @@ namespace Styly.NetSync
         internal MessageProcessor MessageProcessor => _messageProcessor;
         internal NetSyncTimeEstimator TimeEstimator => _timeEstimator;
         internal bool IsStealthMode => _isStealthMode;
+
+        /// <summary>
+        /// Offline mode (no server; local-only behaviour). Can be assigned from code
+        /// only before networking has started (i.e. before NetSyncManager's first
+        /// Update); later assignments are rejected with an error.
+        /// </summary>
+        public bool OfflineMode
+        {
+            get => _offlineMode;
+            set => SetPreConnectionSetting(ref _offlineMode, value, nameof(OfflineMode));
+        }
+
+        /// <summary>
+        /// Alias of <see cref="OfflineMode"/> kept for compatibility.
+        /// </summary>
         public bool IsOfflineMode => _offlineMode;
         public bool HasServerConnection => _connectionManager?.IsConnected == true && !_connectionManager.IsConnectionError;
         public bool HasHandshake => _clientNo > 0;
@@ -628,6 +681,27 @@ namespace Styly.NetSync
         public GameObject GetLocalAvatarPrefab() => _localAvatarPrefab;
         public GameObject GetRemoteAvatarPrefab() => _remoteAvatarPrefab;
         public GameObject GetHumanPresencePrefab() => _humanPresencePrefab;
+
+        /// <summary>
+        /// Assigns a connection setting that is consumed when networking starts.
+        /// Managers (including the connection manager) are created on the first
+        /// Update, so once the connection manager exists the value is
+        /// already in use and the assignment is rejected with an error instead of
+        /// silently leaving the Inspector value and the live connection out of sync.
+        /// </summary>
+        private void SetPreConnectionSetting<T>(ref T field, T value, string propertyName, string hint = null)
+        {
+            if (_connectionManager != null)
+            {
+                Debug.LogError(
+                    $"[NetSyncManager] {propertyName} cannot be changed after networking has started. " +
+                    "Set it before NetSyncManager's first Update (e.g. from another component's Awake/Start). " +
+                    (hint ?? string.Empty),
+                    this);
+                return;
+            }
+            field = value;
+        }
         #endregion ------------------------------------------------------------------------
 
         #region === Unity Callbacks ===
@@ -662,9 +736,12 @@ namespace Styly.NetSync
 
             if (_deviceIdResolver.IsResolved)
             {
-                CompleteDeviceIdResolution();
+                ApplyResolvedDeviceId();
             }
-            // Otherwise, Update() will complete initialization when the resolver finishes
+            // Managers are always created on the first Update() (see InitializeManagers)
+            // so that ServerAddress / RoomId / OfflineMode can still be assigned from
+            // other components' Awake/Start. If the resolver is still pending here,
+            // Update() also waits for it before applying the device ID.
         }
 
         void Start()
@@ -791,10 +868,16 @@ namespace Styly.NetSync
             {
                 if (_deviceIdResolver == null || !_deviceIdResolver.IsResolved) { return; }
 
-                // The synchronous path already initialized managers in Awake.
+                if (!_deviceIdApplied)
+                {
+                    ApplyResolvedDeviceId();
+                }
+
+                // Managers are created here, after every other component's Awake/Start,
+                // so connection settings assigned from code are honoured.
                 if (_connectionManager == null)
                 {
-                    CompleteDeviceIdResolution();
+                    InitializeManagers();
                 }
 
                 _startupPending = false;
@@ -889,25 +972,30 @@ namespace Styly.NetSync
 
         #region === Initialization ===
         /// <summary>
-        /// Completes device ID resolution by reading the result from the resolver
-        /// and initializing all managers. Called either synchronously from Awake()
-        /// or deferred from Update() when the Android permission dialog was shown.
+        /// Reads the resolved device ID from the resolver. Called from Awake() when
+        /// resolution completed synchronously, otherwise from Update() once the
+        /// Android permission dialog has been answered.
         /// </summary>
-        private void CompleteDeviceIdResolution()
+        private void ApplyResolvedDeviceId()
         {
             _deviceId = _deviceIdResolver.DeviceId;
+            _deviceIdApplied = true;
             DebugLog($"Device ID: {_deviceId}");
+        }
 
-            InitializeManagers();
-
+        /// <summary>
+        /// Creates all managers. Always called from the first Update() (never from
+        /// Awake()) so that ServerAddress / RoomId / OfflineMode assigned from other
+        /// components' Awake/Start are applied; _offlineMode is consumed here to
+        /// choose the connection manager.
+        /// </summary>
+        private void InitializeManagers()
+        {
             if (_isStealthMode)
             {
                 DebugLog("Stealth mode enabled (no local avatar prefab)");
             }
-        }
 
-        private void InitializeManagers()
-        {
             // Initialize managers
             _messageProcessor = new MessageProcessor(_logNetworkTraffic);
             _messageProcessor.SetLocalDeviceId(_deviceId);

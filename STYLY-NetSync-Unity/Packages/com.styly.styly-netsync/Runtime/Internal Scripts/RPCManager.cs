@@ -101,7 +101,7 @@ namespace Styly.NetSync
             }
 
             // Offline mode: loopback RPC to self
-            if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
+            if (_netSyncManager != null && _netSyncManager.OfflineMode)
             {
                 if (targetClientNos == null || targetClientNos.Length == 0 || Array.IndexOf(targetClientNos, _netSyncManager.ClientNo) >= 0)
                 {

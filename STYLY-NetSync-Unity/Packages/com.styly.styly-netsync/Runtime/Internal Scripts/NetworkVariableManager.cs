@@ -136,7 +136,7 @@ namespace Styly.NetSync
             }
 
             // Offline mode: write locally and fire event without server round-trip
-            if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
+            if (_netSyncManager != null && _netSyncManager.OfflineMode)
             {
                 var oldValue = _globalVariables.TryGetValue(name, out var existing) ? existing : null;
                 if (!string.Equals(oldValue, value))
@@ -251,7 +251,7 @@ namespace Styly.NetSync
             }
 
             // Offline mode: write locally and fire event without server round-trip
-            if (_netSyncManager != null && _netSyncManager.IsOfflineMode)
+            if (_netSyncManager != null && _netSyncManager.OfflineMode)
             {
                 var oldValue = clientVars.TryGetValue(name, out var existing) ? existing : null;
                 if (!string.Equals(oldValue, value))
