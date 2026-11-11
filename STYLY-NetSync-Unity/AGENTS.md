@@ -27,8 +27,15 @@
 - **Play Mode**: Test in Unity Editor with demo scenes
 - **Network Testing**: Requires running Python server (see parent AGENTS.md)
 - **Debug Output**: Enable debug logs in NetSyncManager inspector
-- **No automated Unity tests**: Verify via demo scenes with Python server running
-- Capture logs or screen recording to demonstrate sync state
+- **Automated tests**: Unity Test Framework suites live in
+  `Packages/com.styly.styly-netsync/Tests/` (run via Test Runner window or CLI)
+  - EditMode: serializer/manager unit tests, incl. cross-language golden bytes
+  - PlayMode: offline tests plus Python-server integration tests; the
+    integration tests launch the local server via `uv` and self-ignore when
+    `uv` is not on PATH — set `STYLY_NETSYNC_TESTS_REQUIRE_SERVER=1` (CI) to
+    fail instead of skip so coverage cannot silently disappear
+- **Manual verification**: Demo scenes with Python server running; capture logs
+  or screen recording to demonstrate sync state
 
 ## Key Internal Scripts
 

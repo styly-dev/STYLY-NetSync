@@ -1,0 +1,29 @@
+{
+  "client_hello_stealth": {
+    "length": 14
+  },
+  "client_hello_visible": {
+    "length": 14
+  },
+  "client_var_clear": {
+    "length": 7
+  },
+  "client_var_set": {
+    "length": 16
+  },
+  "device_id_mapping": {
+    "length": 30
+  },
+  "global_var_set": {
+    "length": 18
+  },
+  "object_pose_identity": {
+    "length": 27
+  },
+  "rpc_broadcast": {
+    "length": 37
+  },
+  "rpc_targeted": {
+    "length": 34
+  }
+}
