@@ -316,17 +316,40 @@ namespace Styly.NetSync
 
         #region === Moving Floors ===
         /// <summary>
+        /// Optional filter for moving-floor warnings. While a remote avatar's moving floor
+        /// cannot be resolved, the avatar holds its last pose. NetSync warns about that only
+        /// after it has lasted about one second, and only if this predicate returns true for
+        /// the avatar's client number. Return false when the local viewer cannot see that
+        /// avatar anyway (for example it is hidden by application logic). Null (the default)
+        /// treats every avatar as relevant.
+        /// The predicate runs on the main thread, about once per second per unresolved avatar,
+        /// and must be free of side effects. If it throws, the avatar is treated as relevant.
+        /// </summary>
+        public Func<int, bool> IsRemoteAvatarRelevantForMovingFloorWarnings
+        {
+            get { return _movingFloorManager.RelevancePredicate; }
+            set { _movingFloorManager.RelevancePredicate = value; }
+        }
+
+        /// <summary>
+        /// Number of unresolved moving-floor episodes that produced a warning since startup.
+        /// </summary>
+        public int MovingFloorWarnedEpisodeCount => _movingFloorManager.WarnedEpisodeCount;
+
+        /// <summary>
+        /// Number of unresolved moving-floor episodes that outlasted the grace period but were
+        /// not warned about because <see cref="IsRemoteAvatarRelevantForMovingFloorWarnings"/>
+        /// returned false. An episode that later became relevant and warned counts in both.
+        /// </summary>
+        public int MovingFloorSuppressedEpisodeCount => _movingFloorManager.SuppressedEpisodeCount;
+
+        /// <summary>
         /// The moving floor id currently carrying the local avatar, or 0 when off floor.
         /// </summary>
         public uint LocalMovingFloorId
         {
             get
             {
-                if (_movingFloorManager == null)
-                {
-                    return MovingFloorManager.UnassignedFloorId;
-                }
-
                 return _movingFloorManager.LocalFloorId;
             }
         }
@@ -338,7 +361,7 @@ namespace Styly.NetSync
         {
             get
             {
-                return _movingFloorManager != null && _movingFloorManager.HasLocalFloor;
+                return _movingFloorManager.HasLocalFloor;
             }
         }
 
@@ -347,7 +370,7 @@ namespace Styly.NetSync
         /// </summary>
         public bool IsLocalAvatarOnMovingFloorId(uint floorId)
         {
-            if (_movingFloorManager == null || floorId == MovingFloorManager.UnassignedFloorId)
+            if (floorId == MovingFloorManager.UnassignedFloorId)
             {
                 return false;
             }
@@ -361,11 +384,6 @@ namespace Styly.NetSync
         /// </summary>
         public bool RegisterMovingFloor(uint floorId, Transform floor)
         {
-            if (_movingFloorManager == null)
-            {
-                return false;
-            }
-
             return _movingFloorManager.RegisterFloor(floorId, floor);
         }
 
@@ -374,11 +392,6 @@ namespace Styly.NetSync
         /// </summary>
         public void UnregisterMovingFloor(uint floorId)
         {
-            if (_movingFloorManager == null)
-            {
-                return;
-            }
-
             bool wasOnFloorLocally =
                 floorId != MovingFloorManager.UnassignedFloorId &&
                 _movingFloorManager.LocalFloorId == floorId;
@@ -396,11 +409,6 @@ namespace Styly.NetSync
         /// </summary>
         public bool BoardLocalAvatarOnMovingFloor(uint floorId)
         {
-            if (_movingFloorManager == null)
-            {
-                return false;
-            }
-
             if (!_movingFloorManager.BoardLocal(floorId))
             {
                 Debug.LogWarning(
@@ -431,11 +439,6 @@ namespace Styly.NetSync
         /// </summary>
         public void LeaveLocalAvatarFromMovingFloor()
         {
-            if (_movingFloorManager == null)
-            {
-                return;
-            }
-
             _movingFloorManager.LeaveLocal();
             SetClientVariable(MovingFloorManager.ClientVariableName, "");
         }
@@ -480,9 +483,12 @@ namespace Styly.NetSync
             _objectSyncManager?.ClearRoomScopedState();
             _timeEstimator.Reset();
             _networkVariableManager?.ResetInitialSyncFlag();
+            // Client numbers are per room: values cached from the old room must not be
+            // served for the new room's clients (e.g. when re-seeding a moving floor id).
+            _networkVariableManager?.ClearClientVariableCache();
             _avatarManager?.CleanupRemoteAvatars();
             if (_humanPresenceManager != null) { _humanPresenceManager.CleanupAll(); }
-            if (_movingFloorManager != null) { _movingFloorManager.ClearClientStates(true); }
+            _movingFloorManager.ClearClientStates(true);
 
             // Hard reconnect with new room
             _connectionManager?.Disconnect();
@@ -506,7 +512,7 @@ namespace Styly.NetSync
         private NetworkVariableManager _networkVariableManager;
         private HumanPresenceManager _humanPresenceManager;
         private ObjectSyncManager _objectSyncManager;
-        private MovingFloorManager _movingFloorManager = new MovingFloorManager();
+        private readonly MovingFloorManager _movingFloorManager = new MovingFloorManager();
         private readonly NetSyncTimeEstimator _timeEstimator = new NetSyncTimeEstimator();
 
         // State
@@ -780,6 +786,8 @@ namespace Styly.NetSync
         private void Update()
         {
             if (_isDuplicateInstance) { return; }
+
+            _movingFloorManager.Tick();
 
             // Process deferred permission callbacks on main thread (safe for Unity APIs)
             if (_deviceIdResolver != null)
@@ -1059,12 +1067,27 @@ namespace Styly.NetSync
 
         private void OnRemoteAvatarDisconnected(int clientNo)
         {
-            if (_movingFloorManager != null)
-            {
-                _movingFloorManager.RemoveClient(clientNo);
-            }
+            _movingFloorManager.RemoveClient(clientNo);
 
             OnAvatarDisconnected?.Invoke(clientNo);
+        }
+
+        /// <summary>
+        /// Restore a remote client's moving floor id when its avatar (re)spawns.
+        /// See <see cref="MovingFloorManager.SeedClientFloorId"/>.
+        /// </summary>
+        internal void SeedMovingFloorIdForRemoteClient(int clientNo)
+        {
+            _movingFloorManager.SeedClientFloorId(clientNo, _networkVariableManager);
+        }
+
+        /// <summary>
+        /// Drop a remote client's moving floor id when it disconnects without an avatar.
+        /// Clients with an avatar go through <see cref="OnRemoteAvatarDisconnected"/>.
+        /// </summary>
+        internal void ForgetMovingFloorIdForRemoteClient(int clientNo)
+        {
+            _movingFloorManager.RemoveClient(clientNo);
         }
 
         private void OnRPCReceivedHandler(int senderClientNo, string functionName, string[] args)
@@ -1105,7 +1128,7 @@ namespace Styly.NetSync
         private void OnClientVariableChangedHandler(int clientNo, string name, string oldValue, string newValue)
         {
             Debug.Log($"[NetSyncManager] Client Variable Changed - Client#{clientNo}, Name: {name}, Old: {oldValue ?? "null"}, New: {newValue ?? "null"}");
-            if (name == MovingFloorManager.ClientVariableName && _movingFloorManager != null)
+            if (name == MovingFloorManager.ClientVariableName)
             {
                 _movingFloorManager.SetClientFloorId(clientNo, newValue);
             }
@@ -1553,24 +1576,12 @@ namespace Styly.NetSync
 
         internal bool TryGetLocalMovingFloor(out Transform floor)
         {
-            floor = null;
-            if (_movingFloorManager == null)
-            {
-                return false;
-            }
-
             return _movingFloorManager.TryGetLocalFloor(out floor);
         }
 
-        internal bool TryGetMovingFloorForClient(int clientNo, bool warnIfMissingId, out Transform floor)
+        internal bool TryGetMovingFloorForClient(int clientNo, bool trackUnresolved, out Transform floor)
         {
-            floor = null;
-            if (_movingFloorManager == null)
-            {
-                return false;
-            }
-
-            return _movingFloorManager.TryGetFloorForClient(clientNo, warnIfMissingId, out floor);
+            return _movingFloorManager.TryGetFloorForClient(clientNo, trackUnresolved, out floor);
         }
 
         /// <summary>

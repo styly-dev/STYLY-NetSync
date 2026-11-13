@@ -92,6 +92,17 @@ namespace Styly.NetSync
         }
 
         /// <summary>
+        /// Drop the received client variables of every client without firing change events.
+        /// Client variables are room-scoped and client numbers are reused across rooms, so
+        /// values cached from the previous room must not be readable after a room switch.
+        /// The new room's initial sync repopulates the cache and fires change events.
+        /// </summary>
+        public void ClearClientVariableCache()
+        {
+            _clientVariables.Clear();
+        }
+
+        /// <summary>
         /// Called when connection is established to start tracking sync timeout
         /// </summary>
         public void OnConnectionEstablished()
@@ -398,6 +409,17 @@ namespace Styly.NetSync
                 return clientVars.TryGetValue(name, out var value) ? value : defaultValue;
             }
             return defaultValue;
+        }
+
+        /// <summary>
+        /// Read a client variable from the local cache without the OnReady guard.
+        /// For internal consumers that must work during initial sync and reconnects.
+        /// </summary>
+        internal bool TryGetCachedClientVariable(string name, int clientNo, out string value)
+        {
+            value = null;
+            return _clientVariables.TryGetValue(clientNo, out var clientVars) &&
+                clientVars.TryGetValue(name, out value);
         }
 
         // Helper methods for type conversion

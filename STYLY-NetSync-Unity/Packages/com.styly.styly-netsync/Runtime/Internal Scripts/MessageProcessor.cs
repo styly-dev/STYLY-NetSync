@@ -314,6 +314,11 @@ namespace Styly.NetSync
                                 if (remoteAvatarPrefab != null)
                                 {
                                     avatarManager.SpawnRemoteAvatar(clientNo, deviceId, remoteAvatarPrefab, netSyncManager);
+
+                                    // The moving floor id is dropped when the client disconnects and
+                                    // is only re-delivered when the variable changes; restore it for
+                                    // the (re)spawned avatar.
+                                    netSyncManager.SeedMovingFloorIdForRemoteClient(clientNo);
                                 }
 
                                 // Announce connection regardless of avatar prefab
@@ -417,9 +422,12 @@ namespace Styly.NetSync
                             avatarManager.OnAvatarDisconnected.Invoke(clientNo);
                         }
                     }
-                    else
+                    else if (netSyncManager != null)
                     {
-                        if (netSyncManager != null && netSyncManager.OnAvatarDisconnected != null)
+                        // No avatar, so AvatarManager raises no event: drop the moving floor id
+                        // here to match the avatar path.
+                        netSyncManager.ForgetMovingFloorIdForRemoteClient(clientNo);
+                        if (netSyncManager.OnAvatarDisconnected != null)
                         {
                             netSyncManager.OnAvatarDisconnected.Invoke(clientNo);
                         }
