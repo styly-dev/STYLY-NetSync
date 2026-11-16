@@ -288,19 +288,23 @@ def test_rpc_burst_reaches_ten_targets_during_transform_flood():
 
             target.on_rpc_received.add_listener(on_rpc)
 
-        tx = client_transform_data(
-            physical=transform_data(pos_x=1.0, pos_z=2.0, rot_y=45.0),
-            head=transform_data(pos_x=1.0, pos_y=1.6, pos_z=2.0),
-        )
+        client_transforms = [
+            client_transform_data(
+                device_id=client.device_id,
+                physical=transform_data(pos_x=1.0, pos_z=2.0, rot_y=45.0),
+                head=transform_data(pos_x=1.0, pos_y=1.6, pos_z=2.0),
+            )
+            for client in clients
+        ]
 
         for _ in range(50):
-            for client in clients:
+            for client, tx in zip(clients, client_transforms, strict=True):
                 client.send_transform(tx)
 
         assert sender.rpc("BurstRpc", ["payload"], target_ids)
 
         def all_targets_received():
-            for client in clients:
+            for client, tx in zip(clients, client_transforms, strict=True):
                 client.send_transform(tx)
             for target in targets:
                 target.dispatch_pending_events()
