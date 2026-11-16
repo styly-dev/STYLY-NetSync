@@ -41,11 +41,14 @@ and bound what counts as a real issue during review:
 
 ```bash
 cd STYLY-NetSync-Server
-pip install -e ".[dev]"
-styly-netsync-server
+uv sync --locked --extra dev   # or: pip install -e ".[dev]"
+uv run styly-netsync-server
 # Quality pipeline (run before committing)
-black src/ tests/ && ruff check src/ tests/ && mypy src/ && pytest --cov=src
+uv run black src/ tests/ && uv run ruff check src/ tests/ && uv run mypy src/ && uv run pytest --cov=src
 ```
+
+- CI: `.github/workflows/server-ci.yml` runs the same pipeline on PRs touching `STYLY-NetSync-Server/**` (Ubuntu/Windows/macOS × Python 3.11/3.13), using the committed `uv.lock`
+- `uv.lock` is tracked; after changing dependencies in `pyproject.toml`, run `uv lock` and commit the lockfile (`[tool.uv] exclude-newer = "7 days"` enforces a release cooldown)
 
 ### Unity Client
 

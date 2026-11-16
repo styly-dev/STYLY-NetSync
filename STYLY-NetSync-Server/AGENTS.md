@@ -14,8 +14,9 @@
 ## Development Commands
 
 ```bash
-# Setup
-pip install -e ".[dev]"
+# Setup (uv.lock is tracked; CI uses `uv sync --locked`)
+uv sync --locked --extra dev   # or: pip install -e ".[dev]"
+uv lock                        # after editing dependencies in pyproject.toml
 
 # Run server
 styly-netsync-server
