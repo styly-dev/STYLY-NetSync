@@ -15,7 +15,7 @@
 
 ```bash
 # Setup
-pip install -e ".[dev]"
+uv sync --locked --extra dev   # or: pip install -e ".[dev]"
 
 # Run server
 styly-netsync-server
