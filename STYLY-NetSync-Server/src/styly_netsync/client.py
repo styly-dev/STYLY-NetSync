@@ -186,6 +186,11 @@ class net_sync_manager:
         self._running = False
         self._receive_thread: threading.Thread | None = None
         self._lock = threading.RLock()
+        # Serializes start()/stop() end to end. stop() joins threads without
+        # holding _lock, so _lock alone cannot keep a concurrent start() from
+        # replacing sockets that the in-flight stop() is about to clean up.
+        # Lock order: _lifecycle_lock, then _lock.
+        self._lifecycle_lock = threading.RLock()
 
         # Device/client identification
         self._device_id = str(uuid.uuid4())
@@ -354,7 +359,7 @@ class net_sync_manager:
 
     def start(self) -> "net_sync_manager":
         """Start the client and connect to server."""
-        with self._lock:
+        with self._lifecycle_lock, self._lock:
             if self._running:
                 return self
 
@@ -412,14 +417,22 @@ class net_sync_manager:
 
     def stop(self) -> None:
         """Stop the client and cleanup resources."""
-        with self._lock:
-            if not self._running:
-                return
+        # _lifecycle_lock is held for the whole shutdown so a concurrent
+        # start() waits until cleanup has finished.
+        with self._lifecycle_lock:
+            # Hold _lock only for this state change, not for the thread joins
+            # further down. The receive thread needs _lock to process a
+            # message, so joining it while holding _lock would always time out.
+            with self._lock:
+                if not self._running:
+                    return
 
-            self._running = False
+                self._running = False
 
-            # Clear outgoing buffers
-            self._clear_outgoing_buffers()
+                # Clear outgoing buffers
+                self._clear_outgoing_buffers()
+
+                receive_thread = self._receive_thread
 
             # Stop discovery if running
             self.stop_discovery()
@@ -428,13 +441,14 @@ class net_sync_manager:
             # thread itself, e.g. from an on_connection_error listener —
             # the thread will exit naturally because _running is now False).
             if (
-                self._receive_thread
-                and self._receive_thread.is_alive()
-                and self._receive_thread is not threading.current_thread()
+                receive_thread
+                and receive_thread.is_alive()
+                and receive_thread is not threading.current_thread()
             ):
-                self._receive_thread.join(timeout=1.0)
+                receive_thread.join(timeout=1.0)
 
-            self._cleanup()
+            with self._lock:
+                self._cleanup()
             logger.info("NetSync client stopped")
 
     def close(self) -> None:
@@ -724,7 +738,9 @@ class net_sync_manager:
                 ):
                     dealer_drained = 0
                     max_dealer_drain = 64  # Limit drain iterations
-                    while dealer_drained < max_dealer_drain:
+                    # Re-check _running each pass: stop() may tear the socket
+                    # down under this loop if its join times out.
+                    while self._running and dealer_drained < max_dealer_drain:
                         try:
                             message_parts = self._dealer_socket.recv_multipart(
                                 flags=zmq.NOBLOCK
