@@ -29,6 +29,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Games/Entertainment",
     "Topic :: Internet",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -177,6 +178,10 @@ exclude_lines = [
 
 [tool.coverage.html]
 directory = "htmlcov"
+
+# Supply-chain cooldown: only resolve distributions published at least 7 days ago
+[tool.uv]
+exclude-newer = "7 days"
 
 [dependency-groups]
 dev = [
