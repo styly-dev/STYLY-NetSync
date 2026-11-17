@@ -186,6 +186,11 @@ class net_sync_manager:
         self._running = False
         self._receive_thread: threading.Thread | None = None
         self._lock = threading.RLock()
+        # Serializes start()/stop() end to end. stop() joins threads without
+        # holding _lock, so _lock alone cannot keep a concurrent start() from
+        # replacing sockets that the in-flight stop() is about to clean up.
+        # Lock order: _lifecycle_lock, then _lock.
+        self._lifecycle_lock = threading.RLock()
 
         # Device/client identification
         self._device_id = str(uuid.uuid4())
@@ -354,7 +359,7 @@ class net_sync_manager:
 
     def start(self) -> "net_sync_manager":
         """Start the client and connect to server."""
-        with self._lock:
+        with self._lifecycle_lock, self._lock:
             if self._running:
                 return self
 
@@ -412,37 +417,41 @@ class net_sync_manager:
 
     def stop(self) -> None:
         """Stop the client and cleanup resources."""
-        with self._lock:
-            if not self._running:
-                return
+        # _lifecycle_lock is held for the whole shutdown so a concurrent
+        # start() waits until cleanup has finished.
+        with self._lifecycle_lock:
+            with self._lock:
+                if not self._running:
+                    return
 
-            self._running = False
+                self._running = False
 
-            # Clear outgoing buffers
-            self._clear_outgoing_buffers()
+                # Clear outgoing buffers
+                self._clear_outgoing_buffers()
 
-            receive_thread = self._receive_thread
+                receive_thread = self._receive_thread
 
-        # Join outside the lock: the receive thread takes self._lock while
-        # processing messages, so joining under the lock would deadlock until
-        # the join timeout expires and then close sockets under a live thread.
+            # Join without holding _lock: the receive thread takes _lock while
+            # processing messages, so joining under it would deadlock until
+            # the join timeout expires and then close sockets under a live
+            # thread.
 
-        # Stop discovery if running
-        self.stop_discovery()
+            # Stop discovery if running
+            self.stop_discovery()
 
-        # Wait for receive thread (skip join if called from the receive
-        # thread itself, e.g. from an on_connection_error listener —
-        # the thread will exit naturally because _running is now False).
-        if (
-            receive_thread
-            and receive_thread.is_alive()
-            and receive_thread is not threading.current_thread()
-        ):
-            receive_thread.join(timeout=1.0)
+            # Wait for receive thread (skip join if called from the receive
+            # thread itself, e.g. from an on_connection_error listener —
+            # the thread will exit naturally because _running is now False).
+            if (
+                receive_thread
+                and receive_thread.is_alive()
+                and receive_thread is not threading.current_thread()
+            ):
+                receive_thread.join(timeout=1.0)
 
-        with self._lock:
-            self._cleanup()
-        logger.info("NetSync client stopped")
+            with self._lock:
+                self._cleanup()
+            logger.info("NetSync client stopped")
 
     def close(self) -> None:
         """Alias for stop()."""

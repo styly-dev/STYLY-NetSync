@@ -430,6 +430,52 @@ def test_stop_returns_promptly_during_control_traffic():
         server.stop()
 
 
+def test_start_during_stop_waits_for_shutdown():
+    """start() racing with stop() must not have its new sockets closed."""
+    server, make_client = _start_server_with_two_clients("start_during_stop")
+    client = make_client()
+    try:
+        client.start()
+        assert _wait_until(lambda: client.client_no is not None, timeout=8.0)
+
+        in_shutdown = threading.Event()
+        original_stop_discovery = client.stop_discovery
+
+        def slow_stop_discovery():
+            # Runs inside stop() after _running is cleared and _lock released,
+            # i.e. in the window where stop() is joining threads.
+            in_shutdown.set()
+            time.sleep(0.3)
+            original_stop_discovery()
+
+        client.stop_discovery = slow_stop_discovery
+
+        def restart():
+            if in_shutdown.wait(timeout=2.0):
+                client.start()
+
+        restart_thread = threading.Thread(target=restart, daemon=True)
+        restart_thread.start()
+        try:
+            client.stop()
+            restart_thread.join(timeout=5.0)
+        finally:
+            client.stop_discovery = original_stop_discovery
+        assert not restart_thread.is_alive()
+
+        # The restart must have run after shutdown finished and left a fully
+        # working client (not _running=True with torn-down sockets).
+        assert client.is_running
+        assert client._context is not None
+        assert client._dealer_socket is not None
+        receive_thread = client._receive_thread
+        assert receive_thread is not None and receive_thread.is_alive()
+
+    finally:
+        client.stop()
+        server.stop()
+
+
 def test_network_variables():
     """Test Network Variables functionality."""
     print("\n=== Testing Network Variables ===")
