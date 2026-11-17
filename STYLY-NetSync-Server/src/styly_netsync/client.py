@@ -421,21 +421,28 @@ class net_sync_manager:
             # Clear outgoing buffers
             self._clear_outgoing_buffers()
 
-            # Stop discovery if running
-            self.stop_discovery()
+            receive_thread = self._receive_thread
 
-            # Wait for receive thread (skip join if called from the receive
-            # thread itself, e.g. from an on_connection_error listener —
-            # the thread will exit naturally because _running is now False).
-            if (
-                self._receive_thread
-                and self._receive_thread.is_alive()
-                and self._receive_thread is not threading.current_thread()
-            ):
-                self._receive_thread.join(timeout=1.0)
+        # Join outside the lock: the receive thread takes self._lock while
+        # processing messages, so joining under the lock would deadlock until
+        # the join timeout expires and then close sockets under a live thread.
 
+        # Stop discovery if running
+        self.stop_discovery()
+
+        # Wait for receive thread (skip join if called from the receive
+        # thread itself, e.g. from an on_connection_error listener —
+        # the thread will exit naturally because _running is now False).
+        if (
+            receive_thread
+            and receive_thread.is_alive()
+            and receive_thread is not threading.current_thread()
+        ):
+            receive_thread.join(timeout=1.0)
+
+        with self._lock:
             self._cleanup()
-            logger.info("NetSync client stopped")
+        logger.info("NetSync client stopped")
 
     def close(self) -> None:
         """Alias for stop()."""
@@ -664,7 +671,7 @@ class net_sync_manager:
                     frames_received = 0
 
                     # Drain all available frames, keep only the last
-                    while True:
+                    while self._running:
                         try:
                             message_parts = self._sub_socket.recv_multipart(
                                 flags=zmq.NOBLOCK
@@ -692,12 +699,14 @@ class net_sync_manager:
                                 )
                             continue
                         except Exception as e:
-                            # Unexpected error: log and skip this message, keep draining
+                            # Unexpected error (e.g. socket torn down by
+                            # stop()): leave the drain loop instead of
+                            # retrying, which could spin forever.
                             if self._running:
                                 logger.warning(
                                     f"Unexpected error draining SUB, skipping: {e}"
                                 )
-                            continue
+                            break
 
                     if fatal_error:
                         self._trigger_reconnect(fatal_error)
@@ -724,7 +733,7 @@ class net_sync_manager:
                 ):
                     dealer_drained = 0
                     max_dealer_drain = 64  # Limit drain iterations
-                    while dealer_drained < max_dealer_drain:
+                    while self._running and dealer_drained < max_dealer_drain:
                         try:
                             message_parts = self._dealer_socket.recv_multipart(
                                 flags=zmq.NOBLOCK
@@ -768,9 +777,14 @@ class net_sync_manager:
                                 )
                             continue
                         except Exception as e:
-                            # Unexpected error while draining DEALER; log and continue
-                            logger.warning(f"Error in DEALER receive drain loop: {e}")
-                            continue
+                            # Unexpected error (e.g. socket torn down by
+                            # stop()): leave the drain loop instead of
+                            # retrying, which could spin forever.
+                            if self._running:
+                                logger.warning(
+                                    f"Error in DEALER receive drain loop: {e}"
+                                )
+                            break
 
                     if fatal_error:
                         self._trigger_reconnect(fatal_error)

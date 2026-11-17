@@ -47,7 +47,7 @@ uv run styly-netsync-server
 uv run black src/ tests/ && uv run ruff check src/ tests/ && uv run mypy src/ && uv run pytest --cov=src
 ```
 
-- CI: `.github/workflows/server-ci.yml` runs the same pipeline (Ubuntu/Windows/macOS × Python 3.11/3.13); it is manual-only for now — run "Server CI" from the Actions tab against a branch (it does not run automatically on PRs or pushes yet)
+- CI: `.github/workflows/server-ci.yml` runs the same pipeline on PRs touching `STYLY-NetSync-Server/**` (Ubuntu/Windows/macOS × Python 3.11/3.13); it can also be run manually from the Actions tab
 - `uv lock` only resolves releases published at least 7 days ago (`[tool.uv] exclude-newer` in `pyproject.toml`), so a just-released version will not be picked up
 
 ### Unity Client

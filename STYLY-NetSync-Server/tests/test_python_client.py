@@ -315,6 +315,121 @@ def test_rpc_burst_reaches_ten_targets_during_transform_flood():
         server.stop()
 
 
+def _start_server_with_two_clients(room_id):
+    control_port = _find_free_port()
+    transform_port = _find_free_port()
+    pub_port = _find_free_port()
+
+    server = NetSyncServer(
+        control_port=control_port,
+        transform_port=transform_port,
+        pub_port=pub_port,
+        enable_server_discovery=False,
+    )
+    server_thread = threading.Thread(target=lambda: server.start(), daemon=True)
+    server_thread.start()
+    time.sleep(0.3)
+
+    def make_client():
+        return net_sync_manager(
+            server="tcp://localhost",
+            dealer_port=control_port,
+            transform_port=transform_port,
+            sub_port=pub_port,
+            room=room_id,
+            auto_dispatch=False,
+        )
+
+    return server, make_client
+
+
+def test_receive_thread_exits_when_stop_join_times_out():
+    """Receive thread must exit even if stop() closes sockets underneath it."""
+    server, make_client = _start_server_with_two_clients("stop_join_timeout")
+    sender = make_client()
+    target = make_client()
+    try:
+        sender.start()
+        target.start()
+        assert _wait_until(
+            lambda: sender.client_no is not None and target.client_no is not None,
+            timeout=8.0,
+        )
+        # Let the debounced ID mapping broadcasts settle so the RPC below is
+        # the control message the receive thread blocks on.
+        time.sleep(0.7)
+
+        receive_thread = target._receive_thread
+        assert receive_thread is not None
+
+        # Hold the client lock so the receive thread blocks while processing
+        # the RPC inside the DEALER drain loop. stop() (re-entrant lock) then
+        # times out its join and closes the sockets under the live thread.
+        with target._lock:
+            assert sender.rpc("Block", ["payload"], [target.client_no])
+            time.sleep(0.2)
+            target.stop()
+
+        receive_thread.join(timeout=2.0)
+        assert not receive_thread.is_alive()
+
+    finally:
+        target.stop()
+        sender.stop()
+        server.stop()
+
+
+def test_stop_returns_promptly_during_control_traffic():
+    """stop() must not wait out its join timeout while control messages arrive."""
+    server, make_client = _start_server_with_two_clients("stop_during_traffic")
+    sender = make_client()
+    targets = []
+    try:
+        sender.start()
+        assert _wait_until(lambda: sender.client_no is not None, timeout=8.0)
+
+        for _ in range(5):
+            target = make_client()
+            targets.append(target)
+            target.start()
+            assert _wait_until(
+                lambda client=target: client.client_no is not None, timeout=8.0
+            )
+            target_client_no = target.client_no
+
+            stop_traffic = threading.Event()
+
+            def send_rpcs(stop_event=stop_traffic, client_no=target_client_no):
+                while not stop_event.is_set():
+                    sender.rpc("Traffic", ["payload"], [client_no])
+                    time.sleep(0.001)
+
+            traffic_thread = threading.Thread(target=send_rpcs, daemon=True)
+            traffic_thread.start()
+            try:
+                time.sleep(0.2)
+                receive_thread = target._receive_thread
+                assert receive_thread is not None
+
+                started = time.monotonic()
+                target.stop()
+                elapsed = time.monotonic() - started
+            finally:
+                stop_traffic.set()
+                traffic_thread.join(timeout=2.0)
+
+            # The receive thread join timeout inside stop() is 1.0s.
+            assert elapsed < 0.9
+            receive_thread.join(timeout=2.0)
+            assert not receive_thread.is_alive()
+
+    finally:
+        for target in targets:
+            target.stop()
+        sender.stop()
+        server.stop()
+
+
 def test_network_variables():
     """Test Network Variables functionality."""
     print("\n=== Testing Network Variables ===")

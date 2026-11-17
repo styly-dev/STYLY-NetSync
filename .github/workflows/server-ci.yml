@@ -1,9 +1,16 @@
 name: Server CI
 
-# Manual trigger only for now: run from the Actions tab against any branch.
-# pull_request/push triggers will be added once the suite is green on all
-# three OSes.
 on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - "STYLY-NetSync-Server/**"
+      - ".github/workflows/server-ci.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "STYLY-NetSync-Server/**"
+      - ".github/workflows/server-ci.yml"
   workflow_dispatch:
 
 permissions:
