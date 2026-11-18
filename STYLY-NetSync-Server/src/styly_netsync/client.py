@@ -420,6 +420,9 @@ class net_sync_manager:
         # _lifecycle_lock is held for the whole shutdown so a concurrent
         # start() waits until cleanup has finished.
         with self._lifecycle_lock:
+            # Hold _lock only for this state change, not for the thread joins
+            # further down. The receive thread needs _lock to process a
+            # message, so joining it while holding _lock would always time out.
             with self._lock:
                 if not self._running:
                     return
@@ -430,11 +433,6 @@ class net_sync_manager:
                 self._clear_outgoing_buffers()
 
                 receive_thread = self._receive_thread
-
-            # Join without holding _lock: the receive thread takes _lock while
-            # processing messages, so joining under it would deadlock until
-            # the join timeout expires and then close sockets under a live
-            # thread.
 
             # Stop discovery if running
             self.stop_discovery()
@@ -680,7 +678,7 @@ class net_sync_manager:
                     frames_received = 0
 
                     # Drain all available frames, keep only the last
-                    while self._running:
+                    while True:
                         try:
                             message_parts = self._sub_socket.recv_multipart(
                                 flags=zmq.NOBLOCK
@@ -708,14 +706,12 @@ class net_sync_manager:
                                 )
                             continue
                         except Exception as e:
-                            # Unexpected error (e.g. socket torn down by
-                            # stop()): leave the drain loop instead of
-                            # retrying, which could spin forever.
+                            # Unexpected error: log and skip this message, keep draining
                             if self._running:
                                 logger.warning(
                                     f"Unexpected error draining SUB, skipping: {e}"
                                 )
-                            break
+                            continue
 
                     if fatal_error:
                         self._trigger_reconnect(fatal_error)
@@ -742,6 +738,8 @@ class net_sync_manager:
                 ):
                     dealer_drained = 0
                     max_dealer_drain = 64  # Limit drain iterations
+                    # Re-check _running each pass: stop() may tear the socket
+                    # down under this loop if its join times out.
                     while self._running and dealer_drained < max_dealer_drain:
                         try:
                             message_parts = self._dealer_socket.recv_multipart(
@@ -786,14 +784,9 @@ class net_sync_manager:
                                 )
                             continue
                         except Exception as e:
-                            # Unexpected error (e.g. socket torn down by
-                            # stop()): leave the drain loop instead of
-                            # retrying, which could spin forever.
-                            if self._running:
-                                logger.warning(
-                                    f"Error in DEALER receive drain loop: {e}"
-                                )
-                            break
+                            # Unexpected error while draining DEALER; log and continue
+                            logger.warning(f"Error in DEALER receive drain loop: {e}")
+                            continue
 
                     if fatal_error:
                         self._trigger_reconnect(fatal_error)
