@@ -3,15 +3,26 @@
 from __future__ import annotations
 
 import io
+import os
 import socket
+import sys
 import threading
 from dataclasses import replace
 from unittest.mock import patch
 
+import pytest
 from loguru import logger
 
 from styly_netsync.config import load_default_config
 from styly_netsync.server import NetSyncServer
+
+# macOS local network privacy blocks UDP broadcast on GitHub-hosted runners
+# (actions/runner-images#10924). Skip only there so other environments still
+# test the real broadcast path.
+skip_where_udp_broadcast_is_blocked = pytest.mark.skipif(
+    sys.platform == "darwin" and os.environ.get("GITHUB_ACTIONS") == "true",
+    reason="UDP broadcast is blocked on GitHub-hosted macOS runners",
+)
 
 
 def _find_free_port() -> int:
@@ -56,6 +67,7 @@ class TestDiscoveryProbe:
             logger.remove(handler_id)
         assert "Another STYLY-NetSync server" not in sink.getvalue()
 
+    @skip_where_udp_broadcast_is_blocked
     def test_warns_when_another_server_responds(self) -> None:
         """Probe should log a warning when an existing server responds."""
         port = _find_free_port()
