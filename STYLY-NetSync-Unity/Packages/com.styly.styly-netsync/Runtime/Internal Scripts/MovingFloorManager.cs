@@ -20,6 +20,14 @@ namespace Styly.NetSync
         private readonly Dictionary<int, uint> _clientFloorIds = new Dictionary<int, uint>();
         private readonly HashSet<(int clientNo, uint floorId)> _missingWarnings = new HashSet<(int clientNo, uint floorId)>();
 
+        // The floor id (reliable client variable) and floor-local poses (unreliable) travel on
+        // different channels, so on board/leave they briefly disagree. Only warn when a client
+        // stays unresolved longer than this.
+        private const float WarningGraceSeconds = 1f;
+        // A longer gap between failed lookups means the previous unresolved period has ended.
+        private const float UnresolvedGapSeconds = 0.5f;
+        private readonly Dictionary<int, (float since, float last)> _unresolvedTimes = new Dictionary<int, (float since, float last)>();
+
         private uint _localFloorId;
 
         public uint LocalFloorId => _localFloorId;
@@ -97,6 +105,8 @@ namespace Styly.NetSync
             }
 
             RemoveWarningKeysForClient(clientNo);
+            // A floor change starts a new unresolved period with its own grace time.
+            _unresolvedTimes.Remove(clientNo);
             if (string.IsNullOrEmpty(encodedFloorId))
             {
                 _clientFloorIds.Remove(clientNo);
@@ -116,7 +126,11 @@ namespace Styly.NetSync
 
         public void RemoveClient(int clientNo)
         {
-            _clientFloorIds.Remove(clientNo);
+            // Keep _clientFloorIds: it mirrors the client-variable cache, which survives an avatar
+            // respawn and only sends change events for values that differ. Dropping the id here
+            // left a respawned avatar frozen on its moving floor. The id is still cleared when
+            // the variable is cleared or removed.
+            _unresolvedTimes.Remove(clientNo);
             RemoveWarningKeysForClient(clientNo);
         }
 
@@ -125,7 +139,7 @@ namespace Styly.NetSync
             floor = null;
             if (!_clientFloorIds.TryGetValue(clientNo, out var floorId) || floorId == UnassignedFloorId)
             {
-                if (warnIfMissingId)
+                if (IsUnresolvedPastGrace(clientNo) && warnIfMissingId)
                 {
                     WarnOnce(
                         clientNo,
@@ -137,13 +151,20 @@ namespace Styly.NetSync
 
             if (_floors.TryGetValue(floorId, out floor) && floor != null)
             {
+                _unresolvedTimes.Remove(clientNo);
                 return true;
             }
 
-            WarnOnce(
-                clientNo,
-                floorId,
-                $"[NetSync] Moving floor '{FormatFloorId(floorId)}' for client#{clientNo} is not registered. Holding the last applied avatar pose until it is registered.");
+            if (IsUnresolvedPastGrace(clientNo))
+            {
+                // Keyed by floor only (client 0 is never a real client): an unregistered floor is
+                // usually content that is inactive on this client, so warn once per floor instead
+                // of once per rider and ride. RegisterFloor re-arms it.
+                WarnOnce(
+                    0,
+                    floorId,
+                    $"[NetSync] Moving floor '{FormatFloorId(floorId)}' is not registered on this client (first seen for client#{clientNo}). Holding the last applied pose of avatars on it until it is registered. This is expected if the floor's GameObject is inactive here.");
+            }
             floor = null;
             return false;
         }
@@ -152,6 +173,7 @@ namespace Styly.NetSync
         {
             _clientFloorIds.Clear();
             _missingWarnings.Clear();
+            _unresolvedTimes.Clear();
             if (clearLocal)
             {
                 _localFloorId = UnassignedFloorId;
@@ -203,6 +225,18 @@ namespace Styly.NetSync
 
             return uint.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out floorId) &&
                 floorId != UnassignedFloorId;
+        }
+
+        private bool IsUnresolvedPastGrace(int clientNo)
+        {
+            float now = Time.unscaledTime;
+            if (!_unresolvedTimes.TryGetValue(clientNo, out var times) || now - times.last > UnresolvedGapSeconds)
+            {
+                times.since = now;
+            }
+            times.last = now;
+            _unresolvedTimes[clientNo] = times;
+            return now - times.since >= WarningGraceSeconds;
         }
 
         private void WarnOnce(int clientNo, uint floorId, string message)
