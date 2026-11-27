@@ -1,4 +1,5 @@
 // NetSyncAvatar.cs
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
@@ -35,6 +36,7 @@ namespace Styly.NetSync
 
         // Properties
         public string DeviceId => _deviceId;
+        [Obsolete("ClientNo changes across reconnects; use DeviceId instead. See issue #393.")]
         public int ClientNo => _clientNo;
         public bool IsLocalAvatar { get; private set; }
 
@@ -125,11 +127,17 @@ namespace Styly.NetSync
 
         void OnEnable()
         {
-            // Subscribe to NetSyncManager's client variable change event
+            // Subscribe to NetSyncManager's client variable change event.
+            // Intentionally stays on the ClientNo-based event: for a remote avatar,
+            // _clientNo is available immediately at spawn while _deviceId is only
+            // populated once the ID mapping arrives, so filtering by clientNo here
+            // is the more robust choice during that early window.
+#pragma warning disable CS0618
             if (NetSyncManager.Instance != null)
             {
                 NetSyncManager.Instance.OnClientVariableChanged.AddListener(HandleClientVariableChanged);
             }
+#pragma warning restore CS0618
 #if UNITY_EDITOR
             Application.onBeforeRender += ApplyEditorNoXrFallbackTransforms;
 #endif
@@ -138,10 +146,12 @@ namespace Styly.NetSync
         void OnDisable()
         {
             // Unsubscribe from NetSyncManager's client variable change event
+#pragma warning disable CS0618
             if (NetSyncManager.Instance != null)
             {
                 NetSyncManager.Instance.OnClientVariableChanged.RemoveListener(HandleClientVariableChanged);
             }
+#pragma warning restore CS0618
 #if UNITY_EDITOR
             Application.onBeforeRender -= ApplyEditorNoXrFallbackTransforms;
 #endif
@@ -771,7 +781,9 @@ namespace Styly.NetSync
         /// </summary>
         public bool SetClientVariable(string name, string value)
         {
+#pragma warning disable CS0618 // targeting this avatar's own clientNo internally is not part of the deprecated public surface
             return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(name, value, _clientNo) : false;
+#pragma warning restore CS0618
         }
 
         /// <summary>
@@ -779,23 +791,49 @@ namespace Styly.NetSync
         /// </summary>
         public string GetClientVariable(string name, string defaultValue = null)
         {
+#pragma warning disable CS0618 // targeting this avatar's own clientNo internally is not part of the deprecated public surface
             return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(name, _clientNo, defaultValue) : defaultValue;
+#pragma warning restore CS0618
         }
 
         /// <summary>
         /// Set a client variable for a specific client
         /// </summary>
+        [Obsolete("ClientNo changes across reconnects; use the DeviceId-based overload instead. See issue #393.")]
         public bool SetClientVariable(string name, string value, int targetClientNo)
         {
             return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(name, value, targetClientNo) : false;
         }
 
         /// <summary>
+        /// Set a client variable for a specific device
+        /// </summary>
+        public bool SetClientVariable(string name, string value, string targetDeviceId)
+        {
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.SetClientVariable(name, value, targetDeviceId) : false;
+        }
+
+        /// <summary>
         /// Get a client variable for a specific client
         /// </summary>
+        [Obsolete("ClientNo changes across reconnects; use the DeviceId-based overload instead. See issue #393.")]
         public string GetClientVariable(string name, int clientNo, string defaultValue = null)
         {
             return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariable(name, clientNo, defaultValue) : defaultValue;
+        }
+
+        /// <summary>
+        /// Get a client variable for a specific device.
+        /// </summary>
+        /// <remarks>
+        /// Named distinctly rather than overloading <see cref="GetClientVariable(string, string)"/>:
+        /// both take two strings when <paramref name="defaultValue"/> is omitted, so an
+        /// overload here would let a caller who forgot the deviceId argument silently
+        /// compile against the self-targeting overload instead.
+        /// </remarks>
+        public string GetClientVariableByDeviceId(string name, string deviceId, string defaultValue = null)
+        {
+            return NetSyncManager.Instance != null ? NetSyncManager.Instance.GetClientVariableByDeviceId(name, deviceId, defaultValue) : defaultValue;
         }
         #endregion
     }

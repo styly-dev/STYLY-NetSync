@@ -33,6 +33,12 @@ namespace Styly.NetSync.Editor
             string.Empty,
             "Raised when ownership transfers. Args: (newOwnerClientNo, previousOwnerClientNo). 0 means no owner.");
 
+        private static readonly GUIContent s_OwnershipChangedByDeviceIdLabel = new GUIContent("On Ownership Changed By Device Id");
+
+        private static readonly GUIContent s_OwnershipChangedByDeviceIdTooltip = new GUIContent(
+            string.Empty,
+            "Raised when ownership transfers. Args: (newOwnerDeviceId, previousOwnerDeviceId). Null means no owner or an unresolved mapping.");
+
         private void OnEnable()
         {
             _netSyncObject = (NetSyncObject)target;
@@ -55,7 +61,9 @@ namespace Styly.NetSync.Editor
                 serializedObject.ApplyModifiedProperties();
                 return;
             }
+#pragma warning disable CS0618 // editor-only debug display of the deprecated ClientNo-based owner
             int ownerClientNo = _netSyncObject.OwnerClientNo;
+#pragma warning restore CS0618
             string ownerLabel;
             if (!Application.isPlaying)
             {
@@ -91,12 +99,12 @@ namespace Styly.NetSync.Editor
                 }
             }
 
-            // Draw everything else but skip the hidden fields and the event we render ourselves.
-            DrawPropertiesExcluding(serializedObject, "m_Script", "_objectId", "_manualObjectId", "OnOwnershipChanged");
+            // Draw everything else but skip the hidden fields and the events we render ourselves.
+            DrawPropertiesExcluding(serializedObject, "m_Script", "_objectId", "_manualObjectId", "OnOwnershipChanged", "OnOwnershipChangedByDeviceId");
 
             // Re-draw the "Events" header (lost because [Header] only renders
-            // under the default drawer) and the event. Overlay an invisible
-            // tooltip label on the header row so hover reveals the arg order.
+            // under the default drawer) and the events. Overlay an invisible
+            // tooltip label on each header row so hover reveals the arg order.
             var ownershipEventProp = serializedObject.FindProperty("OnOwnershipChanged");
             if (ownershipEventProp != null)
             {
@@ -110,6 +118,19 @@ namespace Styly.NetSync.Editor
                     eventRect.width,
                     EditorGUIUtility.singleLineHeight);
                 GUI.Label(headerRect, s_OwnershipChangedTooltip);
+            }
+
+            var ownershipByDeviceIdEventProp = serializedObject.FindProperty("OnOwnershipChangedByDeviceId");
+            if (ownershipByDeviceIdEventProp != null)
+            {
+                EditorGUILayout.PropertyField(ownershipByDeviceIdEventProp, s_OwnershipChangedByDeviceIdLabel, true);
+                var eventRect = GUILayoutUtility.GetLastRect();
+                var headerRect = new Rect(
+                    eventRect.x,
+                    eventRect.y,
+                    eventRect.width,
+                    EditorGUIUtility.singleLineHeight);
+                GUI.Label(headerRect, s_OwnershipChangedByDeviceIdTooltip);
             }
 
             serializedObject.ApplyModifiedProperties();
