@@ -53,9 +53,11 @@ def test_monotonic_vs_system_time():
     mono_interval = mono_end - mono_start
     sys_interval = sys_end - sys_start
 
-    # Both should be similar for this short interval
+    # Both should be similar for this short interval. On Windows before
+    # Python 3.13 these clocks advance in ~15.6 ms steps, so the tolerance
+    # allows about two steps (issue #549).
     assert (
-        abs(mono_interval - sys_interval) < 0.01
+        abs(mono_interval - sys_interval) < 0.03
     ), f"Large difference between monotonic ({mono_interval:.3f}s) and system ({sys_interval:.3f}s) intervals"
 
     print(
