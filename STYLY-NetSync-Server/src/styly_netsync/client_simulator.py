@@ -3,7 +3,7 @@
 STYLY NetSync Client Simulator - Load testing and behavior simulation tool.
 
 This module simulates multiple Unity clients connecting to a STYLY NetSync server,
-sending transform updates at 10Hz using the binary protocol. It's designed for
+sending poses or stealth control HELLOs using the binary protocol. It's designed for
 server stress testing and validation without requiring actual Unity clients.
 
 Architecture:
@@ -61,10 +61,9 @@ from styly_netsync.binary_serializer import (
     MSG_ROOM_POSE,
     MSG_RPC,
     deserialize,
-    serialize_client_hello,
     serialize_client_transform,
-    serialize_client_var_set,
 )
+from styly_netsync.simulator_transport import NetworkTransport as NetworkTransport
 
 
 def euler_to_quaternion(
@@ -517,345 +516,6 @@ class TransformBuilder:
 # ============================================================================
 
 
-class NetworkTransport:
-    """Handles ZeroMQ transport sockets for simulated clients."""
-
-    def __init__(
-        self,
-        context: zmq.Context,
-        server_addr: str,
-        dealer_port: int,
-        transform_port: int | None,
-        sub_port: int,
-        room_id: str,
-        enable_sub: bool = True,
-        socket_register: Callable[[zmq.Socket], None] | None = None,
-        socket_unregister: Callable[[zmq.Socket], None] | None = None,
-    ):
-        self.context = context
-        self.server_addr = server_addr
-        self.control_port = dealer_port
-        self.dealer_port = dealer_port  # Deprecated compatibility alias
-        self.transform_port = (
-            transform_port if transform_port is not None else self.control_port + 2
-        )
-        self.sub_port = sub_port
-        self.room_id = room_id
-        self.enable_sub = enable_sub
-        self.socket: zmq.Socket | None = None
-        self.transform_socket: zmq.Socket[Any] | None = None
-        self.sub_socket: zmq.Socket[Any] | None = None
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self._socket_register = socket_register
-        self._socket_unregister = socket_unregister
-
-    def _register_socket(self, socket: zmq.Socket[Any]) -> None:
-        if self._socket_register:
-            try:
-                self._socket_register(socket)
-            except Exception:
-                pass
-
-    def _unregister_socket(self, socket: zmq.Socket[Any]) -> None:
-        if self._socket_unregister:
-            try:
-                self._socket_unregister(socket)
-            except Exception:
-                pass
-
-    def connect(self) -> bool:
-        """Establish connection to server sockets."""
-        try:
-            # Control DEALER carries RPC, Network Variables, ownership, and hello.
-            self.socket = self.context.socket(zmq.DEALER)
-            self._register_socket(self.socket)
-            self.socket.setsockopt(zmq.LINGER, 0)
-            self.socket.setsockopt(zmq.IMMEDIATE, 1)
-            self.socket.setsockopt(zmq.RCVTIMEO, 0)  # Non-blocking receive
-            self.socket.setsockopt(zmq.SNDTIMEO, 1000)
-            self.socket.setsockopt(zmq.SNDHWM, 1024)
-            self.socket.setsockopt(zmq.RCVHWM, 1024)
-
-            control_endpoint = f"{self.server_addr}:{self.control_port}"
-            self.socket.connect(control_endpoint)
-            self.logger.debug(f"Connected control DEALER to {control_endpoint}")
-
-            # Transform DEALER carries only client/object pose uplink and may drop.
-            self.transform_socket = self.context.socket(zmq.DEALER)
-            self._register_socket(self.transform_socket)
-            self.transform_socket.setsockopt(zmq.LINGER, 0)
-            self.transform_socket.setsockopt(zmq.IMMEDIATE, 1)
-            self.transform_socket.setsockopt(zmq.SNDTIMEO, 0)
-            self.transform_socket.setsockopt(zmq.SNDHWM, 2)
-
-            transform_endpoint = f"{self.server_addr}:{self.transform_port}"
-            self.transform_socket.connect(transform_endpoint)
-            self.logger.debug(f"Connected transform DEALER to {transform_endpoint}")
-
-            # Optional SUB for receiving broadcasts (ID mappings, NV syncs, etc.)
-            # Low RCVHWM (2) to prefer recent updates and drop stale messages
-            if self.enable_sub:
-                try:
-                    self.sub_socket = self.context.socket(zmq.SUB)
-                    self._register_socket(self.sub_socket)
-                    self.sub_socket.setsockopt(zmq.LINGER, 0)
-                    self.sub_socket.setsockopt(zmq.RCVTIMEO, 10)  # non-blocking-ish
-                    self.sub_socket.setsockopt(
-                        zmq.RCVHWM, 2
-                    )  # Low HWM to prefer recent
-                    sub_endpoint = f"{self.server_addr}:{self.sub_port}"
-                    self.sub_socket.connect(sub_endpoint)
-                    # Subscribe to room topic
-                    self.sub_socket.setsockopt(
-                        zmq.SUBSCRIBE, self.room_id.encode("utf-8")
-                    )
-                    self.logger.debug(
-                        f"Connected SUB to {sub_endpoint} topic '{self.room_id}'"
-                    )
-                except Exception as se:
-                    # SUB is optional; ensure any partially created socket is closed
-                    try:
-                        if self.sub_socket:
-                            self.sub_socket.close()
-                            self._unregister_socket(self.sub_socket)
-                    except Exception:
-                        pass
-                    finally:
-                        self.sub_socket = None
-                    self.logger.warning(f"Failed to setup SUB socket: {se}")
-
-            return True
-        except Exception as e:
-            # Ensure any partially created sockets are closed to avoid FD leaks
-            try:
-                self.disconnect()
-            except Exception:
-                pass
-            self.logger.error(f"Failed to connect: {e}")
-            return False
-
-    def send_transform(self, room_id: str, transform_data: dict[str, Any]) -> bool:
-        """Send transform data to server."""
-        if not self.transform_socket:
-            return False
-
-        try:
-            binary_data = serialize_client_transform(transform_data)
-            self.transform_socket.send_multipart(
-                [
-                    room_id.encode("utf-8"),
-                    binary_data,
-                ],
-                flags=zmq.NOBLOCK,
-            )
-            return True
-        except zmq.Again:
-            # Drop when socket is not ready to avoid blocking under congestion.
-            return False
-        except Exception as e:
-            self.logger.error(f"Failed to send transform: {e}")
-            return False
-
-    def send_client_hello(self, room_id: str, device_id: str) -> bool:
-        """Register the control identity for this simulated client."""
-        if not self.socket:
-            return False
-
-        try:
-            binary_data = serialize_client_hello(device_id, is_stealth=False)
-            self.socket.send_multipart(
-                [
-                    room_id.encode("utf-8"),
-                    binary_data,
-                ],
-                flags=zmq.NOBLOCK,
-            )
-            return True
-        except zmq.Again:
-            return False
-        except Exception as e:
-            self.logger.error(f"Failed to send client hello: {e}")
-            return False
-
-    def send_client_variable(
-        self,
-        room_id: str,
-        sender_client_no: int,
-        device_id: str,
-        var_name: str,
-        value: str,
-    ) -> bool:
-        """Send client variable data to server."""
-        if not self.socket:
-            return False
-
-        try:
-            var_data = {
-                "senderClientNo": sender_client_no,
-                # Stable device ID required by v8 for control-identity binding;
-                # the server drops client-originated control messages without it.
-                "deviceId": device_id,
-                "targetClientNo": sender_client_no,  # Set variable for ourselves
-                "variableName": var_name,
-                "variableValue": value,
-            }
-            binary_data = serialize_client_var_set(var_data)
-            self.socket.send_multipart(
-                [
-                    room_id.encode("utf-8"),
-                    binary_data,
-                ],
-                flags=zmq.NOBLOCK,
-            )
-            return True
-        except zmq.Again:
-            # Drop when socket is not ready to avoid blocking under congestion.
-            return False
-        except Exception as e:
-            self.logger.error(f"Failed to send client variable: {e}")
-            return False
-
-    def recv_broadcast(
-        self, allow_any: bool = False
-    ) -> tuple[int, dict[str, Any] | None] | None:
-        """Drain incoming broadcasts and optionally surface non-mapping payloads.
-
-        Args:
-            allow_any: When True, return the first successfully deserialized
-                message regardless of type. When False, only device-ID mapping
-                messages are returned.
-
-        Returns:
-            Tuple of (message_type, data) when a relevant payload is available,
-            otherwise None. Data may be None when deserialization fails.
-        """
-        if not self.sub_socket:
-            return None
-        scans = 0
-        MAX_SCANS = 50  # drain up to 50 messages per tick
-        while scans < MAX_SCANS:
-            scans += 1
-            try:
-                parts = self.sub_socket.recv_multipart(flags=zmq.NOBLOCK)
-            except zmq.Again:
-                return None
-            except Exception as e:
-                self.logger.debug(f"SUB receive error: {e}")
-                return None
-
-            if len(parts) != 2:
-                continue
-            topic, payload = parts
-            if topic.decode("utf-8", errors="ignore") != self.room_id:
-                continue
-
-            # Fast-path: inspect message type byte without full deserialize
-            try:
-                if not payload:
-                    continue
-                msg_type = payload[0]
-            except Exception:
-                continue
-            if msg_type == MSG_DEVICE_ID_MAPPING:
-                try:
-                    _, data, _ = deserialize(payload)
-                    if data is not None:
-                        return msg_type, data
-                except Exception:
-                    # ignore malformed
-                    continue
-                if allow_any:
-                    return msg_type, None
-
-            if allow_any:
-                # When measuring receive throughput we only need message type,
-                # not the full payload. Returning None keeps CPU usage low.
-                return msg_type, None
-            # For other message types, drop and continue scanning
-        return None
-
-    def recv_dealer_control(
-        self, max_drain: int = 10
-    ) -> tuple[int, dict[str, Any] | None] | None:
-        """Receive control messages from DEALER socket (sent via ROUTER unicast).
-
-        Server sends RPC, NV sync, and ID mappings via ROUTER->DEALER for reliable
-        delivery instead of PUB/SUB. This method drains incoming control messages.
-
-        Args:
-            max_drain: Maximum number of messages to drain per call.
-
-        Returns:
-            Tuple of (message_type, data) for the first relevant message, or None.
-            Returns immediately on first valid message or after draining max_drain
-            messages without finding a valid one.
-        """
-        if not self.socket:
-            return None
-
-        for _ in range(max_drain):
-            try:
-                parts = self.socket.recv_multipart(flags=zmq.NOBLOCK)
-            except zmq.Again:
-                # No more messages available
-                return None
-            except zmq.ZMQError as e:
-                # Terminal errors: stop draining
-                if e.errno in (zmq.ETERM, zmq.ENOTSOCK):
-                    self.logger.debug(f"DEALER socket error: {e}")
-                    return None
-                self.logger.debug(f"Non-fatal DEALER receive error: {e}")
-                continue
-            except Exception as e:
-                self.logger.debug(f"DEALER receive error: {e}")
-                # Continue to next iteration rather than returning early
-                continue
-
-            if len(parts) != 2:
-                continue
-
-            dealer_room_id, payload = parts
-            room_id_str = dealer_room_id.decode("utf-8", errors="ignore")
-
-            # Only process messages for our room
-            if room_id_str != self.room_id:
-                continue
-
-            try:
-                if not payload:
-                    continue
-                msg_type = payload[0]
-                _, data, _ = deserialize(payload)
-                return msg_type, data
-            except Exception:
-                # Malformed payload; skip and continue draining
-                continue
-
-        # Drained max_drain messages without finding a valid one
-        return None
-
-    def disconnect(self) -> None:
-        """Close connection to server."""
-        if self.socket:
-            try:
-                self.socket.close()
-            finally:
-                self._unregister_socket(self.socket)
-            self.socket = None
-        if self.transform_socket:
-            try:
-                self.transform_socket.close()
-            finally:
-                self._unregister_socket(self.transform_socket)
-            self.transform_socket = None
-        if self.sub_socket:
-            try:
-                self.sub_socket.close()
-            finally:
-                self._unregister_socket(self.sub_socket)
-            self.sub_socket = None
-
-
 # ============================================================================
 # Shared Subscriber (Single SUB socket for all clients)
 # ============================================================================
@@ -1032,6 +692,8 @@ class SimulatedClient:
         0.5 / 1200.0
     )  # Normalized units lost per second (50% in 20 mins)
     BATTERY_UPDATE_INTERVAL = 60.0  # Send battery updates every 60 seconds
+    INITIAL_SYNC_TIMEOUT = 2.0
+    RECONNECT_DELAY = 10.0
 
     def __init__(
         self,
@@ -1042,6 +704,7 @@ class SimulatedClient:
         simulate_battery: bool = True,
         enable_receive: bool = True,
         transform_send_rate: float = 10.0,
+        stealth_mode: bool = False,
     ):
         self.config = config
         self.transport = transport
@@ -1053,6 +716,7 @@ class SimulatedClient:
         self.simulate_battery = simulate_battery
         self.enable_receive = enable_receive
         self.transform_send_rate = transform_send_rate
+        self.stealth_mode = stealth_mode
         self.recv_stats: ReceiveStats | None = (
             ReceiveStats() if enable_receive else None
         )
@@ -1060,6 +724,16 @@ class SimulatedClient:
         self.start_time = time.monotonic()
         self.last_update_time = self.start_time
         self.running = False
+        self.has_initial_sync = False
+        self.connection_established_at = 0.0
+        self.global_variables: dict[str, str] = {}
+        self.client_variables: dict[int, dict[str, str]] = {}
+        self.device_ids: dict[int, str] = {}
+        self._last_send_time = 0.0
+        self._last_pose_time = 0.0
+        self._last_pose_signature: bytes | None = None
+        self._pose_seq = 0
+        self._reconnect_at: float | None = None
 
         # Battery simulation state (only initialized if enabled)
         if self.simulate_battery:
@@ -1082,95 +756,96 @@ class SimulatedClient:
             self.client_number = 0
             self.logger.info("Battery simulation disabled")
 
-    def run(self, stop_event: threading.Event) -> None:
-        """Run the client simulation loop."""
+    @property
+    def is_ready(self) -> bool:
+        return (
+            self.transport.connected
+            and self.client_number > 0
+            and self.has_initial_sync
+        )
+
+    def _connect(self, now: float) -> bool:
         if not self.transport.connect():
-            self.logger.error("Failed to connect to server")
-            return
+            return False
+        # ConnectionManager queues a non-stealth HELLO first even for stealth
+        # clients. Subsequent Update calls send the stealth HELLO at SendRate.
+        self.transport.send_client_hello(self.room_id, self.config.device_id)
+        self.connection_established_at = now
+        self.has_initial_sync = False
+        self.last_battery_send = now - self.BATTERY_UPDATE_INTERVAL
+        return True
 
-        hello_sent = False
-        for _ in range(20):
-            if self.transport.send_client_hello(self.room_id, self.config.device_id):
-                hello_sent = True
-                break
-            time.sleep(0.05)
-        if not hello_sent:
-            self.logger.warning("Failed to send client hello before simulation start")
-
+    def run(self, stop_event: threading.Event) -> None:
+        """Run application updates separately from the transport's network pump."""
         self.running = True
-        update_interval = 1.0 / self.transform_send_rate  # Calculate interval from rate
-        last_send_time = time.monotonic()
-
+        if not self._connect(time.monotonic()):
+            self.transport.disconnect()
+            self._reconnect_at = time.monotonic() + self.RECONNECT_DELAY
         try:
             while self.running and not stop_event.is_set():
-                current_time = time.monotonic()
-
-                if current_time - last_send_time >= update_interval:
-                    elapsed_time = current_time - self.start_time
-                    delta_time = current_time - self.last_update_time
-
-                    # Update movement
-                    self.movement.previous_position = self.movement.current_position
-                    new_position = self.movement.update_position(
-                        elapsed_time, delta_time
-                    )
-                    self.movement.current_position = new_position
-
-                    # Calculate rotation
-                    rotation_y = self.movement.calculate_rotation(delta_time)
-
-                    # Build transform data
-                    transform_data = self.transform_builder.build_transform_data(
-                        new_position, elapsed_time, delta_time, rotation_y
-                    )
-
-                    # Send to server
-                    if self.transport.send_transform(self.room_id, transform_data):
-                        self.logger.debug(
-                            f"Sent update: pos=({new_position.x:.2f}, {new_position.z:.2f})"
-                        )
-
-                    # Poll incoming broadcasts (ID mappings, etc.) to learn our client number first
-                    self._poll_broadcasts()
-
-                    # Update battery simulation (may send immediately after client no assigned)
-                    if self.simulate_battery:
-                        self._update_battery(current_time)
-
-                    self.last_update_time = current_time
-                    last_send_time = current_time
-
-                # Opportunistically drain broadcasts more frequently than send rate
-                # to minimize assignment latency and queue buildup
-                self._poll_broadcasts()
-
-                # Small sleep to prevent busy waiting
-                time.sleep(0.01)
-
-        except Exception as e:
-            self.logger.error(f"Error in simulation loop: {e}")
+                self._tick(time.monotonic())
+                stop_event.wait(0.01)
+        except Exception:
+            self.logger.exception("Error in simulation loop")
         finally:
             self.running = False
             self.transport.disconnect()
-            if self.simulate_battery:
-                self.logger.info(
-                    f"Client stopped with final battery level: {self.battery_level:.2f} (normalized)"
+            self.logger.info("Client stopped")
+
+    def _tick(self, now: float) -> None:
+        if self.transport.connection_error is not None and self._reconnect_at is None:
+            self.transport.disconnect()
+            self.client_number = 0
+            self.has_initial_sync = False
+            self._reconnect_at = now + self.RECONNECT_DELAY
+        if self._reconnect_at is not None:
+            if now < self._reconnect_at:
+                return
+            if not self._connect(now):
+                self.transport.disconnect()
+                self._reconnect_at = now + self.RECONNECT_DELAY
+                return
+            self._reconnect_at = None
+
+        self._poll_broadcasts()
+        if (
+            not self.has_initial_sync
+            and now - self.connection_established_at >= self.INITIAL_SYNC_TIMEOUT
+        ):
+            self.has_initial_sync = True
+        if now - self._last_send_time >= 1.0 / self.transform_send_rate:
+            if self.stealth_mode:
+                # Unlike stationary visible avatars, Unity's stealth path has
+                # no 1 Hz filter. HELLO uses the CONTROL lane at SendRate.
+                self.transport.send_client_hello(
+                    self.room_id, self.config.device_id, is_stealth=True
                 )
             else:
-                self.logger.info("Client stopped")
-            if self.enable_receive and self.recv_stats:
-                if self.recv_stats.total_messages > 0:
-                    breakdown = ", ".join(
-                        f"{MESSAGE_TYPE_NAMES.get(t, t)}:{c}"
-                        for t, c in sorted(self.recv_stats.type_counts.items())
-                    )
-                    self.logger.info(
-                        "Received %d broadcasts (%s)",
-                        self.recv_stats.total_messages,
-                        breakdown,
-                    )
-                else:
-                    self.logger.info("No broadcasts received")
+                elapsed = now - self.start_time
+                delta = now - self.last_update_time
+                self.movement.previous_position = self.movement.current_position
+                position = self.movement.update_position(elapsed, delta)
+                self.movement.current_position = position
+                pose = self.transform_builder.build_transform_data(
+                    position, elapsed, delta, self.movement.calculate_rotation(delta)
+                )
+                self._send_pose(pose, now)
+            # Backpressure does not cause a reconnect or a tight retry loop.
+            self._last_send_time = now
+            self.last_update_time = now
+        if self.simulate_battery:
+            self._update_battery(now)
+
+    def _send_pose(self, pose: dict[str, Any], now: float) -> None:
+        pose["poseSeq"] = 0
+        signature = serialize_client_transform(pose)
+        if signature == self._last_pose_signature and now - self._last_pose_time < 1.0:
+            return
+        self._pose_seq = (self._pose_seq + 1) & 0xFFFF
+        pose["poseSeq"] = self._pose_seq
+        if self.transport.send_transform(self.room_id, pose):
+            self._last_pose_signature = signature
+            self._last_pose_time = now
 
     def _update_battery(self, current_time: float) -> None:
         """Update battery level and send updates when needed."""
@@ -1204,89 +879,23 @@ class SimulatedClient:
             self.last_battery_send = current_time
 
     def _poll_broadcasts(self) -> None:
-        """Update local client number from shared subscriber, DEALER, or fallback SUB."""
-        # Prefer shared subscriber for scalability
+        """Apply network-thread messages on the application thread, as Unity does."""
         if self.shared_subscriber:
             assigned = self.shared_subscriber.get_client_no(self.config.device_id)
-            if assigned and assigned != self.client_number:
+            if assigned:
                 self.client_number = assigned
-                self.logger.info(
-                    f"Assigned client number by server: {self.client_number}"
-                )
-            # Still check DEALER for control messages even when using shared subscriber
-            self._poll_dealer_control()
-            return
-
-        # Fallback: use own transport SUB and DEALER if available
-        if not self.transport:
-            return
-
-        # Drain multiple messages per poll, but respect a strict time budget to avoid starvation.
-        max_drains = 100 if self.enable_receive else 10
-        drained = 0
-        assigned_this_poll = False
-
-        # Time budget (nanoseconds)
-        # Higher budget during initial client number assignment, lower during normal operation
-        budget_ns = 5_000_000 if self.client_number == 0 else 1_000_000  # 5ms / 1ms
-        t0 = time.perf_counter_ns()
-
-        # First, poll DEALER for control messages (RPC, NV, ID mapping via ROUTER unicast)
-        while drained < max_drains and (time.perf_counter_ns() - t0) < budget_ns:
-            msg = self.transport.recv_dealer_control(max_drain=1)
-            if not msg:
+        while True:
+            message = self.transport.recv_dealer_control()
+            if message is None:
                 break
-
-            drained += 1
-            msg_type, data = msg
-            assigned_this_poll = self._process_mapping_message(
-                msg_type, data, assigned_this_poll
-            )
-
-            if self.enable_receive:
-                self._handle_broadcast_payload(msg_type, data)
-
-            if assigned_this_poll and not self.enable_receive:
+            kind, data = message
+            self._process_mapping_message(kind, data, False)
+            self._handle_broadcast_payload(kind, data)
+        while True:
+            message = self.transport.recv_broadcast(allow_any=True)
+            if message is None:
                 break
-
-        # Then poll SUB for transform broadcasts
-        while drained < max_drains and (time.perf_counter_ns() - t0) < budget_ns:
-            msg = self.transport.recv_broadcast(allow_any=self.enable_receive)
-            if not msg:
-                break
-
-            drained += 1
-            msg_type, data = msg
-            assigned_this_poll = self._process_mapping_message(
-                msg_type, data, assigned_this_poll
-            )
-
-            if self.enable_receive:
-                self._handle_broadcast_payload(msg_type, data)
-
-            # Once assignment is confirmed we can stop early if we're not
-            # actively measuring receive throughput.
-            if assigned_this_poll and not self.enable_receive:
-                break
-
-        # NOTE: Time budget may interrupt draining, but subsequent ticks will continue
-        # processing messages. This prevents send loop starvation.
-
-    def _poll_dealer_control(self) -> None:
-        """Poll DEALER socket for control messages when using shared subscriber."""
-        if not self.transport:
-            return
-
-        for _ in range(10):  # Drain up to 10 control messages
-            msg = self.transport.recv_dealer_control(max_drain=1)
-            if not msg:
-                break
-
-            msg_type, data = msg
-            self._process_mapping_message(msg_type, data, False)
-
-            if self.enable_receive:
-                self._handle_broadcast_payload(msg_type, data)
+            self._handle_broadcast_payload(*message)
 
     def _process_mapping_message(
         self, msg_type: int, data: dict[str, Any] | None, already_assigned: bool
@@ -1297,6 +906,10 @@ class SimulatedClient:
 
         try:
             mappings = data.get("mappings", []) if data else []
+            # Unity treats every mapping message as a complete room snapshot.
+            self.device_ids.clear()
+            for mapping in mappings:
+                self.device_ids[int(mapping["clientNo"])] = str(mapping["deviceId"])
             for mapping in mappings:
                 if mapping.get("deviceId") == self.config.device_id:
                     assigned = int(mapping.get("clientNo", 0))
@@ -1315,7 +928,17 @@ class SimulatedClient:
     def _handle_broadcast_payload(
         self, msg_type: int, data: dict[str, Any] | None
     ) -> None:
-        """Record broadcast metadata for receive-mode load tests."""
+        """Apply initial sync and NV state before recording receive statistics."""
+        if msg_type in (MSG_GLOBAL_VAR_SYNC, MSG_CLIENT_VAR_SYNC):
+            self.has_initial_sync = True
+        if data and msg_type == MSG_GLOBAL_VAR_SYNC:
+            for variable in data.get("variables", []):
+                self.global_variables[variable["name"]] = variable["value"]
+        if data and msg_type == MSG_CLIENT_VAR_SYNC:
+            for number, variables in data.get("clientVariables", {}).items():
+                self.client_variables[int(number)] = {
+                    item["name"]: item["value"] for item in variables
+                }
         if not self.recv_stats:
             return
 
@@ -1616,6 +1239,7 @@ class ClientSimulator:
         simulate_battery: bool = True,
         enable_receive: bool = True,
         transform_send_rate: float = 10.0,
+        stealth_mode: bool = False,
     ):
         self.server_addr = server_addr
         self.control_port = dealer_port
@@ -1633,6 +1257,7 @@ class ClientSimulator:
         self.simulate_battery = simulate_battery
         self.enable_receive = enable_receive
         self.transform_send_rate = transform_send_rate
+        self.stealth_mode = stealth_mode
 
         self.context = zmq.Context(io_threads=1)
         self.thread_pool = ClientThreadPool(num_clients)
@@ -1844,6 +1469,7 @@ class ClientSimulator:
                 simulate_battery=self.simulate_battery,
                 enable_receive=self.enable_receive,
                 transform_send_rate=self.transform_send_rate,
+                stealth_mode=self.stealth_mode,
             )
 
             # Add to thread pool
@@ -2019,7 +1645,15 @@ Examples:
         help="Transform update send rate in Hz (default: 10.0)",
     )
 
+    parser.add_argument(
+        "--stealth",
+        action="store_true",
+        help="Match Unity without a local avatar: control HELLO at transform-send-rate (default 10 Hz)",
+    )
+
     args = parser.parse_args()
+    if args.transform_send_rate <= 0:
+        parser.error("--transform-send-rate must be positive")
     if args.control_port is not None:
         args.dealer_port = args.control_port
 
@@ -2053,6 +1687,7 @@ Examples:
         simulate_battery=not args.no_sync_battery,
         enable_receive=True,  # Always enable receive (was args.enable_recv)
         transform_send_rate=args.transform_send_rate,
+        stealth_mode=args.stealth,
     )
 
     try:
