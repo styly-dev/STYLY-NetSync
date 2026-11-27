@@ -26,6 +26,9 @@ jobs:
     outputs:
       release_commit: ${{ steps.release.outputs.release_commit }}
       release_tag: ${{ steps.release.outputs.release_tag }}
+    env:
+      # Keep in sync with UV_VERSION in server-ci.yml
+      UV_VERSION: "0.13.7"
 
     steps:
       - name: Checkout repository
@@ -134,19 +137,37 @@ jobs:
           echo "Updated content:"
           cat "$VERSION_FILE"
 
-      - name: Update Python pyproject.toml version
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+
+      - name: Update Python pyproject.toml and uv.lock version
         run: |
-          PYPROJECT_FILE="STYLY-NetSync-Server/pyproject.toml"
+          SERVER_DIR="STYLY-NetSync-Server"
+          PYPROJECT_FILE="$SERVER_DIR/pyproject.toml"
 
           if [ ! -f "$PYPROJECT_FILE" ]; then
             echo "❌ Error: Python pyproject.toml not found at $PYPROJECT_FILE"
             exit 1
           fi
 
+          # Stop if uv.lock is already stale, so the release commit never
+          # carries an unreviewed dependency re-resolution.
+          if ! uv --directory "$SERVER_DIR" lock --check; then
+            echo "❌ Error: uv.lock is out of date with pyproject.toml"
+            echo "Run 'uv lock' in $SERVER_DIR and merge the result into develop first"
+            exit 1
+          fi
+
           # Update version line in pyproject.toml
           sed -i "s/^version = .*/version = \"$VERSION\"/" "$PYPROJECT_FILE"
 
-          echo "✅ Updated Python pyproject.toml version to $VERSION"
+          # uv.lock records the project's own version; refresh it to match
+          uv --directory "$SERVER_DIR" lock
+
+          echo "✅ Updated Python pyproject.toml and uv.lock version to $VERSION"
           echo "Updated version line:"
           grep "^version = " "$PYPROJECT_FILE"
 
@@ -219,6 +240,7 @@ jobs:
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json
           git add STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt
           git add STYLY-NetSync-Server/pyproject.toml
+          git add STYLY-NetSync-Server/uv.lock
 
           # Add updated .md files if any (filter blank lines to avoid empty pathspec)
           if [ -n "${UPDATED_MD_FILES}" ]; then
@@ -238,7 +260,7 @@ jobs:
 
           - Updated Unity package version in package.json
           - Updated Unity version.txt file for runtime version retrieval
-          - Updated Python server version in pyproject.toml
+          - Updated Python server version in pyproject.toml and uv.lock
           - Updated version references in .md files (if any)"
 
           echo "✅ Committed version changes"
@@ -319,7 +341,7 @@ jobs:
               echo "|------|--------|-------------|"
               echo "| Version Update | ✅ | Updated Unity package.json to \`$VERSION\` |"
               echo "| Version Update | ✅ | Updated Unity version.txt to \`$VERSION\` |"
-              echo "| Version Update | ✅ | Updated Python pyproject.toml to \`$VERSION\` |"
+              echo "| Version Update | ✅ | Updated Python pyproject.toml and uv.lock to \`$VERSION\` |"
               echo "| Git Commit | ✅ | Committed changes to develop branch |"
               echo "| Branch Merge | ✅ | Fast-forward merged develop → main |"
               echo "| Release Draft | ✅ | Created draft release with tag \`$TAG_NAME\` |"
@@ -329,6 +351,7 @@ jobs:
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/package.json\`"
               echo "- \`STYLY-NetSync-Unity/Packages/com.styly.styly-netsync/Runtime/Resources/com.styly.styly-netsync.version.txt\`"
               echo "- \`STYLY-NetSync-Server/pyproject.toml\`"
+              echo "- \`STYLY-NetSync-Server/uv.lock\`"
               if [ -n "${UPDATED_MD_FILES}" ]; then
                 echo "$UPDATED_MD_FILES" | while read -r file; do
                   [ -n "$file" ] && echo "- \`$file\`"
@@ -349,6 +372,7 @@ jobs:
               echo "#### Common Issues:"
               echo "- **Version format invalid**: Ensure version follows semantic versioning (x.x.x)"
               echo "- **Branch not up to date**: Pull latest changes from origin/develop"
+              echo "- **uv.lock out of date**: Run \`uv lock\` in STYLY-NetSync-Server and merge it into develop"
               echo "- **Merge conflict**: Main branch has diverged from develop"
               echo "- **Permission denied**: Check GitHub token permissions"
               echo ""
