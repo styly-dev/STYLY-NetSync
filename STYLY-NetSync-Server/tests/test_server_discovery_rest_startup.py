@@ -50,6 +50,7 @@ def test_discovery_starts_after_rest_bridge_success() -> None:
                 return_value=(rest_thread, rest_server),
             ) as run_rest,
             patch("styly_netsync.server.display_logo"),
+            patch.object(server, "_probe_existing_discovery_server", return_value=None),
             patch.object(server, "_start_server_discovery") as start_discovery,
         ):
             server.start()
@@ -69,6 +70,7 @@ def test_server_start_fails_when_rest_bridge_fails() -> None:
             "styly_netsync.rest_bridge.run_uvicorn_in_thread",
             side_effect=RuntimeError("rest bind failed"),
         ) as run_rest,
+        patch.object(server, "_probe_existing_discovery_server", return_value=None),
         patch.object(server, "_start_server_discovery") as start_discovery,
         pytest.raises(SystemExit),
     ):
@@ -79,6 +81,59 @@ def test_server_start_fails_when_rest_bridge_fails() -> None:
     assert server.running is False
     assert server.server_discovery_running is False
     assert server.tcp_server_discovery_running is False
+
+
+def test_server_start_aborts_on_discovery_port_conflict() -> None:
+    """A detected discovery-port conflict must abort before binding anything."""
+    server = _make_server()
+
+    try:
+        with (
+            patch.object(
+                server,
+                "_probe_existing_discovery_server",
+                return_value="Another STYLY-NetSync server ('Other') from 10.0.0.2:9999",
+            ),
+            patch("styly_netsync.rest_bridge.run_uvicorn_in_thread") as run_rest,
+            patch.object(server, "_start_server_discovery") as start_discovery,
+            pytest.raises(SystemExit),
+        ):
+            server.start()
+
+        # Aborted before any partial startup: no REST bridge, no discovery, no run.
+        run_rest.assert_not_called()
+        start_discovery.assert_not_called()
+        assert server.running is False
+    finally:
+        server.stop()
+
+
+def test_server_start_proceeds_on_conflict_when_allowed() -> None:
+    """With allow_discovery_port_conflict set, a conflict only warns."""
+    server = _make_server()
+    server.allow_discovery_port_conflict = True
+    rest_thread, rest_server = _fake_rest_lifecycle()
+
+    try:
+        with (
+            patch.object(
+                server,
+                "_probe_existing_discovery_server",
+                return_value="Another STYLY-NetSync server ('Other') from 10.0.0.2:9999",
+            ),
+            patch(
+                "styly_netsync.rest_bridge.run_uvicorn_in_thread",
+                return_value=(rest_thread, rest_server),
+            ) as run_rest,
+            patch("styly_netsync.server.display_logo"),
+            patch.object(server, "_start_server_discovery") as start_discovery,
+        ):
+            server.start()
+
+        run_rest.assert_called_once()
+        start_discovery.assert_called_once()
+    finally:
+        server.stop()
 
 
 def test_server_start_fails_without_discovery_when_rest_bridge_fails() -> None:
