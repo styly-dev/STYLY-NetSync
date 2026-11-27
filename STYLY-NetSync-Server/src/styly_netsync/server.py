@@ -1432,7 +1432,9 @@ class NetSyncServer:
                     self._enqueue_router(client_identity, room_id, mapping_payload)
 
         if is_new_client:
-            self._sync_network_variables_to_new_client(room_id)
+            self._sync_network_variables_to_new_client(
+                room_id, client_identity, device_id, client_no
+            )
             self._sync_objects_to_new_client(client_identity, room_id)
         elif is_reconnect:
             self._sync_network_variables_to_client(room_id, client_identity)
@@ -1529,7 +1531,9 @@ class NetSyncServer:
         # before hello, the hello handler will sync after control identity exists.
         if control_identity is not None:
             if is_new_client:
-                self._sync_network_variables_to_new_client(room_id)
+                self._sync_network_variables_to_new_client(
+                    room_id, control_identity, device_id, client_no
+                )
                 self._sync_objects_to_new_client(control_identity, room_id)
             elif is_reconnect:
                 self._sync_network_variables_to_client(room_id, control_identity)
@@ -2183,20 +2187,30 @@ class NetSyncServer:
             self._send_ctrl_to_room_via_router(room_id, message_bytes)
             logger.debug(f"Broadcasted client variables to room {room_id}")
 
-    def _sync_network_variables_to_new_client(self, room_id: str) -> None:
-        """Send current Network Variables state to a newly connected client.
+    def _sync_network_variables_to_new_client(
+        self, room_id: str, identity: bytes, device_id: str, client_no: int
+    ) -> None:
+        """Send the full Network Variables snapshot to a newly joined client.
 
-        Broadcasts to all clients in the room (suitable for new-client joins
-        where the full room needs the updated mapping anyway).
+        Peers already hold the room state, so only the joiner gets the snapshot.
+        The one thing peers cannot already have is the joiner's own client
+        variables (e.g. values queued via the REST API before it connected), so
+        those are broadcast, scoped to the joiner's client number, when present.
         """
-        self._broadcast_global_var_sync(room_id)
-        self._broadcast_client_var_sync(room_id)
+        self._sync_network_variables_to_client(room_id, identity)
+
+        with self._rooms_lock:
+            has_own_variables = bool(
+                self.client_variables.get(room_id, {}).get(device_id)
+            )
+        if has_own_variables:
+            self._broadcast_client_var_sync(room_id, {client_no})
 
     def _sync_network_variables_to_client(self, room_id: str, identity: bytes) -> None:
         """Unicast current Network Variables state to a single client.
 
-        Used on reconnect so that only the reconnecting client receives the
-        full NV snapshot, avoiding unnecessary traffic to other clients.
+        Used on join and reconnect so that only that client receives the full
+        NV snapshot, avoiding unnecessary traffic to other clients.
         """
         with self._rooms_lock:
             global_payload = self._build_global_var_sync_payload(room_id)
